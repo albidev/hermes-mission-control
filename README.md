@@ -72,6 +72,28 @@ You can open selected entities with query params:
   - `GET /api/mission-control/agents/trace/stream` (SSE live stream)
 - Live trace now prefers SSE transport with polling fallback.
 
+## Critical recovery playbook (no repo write access)
+
+If Mission Control comes up but `/api/mission-control` is `404` after reboot/update:
+
+1. Check backend directly:
+```bash
+curl -i http://127.0.0.1:8642/api/mission-control
+```
+2. If missing routes were caused by local patch drift, restore from local backup patch and restart gateway:
+```bash
+~/.hermes/bin/restore-mission-control.sh
+```
+3. Re-check both backend and proxied frontend endpoint:
+```bash
+curl -i http://127.0.0.1:8642/api/mission-control
+curl -i http://127.0.0.1:5174/api/mission-control
+```
+
+Local artifacts used by this recovery:
+- `~/.hermes/backups/mission-control-api_server-<timestamp>.patch`
+- `~/.hermes/bin/restore-mission-control.sh`
+
 ## Verification
 
 ```bash
