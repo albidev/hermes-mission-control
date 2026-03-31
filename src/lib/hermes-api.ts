@@ -284,6 +284,15 @@ export type MissionControlSnapshot = {
   alerts: MissionControlAlertsSnapshot;
 };
 
+export type MissionControlCapabilities = {
+  schemaVersion: string;
+  trace: {
+    stream: boolean;
+    compact: boolean;
+    namedSseTraceEvent: boolean;
+  };
+};
+
 export const MISSION_CONTROL_TOKEN_STORAGE_KEY = 'mission-control-token';
 
 export class MissionControlAuthError extends Error {
@@ -533,6 +542,15 @@ const fallbackAgentTrace: MissionControlAgentTraceSnapshot = {
   },
 };
 
+const fallbackCapabilities: MissionControlCapabilities = {
+  schemaVersion: 'v1',
+  trace: {
+    stream: true,
+    compact: true,
+    namedSseTraceEvent: true,
+  },
+};
+
 const fallbackSnapshot: MissionControlSnapshot = {
   backendHealth: 'healthy',
   activeModel: 'gpt-5.4-mini',
@@ -635,6 +653,44 @@ function normalizeSessions(input: Partial<MissionControlSessionsSnapshot> | unde
     activeAgents: Number(input?.activeAgents ?? fallbackSessions.activeAgents),
     toolCallsToday: Number(input?.toolCallsToday ?? fallbackSessions.toolCallsToday),
     items: (input?.items ?? fallbackSessions.items).map((item) => normalizeSessionItem(item)),
+  };
+}
+
+function pickTraceCandidate(input: unknown): Partial<MissionControlAgentTraceSnapshot> | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const candidate = input as Record<string, unknown>;
+
+  if (Array.isArray(candidate.events) || Array.isArray(candidate.nodes) || Array.isArray(candidate.edges)) {
+    return candidate as Partial<MissionControlAgentTraceSnapshot>;
+  }
+
+  const nested = ['trace', 'data', 'payload']
+    .map((key) => candidate[key])
+    .find((value) => value && typeof value === 'object') as Record<string, unknown> | undefined;
+
+  if (!nested) return undefined;
+  if (Array.isArray(nested.events) || Array.isArray(nested.nodes) || Array.isArray(nested.edges)) {
+    return nested as Partial<MissionControlAgentTraceSnapshot>;
+  }
+
+  return undefined;
+}
+
+function normalizeCapabilities(input: unknown): MissionControlCapabilities {
+  if (!input || typeof input !== 'object') return fallbackCapabilities;
+  const candidate = input as Record<string, unknown>;
+  const trace = (candidate.trace && typeof candidate.trace === 'object' ? candidate.trace : {}) as Record<string, unknown>;
+
+  return {
+    schemaVersion: typeof candidate.schemaVersion === 'string' && candidate.schemaVersion ? candidate.schemaVersion : fallbackCapabilities.schemaVersion,
+    trace: {
+      stream: typeof trace.stream === 'boolean' ? trace.stream : fallbackCapabilities.trace.stream,
+      compact: typeof trace.compact === 'boolean' ? trace.compact : fallbackCapabilities.trace.compact,
+      namedSseTraceEvent:
+        typeof trace.namedSseTraceEvent === 'boolean'
+          ? trace.namedSseTraceEvent
+          : fallbackCapabilities.trace.namedSseTraceEvent,
+    },
   };
 }
 
@@ -990,6 +1046,31 @@ export async function loadMissionControlSessions(accessToken?: string): Promise<
   }
 }
 
+export async function loadMissionControlCapabilities(accessToken?: string): Promise<MissionControlCapabilities> {
+  try {
+    const response = await fetch(apiUrl('/mission-control/capabilities'), {
+      headers: buildHeaders(accessToken),
+      credentials: 'include',
+    });
+
+    if (response.status === 401) {
+      throw new MissionControlAuthError();
+    }
+
+    if (response.status === 404) {
+      return fallbackCapabilities;
+    }
+
+    const data = await parseResponse<unknown>(response, 'capabilities');
+    return normalizeCapabilities(data);
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) {
+      throw error;
+    }
+    return fallbackCapabilities;
+  }
+}
+
 export async function loadMissionControlAgentTrace(
   sessionId?: string,
   accessToken?: string,
@@ -1016,8 +1097,12 @@ export async function loadMissionControlAgentTrace(
       credentials: 'include',
     });
 
-    const data = await parseResponse<Partial<MissionControlAgentTraceSnapshot>>(response, 'agents trace');
-    return normalizeAgentTrace(data);
+    if (response.status === 401) {
+      throw new MissionControlAuthError();
+    }
+
+    const raw = await parseResponse<unknown>(response, 'agents trace');
+    return normalizeAgentTrace(pickTraceCandidate(raw));
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1233,4 +1318,8 @@ export function getFallbackSkills(): MissionControlSkillsSnapshot {
 
 export function getFallbackConfig(): MissionControlConfigSnapshot {
   return fallbackConfig;
+}
+
+export function getFallbackCapabilities(): MissionControlCapabilities {
+  return fallbackCapabilities;
 }

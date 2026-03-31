@@ -6,9 +6,12 @@ import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/Modal';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
 import {
+  getFallbackCapabilities,
   loadMissionControlAgentTrace,
+  loadMissionControlCapabilities,
   type MissionControlAgentTraceEvent,
   type MissionControlAgentTraceSnapshot,
+  type MissionControlCapabilities,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 
@@ -66,6 +69,7 @@ function summarizeEventPreview(value?: string, limit = 180): string {
 
 const LIVE_FRESHNESS_SECONDS = 5 * 60;
 const LIVE_TRACE_LIMIT = 320;
+type LiveTraceScope = 'current' | 'last3' | 'full';
 const DAG_NODE_WIDTH = 260;
 const DAG_NODE_HEIGHT = 76;
 const DAG_COL_GAP = 340;
@@ -83,9 +87,11 @@ export function AgentsRoute() {
   const { snapshot, storedToken } = useMissionControl();
   const [view, setView] = useState<'timeline' | 'dag'>('timeline');
   const [liveMode, setLiveMode] = useState(true);
+  const [liveTraceScope, setLiveTraceScope] = useState<LiveTraceScope>('current');
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
   const [trace, setTrace] = useState<MissionControlAgentTraceSnapshot | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
+  const [capabilities, setCapabilities] = useState<MissionControlCapabilities>(getFallbackCapabilities());
   const [sseFallbackToPolling, setSseFallbackToPolling] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<MissionControlAgentTraceEvent | null>(null);
   const [rawPayloadViewer, setRawPayloadViewer] = useState<{ title: string; content: string } | null>(null);
@@ -139,8 +145,60 @@ export function AgentsRoute() {
     return map;
   }, [trace?.events]);
 
+  const visibleTrace = useMemo(() => {
+    if (!trace) return null;
+    if (!liveMode || liveTraceScope === 'full') return trace;
+
+    const turnIds = new Set<number>();
+    for (const event of trace.events) turnIds.add(event.turnId);
+    for (const node of trace.nodes) turnIds.add(node.turnId);
+
+    const sortedTurns = [...turnIds].sort((a, b) => a - b);
+    if (sortedTurns.length === 0) return trace;
+
+    const currentTurn = sortedTurns[sortedTurns.length - 1];
+    const visibleTurns =
+      liveTraceScope === 'current'
+        ? new Set([currentTurn])
+        : new Set(sortedTurns.filter((turn) => turn >= currentTurn - 2));
+
+    const events = trace.events.filter((event) => visibleTurns.has(event.turnId));
+    const nodes = trace.nodes.filter((node) => visibleTurns.has(node.turnId));
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = trace.edges.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
+
+    const turns = new Set<number>();
+    for (const event of events) turns.add(event.turnId);
+    for (const node of nodes) turns.add(node.turnId);
+
+    const toolCalls = events.filter((event) => event.type.startsWith('tool_call_started')).length;
+    const skills = events.filter((event) => event.type === 'skill_used').length;
+    const thoughts = events.filter((event) => event.type === 'thought').length;
+    const errors =
+      events.filter((event) => event.tone === 'bad').length + nodes.filter((node) => node.status === 'failed').length;
+
+    const timestamps = [...events.map((event) => event.timestamp), ...nodes.map((node) => node.timestamp)].filter((value) => Number.isFinite(value));
+    const durationSeconds =
+      timestamps.length > 1 ? Math.max(0, Math.floor(Math.max(...timestamps) - Math.min(...timestamps))) : 0;
+
+    return {
+      ...trace,
+      events,
+      nodes,
+      edges,
+      stats: {
+        turns: turns.size,
+        toolCalls,
+        skills,
+        thoughts,
+        errors,
+        durationSeconds,
+      },
+    };
+  }, [trace, liveMode, liveTraceScope]);
+
   const dagLayout = useMemo(() => {
-    if (!trace || trace.nodes.length === 0) {
+    if (!visibleTrace || visibleTrace.nodes.length === 0) {
       return {
         width: 1200,
         height: 420,
@@ -150,7 +208,7 @@ export function AgentsRoute() {
       };
     }
 
-    const sortedNodes = [...trace.nodes].sort((a, b) => {
+    const sortedNodes = [...visibleTrace.nodes].sort((a, b) => {
       if (a.turnId !== b.turnId) return a.turnId - b.turnId;
       if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
       return a.id.localeCompare(b.id);
@@ -174,7 +232,7 @@ export function AgentsRoute() {
 
     const byId = new Map(nodes.map((item) => [item.node.id, item]));
 
-    const edges = trace.edges
+    const edges = visibleTrace.edges
       .map((edge, index) => {
         const from = byId.get(edge.from);
         const to = byId.get(edge.to);
@@ -207,12 +265,38 @@ export function AgentsRoute() {
       nodes,
       edges,
     };
-  }, [trace]);
+  }, [visibleTrace]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resolved = await loadMissionControlCapabilities(storedToken);
+        if (!cancelled) {
+          setCapabilities(resolved);
+        }
+      } catch {
+        if (!cancelled) {
+          setCapabilities(getFallbackCapabilities());
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storedToken]);
 
   useEffect(() => {
     setSseFallbackToPolling(false);
     setSelectedEvent(null);
   }, [selectedSessionId, liveMode]);
+
+  useEffect(() => {
+    if (!selectedEvent || !visibleTrace) return;
+    if (visibleTrace.events.some((event) => event.id === selectedEvent.id)) return;
+    setSelectedEvent(null);
+  }, [selectedEvent, visibleTrace]);
 
   useEffect(() => {
     if (!selectedSessionId) return;
@@ -286,7 +370,7 @@ export function AgentsRoute() {
   }, [selectedAgent]);
 
   useEffect(() => {
-    if (!liveMode || sseFallbackToPolling) {
+    if (!liveMode || sseFallbackToPolling || !capabilities.trace.stream) {
       return;
     }
 
@@ -307,7 +391,9 @@ export function AgentsRoute() {
     params.set('limit', String(LIVE_TRACE_LIMIT));
     params.set('interval', '1.5');
     if (storedToken) params.set('access_token', storedToken);
-    params.set('compact', '1');
+    if (capabilities.trace.compact) {
+      params.set('compact', '1');
+    }
 
     setTraceLoading(true);
     const source = new EventSource(`${base}/mission-control/agents/trace/stream?${params.toString()}`, { withCredentials: true });
@@ -326,10 +412,12 @@ export function AgentsRoute() {
       handleTraceFrame(event.data);
     };
 
-    source.addEventListener('trace', (event) => {
-      const messageEvent = event as MessageEvent<string>;
-      handleTraceFrame(messageEvent.data);
-    });
+    if (capabilities.trace.namedSseTraceEvent) {
+      source.addEventListener('trace', (event) => {
+        const messageEvent = event as MessageEvent<string>;
+        handleTraceFrame(messageEvent.data);
+      });
+    }
 
     source.addEventListener('error', () => {
       source.close();
@@ -344,10 +432,10 @@ export function AgentsRoute() {
     return () => {
       source.close();
     };
-  }, [selectedSessionId, liveMode, storedToken, sseFallbackToPolling, selectableSessions.length]);
+  }, [selectedSessionId, liveMode, storedToken, sseFallbackToPolling, selectableSessions.length, capabilities]);
 
   useEffect(() => {
-    if (liveMode && !sseFallbackToPolling) {
+    if (liveMode && !sseFallbackToPolling && capabilities.trace.stream) {
       return;
     }
 
@@ -365,7 +453,7 @@ export function AgentsRoute() {
         selectedSessionId || undefined,
         storedToken || undefined,
         liveMode ? LIVE_TRACE_LIMIT : 0,
-        liveMode,
+        liveMode && capabilities.trace.compact,
       );
       if (!cancelled) {
         setTrace(payload);
@@ -388,7 +476,7 @@ export function AgentsRoute() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSessionId, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling]);
+  }, [selectedSessionId, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling, capabilities]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -477,6 +565,34 @@ export function AgentsRoute() {
               <Workflow className="h-3.5 w-3.5" /> {liveMode ? 'Live' : 'Post'}
             </button>
           </div>
+
+          {liveMode ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-text-subtle">Scope</span>
+              <button
+                className={`pill pill-button ${liveTraceScope === 'current' ? 'nav-link-active' : 'pill-subtle'}`}
+                onClick={() => setLiveTraceScope('current')}
+              >
+                Current turn
+              </button>
+              <button
+                className={`pill pill-button ${liveTraceScope === 'last3' ? 'nav-link-active' : 'pill-subtle'}`}
+                onClick={() => setLiveTraceScope('last3')}
+              >
+                Last 3 turns
+              </button>
+              <button
+                className={`pill pill-button ${liveTraceScope === 'full' ? 'nav-link-active' : 'pill-subtle'}`}
+                onClick={() => setLiveTraceScope('full')}
+              >
+                Full session
+              </button>
+            </div>
+          ) : null}
+
+          {!capabilities.trace.stream ? (
+            <p className="text-xs text-warning">Compatibility mode: live SSE stream unavailable, using polling fallback.</p>
+          ) : null}
         </div>
 
         <div className="p-4 flex flex-col gap-4">
@@ -505,33 +621,39 @@ export function AgentsRoute() {
             </select>
           </div>
 
-          {trace?.session ? (
+          {visibleTrace?.session ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-text-subtle">
-              <Badge variant={trace.mode === 'live' ? 'positive' : 'default'}>{trace.mode}</Badge>
-              <span className="break-all">{trace.session.title} · {trace.session.model}</span>
-              <span>turns {trace.stats.turns}</span>
-              <span>tools {trace.stats.toolCalls}</span>
-              <span>skills {trace.stats.skills}</span>
-              <span>thoughts {trace.stats.thoughts}</span>
-              <span>errors {trace.stats.errors}</span>
+              <Badge variant={visibleTrace.mode === 'live' ? 'positive' : 'default'}>{visibleTrace.mode}</Badge>
+              <span className="break-all">{visibleTrace.session.title} · {visibleTrace.session.model}</span>
+              <span>turns {visibleTrace.stats.turns}</span>
+              <span>tools {visibleTrace.stats.toolCalls}</span>
+              <span>skills {visibleTrace.stats.skills}</span>
+              <span>thoughts {visibleTrace.stats.thoughts}</span>
+              <span>errors {visibleTrace.stats.errors}</span>
               <Badge variant={liveMode && !sseFallbackToPolling ? 'positive' : 'default'}>
                 {liveMode && !sseFallbackToPolling ? 'transport: sse' : 'transport: polling'}
               </Badge>
             </div>
           ) : null}
 
+          {liveMode && trace && visibleTrace && trace.events.length > visibleTrace.events.length ? (
+            <p className="text-xs text-text-subtle">
+              Showing {visibleTrace.events.length} of {trace.events.length} events in live scope.
+            </p>
+          ) : null}
+
           {traceLoading ? <p className="text-sm text-text-muted">Loading trace…</p> : null}
 
-          {!traceLoading && trace && trace.stats.toolCalls === 0 && trace.stats.skills === 0 ? (
+          {!traceLoading && visibleTrace && visibleTrace.stats.toolCalls === 0 && visibleTrace.stats.skills === 0 ? (
             <div className="card p-3 text-xs text-text-muted">
               Questa sessione ha solo user/assistant. Per vedere tool calls e skills, cambia sessione con una run più lunga.
             </div>
           ) : null}
 
-          {!traceLoading && trace && view === 'timeline' ? (
+          {!traceLoading && visibleTrace && view === 'timeline' ? (
             <div className="flex flex-col gap-2">
-              {trace.events.length > 0 ? (
-                trace.events.map((event) => (
+              {visibleTrace.events.length > 0 ? (
+                visibleTrace.events.map((event) => (
                   <button
                     key={event.id}
                     type="button"
@@ -560,7 +682,7 @@ export function AgentsRoute() {
             </div>
           ) : null}
 
-          {!traceLoading && trace && view === 'dag' ? (
+          {!traceLoading && visibleTrace && view === 'dag' ? (
             <div className="card p-2.5 sm:p-3 flex flex-col gap-2">
               <div className="flex flex-wrap items-center justify-between gap-2 px-1">
                 <p className="text-xs text-text-muted">Execution graph canvas</p>

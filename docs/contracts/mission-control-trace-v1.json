@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes.local/contracts/mission-control-trace-v1.json",
+  "title": "Mission Control Agent Trace v1",
+  "type": "object",
+  "required": ["success", "mode", "events", "nodes", "edges", "stats"],
+  "properties": {
+    "success": { "type": "boolean" },
+    "mode": { "type": "string", "enum": ["live", "post"] },
+    "session": {
+      "type": ["object", "null"],
+      "additionalProperties": true
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "label", "timestamp", "sessionId", "turnId"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "label": { "type": "string" },
+          "detail": { "type": "string" },
+          "tone": { "type": "string", "enum": ["good", "warn", "bad"] },
+          "status": { "type": "string" },
+          "timestamp": { "type": "number" },
+          "sessionId": { "type": "string" },
+          "turnId": { "type": "number" },
+          "parentEventId": { "type": "string" },
+          "toolName": { "type": "string" },
+          "callId": { "type": "string" },
+          "skillName": { "type": "string" },
+          "request": { "type": "string" },
+          "response": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "label", "status", "turnId", "timestamp"],
+        "additionalProperties": true
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "kind"],
+        "additionalProperties": true
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": ["turns", "toolCalls", "skills", "thoughts", "errors", "durationSeconds"],
+      "properties": {
+        "turns": { "type": "number" },
+        "toolCalls": { "type": "number" },
+        "skills": { "type": "number" },
+        "thoughts": { "type": "number" },
+        "errors": { "type": "number" },
+        "durationSeconds": { "type": "number" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

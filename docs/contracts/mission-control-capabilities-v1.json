@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hermes.local/contracts/mission-control-capabilities-v1.json",
+  "title": "Mission Control Capabilities v1",
+  "type": "object",
+  "required": ["schemaVersion", "trace"],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "v1" },
+    "trace": {
+      "type": "object",
+      "required": ["stream", "compact", "namedSseTraceEvent"],
+      "properties": {
+        "stream": { "type": "boolean" },
+        "compact": { "type": "boolean" },
+        "namedSseTraceEvent": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
