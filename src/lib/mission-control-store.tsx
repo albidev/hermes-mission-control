@@ -184,44 +184,88 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     return updated;
   }, []);
 
-  const refreshAll = useCallback(async (token?: string, options?: { silent?: boolean; includeReference?: boolean }) => {
+  const refreshAll = useCallback(async (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean }) => {
     const silent = options?.silent ?? false;
     const includeReference = options?.includeReference ?? true;
+    const includeSnapshot = options?.includeSnapshot ?? !silent;
     if (!silent) {
       setLoading(true);
     }
 
     try {
-      const coreRequests = [
-        loadMissionControlSnapshot(token),
+      const [machine, sessions, cron, alerts] = await Promise.all([
         loadMissionControlMachineStatus(token),
         loadMissionControlSessions(token),
         loadMissionControlCron(token),
         loadMissionControlAlerts(token),
-      ];
-
-      const referenceRequests = includeReference
-        ? [loadMissionControlKnowledge(token), loadMissionControlTools(token), loadMissionControlSkills(token)]
-        : [];
-
-      const [dashboard, machine, sessions, cron, alerts, ...referenceData] = await Promise.all([
-        ...coreRequests,
-        ...referenceRequests,
       ]);
 
-      setSnapshot({
-        ...dashboard as MissionControlSnapshot,
-        machine: machine as MissionControlSnapshot['machine'],
-        sessions: sessions as MissionControlSnapshot['sessions'],
-        cron: cron as MissionControlSnapshot['cron'],
-        alerts: alerts as MissionControlSnapshot['alerts'],
+      setSnapshot((previous) => {
+        const nextMachine = machine as MissionControlSnapshot['machine'];
+        const nextSessions = sessions as MissionControlSnapshot['sessions'];
+        const nextCron = cron as MissionControlSnapshot['cron'];
+        const nextAlerts = alerts as MissionControlSnapshot['alerts'];
+
+        const machineValue = nextMachine.source === 'fallback' && previous.machine.source !== 'fallback' ? previous.machine : nextMachine;
+        const sessionsValue = nextSessions.totalSessions === 0 && previous.sessions.totalSessions > 0 ? previous.sessions : nextSessions;
+        const cronValue = nextCron.items.length === 0 && previous.cron.items.length > 0 ? previous.cron : nextCron;
+        const alertsValue =
+          nextAlerts.items.length === 1 && nextAlerts.items[0]?.id === 'fallback-gateway' && previous.alerts.items.length > 0
+            ? previous.alerts
+            : nextAlerts;
+
+        return {
+          ...previous,
+          machine: machineValue,
+          sessions: sessionsValue,
+          cron: cronValue,
+          alerts: alertsValue,
+        };
       });
 
-      if (includeReference && referenceData.length === 3) {
-        const [knowledgeSnapshot, toolsSnapshot, skillsSnapshot] = referenceData;
-        setKnowledge(knowledgeSnapshot as Awaited<ReturnType<typeof loadMissionControlKnowledge>>);
-        setTools(toolsSnapshot as Awaited<ReturnType<typeof loadMissionControlTools>>);
-        setSkills(skillsSnapshot as Awaited<ReturnType<typeof loadMissionControlSkills>>);
+      if (includeReference) {
+        const [knowledgeRes, toolsRes, skillsRes] = await Promise.allSettled([
+          loadMissionControlKnowledge(token),
+          loadMissionControlTools(token),
+          loadMissionControlSkills(token),
+        ]);
+
+        if (knowledgeRes.status === 'fulfilled') {
+          const nextKnowledge = knowledgeRes.value;
+          setKnowledge((previous) => (nextKnowledge.available ? nextKnowledge : previous));
+        }
+
+        if (toolsRes.status === 'fulfilled') {
+          const nextTools = toolsRes.value;
+          setTools((previous) => (nextTools.available ? nextTools : previous));
+        }
+
+        if (skillsRes.status === 'fulfilled') {
+          const nextSkills = skillsRes.value;
+          setSkills((previous) => (nextSkills.available ? nextSkills : previous));
+        }
+      }
+
+      if (includeSnapshot) {
+        try {
+          const dashboard = await loadMissionControlSnapshot(token);
+          setSnapshot((previous) => ({
+            ...previous,
+            backendHealth: dashboard.backendHealth,
+            activeModel: dashboard.activeModel,
+            fallbackModel: dashboard.fallbackModel,
+            gatewayStatus: dashboard.gatewayStatus,
+            activeAgents: dashboard.activeAgents,
+            queuedJobs: dashboard.queuedJobs,
+            toolCallsToday: dashboard.toolCallsToday,
+            recentSignals: dashboard.recentSignals,
+            knowledgeSharing: dashboard.knowledgeSharing,
+          }));
+        } catch (error) {
+          if (error instanceof MissionControlAuthError) {
+            throw error;
+          }
+        }
       }
 
       setAuthRequired(false);
@@ -261,11 +305,39 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    let ticks = 0;
     const interval = window.setInterval(() => {
-      void refreshAll(storedToken || undefined, { silent: true, includeReference: false });
+      ticks += 1;
+      const includeReference = ticks % 4 === 0 || !tools.available || !skills.available || !knowledge.available;
+      void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot: false });
     }, 15000);
 
     return () => window.clearInterval(interval);
+  }, [authRequired, knowledge.available, refreshAll, skills.available, storedToken, tools.available]);
+
+  useEffect(() => {
+    if (authRequired || typeof document === 'undefined' || typeof window === 'undefined') {
+      return;
+    }
+
+    const refreshAfterWake = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      void refreshAll(storedToken || undefined, { silent: true, includeReference: true, includeSnapshot: false });
+    };
+
+    const refreshAfterOnline = () => {
+      void refreshAll(storedToken || undefined, { silent: true, includeReference: true, includeSnapshot: false });
+    };
+
+    document.addEventListener('visibilitychange', refreshAfterWake);
+    window.addEventListener('online', refreshAfterOnline);
+
+    return () => {
+      document.removeEventListener('visibilitychange', refreshAfterWake);
+      window.removeEventListener('online', refreshAfterOnline);
+    };
   }, [authRequired, refreshAll, storedToken]);
 
   const unlock = useCallback(async (token: string) => {

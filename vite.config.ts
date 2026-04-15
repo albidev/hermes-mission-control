@@ -2,6 +2,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 
 const LOCAL_TELEMETRY_TARGET = process.env.MISSION_CONTROL_LOCAL_TELEMETRY_URL || 'http://127.0.0.1:8765';
+const ALLOWED_HOSTS = (process.env.MISSION_CONTROL_ALLOWED_HOSTS || 'localhost,127.0.0.1')
+  .split(',')
+  .map((host) => host.trim())
+  .filter(Boolean);
 
 export default defineConfig({
   plugins: [react()],
@@ -9,13 +13,14 @@ export default defineConfig({
     host: true,
     port: 5174,
     strictPort: true,
+    allowedHosts: ALLOWED_HOSTS,
     proxy: {
-      '/api': {
-        target: 'http://localhost:8642',
-        changeOrigin: true,
-      },
       '/api/local': {
         target: LOCAL_TELEMETRY_TARGET,
+        changeOrigin: true,
+      },
+      '/api': {
+        target: 'http://127.0.0.1:8642',
         changeOrigin: true,
       },
     },
@@ -25,12 +30,12 @@ export default defineConfig({
     port: 4174,
     strictPort: true,
     proxy: {
-      '/api': {
-        target: 'http://localhost:8642',
-        changeOrigin: true,
-      },
       '/api/local': {
         target: LOCAL_TELEMETRY_TARGET,
+        changeOrigin: true,
+      },
+      '/api': {
+        target: 'http://127.0.0.1:8642',
         changeOrigin: true,
       },
     },
