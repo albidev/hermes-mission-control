@@ -7,6 +7,7 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from statistics import median
 from typing import Any, Deque, Dict
 
 import psutil
@@ -16,7 +17,7 @@ def gb(value: float) -> float:
     return round(float(value) / (1024**3), 1)
 
 
-_cpu_samples: Deque[float] = deque(maxlen=5)
+_cpu_samples: Deque[float] = deque(maxlen=12)
 _cpu_lock = threading.Lock()
 _cpu_ready = threading.Event()
 
@@ -39,7 +40,8 @@ def _read_smoothed_cpu_percent() -> float:
     if _cpu_ready.is_set():
         with _cpu_lock:
             if _cpu_samples:
-                return round(sum(_cpu_samples) / len(_cpu_samples), 1)
+                # Median is more stable than mean for short transient spikes/drops.
+                return round(float(median(_cpu_samples)), 1)
     # Early fallback before first sampler tick.
     return round(float(psutil.cpu_percent(interval=None)), 1)
 
@@ -60,6 +62,12 @@ def collect_system_snapshot() -> Dict[str, Any]:
     load_five = round(float(load[1]), 2) if load[1] is not None else None
     load_fifteen = round(float(load[2]), 2) if load[2] is not None else None
     load_per_core = round(float(load[0]) / cpu_cores, 3) if load[0] is not None and cpu_cores else None
+
+    # Guard against occasional 0.0 snapshots when the machine clearly has load.
+    if load_per_core is not None:
+        inferred_cpu_from_load = round(max(0.0, min(100.0, load_per_core * 100.0)), 1)
+        if cpu_percent < 0.5 and inferred_cpu_from_load >= 1.0:
+            cpu_percent = inferred_cpu_from_load
 
     process_memory_mb = round(float(psutil.Process().memory_info().rss) / (1024**2), 1)
 
