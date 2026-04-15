@@ -78,11 +78,15 @@ export function SystemHealthPanel({
     machine.health === 'degraded' ? 'warning' :
     machine.health === 'critical' ? 'negative' : 'default';
 
-  const cpuUsagePercent =
-    machine.cpuUsagePercent ??
-    (machine.loadAverage?.perCore !== null && machine.loadAverage?.perCore !== undefined
+  const loadDerivedCpuPercent =
+    machine.loadAverage?.perCore !== null && machine.loadAverage?.perCore !== undefined
       ? machine.loadAverage.perCore * 100
-      : null);
+      : null;
+
+  const cpuUsagePercent =
+    machine.cpuUsagePercent !== null && machine.cpuUsagePercent !== undefined && machine.cpuUsagePercent > 0.5
+      ? machine.cpuUsagePercent
+      : loadDerivedCpuPercent;
 
   const cpuLoadVariant =
     (cpuUsagePercent ?? 0) > 85 ? 'negative' :
