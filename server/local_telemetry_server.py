@@ -3,15 +3,45 @@ import json
 import os
 import platform
 import socket
+import threading
+from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict
+from typing import Any, Deque, Dict
 
 import psutil
 
 
 def gb(value: float) -> float:
     return round(float(value) / (1024**3), 1)
+
+
+_cpu_samples: Deque[float] = deque(maxlen=5)
+_cpu_lock = threading.Lock()
+_cpu_ready = threading.Event()
+
+
+def _cpu_sampler() -> None:
+    # Prime psutil baseline once, then keep sampling in background.
+    psutil.cpu_percent(interval=None)
+    while True:
+        try:
+            value = float(psutil.cpu_percent(interval=0.5))
+            with _cpu_lock:
+                _cpu_samples.append(value)
+            _cpu_ready.set()
+        except Exception:
+            # Keep sampler alive even if psutil glitches.
+            continue
+
+
+def _read_smoothed_cpu_percent() -> float:
+    if _cpu_ready.is_set():
+        with _cpu_lock:
+            if _cpu_samples:
+                return round(sum(_cpu_samples) / len(_cpu_samples), 1)
+    # Early fallback before first sampler tick.
+    return round(float(psutil.cpu_percent(interval=None)), 1)
 
 
 def collect_system_snapshot() -> Dict[str, Any]:
@@ -24,7 +54,7 @@ def collect_system_snapshot() -> Dict[str, Any]:
         load = (None, None, None)
 
     cpu_cores = os.cpu_count() or 1
-    cpu_percent = round(float(psutil.cpu_percent(interval=0.25)), 1)
+    cpu_percent = _read_smoothed_cpu_percent()
 
     load_one = round(float(load[0]), 2) if load[0] is not None else None
     load_five = round(float(load[1]), 2) if load[1] is not None else None
@@ -99,6 +129,10 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST", "127.0.0.1")
     port = int(os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT", "8765"))
+
+    sampler = threading.Thread(target=_cpu_sampler, name="mc-cpu-sampler", daemon=True)
+    sampler.start()
+
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"[mission-control-local-telemetry] listening on http://{host}:{port}", flush=True)
     server.serve_forever()
