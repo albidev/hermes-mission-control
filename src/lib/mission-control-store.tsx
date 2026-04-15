@@ -220,6 +220,7 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
           sessions: sessionsValue,
           cron: cronValue,
           alerts: alertsValue,
+          activeAgents: sessionsValue.activeAgents,
         };
       });
 
@@ -275,16 +276,18 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       if (error instanceof MissionControlAuthError) {
         setAuthRequired(true);
         setAuthError('Access token required to enter the cockpit.');
+
+        // Auth failures should lock the UI and scrub live state.
+        setSnapshot(getFallbackSnapshot());
+        if (includeReference) {
+          setKnowledge(getFallbackKnowledge());
+          setTools(getFallbackTools());
+          setSkills(getFallbackSkills());
+        }
       } else {
+        // Transient network/backend hiccups should NOT clobber already-live data.
         setAuthRequired(false);
         setAuthError(null);
-      }
-
-      setSnapshot(getFallbackSnapshot());
-      if (includeReference) {
-        setKnowledge(getFallbackKnowledge());
-        setTools(getFallbackTools());
-        setSkills(getFallbackSkills());
       }
     } finally {
       if (!silent) {
@@ -309,11 +312,12 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     const interval = window.setInterval(() => {
       ticks += 1;
       const includeReference = ticks % 4 === 0 || !tools.available || !skills.available || !knowledge.available;
-      void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot: false });
+      const includeSnapshot = ticks % 8 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
+      void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot });
     }, 15000);
 
     return () => window.clearInterval(interval);
-  }, [authRequired, knowledge.available, refreshAll, skills.available, storedToken, tools.available]);
+  }, [authRequired, knowledge.available, refreshAll, skills.available, snapshot.activeModel, storedToken, tools.available]);
 
   useEffect(() => {
     if (authRequired || typeof document === 'undefined' || typeof window === 'undefined') {
@@ -324,11 +328,11 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       if (document.visibilityState !== 'visible') {
         return;
       }
-      void refreshAll(storedToken || undefined, { silent: true, includeReference: true, includeSnapshot: false });
+      void refreshAll(storedToken || undefined, { silent: true, includeReference: true, includeSnapshot: true });
     };
 
     const refreshAfterOnline = () => {
-      void refreshAll(storedToken || undefined, { silent: true, includeReference: true, includeSnapshot: false });
+      void refreshAll(storedToken || undefined, { silent: true, includeReference: true, includeSnapshot: true });
     };
 
     document.addEventListener('visibilitychange', refreshAfterWake);

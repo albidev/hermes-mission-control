@@ -1,16 +1,52 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#0f1117;">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#060816" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      (() => {
+        try {
+          const root = document.documentElement;
+          const theme = localStorage.getItem('mission-control-theme') || 'system';
+          const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          const resolved = theme === 'dark' || theme === 'light' ? theme : (prefersDark ? 'dark' : 'light');
+          const bg = resolved === 'dark' ? '#0f1117' : '#ffffff';
+
+          root.setAttribute('data-theme', resolved);
+          root.style.backgroundColor = bg;
+          root.style.colorScheme = resolved;
+
+          const themeMeta = document.querySelector('meta[name="theme-color"]');
+          if (themeMeta) {
+            themeMeta.setAttribute('content', resolved === 'dark' ? '#0f1117' : '#ffffff');
+          }
+        } catch {}
+      })();
+    </script>
     <title>Hermes Mission Control</title>
     <meta
       name="description"
       content="Mobile-first Mission Control for Hermes: status, sessions, alerts, and quick actions in one view."
     />
+    <style>
+      :root { color-scheme: dark light; }
+      html, body, #root {
+        margin: 0;
+        min-height: 100%;
+        background: #0f1117;
+      }
+      body { background: inherit; }
+      #root { background: inherit; }
+      @media (prefers-color-scheme: light) {
+        html, body, #root { background: #ffffff; }
+      }
+      html[data-theme='dark'], html[data-theme='dark'] body, html[data-theme='dark'] #root { background: #0f1117; }
+      html[data-theme='light'], html[data-theme='light'] body, html[data-theme='light'] #root { background: #ffffff; }
+    </style>
   </head>
-  <body>
+  <body style="background:inherit;">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
