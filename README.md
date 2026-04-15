@@ -80,19 +80,21 @@ If Mission Control comes up but `/api/mission-control` is `404` after reboot/upd
 ```bash
 curl -i http://127.0.0.1:8642/api/mission-control
 ```
-2. If missing routes were caused by local patch drift, restore from local backup patch and restart gateway:
+2. Re-apply Mission Control core compatibility fixes (idempotent), restart gateway, and run smoke checks:
 ```bash
-~/.hermes/bin/restore-mission-control.sh
+./scripts/reapply-core-mission-control-fixes.sh
 ```
+
+You can pass an explicit Hermes core path if needed:
+```bash
+./scripts/reapply-core-mission-control-fixes.sh /path/to/hermes-agent
+```
+
 3. Re-check both backend and proxied frontend endpoint:
 ```bash
 curl -i http://127.0.0.1:8642/api/mission-control
 curl -i http://127.0.0.1:5174/api/mission-control
 ```
-
-Local artifacts used by this recovery:
-- `~/.hermes/backups/mission-control-api_server-<timestamp>.patch`
-- `~/.hermes/bin/restore-mission-control.sh`
 
 ## Verification
 
