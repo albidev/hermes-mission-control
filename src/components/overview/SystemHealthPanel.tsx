@@ -100,6 +100,11 @@ export function SystemHealthPanel({
       ? Math.max(0, Number((machine.diskUsage.totalGb - machine.diskUsage.freeGb).toFixed(1)))
       : null;
 
+  const telemetrySourceLabel =
+    machine.source === 'local-psutil' ? 'local psutil' :
+    machine.source === 'core-api' ? 'core api' :
+    'fallback';
+
   return (
     <Card padding="none">
       <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
@@ -123,6 +128,9 @@ export function SystemHealthPanel({
         <div className="flex items-center gap-2 pb-2 border-b border-border-subtle">
           <Server className="h-4 w-4 text-text-muted" />
           <span className="text-xs text-text">{machine.host}</span>
+          <Badge variant={machine.source === 'local-psutil' ? 'positive' : machine.source === 'core-api' ? 'warning' : 'default'}>
+            {telemetrySourceLabel}
+          </Badge>
           <div className="flex-1" />
           <Badge variant={healthVariant} dot>
             {machine.health}

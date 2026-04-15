@@ -21,10 +21,21 @@ A standalone frontend app that gives you one place to operate Hermes:
 ```bash
 cd apps/mission-control
 npm install
+npm run dev:full
+```
+
+`dev:full` runs both:
+- Vite UI on `5174`
+- local telemetry backend (`/api/local/system`) on `8765`
+
+If you want to run them separately:
+
+```bash
+npm run dev:telemetry
 npm run dev
 ```
 
-The Vite dev server runs on port `5174` (`--strictPort`) and is reachable on LAN.
+The telemetry backend requires `psutil` on the Python runtime used by `scripts/run-local-telemetry.sh`.
 
 ## API contract
 The app reads from Mission Control endpoints exposed by Hermes API server:
@@ -35,6 +46,11 @@ GET /api/mission-control/system
 ```
 
 Additional route-specific data comes from dedicated Mission Control endpoints.
+
+For machine telemetry, frontend tries this order:
+1. `GET /api/local/system` (local psutil backend, preferred)
+2. `GET /api/mission-control/system` (core fallback)
+3. built-in cached fallback snapshot
 
 ## Environment variables
 

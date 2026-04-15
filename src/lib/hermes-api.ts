@@ -1,5 +1,6 @@
 export type MissionControlMachineStatus = {
   health: 'healthy' | 'degraded' | 'critical' | 'offline';
+  source?: 'local-psutil' | 'core-api' | 'fallback';
   host: string;
   platform: string;
   platformVersion: string;
@@ -304,6 +305,7 @@ export class MissionControlAuthError extends Error {
 
 const fallbackMachine: MissionControlMachineStatus = {
   health: 'degraded',
+  source: 'fallback',
   host: 'local-machine',
   platform: 'unknown',
   platformVersion: '',
@@ -604,6 +606,7 @@ function normalizeMachineStatus(input: Partial<MissionControlMachineStatus> | un
 
   return {
     health: input.health ?? fallbackMachine.health,
+    source: input.source ?? fallbackMachine.source,
     host: input.host ?? fallbackMachine.host,
     platform: input.platform ?? fallbackMachine.platform,
     platformVersion: input.platformVersion ?? fallbackMachine.platformVersion,
@@ -1004,7 +1007,29 @@ export async function loadMissionControlSnapshot(accessToken?: string): Promise<
   }
 }
 
+async function loadLocalMissionControlMachineStatus(): Promise<MissionControlMachineStatus | null> {
+  try {
+    const response = await fetch('/api/local/system', {
+      headers: { Accept: 'application/json' },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json() as Partial<MissionControlMachineStatus>;
+    return normalizeMachineStatus({ ...data, source: 'local-psutil' });
+  } catch {
+    return null;
+  }
+}
+
 export async function loadMissionControlMachineStatus(accessToken?: string): Promise<MissionControlMachineStatus> {
+  const local = await loadLocalMissionControlMachineStatus();
+  if (local) {
+    return local;
+  }
+
   try {
     const response = await fetch(apiUrl('/mission-control/system'), {
       headers: buildHeaders(accessToken),
@@ -1015,7 +1040,7 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
     }
 
     const data = await parseResponse<Partial<MissionControlMachineStatus>>(response, 'machine');
-    return normalizeMachineStatus(data);
+    return normalizeMachineStatus({ ...data, source: 'core-api' });
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:telemetry": "./scripts/run-local-telemetry.sh",
+    "dev:full": "concurrently -k -n telemetry,vite -c blue,green \"npm run dev:telemetry\" \"npm run dev\"",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -24,6 +26,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react-swc": "^3.8.0",
     "autoprefixer": "^10.4.27",
+    "concurrently": "^9.2.1",
     "postcss": "^8.5.8",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.6.2",
