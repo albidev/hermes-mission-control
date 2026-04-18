@@ -312,7 +312,7 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     const interval = window.setInterval(() => {
       ticks += 1;
       const includeReference = ticks % 4 === 0 || !tools.available || !skills.available || !knowledge.available;
-      const includeSnapshot = ticks % 8 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
+      const includeSnapshot = ticks % 4 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
       void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot });
     }, 15000);
 

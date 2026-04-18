@@ -969,6 +969,7 @@ async function loadResource<T>(path: string, accessToken: string | undefined, fa
   try {
     const response = await fetch(apiUrl(path), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -990,6 +991,7 @@ export async function loadMissionControlSnapshot(accessToken?: string): Promise<
   try {
     const response = await fetch(apiUrl('/mission-control'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1011,6 +1013,7 @@ async function loadLocalMissionControlMachineStatus(): Promise<MissionControlMac
   try {
     const response = await fetch('/api/local/system', {
       headers: { Accept: 'application/json' },
+      cache: 'no-store',
     });
 
     if (!response.ok) {
@@ -1033,6 +1036,7 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
   try {
     const response = await fetch(apiUrl('/mission-control/system'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1054,6 +1058,7 @@ export async function loadMissionControlSessions(accessToken?: string): Promise<
   try {
     const response = await fetch(apiUrl('/mission-control/sessions'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1075,6 +1080,7 @@ export async function loadMissionControlCapabilities(accessToken?: string): Prom
   try {
     const response = await fetch(apiUrl('/mission-control/capabilities'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
       credentials: 'include',
     });
 
@@ -1119,6 +1125,7 @@ export async function loadMissionControlAgentTrace(
 
     const response = await fetch(apiUrl(`/mission-control/agents/trace${params.toString() ? `?${params.toString()}` : ''}`), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
       credentials: 'include',
     });
 
@@ -1140,6 +1147,7 @@ export async function loadMissionControlCron(accessToken?: string): Promise<Miss
   try {
     const response = await fetch(apiUrl('/mission-control/cron'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1161,6 +1169,7 @@ export async function loadMissionControlAlerts(accessToken?: string): Promise<Mi
   try {
     const response = await fetch(apiUrl('/mission-control/alerts'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1182,6 +1191,7 @@ export async function loadMissionControlKnowledge(accessToken?: string): Promise
   try {
     const response = await fetch(apiUrl('/mission-control/knowledge'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1206,6 +1216,7 @@ export async function loadMissionControlKnowledgeFile(
   const params = new URLSearchParams({ source_path: sourcePath });
   const response = await fetch(apiUrl(`/mission-control/knowledge/file?${params.toString()}`), {
     headers: buildHeaders(accessToken),
+    cache: 'no-store',
   });
 
   if (response.status === 401) {
@@ -1219,6 +1230,7 @@ export async function loadMissionControlTools(accessToken?: string): Promise<Mis
   try {
     const response = await fetch(apiUrl('/mission-control/tools'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1240,6 +1252,7 @@ export async function loadMissionControlSkills(accessToken?: string): Promise<Mi
   try {
     const response = await fetch(apiUrl('/mission-control/skills'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1261,6 +1274,7 @@ export async function loadMissionControlConfig(accessToken?: string): Promise<Mi
   try {
     const response = await fetch(apiUrl('/mission-control/config'), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
@@ -1290,6 +1304,7 @@ export async function loadMissionControlLogs(
   try {
     const response = await fetch(apiUrl(`/mission-control/logs${suffix}`), {
       headers: buildHeaders(accessToken),
+      cache: 'no-store',
     });
 
     if (response.status === 401) {
