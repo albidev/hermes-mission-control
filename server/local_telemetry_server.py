@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hmac
 import json
 import os
 import platform
@@ -8,7 +9,7 @@ from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from statistics import median
-from typing import Any, Deque, Dict
+from typing import Any, Deque, Dict, Optional
 
 import psutil
 
@@ -110,22 +111,63 @@ def collect_system_snapshot() -> Dict[str, Any]:
     }
 
 
+def _resolve_access_token() -> Optional[str]:
+    token = (os.getenv("MISSION_CONTROL_TOKEN") or "").strip()
+    if token:
+        return token
+    fallback = (os.getenv("API_SERVER_KEY") or "").strip()
+    return fallback or None
+
+
+def _extract_bearer_token(header_value: Optional[str]) -> Optional[str]:
+    if not header_value:
+        return None
+    scheme, _, token = header_value.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token or None
+
+
+def _is_authorized(handler: BaseHTTPRequestHandler) -> bool:
+    expected = _resolve_access_token()
+    if not expected:
+        return False
+    candidate = _extract_bearer_token(handler.headers.get("Authorization"))
+    if not candidate:
+        return False
+    return hmac.compare_digest(candidate, expected)
+
+
 class Handler(BaseHTTPRequestHandler):
-    def _json(self, status: int, payload: Dict[str, Any]) -> None:
+    def _json(self, status: int, payload: Dict[str, Any], extra_headers: Optional[Dict[str, str]] = None) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
+        if extra_headers:
+            for key, value in extra_headers.items():
+                self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _unauthorized(self) -> None:
+        self._json(
+            401,
+            {"error": "invalid_api_key", "detail": "Mission Control local telemetry requires a bearer token."},
+            extra_headers={"WWW-Authenticate": 'Bearer realm="Mission Control"'},
+        )
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
             self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
             return
         if self.path == "/api/local/system":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
             self._json(200, collect_system_snapshot())
             return
         self._json(404, {"error": "not_found", "path": self.path})

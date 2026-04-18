@@ -23,12 +23,12 @@ function MoonIcon() {
   );
 }
 
-export function ThemeSelector() {
+export function ThemeSelector({ showLabel = true, className = '' }: { showLabel?: boolean; className?: string }) {
   const { resolvedTheme, setTheme } = useMissionControl();
 
   return (
-    <div className="theme-toggle" role="group" aria-label="Theme mode">
-      <span className="theme-toggle-label">Theme</span>
+    <div className={`theme-toggle ${className}`.trim()} role="group" aria-label="Theme mode">
+      {showLabel ? <span className="theme-toggle-label">Theme</span> : null}
       <div className="theme-toggle-track">
         <button
           type="button"
