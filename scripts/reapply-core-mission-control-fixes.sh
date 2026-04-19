@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HERMES_ROOT="${1:-${HERMES_ROOT:-$DEFAULT_ROOT}}"
+PATCH_FILE="$SCRIPT_DIR/../patches/hermes-core-mission-control-api_server.patch"
 
 API_SERVER="$HERMES_ROOT/gateway/platforms/api_server.py"
 MODEL_TOOLS="$HERMES_ROOT/model_tools.py"
@@ -12,11 +13,29 @@ SKILLS_TOOL="$HERMES_ROOT/tools/skills_tool.py"
 log() { echo "[mission-control-fix] $*"; }
 fail() { echo "[mission-control-fix][FAIL] $*" >&2; exit 1; }
 
+apply_canonical_patch_if_needed() {
+  [[ -f "$PATCH_FILE" ]] || fail "Missing canonical patch at $PATCH_FILE"
+
+  if git -C "$HERMES_ROOT" apply --check "$PATCH_FILE" >/dev/null 2>&1; then
+    log "Applying canonical Mission Control core patch from $PATCH_FILE"
+    git -C "$HERMES_ROOT" apply "$PATCH_FILE"
+    return
+  fi
+
+  if git -C "$HERMES_ROOT" apply --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
+    log "Canonical Mission Control core patch already present"
+    return
+  fi
+
+  fail "Canonical patch does not apply cleanly. Inspect $PATCH_FILE against current Hermes core."
+}
+
 [[ -f "$API_SERVER" ]] || fail "Missing api_server.py at $API_SERVER"
 [[ -f "$MODEL_TOOLS" ]] || fail "Missing model_tools.py at $MODEL_TOOLS"
 [[ -f "$SKILLS_TOOL" ]] || fail "Missing skills_tool.py at $SKILLS_TOOL"
 
 log "Applying idempotent core patches in: $HERMES_ROOT"
+apply_canonical_patch_if_needed
 
 python3 - "$HERMES_ROOT" <<'PY'
 from pathlib import Path
