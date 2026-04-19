@@ -1009,12 +1009,16 @@ export async function loadMissionControlSnapshot(accessToken?: string): Promise<
   }
 }
 
-async function loadLocalMissionControlMachineStatus(): Promise<MissionControlMachineStatus | null> {
+async function loadLocalMissionControlMachineStatus(accessToken?: string): Promise<MissionControlMachineStatus | null> {
   try {
     const response = await fetch('/api/local/system', {
-      headers: { Accept: 'application/json' },
+      headers: buildHeaders(accessToken),
       cache: 'no-store',
     });
+
+    if (response.status === 401) {
+      throw new MissionControlAuthError();
+    }
 
     if (!response.ok) {
       return null;
@@ -1022,13 +1026,16 @@ async function loadLocalMissionControlMachineStatus(): Promise<MissionControlMac
 
     const data = await response.json() as Partial<MissionControlMachineStatus>;
     return normalizeMachineStatus({ ...data, source: 'local-psutil' });
-  } catch {
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) {
+      throw error;
+    }
     return null;
   }
 }
 
 export async function loadMissionControlMachineStatus(accessToken?: string): Promise<MissionControlMachineStatus> {
-  const local = await loadLocalMissionControlMachineStatus();
+  const local = await loadLocalMissionControlMachineStatus(accessToken);
   if (local) {
     return local;
   }

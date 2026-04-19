@@ -61,7 +61,15 @@ VITE_HERMES_API_BASE_URL=http://localhost:8642/api
 If unset, the app uses `/api` through the Vite proxy.
 
 ## Auth
-If Hermes API server has `API_SERVER_KEY`, Mission Control prompts for a bearer token before unlocking the dashboard.
+If Hermes API server has `MISSION_CONTROL_TOKEN` or `API_SERVER_KEY`, Mission Control prompts for a bearer token before unlocking the dashboard.
+
+The same bearer token is now required by the local telemetry backend for `GET /api/local/system`.
+
+Auth precedence:
+1. `MISSION_CONTROL_TOKEN`
+2. `API_SERVER_KEY`
+
+This keeps the local psutil sidecar aligned with the main dashboard lock instead of quietly bypassing it.
 
 ## Deep links
 You can open selected entities with query params:

@@ -58,4 +58,15 @@ Use this when update/autostash leaves conflicted files:
 - `docs/contracts/mission-control-capabilities-v1.json`
 - `docs/contracts/mission-control-trace-v1.json`
 - `docs/contracts/compatibility-matrix.md`
+- `patches/hermes-core-mission-control-api_server.patch`
+- `scripts/reapply-core-mission-control-fixes.sh`
 - `scripts/smoke-upgrade.sh`
+
+## Canonical backend recovery path
+If a Hermes core update drops Mission Control routes from `gateway/platforms/api_server.py`:
+1. Run `bash apps/mission-control/scripts/reapply-core-mission-control-fixes.sh`
+2. The script first reapplies `patches/hermes-core-mission-control-api_server.patch` with `git apply`
+3. Then it reapplies compatibility shims in `model_tools.py` and `tools/skills_tool.py`
+4. Finally it runs syntax checks, restarts gateway, and smoke-checks Mission Control endpoints
+
+Rule: update the canonical patch file whenever Mission Control backend compatibility changes, instead of relying on git stash recovery.
