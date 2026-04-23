@@ -354,7 +354,7 @@ const fallbackAlerts: MissionControlAlertsSnapshot = {
       tone: 'warn',
       title: 'Dashboard is using fallback data',
       detail: 'Real backend endpoints were not reachable, so the cockpit is showing cached defaults.',
-      endpoint: '/api/mission-control',
+      endpoint: '/api/status',
     },
   ],
 };
@@ -365,36 +365,31 @@ const fallbackKnowledge: MissionControlKnowledgeSnapshot = {
   title: 'Knowledge Sharing',
   path: 'Knowledge Sharing.md',
   updatedAt: null,
-  excerpt: 'Create MEMORY.md, USER.md, IDENTITY.md, and AGENTS.md in the vault to surface them here.',
+  excerpt: 'Create ~/.hermes/SOUL.md, ~/.hermes/USER.md, ~/.hermes/AGENTS.md and vault notes to surface them here.',
   highlights: [],
   primary: {
     id: 'knowledge-sharing',
     title: 'Knowledge Sharing',
     path: 'Knowledge Sharing.md',
     updatedAt: null,
-    excerpt: 'Create MEMORY.md, USER.md, IDENTITY.md, and AGENTS.md in the vault to surface them here.',
+    excerpt: 'Create ~/.hermes/SOUL.md, ~/.hermes/USER.md, ~/.hermes/AGENTS.md and vault notes to surface them here.',
     highlights: [],
   },
   items: [],
   sections: [
     {
-      id: 'memory',
-      title: 'MEMORY.md',
+      id: 'soul',
+      title: '~/.hermes/SOUL.md',
       items: [],
     },
     {
       id: 'user',
-      title: 'USER.md',
-      items: [],
-    },
-    {
-      id: 'identity',
-      title: 'IDENTITY.md',
+      title: '~/.hermes/USER.md',
       items: [],
     },
     {
       id: 'agents',
-      title: 'AGENTS.md',
+      title: '~/.hermes/AGENTS.md',
       items: [],
     },
     {
@@ -545,11 +540,11 @@ const fallbackAgentTrace: MissionControlAgentTraceSnapshot = {
 };
 
 const fallbackCapabilities: MissionControlCapabilities = {
-  schemaVersion: 'v1',
+  schemaVersion: 'core-safe-v1',
   trace: {
-    stream: true,
-    compact: true,
-    namedSseTraceEvent: true,
+    stream: false,
+    compact: false,
+    namedSseTraceEvent: false,
   },
 };
 
@@ -987,19 +982,357 @@ async function loadResource<T>(path: string, accessToken: string | undefined, fa
   }
 }
 
+
+type OfficialStatusPayload = {
+  gateway_running?: boolean;
+  gateway_state?: string | null;
+  active_sessions?: number;
+  config_path?: string;
+  gateway_updated_at?: string | null;
+};
+
+type OfficialModelInfoPayload = {
+  model?: string;
+  provider?: string;
+  auto_context_length?: number;
+  config_context_length?: number;
+  effective_context_length?: number;
+  capabilities?: Record<string, unknown>;
+};
+
+type OfficialSessionsPayload = {
+  sessions?: Array<Record<string, unknown>>;
+  total?: number;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === 'string' && value ? value : null;
+}
+
+function readNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function readBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
+}
+
+function hashText(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/$/, '');
+}
+
+async function fetchOfficialJson<T>(path: string, accessToken?: string): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    headers: buildHeaders(accessToken),
+    cache: 'no-store',
+  });
+
+  if (response.status === 401) {
+    throw new MissionControlAuthError();
+  }
+
+  return await parseResponse<T>(response, path.replace(/^\//, ''));
+}
+
+async function maybeFetchOfficialJson<T>(path: string, accessToken?: string): Promise<T | null> {
+  try {
+    return await fetchOfficialJson<T>(path, accessToken);
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) throw error;
+    return null;
+  }
+}
+
+async function fetchOfficialStatus(accessToken?: string): Promise<OfficialStatusPayload | null> {
+  return await maybeFetchOfficialJson<OfficialStatusPayload>('/status', accessToken);
+}
+
+async function fetchOfficialModelInfo(accessToken?: string): Promise<OfficialModelInfoPayload | null> {
+  return await maybeFetchOfficialJson<OfficialModelInfoPayload>('/model/info', accessToken);
+}
+
+async function fetchOfficialSessions(accessToken?: string, limit = 50): Promise<OfficialSessionsPayload | null> {
+  return await maybeFetchOfficialJson<OfficialSessionsPayload>(`/sessions?limit=${limit}&offset=0`, accessToken);
+}
+
+function formatModelRef(model: string | null | undefined, provider?: string | null, baseUrl?: string | null): string {
+  const modelName = (model ?? '').trim();
+  if (!modelName) return 'unknown';
+  const providerName = (provider ?? '').trim();
+  if (providerName) return `${modelName} @ ${providerName}`;
+  const url = (baseUrl ?? '').trim();
+  if (url) {
+    try {
+      return `${modelName} @ ${new URL(url).host}`;
+    } catch {
+      return `${modelName} @ ${url}`;
+    }
+  }
+  return modelName;
+}
+
+function deriveFallbackModel(config: Record<string, unknown> | null | undefined): string {
+  if (!config) return fallbackSnapshot.fallbackModel;
+
+  const chain = config.fallback_providers;
+  if (Array.isArray(chain) && chain.length > 0 && isRecord(chain[0])) {
+    const first = chain[0];
+    return formatModelRef(readString(first.model), readString(first.provider), readString(first.base_url));
+  }
+
+  const single = config.fallback_model;
+  if (isRecord(single)) {
+    return formatModelRef(readString(single.model), readString(single.provider), readString(single.base_url));
+  }
+
+  return fallbackSnapshot.fallbackModel;
+}
+
+function deriveGatewayStatus(status: OfficialStatusPayload | null): string {
+  if (!status) return fallbackSnapshot.gatewayStatus;
+  const state = readString(status.gateway_state).trim();
+  if (state) {
+    if (state === 'running') return 'online';
+    if (state === 'stopped') return 'offline';
+    return state.replace(/_/g, ' ');
+  }
+  return readBoolean(status.gateway_running, false) ? 'online' : 'offline';
+}
+
+function deriveBackendHealth(status: OfficialStatusPayload | null, machine: MissionControlMachineStatus): MissionControlSnapshot['backendHealth'] {
+  if (!status) return 'offline';
+  if (!readBoolean(status.gateway_running, false)) return 'offline';
+  if (machine.health === 'critical' || machine.health === 'offline') return 'degraded';
+  return 'healthy';
+}
+
+function normalizeOfficialSessionItem(input: Record<string, unknown>): MissionControlSessionItem {
+  return normalizeSessionItem({
+    id: readString(input.id, 'unknown-session'),
+    source: readString(input.source, 'unknown'),
+    model: readString(input.model, 'unknown'),
+    title: readString(input.title, 'Untitled session'),
+    startedAt: readNumber(input.started_at),
+    endedAt: input.ended_at === null ? null : readNumber(input.ended_at),
+    messageCount: readNumber(input.message_count),
+    preview: readString(input.preview),
+    lastActive: readNumber(input.last_active, readNumber(input.started_at)),
+  });
+}
+
+function deriveSessionsSnapshot(payload: OfficialSessionsPayload | null, status: OfficialStatusPayload | null): MissionControlSessionsSnapshot {
+  if (!payload?.sessions) {
+    return normalizeSessions({
+      ...fallbackSessions,
+      activeAgents: readNumber(status?.active_sessions, fallbackSessions.activeAgents),
+    });
+  }
+
+  const items = payload.sessions.filter(isRecord).map((item) => normalizeOfficialSessionItem(item));
+  const activeAgents = payload.sessions.filter((item) => isRecord(item) && readBoolean(item.is_active)).length || readNumber(status?.active_sessions, 0);
+  const totalMessages = payload.sessions.reduce((total, item) => total + (isRecord(item) ? readNumber(item.message_count) : 0), 0);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEpoch = todayStart.getTime() / 1000;
+  const toolCallsToday = payload.sessions.reduce((total, item) => {
+    if (!isRecord(item)) return total;
+    return readNumber(item.started_at) >= todayEpoch ? total + readNumber(item.tool_call_count) : total;
+  }, 0);
+
+  return normalizeSessions({
+    totalSessions: readNumber(payload.total, items.length),
+    totalMessages,
+    activeAgents,
+    toolCallsToday,
+    items,
+  });
+}
+
+function normalizeOfficialCronJob(input: Record<string, unknown>): MissionControlCronJob {
+  const scheduleDisplay = readString(input.schedule_display)
+    || (isRecord(input.schedule) ? readString(input.schedule.display) : '')
+    || 'unspecified';
+  const enabled = readBoolean(input.enabled, true);
+  const state = readString(input.state) || (enabled ? 'scheduled' : 'paused');
+  return normalizeCronJob({
+    id: readString(input.id, 'scheduled-job'),
+    label: readString(input.name) || readString(input.label) || readString(input.id, 'Scheduled job'),
+    enabled,
+    state,
+    scheduleDisplay,
+    nextRunAt: readNullableString(input.next_run_at),
+    lastRunAt: readNullableString(input.last_run_at),
+    pausedReason: readNullableString(input.paused_reason),
+    lastStatus: readNullableString(input.last_status),
+    lastError: readNullableString(input.last_error) ?? readNullableString(input.last_delivery_error),
+    prompt: readString(input.prompt),
+    model: readString(input.model, 'unknown'),
+    provider: readNullableString(input.provider),
+    skill: readNullableString(input.skill),
+    skills: readStringArray(input.skills),
+  });
+}
+
+function deriveAlerts(
+  status: OfficialStatusPayload | null,
+  machine: MissionControlMachineStatus,
+  sessions: MissionControlSessionsSnapshot,
+  cron: MissionControlCronSnapshot,
+): MissionControlAlertsSnapshot {
+  const items: MissionControlAlert[] = [];
+  const gatewayRunning = readBoolean(status?.gateway_running, false);
+
+  if (!gatewayRunning) {
+    items.push({
+      id: 'gateway-offline',
+      category: 'gateway',
+      tone: 'bad',
+      title: 'Gateway offline',
+      detail: 'Hermes gateway is not reporting as running.',
+      endpoint: '/api/status',
+    });
+  }
+
+  if (machine.health === 'critical' || machine.health === 'offline') {
+    items.push({
+      id: 'machine-health',
+      category: 'machine',
+      tone: 'bad',
+      title: 'Machine telemetry degraded',
+      detail: machine.summary,
+      endpoint: '/api/local/system',
+    });
+  } else if (machine.source === 'fallback') {
+    items.push({
+      id: 'machine-fallback',
+      category: 'machine',
+      tone: 'warn',
+      title: 'Machine telemetry unavailable',
+      detail: 'Local telemetry did not answer, so Mission Control is flying half-blind.',
+      endpoint: '/api/local/system',
+    });
+  }
+
+  const failedJobs = cron.items.filter((job) => job.lastStatus === 'failed' || Boolean(job.lastError));
+  if (failedJobs.length > 0) {
+    items.push({
+      id: 'cron-failures',
+      category: 'cron',
+      tone: 'warn',
+      title: 'Cron jobs need attention',
+      detail: `${failedJobs.length} scheduled job${failedJobs.length === 1 ? '' : 's'} reported failures or delivery errors.`,
+      endpoint: '/api/cron/jobs',
+    });
+  }
+
+  if (sessions.activeAgents === 0 && gatewayRunning) {
+    items.push({
+      id: 'sessions-idle',
+      category: 'sessions',
+      tone: 'good',
+      title: 'No active sessions',
+      detail: 'Gateway is up, but nothing is actively running right now.',
+      endpoint: '/api/sessions',
+    });
+  }
+
+  return normalizeAlerts({ items: items.length > 0 ? items : [] });
+}
+
+function deriveRecentSignals(
+  status: OfficialStatusPayload | null,
+  modelInfo: OfficialModelInfoPayload | null,
+  sessions: MissionControlSessionsSnapshot,
+  cron: MissionControlCronSnapshot,
+  alerts: MissionControlAlertsSnapshot,
+  machine: MissionControlMachineStatus,
+): MissionControlSnapshot['recentSignals'] {
+  const signals: MissionControlSnapshot['recentSignals'] = [
+    {
+      label: 'Gateway',
+      detail: readBoolean(status?.gateway_running, false)
+        ? `Gateway ${deriveGatewayStatus(status)} with ${sessions.activeAgents} active session${sessions.activeAgents === 1 ? '' : 's'}.`
+        : 'Gateway is offline or not reachable from the dashboard.',
+      tone: readBoolean(status?.gateway_running, false) ? 'good' : 'bad',
+    },
+    {
+      label: 'Model',
+      detail: formatModelRef(readString(modelInfo?.model), readString(modelInfo?.provider)),
+      tone: readString(modelInfo?.model) ? 'good' : 'warn',
+    },
+    {
+      label: 'Cron',
+      detail: cron.items.length > 0 ? `${cron.queuedJobs} job${cron.queuedJobs === 1 ? '' : 's'} queued across ${cron.items.length} schedule${cron.items.length === 1 ? '' : 's'}.` : 'No cron jobs configured.',
+      tone: cron.items.some((job) => job.lastStatus === 'failed' || Boolean(job.lastError)) ? 'warn' : 'good',
+    },
+    {
+      label: 'Machine',
+      detail: machine.summary,
+      tone: machine.health === 'healthy' ? 'good' : machine.health === 'degraded' ? 'warn' : 'bad',
+    },
+  ];
+
+  if (alerts.items.length > 0) {
+    const primary = alerts.items[0];
+    signals.push({ label: 'Alert', detail: `${primary.title}: ${primary.detail}`, tone: primary.tone });
+  }
+
+  return signals;
+}
+
 export async function loadMissionControlSnapshot(accessToken?: string): Promise<MissionControlSnapshot> {
   try {
-    const response = await fetch(apiUrl('/mission-control'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
+    const [status, modelInfo, configRaw, sessions, cron, machine] = await Promise.all([
+      fetchOfficialStatus(accessToken),
+      fetchOfficialModelInfo(accessToken),
+      maybeFetchOfficialJson<Record<string, unknown>>('/config', accessToken),
+      loadMissionControlSessions(accessToken),
+      loadMissionControlCron(accessToken),
+      loadMissionControlMachineStatus(accessToken),
+    ]);
+
+    const alerts = deriveAlerts(status, machine, sessions, cron);
+    return normalizeSnapshot({
+      backendHealth: deriveBackendHealth(status, machine),
+      activeModel: formatModelRef(readString(modelInfo?.model), readString(modelInfo?.provider)),
+      fallbackModel: deriveFallbackModel(configRaw),
+      gatewayStatus: deriveGatewayStatus(status),
+      activeAgents: sessions.activeAgents,
+      queuedJobs: cron.queuedJobs,
+      toolCallsToday: sessions.toolCallsToday,
+      recentSignals: deriveRecentSignals(status, modelInfo, sessions, cron, alerts, machine),
+      knowledgeSharing: await loadMissionControlKnowledge(accessToken),
+      machine,
+      sessions,
+      cron,
+      alerts,
     });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlSnapshot>>(response, 'mission-control');
-    return normalizeSnapshot(data);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1041,17 +1374,16 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
   }
 
   try {
-    const response = await fetch(apiUrl('/mission-control/system'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
+    const status = await fetchOfficialStatus(accessToken);
+    const gatewayRunning = readBoolean(status?.gateway_running, false);
+    return normalizeMachineStatus({
+      ...fallbackMachine,
+      source: 'core-api',
+      health: gatewayRunning ? 'degraded' : 'offline',
+      summary: gatewayRunning
+        ? 'Local telemetry unavailable; gateway is reachable via core API only.'
+        : 'Local telemetry unavailable and gateway is offline.',
     });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlMachineStatus>>(response, 'machine');
-    return normalizeMachineStatus({ ...data, source: 'core-api' });
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1063,17 +1395,11 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
 
 export async function loadMissionControlSessions(accessToken?: string): Promise<MissionControlSessionsSnapshot> {
   try {
-    const response = await fetch(apiUrl('/mission-control/sessions'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
-    });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlSessionsSnapshot>>(response, 'sessions');
-    return normalizeSessions(data);
+    const [payload, status] = await Promise.all([
+      fetchOfficialSessions(accessToken, 50),
+      fetchOfficialStatus(accessToken),
+    ]);
+    return deriveSessionsSnapshot(payload, status);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1083,86 +1409,32 @@ export async function loadMissionControlSessions(accessToken?: string): Promise<
   }
 }
 
-export async function loadMissionControlCapabilities(accessToken?: string): Promise<MissionControlCapabilities> {
-  try {
-    const response = await fetch(apiUrl('/mission-control/capabilities'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
-      credentials: 'include',
-    });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    if (response.status === 404) {
-      return fallbackCapabilities;
-    }
-
-    const data = await parseResponse<unknown>(response, 'capabilities');
-    return normalizeCapabilities(data);
-  } catch (error) {
-    if (error instanceof MissionControlAuthError) {
-      throw error;
-    }
-    return fallbackCapabilities;
-  }
+export async function loadMissionControlCapabilities(_accessToken?: string): Promise<MissionControlCapabilities> {
+  return normalizeCapabilities({
+    schemaVersion: 'core-safe-v1',
+    trace: {
+      stream: false,
+      compact: false,
+      namedSseTraceEvent: false,
+    },
+  });
 }
 
 export async function loadMissionControlAgentTrace(
-  sessionId?: string,
-  accessToken?: string,
-  limit = 300,
-  compact = false,
+  _sessionId?: string,
+  _accessToken?: string,
+  _limit = 300,
+  _compact = false,
 ): Promise<MissionControlAgentTraceSnapshot> {
-  try {
-    const params = new URLSearchParams();
-    if (sessionId) params.set('session_id', sessionId);
-    if (Number.isFinite(limit)) {
-      const normalized = Math.floor(limit);
-      if (normalized <= 0) {
-        params.set('limit', '0');
-      } else {
-        params.set('limit', String(Math.max(50, Math.min(1000, normalized))));
-      }
-    }
-    if (compact) {
-      params.set('compact', '1');
-    }
-
-    const response = await fetch(apiUrl(`/mission-control/agents/trace${params.toString() ? `?${params.toString()}` : ''}`), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
-      credentials: 'include',
-    });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const raw = await parseResponse<unknown>(response, 'agents trace');
-    return normalizeAgentTrace(pickTraceCandidate(raw));
-  } catch (error) {
-    if (error instanceof MissionControlAuthError) {
-      throw error;
-    }
-    return fallbackAgentTrace;
-  }
+  return fallbackAgentTrace;
 }
 
 export async function loadMissionControlCron(accessToken?: string): Promise<MissionControlCronSnapshot> {
   try {
-    const response = await fetch(apiUrl('/mission-control/cron'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
-    });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlCronSnapshot>>(response, 'cron');
-    return normalizeCron(data);
+    const jobs = await fetchOfficialJson<Array<Record<string, unknown>>>('/cron/jobs', accessToken);
+    const items = Array.isArray(jobs) ? jobs.filter(isRecord).map((job) => normalizeOfficialCronJob(job)) : [];
+    const queuedJobs = items.filter((job) => job.enabled && job.state !== 'paused' && Boolean(job.nextRunAt)).length;
+    return normalizeCron({ queuedJobs, items });
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1174,17 +1446,13 @@ export async function loadMissionControlCron(accessToken?: string): Promise<Miss
 
 export async function loadMissionControlAlerts(accessToken?: string): Promise<MissionControlAlertsSnapshot> {
   try {
-    const response = await fetch(apiUrl('/mission-control/alerts'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
-    });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlAlertsSnapshot>>(response, 'alerts');
-    return normalizeAlerts(data);
+    const [status, machine, sessions, cron] = await Promise.all([
+      fetchOfficialStatus(accessToken),
+      loadMissionControlMachineStatus(accessToken),
+      loadMissionControlSessions(accessToken),
+      loadMissionControlCron(accessToken),
+    ]);
+    return deriveAlerts(status, machine, sessions, cron);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1196,23 +1464,14 @@ export async function loadMissionControlAlerts(accessToken?: string): Promise<Mi
 
 export async function loadMissionControlKnowledge(accessToken?: string): Promise<MissionControlKnowledgeSnapshot> {
   try {
-    const response = await fetch(apiUrl('/mission-control/knowledge'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
-    });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlKnowledgeSnapshot>>(response, 'knowledge');
-    return normalizeKnowledge(data);
+    const payload = await fetchOfficialJson<Partial<MissionControlKnowledgeSnapshot>>('/knowledge', accessToken);
+    return normalizeKnowledge(payload);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
     }
 
-    return fallbackKnowledge;
+    return normalizeKnowledge(fallbackKnowledge);
   }
 }
 
@@ -1220,8 +1479,7 @@ export async function loadMissionControlKnowledgeFile(
   sourcePath: string,
   accessToken?: string,
 ): Promise<MissionControlKnowledgeFilePayload> {
-  const params = new URLSearchParams({ source_path: sourcePath });
-  const response = await fetch(apiUrl(`/mission-control/knowledge/file?${params.toString()}`), {
+  const response = await fetch(apiUrl(`/knowledge/file?path=${encodeURIComponent(sourcePath)}`), {
     headers: buildHeaders(accessToken),
     cache: 'no-store',
   });
@@ -1230,22 +1488,51 @@ export async function loadMissionControlKnowledgeFile(
     throw new MissionControlAuthError();
   }
 
-  return await parseResponse<MissionControlKnowledgeFilePayload>(response, 'knowledge file');
+  if (!response.ok) {
+    throw new Error(`Knowledge file API returned ${response.status}`);
+  }
+
+  const payload = await response.json() as MissionControlKnowledgeFilePayload;
+  return {
+    ...payload,
+    path: redactHomePath(payload.path) ?? payload.path,
+    sourcePath: redactHomePath(payload.sourcePath) ?? payload.sourcePath,
+  };
 }
 
 export async function loadMissionControlTools(accessToken?: string): Promise<MissionControlToolsSnapshot> {
   try {
-    const response = await fetch(apiUrl('/mission-control/tools'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
+    const payload = await fetchOfficialJson<Array<Record<string, unknown>>>('/tools/toolsets', accessToken);
+    const toolsets = (Array.isArray(payload) ? payload : []).filter(isRecord).map((item) => {
+      const tools = readStringArray(item.tools).sort((a, b) => a.localeCompare(b));
+      return normalizeToolset({
+        name: readString(item.name, 'toolset'),
+        description: readString(item.description),
+        directTools: tools,
+        includes: [],
+        resolvedTools: tools,
+        toolCount: tools.length,
+        isComposite: false,
+        available: readBoolean(item.available, true),
+        requirements: readBoolean(item.configured, true) ? [] : ['configuration required'],
+      });
     });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlToolsSnapshot>>(response, 'tools');
-    return normalizeTools(data);
+    const toolCatalog = toolsets.flatMap((toolset) => toolset.resolvedTools.map((name) => ({
+      name,
+      toolset: toolset.name,
+      available: toolset.available,
+      sourcePath: null,
+    })));
+    const availableToolsets = toolsets.filter((toolset) => toolset.available);
+    return normalizeTools({
+      available: toolsets.length > 0,
+      count: toolsets.length,
+      toolCount: toolCatalog.length,
+      toolsets,
+      availableToolsets,
+      toolCatalog,
+      resolvedTools: [...new Set(toolCatalog.map((item) => item.name))].sort((a, b) => a.localeCompare(b)),
+    });
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1257,17 +1544,33 @@ export async function loadMissionControlTools(accessToken?: string): Promise<Mis
 
 export async function loadMissionControlSkills(accessToken?: string): Promise<MissionControlSkillsSnapshot> {
   try {
-    const response = await fetch(apiUrl('/mission-control/skills'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
-    });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
+    const payload = await fetchOfficialJson<Array<Record<string, unknown>>>('/skills', accessToken);
+    const skills = (Array.isArray(payload) ? payload : []).filter(isRecord).map((item) => normalizeSkillItem({
+      id: readString(item.id) || readString(item.name, 'skill-item'),
+      name: readString(item.name, 'Unnamed skill'),
+      description: readString(item.description),
+      enabled: readBoolean(item.enabled, true),
+      model: readString(item.model, 'unknown'),
+      tags: readStringArray(item.tags),
+      category: readString(item.category) || undefined,
+      filePath: readString(item.file_path) || readString(item.filePath) || undefined,
+    }));
+    const categoryMap = new Map<string, MissionControlSkillCategory>();
+    for (const skill of skills) {
+      const categoryName = skill.category || 'Uncategorized';
+      const existing = categoryMap.get(categoryName) ?? { name: categoryName, count: 0, skills: [] };
+      existing.skills.push(skill.name);
+      existing.count = existing.skills.length;
+      categoryMap.set(categoryName, existing);
     }
-
-    const data = await parseResponse<Partial<MissionControlSkillsSnapshot>>(response, 'skills');
-    return normalizeSkills(data);
+    const categories = [...categoryMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return normalizeSkills({
+      available: skills.length > 0,
+      count: skills.length,
+      hint: skills.length > 0 ? null : 'No skills exposed by the Hermes dashboard.',
+      skills,
+      categories,
+    });
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1279,17 +1582,22 @@ export async function loadMissionControlSkills(accessToken?: string): Promise<Mi
 
 export async function loadMissionControlConfig(accessToken?: string): Promise<MissionControlConfigSnapshot> {
   try {
-    const response = await fetch(apiUrl('/mission-control/config'), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
+    const [status, parsedConfig, rawConfig] = await Promise.all([
+      fetchOfficialStatus(accessToken),
+      fetchOfficialJson<Record<string, unknown>>('/config', accessToken),
+      fetchOfficialJson<{ yaml?: string }>('/config/raw', accessToken),
+    ]);
+    const content = typeof rawConfig?.yaml === 'string' ? rawConfig.yaml : '';
+    const path = readString(status?.config_path, fallbackConfig.path);
+    return normalizeConfig({
+      available: true,
+      path,
+      exists: Boolean(content.trim()) || Boolean(path),
+      content,
+      hash: hashText(content),
+      updatedAt: readNullableString(status?.gateway_updated_at),
+      config: parsedConfig ?? {},
     });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlConfigSnapshot>>(response, 'config');
-    return normalizeConfig(data);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1299,27 +1607,55 @@ export async function loadMissionControlConfig(accessToken?: string): Promise<Mi
   }
 }
 
+function inferLogLevel(line: string): MissionControlLogEntry['level'] {
+  if (/(ERROR|CRITICAL)/.test(line)) return 'error';
+  if (/WARNING/.test(line)) return 'warn';
+  return 'info';
+}
+
+function buildLogFilePath(name: string): string {
+  return `~/.hermes/logs/${name}`;
+}
+
 export async function loadMissionControlLogs(
   accessToken?: string,
   options?: { maxFiles?: number; maxLines?: number },
 ): Promise<MissionControlLogsSnapshot> {
-  const params = new URLSearchParams();
-  if (options?.maxFiles) params.set('max_files', String(options.maxFiles));
-  if (options?.maxLines) params.set('max_lines', String(options.maxLines));
-  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const fileKeys = ['agent', 'errors', 'gateway'];
+  const limit = Math.max(1, Math.min(options?.maxLines ?? 160, 500));
+  const selectedKeys = fileKeys.slice(0, Math.max(1, Math.min(options?.maxFiles ?? fileKeys.length, fileKeys.length)));
 
   try {
-    const response = await fetch(apiUrl(`/mission-control/logs${suffix}`), {
-      headers: buildHeaders(accessToken),
-      cache: 'no-store',
+    const payloads = await Promise.all(selectedKeys.map(async (key) => {
+      const result = await fetchOfficialJson<{ file?: string; lines?: string[] }>(`/logs?file=${encodeURIComponent(key)}&lines=${limit}`, accessToken);
+      const lines = Array.isArray(result.lines) ? result.lines : [];
+      return {
+        key,
+        entries: lines.map((line, index) => ({
+          lineNumber: index + 1,
+          level: inferLogLevel(String(line)),
+          text: String(line),
+        })),
+      };
+    }));
+
+    const files = payloads.map((payload) => ({
+      name: `${payload.key}.log`,
+      path: buildLogFilePath(`${payload.key}.log`),
+      updatedAt: null,
+      sizeBytes: 0,
+      entryCount: payload.entries.length,
+      entries: payload.entries,
+    }));
+
+    return normalizeLogs({
+      available: true,
+      path: '~/.hermes/logs',
+      fileCount: files.length,
+      totalEntries: files.reduce((total, file) => total + file.entries.length, 0),
+      generatedAt: new Date().toISOString(),
+      files,
     });
-
-    if (response.status === 401) {
-      throw new MissionControlAuthError();
-    }
-
-    const data = await parseResponse<Partial<MissionControlLogsSnapshot>>(response, 'logs');
-    return normalizeLogs(data);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1329,22 +1665,22 @@ export async function loadMissionControlLogs(
   }
 }
 
-export async function saveMissionControlConfig(accessToken: string | undefined, content: string, expectedHash?: string | null): Promise<MissionControlConfigSnapshot> {
-  const response = await fetch(apiUrl('/mission-control/config'), {
+export async function saveMissionControlConfig(accessToken: string | undefined, content: string, _expectedHash?: string | null): Promise<MissionControlConfigSnapshot> {
+  const response = await fetch(apiUrl('/config/raw'), {
     method: 'PUT',
     headers: {
       ...buildHeaders(accessToken),
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ content, expectedHash: expectedHash ?? undefined }),
+    body: JSON.stringify({ yaml_text: content }),
   });
 
   if (response.status === 401) {
     throw new MissionControlAuthError();
   }
 
-  const data = await parseResponse<Partial<MissionControlConfigSnapshot>>(response, 'config save');
-  return normalizeConfig(data);
+  await parseResponse<Record<string, unknown>>(response, 'config save');
+  return await loadMissionControlConfig(accessToken);
 }
 
 export function getFallbackSnapshot(): MissionControlSnapshot {

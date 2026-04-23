@@ -20,7 +20,7 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/api': {
-        target: 'http://127.0.0.1:8642',
+        target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',
         changeOrigin: true,
       },
     },
@@ -35,7 +35,7 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/api': {
-        target: 'http://127.0.0.1:8642',
+        target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',
         changeOrigin: true,
       },
     },

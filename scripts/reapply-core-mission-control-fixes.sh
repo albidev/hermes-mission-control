@@ -4,173 +4,163 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HERMES_ROOT="${1:-${HERMES_ROOT:-$DEFAULT_ROOT}}"
-PATCH_FILE="$SCRIPT_DIR/../patches/hermes-core-mission-control-api_server.patch"
 
-API_SERVER="$HERMES_ROOT/gateway/platforms/api_server.py"
-MODEL_TOOLS="$HERMES_ROOT/model_tools.py"
-SKILLS_TOOL="$HERMES_ROOT/tools/skills_tool.py"
+WEB_SERVER="$HERMES_ROOT/hermes_cli/web_server.py"
+VITE_CONFIG="$HERMES_ROOT/apps/mission-control/vite.config.ts"
+SMOKE_SCRIPT="$HERMES_ROOT/apps/mission-control/scripts/smoke-upgrade.sh"
 
-log() { echo "[mission-control-fix] $*"; }
-fail() { echo "[mission-control-fix][FAIL] $*" >&2; exit 1; }
+log() { echo "[mission-control-align] $*"; }
+fail() { echo "[mission-control-align][FAIL] $*" >&2; exit 1; }
 
-apply_canonical_patch_if_needed() {
-  [[ -f "$PATCH_FILE" ]] || fail "Missing canonical patch at $PATCH_FILE"
+[[ -f "$WEB_SERVER" ]] || fail "Missing web_server.py at $WEB_SERVER"
+[[ -f "$VITE_CONFIG" ]] || fail "Missing vite.config.ts at $VITE_CONFIG"
+[[ -f "$SMOKE_SCRIPT" ]] || fail "Missing smoke script at $SMOKE_SCRIPT"
 
-  if git -C "$HERMES_ROOT" apply --check "$PATCH_FILE" >/dev/null 2>&1; then
-    log "Applying canonical Mission Control core patch from $PATCH_FILE"
-    git -C "$HERMES_ROOT" apply "$PATCH_FILE"
-    return
-  fi
+log "Aligning Mission Control against Hermes dashboard backend in: $HERMES_ROOT"
 
-  if git -C "$HERMES_ROOT" apply --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
-    log "Canonical Mission Control core patch already present"
-    return
-  fi
-
-  fail "Canonical patch does not apply cleanly. Inspect $PATCH_FILE against current Hermes core."
-}
-
-[[ -f "$API_SERVER" ]] || fail "Missing api_server.py at $API_SERVER"
-[[ -f "$MODEL_TOOLS" ]] || fail "Missing model_tools.py at $MODEL_TOOLS"
-[[ -f "$SKILLS_TOOL" ]] || fail "Missing skills_tool.py at $SKILLS_TOOL"
-
-log "Applying idempotent core patches in: $HERMES_ROOT"
-apply_canonical_patch_if_needed
-
-python3 - "$HERMES_ROOT" <<'PY'
+python3 - "$WEB_SERVER" <<'PY'
 from pathlib import Path
 import sys
 
-root = Path(sys.argv[1]).resolve()
-api = root / "gateway/platforms/api_server.py"
-model = root / "model_tools.py"
-skills = root / "tools/skills_tool.py"
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+original = text
 
-modified = []
+old_require = '''def _require_token(request: Request) -> None:
+    """Validate the ephemeral session token.  Raises 401 on mismatch.
 
+    Uses ``hmac.compare_digest`` to prevent timing side-channels.
+    """
+    auth = request.headers.get("authorization", "")
+    expected = f"Bearer {_SESSION_TOKEN}"
+    if not hmac.compare_digest(auth.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+'''
+new_auth = '''def _accepted_bearer_tokens() -> List[str]:
+    """Return bearer tokens accepted by the dashboard API.
 
-def write_if_changed(path: Path, content: str) -> None:
-    old = path.read_text(encoding="utf-8")
-    if old != content:
-        path.write_text(content, encoding="utf-8")
-        modified.append(str(path))
-
-
-def ensure_replace_all(text: str, old: str, new: str) -> str:
-    if old in text:
-        return text.replace(old, new)
-    return text
-
-
-# 1) api_server.py patches
-api_text = api.read_text(encoding="utf-8")
-
-api_text = ensure_replace_all(
-    api_text,
-    'return {"success": True, "toolset": match, "toolCatalog": tool_catalog, "availableToolsets": items}',
-    'return {"success": True, "available": True, "toolset": match, "toolCatalog": tool_catalog, "availableToolsets": items}',
-)
-
-api_text = ensure_replace_all(
-    api_text,
-    'return {\n            "success": True,\n            "toolsets": items,',
-    'return {\n            "success": True,\n            "available": True,\n            "toolsets": items,',
-)
-
-api_text = ensure_replace_all(
-    api_text,
-    'return {\n            "success": True,\n            "skills": _sanitize_path_payload(normalized_skills),',
-    'return {\n            "success": True,\n            "available": True,\n            "skills": _sanitize_path_payload(normalized_skills),',
-)
-
-api_text = ensure_replace_all(
-    api_text,
-    'return {\n            "success": True,\n            "skills": _sanitize_path_payload(skills_payload.get("skills", [])),',
-    'return {\n            "success": True,\n            "available": True,\n            "skills": _sanitize_path_payload(skills_payload.get("skills", [])),',
-)
-
-api_text = ensure_replace_all(
-    api_text,
-    '    return {\n        "path": _redact_home_path(str(path)),',
-    '    return {\n        "available": True,\n        "path": _redact_home_path(str(path)),',
-)
-
-write_if_changed(api, api_text)
+    The built-in dashboard SPA receives the ephemeral session token injected
+    into index.html. Mission Control can also run as a standalone Vite app, so
+    it needs a stable operator-provided token. Prefer MISSION_CONTROL_TOKEN;
+    fall back to API_SERVER_KEY for compatibility with the gateway API server.
+    """
+    tokens = [_SESSION_TOKEN]
+    for env_name in ("MISSION_CONTROL_TOKEN", "API_SERVER_KEY"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            tokens.append(value)
+    return tokens
 
 
-# 2) model_tools.py compatibility shim
-model_text = model.read_text(encoding="utf-8")
-if "import inspect" not in model_text:
-    model_text = model_text.replace("import threading\n", "import threading\nimport inspect\n")
-
-shim = '''\n\ndef get_tool_source_path(tool_name: str) -> Optional[str]:\n    """Best-effort source file path for a registered tool handler."""\n    entry = registry._tools.get(tool_name)  # Backward-compat shim for Mission Control\n    if not entry:\n        return None\n    try:\n        source_path = inspect.getsourcefile(entry.handler)\n        return source_path\n    except Exception:\n        return None\n'''
-
-if "def get_tool_source_path(tool_name: str) -> Optional[str]:" not in model_text:
-    marker = "\ndef check_toolset_requirements() -> Dict[str, bool]:\n"
-    if marker not in model_text:
-        raise RuntimeError("Could not find insertion point in model_tools.py")
-    model_text = model_text.replace(marker, shim + marker)
-
-write_if_changed(model, model_text)
+def _is_authorized_request(request: Request) -> bool:
+    """Validate bearer auth using constant-time comparisons."""
+    auth = request.headers.get("authorization", "")
+    for token in _accepted_bearer_tokens():
+        expected = f"Bearer {token}"
+        if hmac.compare_digest(auth.encode(), expected.encode()):
+            return True
+    return False
 
 
-# 3) skills_tool.py compatibility shim
-skills_text = skills.read_text(encoding="utf-8")
+def _require_token(request: Request) -> None:
+    """Validate dashboard bearer auth. Raises 401 on mismatch."""
+    if not _is_authorized_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+'''
 
-skills_shim = '''\n\ndef skills_categories(task_id: str = None) -> str:\n    """List available skill categories with counts and optional descriptions."""\n    try:\n        if not SKILLS_DIR.exists():\n            return json.dumps(\n                {\n                    "success": True,\n                    "categories": [],\n                    "count": 0,\n                    "hint": "No skills directory found yet.",\n                },\n                ensure_ascii=False,\n            )\n\n        all_skills = _find_all_skills()\n        buckets: Dict[str, Dict[str, Any]] = {}\n        for skill in all_skills:\n            category_name = skill.get("category") or "uncategorized"\n            bucket = buckets.setdefault(\n                category_name,\n                {\n                    "name": category_name,\n                    "count": 0,\n                    "description": None,\n                },\n            )\n            bucket["count"] += 1\n\n        for category_name, bucket in buckets.items():\n            if category_name == "uncategorized":\n                continue\n            category_dir = SKILLS_DIR / category_name\n            if category_dir.exists() and category_dir.is_dir():\n                bucket["description"] = _load_category_description(category_dir)\n\n        categories = sorted(buckets.values(), key=lambda c: c["name"])\n        return json.dumps(\n            {\n                "success": True,\n                "categories": categories,\n                "count": len(categories),\n                "hint": "Use skills_list(category=...) for skills in a category",\n            },\n            ensure_ascii=False,\n        )\n\n    except Exception as e:\n        return tool_error(str(e), success=False)\n'''
+if "def _is_authorized_request(request: Request) -> bool:" not in text:
+    if old_require not in text:
+        raise SystemExit("Could not find legacy _require_token block to patch")
+    text = text.replace(old_require, new_auth)
 
-if "def skills_categories(task_id: str = None) -> str:" not in skills_text:
-    marker = "\ndef skills_list(category: str = None, task_id: str = None) -> str:\n"
-    if marker not in skills_text:
-        raise RuntimeError("Could not find insertion point in skills_tool.py")
-    skills_text = skills_text.replace(marker, skills_shim + marker)
+old_middleware = '''        auth = request.headers.get("authorization", "")
+        expected = f"Bearer {_SESSION_TOKEN}"
+        if not hmac.compare_digest(auth.encode(), expected.encode()):
+            return JSONResponse(
+'''
+new_middleware = '''        if not _is_authorized_request(request):
+            return JSONResponse(
+'''
+if old_middleware in text:
+    text = text.replace(old_middleware, new_middleware)
 
-write_if_changed(skills, skills_text)
+if "from typing import Any, Dict, List, Optional" not in text and "List" not in text.split("\n", 80)[0:80]:
+    raise SystemExit("web_server.py typing imports do not expose List; inspect manually")
 
-print("PATCHED_FILES")
-if modified:
-    for item in modified:
-        print(item)
+old_allowed_roots = '''    allowed_roots = [
+        (Path.home() / "Documents" / "Hermes").resolve(),
+        (Path.home() / ".hermes" / "memories").resolve(),
+        (Path.home() / ".hermes" / "hermes-agent").resolve(),
+    ]
+'''
+new_allowed_roots = '''    allowed_roots = [
+        (Path.home() / "Documents" / "Hermes").resolve(),
+        (Path.home() / ".hermes").resolve(),
+    ]
+'''
+if old_allowed_roots in text:
+    text = text.replace(old_allowed_roots, new_allowed_roots)
+
+old_core_docs = '''    memories = home / ".hermes" / "memories"
+    agent_root = PROJECT_ROOT
+
+    core_candidates = [
+        memories / "MEMORY.md",
+        memories / "USER.md",
+        agent_root / "AGENTS.md",
+    ]
+'''
+new_core_docs = '''    hermes_home = home / ".hermes"
+
+    core_candidates = [
+        hermes_home / "SOUL.md",
+        hermes_home / "USER.md",
+        hermes_home / "AGENTS.md",
+        hermes_home / "memories" / "MEMORY.md",
+    ]
+'''
+if old_core_docs in text:
+    text = text.replace(old_core_docs, new_core_docs)
+
+if 'hermes_home / "SOUL.md"' not in text or 'hermes_home / "USER.md"' not in text or 'hermes_home / "AGENTS.md"' not in text:
+    raise SystemExit("web_server.py Knowledge core docs are not aligned to ~/.hermes/SOUL.md, USER.md, AGENTS.md")
+if '(Path.home() / ".hermes").resolve()' not in text:
+    raise SystemExit("web_server.py Knowledge file reader does not allow ~/.hermes root")
+
+if text != original:
+    path.write_text(text, encoding="utf-8")
+    print("PATCHED web_server.py")
 else:
-    print("none")
+    print("web_server.py already aligned")
 PY
+
+if ! grep -q "127.0.0.1:9119" "$VITE_CONFIG"; then
+  fail "Mission Control Vite proxy is not pointed at dashboard backend 9119"
+fi
+if ! grep -q "'/api/local'" "$VITE_CONFIG"; then
+  fail "Mission Control Vite proxy is missing /api/local before /api"
+fi
 
 log "Running syntax checks"
-python3 -m py_compile "$API_SERVER" "$MODEL_TOOLS" "$SKILLS_TOOL"
+python3 -m py_compile "$WEB_SERVER"
+bash -n "$SMOKE_SCRIPT" "$SCRIPT_DIR/run-dashboard-api.sh" "$SCRIPT_DIR/run-local-telemetry.sh"
 
-log "Restarting Hermes gateway"
-launchctl kickstart -k "gui/$(id -u)/ai.hermes.gateway"
+restart_job() {
+  local label="$1"
+  if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+    log "Restarting $label"
+    launchctl kickstart -k "gui/$(id -u)/$label"
+  else
+    log "LaunchAgent $label not loaded; skipping restart"
+  fi
+}
 
-log "Smoke checking Mission Control endpoints"
-python3 - <<'PY'
-import json
-import time
-import urllib.request
-import urllib.error
+restart_job ai.hermes.dashboard-api
+restart_job ai.hermes.mission-control-telemetry
+restart_job ai.hermes.mission-control
 
-bases = ["http://127.0.0.1:8642", "http://127.0.0.1:5174"]
-paths = ["tools", "skills", "config"]
+log "Smoke checking current Mission Control stack"
+"$SMOKE_SCRIPT" http://127.0.0.1:9119/api
+"$SMOKE_SCRIPT" http://127.0.0.1:5174/api
 
-def fetch_with_retry(url: str, attempts: int = 12, delay: float = 1.0):
-    last_err = None
-    for _ in range(attempts):
-        try:
-            with urllib.request.urlopen(url, timeout=8) as r:
-                return json.loads(r.read().decode("utf-8"))
-        except (urllib.error.URLError, ConnectionError) as e:
-            last_err = e
-            time.sleep(delay)
-    raise SystemExit(f"{url} unreachable after retries: {last_err}")
-
-for base in bases:
-    for p in paths:
-        url = f"{base}/api/mission-control/{p}"
-        data = fetch_with_retry(url)
-        if not data.get("success"):
-            raise SystemExit(f"{url} -> success=false")
-        if data.get("available") is not True:
-            raise SystemExit(f"{url} -> available is not True (got {data.get('available')!r})")
-        print(f"OK {url} available={data.get('available')}")
-PY
-
-log "Done. Core Mission Control compatibility fixes are applied and verified."
+log "Done. Mission Control is aligned to dashboard backend 9119 and verified through Vite 5174."

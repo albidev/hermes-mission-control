@@ -139,10 +139,10 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
 
   const gatewayActions = useMemo<MissionControlGatewayAction[]>(
     () => [
-      { id: 'refresh', label: 'Refresh snapshot', hint: 'Reload all live Mission Control data.', endpoint: '/api/mission-control', method: 'GET' },
-      { id: 'reload-config', label: 'Reload config', hint: 'Re-read config.yaml from disk.', endpoint: '/api/mission-control/config', method: 'GET' },
-      { id: 'probe-health', label: 'Probe gateway', hint: 'Hit /health to verify the gateway.', endpoint: '/health', method: 'GET' },
-      { id: 'restart-gateway', label: 'Restart gateway', hint: 'Request a safe process restart.', endpoint: '/api/mission-control/restart', method: 'POST' },
+      { id: 'refresh', label: 'Refresh snapshot', hint: 'Reload all live Mission Control data.', endpoint: '/api/status', method: 'GET' },
+      { id: 'reload-config', label: 'Reload config', hint: 'Re-read config.yaml from disk.', endpoint: '/api/config/raw', method: 'GET' },
+      { id: 'probe-health', label: 'Probe gateway', hint: 'Hit /api/status to verify the dashboard backend.', endpoint: '/api/status', method: 'GET' },
+      { id: 'restart-gateway', label: 'Restart gateway', hint: 'Request a safe process restart.', endpoint: '/api/gateway/restart', method: 'POST' },
     ],
     [],
   );
@@ -298,7 +298,13 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refreshAll(initialToken || undefined);
-    void refreshConfig(initialToken || undefined);
+    void refreshConfig(initialToken || undefined).catch((error) => {
+      if (error instanceof MissionControlAuthError) {
+        setAuthRequired(true);
+        setAuthError('Access token required to enter the cockpit.');
+        setConfig(getFallbackConfig());
+      }
+    });
     // Initial boot only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
