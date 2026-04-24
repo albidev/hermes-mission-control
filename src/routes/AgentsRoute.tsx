@@ -7,20 +7,19 @@ import { Modal } from '../components/Modal';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
 import {
   getFallbackCapabilities,
+  loadMissionControlAgentSessions,
   loadMissionControlAgentTrace,
   loadMissionControlCapabilities,
+  type MissionControlAgentSessionItem,
   type MissionControlAgentTraceEvent,
   type MissionControlAgentTraceSnapshot,
+  type MissionControlAgentRegistryItem,
   type MissionControlCapabilities,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 
-type AgentAggregate = {
+type AgentAggregate = MissionControlAgentRegistryItem & {
   id: string;
-  source: string;
-  model: string;
-  totalSessions: number;
-  liveSessions: number;
   totalMessages: number;
   lastActive: number;
 };
@@ -89,6 +88,7 @@ export function AgentsRoute() {
   const [liveMode, setLiveMode] = useState(true);
   const [liveTraceScope, setLiveTraceScope] = useState<LiveTraceScope>('current');
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
+  const [agentSessions, setAgentSessions] = useState<MissionControlAgentSessionItem[]>([]);
   const [trace, setTrace] = useState<MissionControlAgentTraceSnapshot | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [capabilities, setCapabilities] = useState<MissionControlCapabilities>(getFallbackCapabilities());
@@ -96,14 +96,14 @@ export function AgentsRoute() {
   const [selectedEvent, setSelectedEvent] = useState<MissionControlAgentTraceEvent | null>(null);
   const [rawPayloadViewer, setRawPayloadViewer] = useState<{ title: string; content: string } | null>(null);
 
-  const orderedSessions = useMemo(
-    () => [...snapshot.sessions.items].sort((a, b) => b.lastActive - a.lastActive),
-    [snapshot.sessions.items],
+  const orderedSessions = useMemo<MissionControlAgentSessionItem[]>(
+    () => [...agentSessions].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0)),
+    [agentSessions],
   );
 
   const trulyLiveSessions = useMemo(() => {
     const cutoff = Date.now() / 1000 - LIVE_FRESHNESS_SECONDS;
-    return orderedSessions.filter((session) => session.endedAt === null && session.lastActive >= cutoff);
+    return orderedSessions.filter((session) => session.status === 'live' && (session.lastActiveAt ?? 0) >= cutoff);
   }, [orderedSessions]);
 
   const baseSessions = liveMode ? trulyLiveSessions : orderedSessions;
@@ -120,7 +120,7 @@ export function AgentsRoute() {
     const preferred = liveRichSession ?? richSession ?? selectableSessions[0];
 
     if (preferred) {
-      setSelectedSessionId(preferred.id);
+      setSelectedSessionId(preferred.sessionId);
     }
   }, [selectableSessions, selectedSessionId]);
 
@@ -288,6 +288,26 @@ export function AgentsRoute() {
   }, [storedToken]);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resolved = await loadMissionControlAgentSessions(storedToken, 200);
+        if (!cancelled) {
+          setAgentSessions(resolved.items);
+        }
+      } catch {
+        if (!cancelled) {
+          setAgentSessions([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storedToken]);
+
+  useEffect(() => {
     setSseFallbackToPolling(false);
     setSelectedEvent(null);
   }, [selectedSessionId, liveMode]);
@@ -300,8 +320,8 @@ export function AgentsRoute() {
 
   useEffect(() => {
     if (!selectedSessionId) return;
-    if (selectableSessions.some((session) => session.id === selectedSessionId)) return;
-    setSelectedSessionId(selectableSessions[0]?.id ?? '');
+    if (selectableSessions.some((session) => session.sessionId === selectedSessionId)) return;
+    setSelectedSessionId(selectableSessions[0]?.sessionId ?? '');
   }, [selectedSessionId, selectableSessions]);
 
   useEffect(() => {
@@ -310,18 +330,18 @@ export function AgentsRoute() {
 
     const freshest = selectableSessions[0];
     if (!selectedSessionId) {
-      setSelectedSessionId(freshest.id);
+      setSelectedSessionId(freshest.sessionId);
       return;
     }
 
-    const current = selectableSessions.find((session) => session.id === selectedSessionId);
+    const current = selectableSessions.find((session) => session.sessionId === selectedSessionId);
     if (!current) {
-      setSelectedSessionId(freshest.id);
+      setSelectedSessionId(freshest.sessionId);
       return;
     }
 
-    if (freshest.id !== current.id && freshest.lastActive > current.lastActive + 5) {
-      setSelectedSessionId(freshest.id);
+    if (freshest.sessionId !== current.sessionId && (freshest.lastActiveAt ?? 0) > (current.lastActiveAt ?? 0) + 5) {
+      setSelectedSessionId(freshest.sessionId);
     }
   }, [liveMode, selectableSessions, selectedSessionId]);
 
@@ -329,28 +349,33 @@ export function AgentsRoute() {
     const map = new Map<string, AgentAggregate>();
 
     for (const session of orderedSessions) {
-      const source = session.source || 'unknown';
-      const model = session.model || 'unknown';
-      const key = getAgentKey(source, model);
+      const key = session.agentId;
       const current = map.get(key);
 
       if (!current) {
         map.set(key, {
           id: key,
-          source,
-          model,
+          agentId: key,
+          source: session.source,
+          model: session.model,
+          label: `${session.source} / ${session.model}`,
           totalSessions: 1,
-          liveSessions: session.endedAt === null ? 1 : 0,
+          liveSessions: session.status === 'live' ? 1 : 0,
+          lastActiveAt: session.lastActiveAt,
+          traceMode: session.traceMode,
           totalMessages: session.messageCount,
-          lastActive: session.lastActive,
+          lastActive: session.lastActiveAt ?? 0,
         });
         continue;
       }
 
       current.totalSessions += 1;
-      if (session.endedAt === null) current.liveSessions += 1;
+      if (session.status === 'live') current.liveSessions += 1;
       current.totalMessages += session.messageCount;
-      current.lastActive = Math.max(current.lastActive, session.lastActive);
+      current.lastActiveAt = Math.max(current.lastActiveAt ?? 0, session.lastActiveAt ?? 0) || null;
+      current.lastActive = Math.max(current.lastActive, session.lastActiveAt ?? 0);
+      if (current.traceMode !== 'native' && session.traceMode === 'native') current.traceMode = 'native';
+      else if (current.traceMode === 'unavailable' && session.traceMode === 'transcript') current.traceMode = 'transcript';
     }
 
     return [...map.values()].sort((a, b) => {
@@ -488,8 +513,8 @@ export function AgentsRoute() {
               {selectedAgent ? `Agent cockpit · ${selectedAgent.source}` : 'Runtime + trace chain (Timeline and DAG)'}
             </h2>
           </div>
-          <Badge variant={selectedAgent ? 'warning' : snapshot.activeAgents > 0 ? 'positive' : 'default'} dot>
-            {selectedAgent ? 'single-agent view' : `${snapshot.activeAgents} active`}
+          <Badge variant={selectedAgent ? 'warning' : registry.some((agent) => agent.liveSessions > 0) ? 'positive' : 'default'} dot>
+            {selectedAgent ? 'single-agent view' : `${registry.filter((agent) => agent.liveSessions > 0).length} active`}
           </Badge>
         </div>
 
@@ -497,8 +522,8 @@ export function AgentsRoute() {
           <MetricCard
             icon={Bot}
             label={selectedAgent ? 'Agent sessions' : 'Active agents'}
-            value={selectedAgent ? String(selectedAgent.totalSessions) : String(snapshot.activeAgents)}
-            hint={selectedAgent ? `${selectedAgent.model}` : 'current runtime'}
+            value={selectedAgent ? String(selectedAgent.totalSessions) : String(registry.filter((agent) => agent.liveSessions > 0).length)}
+            hint={selectedAgent ? `${selectedAgent.model}` : 'agents with live sessions'}
           />
           <MetricCard
             icon={Activity}
@@ -514,9 +539,9 @@ export function AgentsRoute() {
           />
           <MetricCard
             icon={Gauge}
-            label={selectedAgent ? 'Last active' : 'Tool calls'}
-            value={selectedAgent ? formatRelativeTime(selectedAgent.lastActive) : String(snapshot.sessions.toolCallsToday)}
-            hint={selectedAgent ? formatTimestamp(selectedAgent.lastActive) : 'today'}
+            label={selectedAgent ? 'Last active' : 'Tracked sessions'}
+            value={selectedAgent ? formatRelativeTime(selectedAgent.lastActive) : String(orderedSessions.length)}
+            hint={selectedAgent ? formatTimestamp(selectedAgent.lastActive) : 'filesystem + session adapter'}
           />
         </div>
       </Card>
@@ -614,8 +639,8 @@ export function AgentsRoute() {
                 </option>
               ) : null}
               {selectableSessions.map((session) => (
-                <option key={session.id} value={session.id}>
-                  {session.title} · {session.source} · {formatRelativeTime(session.lastActive)}
+                <option key={session.sessionId} value={session.sessionId}>
+                  {session.title} · {session.source} · {formatRelativeTime(session.lastActiveAt ?? session.startedAt ?? 0)}
                 </option>
               ))}
             </select>

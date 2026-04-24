@@ -83,7 +83,10 @@ export type MissionControlAgentTraceEdge = {
 
 export type MissionControlAgentTraceSnapshot = {
   success: boolean;
+  schemaVersion?: string;
+  available?: boolean;
   mode: 'live' | 'post';
+  traceMode?: MissionControlTraceMode;
   session: MissionControlSessionItem | null;
   events: MissionControlAgentTraceEvent[];
   nodes: MissionControlAgentTraceNode[];
@@ -96,6 +99,7 @@ export type MissionControlAgentTraceSnapshot = {
     errors: number;
     durationSeconds: number;
   };
+  warnings?: string[];
 };
 
 export type MissionControlCronJob = {
@@ -291,6 +295,68 @@ export type MissionControlCapabilities = {
     stream: boolean;
     compact: boolean;
     namedSseTraceEvent: boolean;
+  };
+  traceModes: MissionControlTraceMode[];
+};
+
+export type MissionControlTraceMode = 'native' | 'transcript' | 'unavailable';
+export type MissionControlAgentSessionStatus = 'live' | 'idle' | 'ended';
+
+export type MissionControlAgentRegistryItem = {
+  agentId: string;
+  source: string;
+  model: string;
+  label: string;
+  totalSessions: number;
+  liveSessions: number;
+  lastActiveAt: number | null;
+  traceMode: MissionControlTraceMode;
+};
+
+export type MissionControlAgentsSnapshot = {
+  success: boolean;
+  schemaVersion: string;
+  available: boolean;
+  capabilities: {
+    trace:
+      | boolean
+      | {
+          stream?: boolean;
+          compact?: boolean;
+          namedSseTraceEvent?: boolean;
+        };
+    traceModes: MissionControlTraceMode[];
+  };
+  items: MissionControlAgentRegistryItem[];
+};
+
+export type MissionControlAgentSessionItem = {
+  sessionId: string;
+  agentId: string;
+  title: string;
+  source: string;
+  platform: string;
+  chatType: string;
+  displayName: string;
+  model: string;
+  startedAt: number | null;
+  lastActiveAt: number | null;
+  endedAt: number | null;
+  status: MissionControlAgentSessionStatus;
+  messageCount: number;
+  traceMode: MissionControlTraceMode;
+  preview: string;
+};
+
+export type MissionControlAgentsSessionsSnapshot = {
+  success: boolean;
+  schemaVersion: string;
+  available: boolean;
+  items: MissionControlAgentSessionItem[];
+  stats: {
+    totalSessions: number;
+    liveSessions: number;
+    activeAgents: number;
   };
 };
 
@@ -524,7 +590,10 @@ const fallbackLogs: MissionControlLogsSnapshot = {
 
 const fallbackAgentTrace: MissionControlAgentTraceSnapshot = {
   success: true,
+  schemaVersion: 'core-safe-v1',
+  available: false,
   mode: 'post',
+  traceMode: 'unavailable',
   session: null,
   events: [],
   nodes: [],
@@ -537,6 +606,7 @@ const fallbackAgentTrace: MissionControlAgentTraceSnapshot = {
     errors: 0,
     durationSeconds: 0,
   },
+  warnings: ['Agent trace unavailable.'],
 };
 
 const fallbackCapabilities: MissionControlCapabilities = {
@@ -546,6 +616,7 @@ const fallbackCapabilities: MissionControlCapabilities = {
     compact: false,
     namedSseTraceEvent: false,
   },
+  traceModes: ['native', 'transcript', 'unavailable'],
 };
 
 const fallbackSnapshot: MissionControlSnapshot = {
@@ -677,18 +748,126 @@ function pickTraceCandidate(input: unknown): Partial<MissionControlAgentTraceSna
 function normalizeCapabilities(input: unknown): MissionControlCapabilities {
   if (!input || typeof input !== 'object') return fallbackCapabilities;
   const candidate = input as Record<string, unknown>;
-  const trace = (candidate.trace && typeof candidate.trace === 'object' ? candidate.trace : {}) as Record<string, unknown>;
+  const rawTrace = candidate.trace;
+  const trace = (rawTrace && typeof rawTrace === 'object' ? rawTrace : {}) as Record<string, unknown>;
+  const traceEnabled = typeof rawTrace === 'boolean' ? rawTrace : null;
+  const traceModes = Array.isArray(candidate.traceModes)
+    ? candidate.traceModes.map((mode) => normalizeTraceMode(mode))
+    : fallbackCapabilities.traceModes;
 
   return {
     schemaVersion: typeof candidate.schemaVersion === 'string' && candidate.schemaVersion ? candidate.schemaVersion : fallbackCapabilities.schemaVersion,
     trace: {
-      stream: typeof trace.stream === 'boolean' ? trace.stream : fallbackCapabilities.trace.stream,
-      compact: typeof trace.compact === 'boolean' ? trace.compact : fallbackCapabilities.trace.compact,
+      stream: typeof trace.stream === 'boolean' ? trace.stream : (traceEnabled ?? fallbackCapabilities.trace.stream),
+      compact: typeof trace.compact === 'boolean' ? trace.compact : (traceEnabled ?? fallbackCapabilities.trace.compact),
       namedSseTraceEvent:
         typeof trace.namedSseTraceEvent === 'boolean'
           ? trace.namedSseTraceEvent
-          : fallbackCapabilities.trace.namedSseTraceEvent,
+          : (traceEnabled ?? fallbackCapabilities.trace.namedSseTraceEvent),
     },
+    traceModes,
+  };
+}
+
+function getAgentKey(source?: string, model?: string): string {
+  return `${source || 'unknown'}::${model || 'unknown'}`;
+}
+
+function normalizeTraceMode(value: unknown): MissionControlTraceMode {
+  return value === 'native' || value === 'transcript' || value === 'unavailable' ? value : 'unavailable';
+}
+
+function normalizeAgentRegistryItem(input: Record<string, unknown> | undefined): MissionControlAgentRegistryItem {
+  return {
+    agentId: readString(input?.agentId, getAgentKey(readString(input?.source), readString(input?.model))),
+    source: readString(input?.source, 'unknown'),
+    model: readString(input?.model, 'unknown'),
+    label: readString(input?.label, `${readString(input?.source, 'unknown')} / ${readString(input?.model, 'unknown')}`),
+    totalSessions: readNumber(input?.totalSessions, 0),
+    liveSessions: readNumber(input?.liveSessions, 0),
+    lastActiveAt: input?.lastActiveAt === null || input?.lastActiveAt === undefined ? null : readNumber(input?.lastActiveAt, 0),
+    traceMode: normalizeTraceMode(input?.traceMode),
+  };
+}
+
+function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): MissionControlAgentSessionItem {
+  const source = readString(input?.source, 'unknown');
+  const model = readString(input?.model, 'unknown');
+  return {
+    sessionId: readString(input?.sessionId, readString(input?.id, 'unknown-session')),
+    agentId: readString(input?.agentId, getAgentKey(source, model)),
+    title: readString(input?.title, 'Untitled session'),
+    source,
+    platform: readString(input?.platform, source),
+    chatType: readString(input?.chatType, 'unknown'),
+    displayName: readString(input?.displayName, 'Unknown session'),
+    model,
+    startedAt: input?.startedAt === null || input?.startedAt === undefined ? null : readNumber(input?.startedAt, 0),
+    lastActiveAt: input?.lastActiveAt === null || input?.lastActiveAt === undefined ? null : readNumber(input?.lastActiveAt, 0),
+    endedAt: input?.endedAt === null || input?.endedAt === undefined ? null : readNumber(input?.endedAt, 0),
+    status: input?.status === 'live' || input?.status === 'idle' || input?.status === 'ended' ? input.status : 'idle',
+    messageCount: readNumber(input?.messageCount, 0),
+    traceMode: normalizeTraceMode(input?.traceMode),
+    preview: readString(input?.preview),
+  };
+}
+
+function normalizeAgentSessionsSnapshot(input: OfficialMissionControlAgentSessionsPayload | null | undefined): MissionControlAgentsSessionsSnapshot {
+  const items = Array.isArray(input?.items) ? input.items.filter(isRecord).map((item) => normalizeAgentSessionItem(item)) : [];
+  return {
+    success: input?.success ?? true,
+    schemaVersion: readString(input?.schemaVersion, '1'),
+    available: input?.available ?? true,
+    items,
+    stats: {
+      totalSessions: readNumber(input?.stats?.totalSessions, items.length),
+      liveSessions: readNumber(input?.stats?.liveSessions, items.filter((item) => item.status === 'live').length),
+      activeAgents: readNumber(input?.stats?.activeAgents, new Set(items.filter((item) => item.status === 'live').map((item) => item.agentId)).size),
+    },
+  };
+}
+
+function normalizeAgentsSnapshot(input: OfficialMissionControlAgentsPayload | null | undefined): MissionControlAgentsSnapshot {
+  const items = Array.isArray(input?.items) ? input.items.filter(isRecord).map((item) => normalizeAgentRegistryItem(item)) : [];
+  const traceModes = Array.isArray(input?.capabilities?.traceModes)
+    ? input.capabilities.traceModes.map((mode) => normalizeTraceMode(mode))
+    : fallbackCapabilities.traceModes ?? ['native', 'transcript', 'unavailable'];
+
+  return {
+    success: input?.success ?? true,
+    schemaVersion: readString(input?.schemaVersion, '1'),
+    available: input?.available ?? true,
+    capabilities: {
+      trace: typeof input?.capabilities?.trace === 'boolean' ? input.capabilities.trace : true,
+      traceModes,
+    },
+    items,
+  };
+}
+
+function normalizeTraceSessionRef(input: Record<string, unknown> | null | undefined): MissionControlAgentTraceSnapshot['session'] {
+  if (!input) return null;
+  return {
+    id: readString(input.sessionId, readString(input.id, 'unknown-session')),
+    source: readString(input.source, 'unknown'),
+    model: readString(input.model, 'unknown'),
+    title: readString(input.title, 'Untitled session'),
+    startedAt: input.startedAt === null || input.startedAt === undefined ? 0 : readNumber(input.startedAt, 0),
+    endedAt: null,
+    messageCount: 0,
+    preview: '',
+    lastActive: input.lastActiveAt === null || input.lastActiveAt === undefined ? 0 : readNumber(input.lastActiveAt, 0),
+  };
+}
+
+function normalizeAgentTracePayload(input: Partial<MissionControlAgentTraceSnapshot> | undefined): MissionControlAgentTraceSnapshot {
+  const normalized = normalizeAgentTrace(input);
+  const record = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  return {
+    ...normalized,
+    session: normalizeTraceSessionRef(record.session as Record<string, unknown> | null | undefined),
+    traceMode: normalizeTraceMode(record.traceMode),
+    warnings: Array.isArray(record.warnings) ? record.warnings.filter((item): item is string => typeof item === 'string') : [],
   };
 }
 
@@ -697,7 +876,10 @@ function normalizeAgentTrace(input: Partial<MissionControlAgentTraceSnapshot> | 
 
   return {
     success: Boolean(input.success ?? true),
+    schemaVersion: input.schemaVersion ?? fallbackAgentTrace.schemaVersion,
+    available: input.available ?? fallbackAgentTrace.available,
     mode: input.mode === 'live' ? 'live' : 'post',
+    traceMode: normalizeTraceMode(input.traceMode),
     session: input.session ? normalizeSessionItem(input.session as Partial<MissionControlSessionItem>) : null,
     events: (input.events ?? fallbackAgentTrace.events).map((event, index) => ({
       id: event?.id ?? `event-${index + 1}`,
@@ -737,6 +919,7 @@ function normalizeAgentTrace(input: Partial<MissionControlAgentTraceSnapshot> | 
       errors: Number(input.stats?.errors ?? 0),
       durationSeconds: Number(input.stats?.durationSeconds ?? 0),
     },
+    warnings: input.warnings ?? fallbackAgentTrace.warnings,
   };
 }
 
@@ -1005,6 +1188,29 @@ type OfficialSessionsPayload = {
   total?: number;
 };
 
+type OfficialMissionControlAgentsPayload = {
+  success?: boolean;
+  schemaVersion?: string;
+  available?: boolean;
+  capabilities?: {
+    trace?: boolean;
+    traceModes?: string[];
+  };
+  items?: Array<Record<string, unknown>>;
+};
+
+type OfficialMissionControlAgentSessionsPayload = {
+  success?: boolean;
+  schemaVersion?: string;
+  available?: boolean;
+  items?: Array<Record<string, unknown>>;
+  stats?: {
+    totalSessions?: number;
+    liveSessions?: number;
+    activeAgents?: number;
+  };
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -1079,6 +1285,30 @@ async function fetchOfficialModelInfo(accessToken?: string): Promise<OfficialMod
 
 async function fetchOfficialSessions(accessToken?: string, limit = 50): Promise<OfficialSessionsPayload | null> {
   return await maybeFetchOfficialJson<OfficialSessionsPayload>(`/sessions?limit=${limit}&offset=0`, accessToken);
+}
+
+async function fetchMissionControlAgents(accessToken?: string): Promise<OfficialMissionControlAgentsPayload | null> {
+  return await maybeFetchOfficialJson<OfficialMissionControlAgentsPayload>('/mission-control/agents', accessToken);
+}
+
+async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100): Promise<OfficialMissionControlAgentSessionsPayload | null> {
+  return await maybeFetchOfficialJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}`, accessToken);
+}
+
+async function fetchMissionControlAgentTrace(
+  sessionId?: string,
+  accessToken?: string,
+  limit = 300,
+  compact = false,
+): Promise<Partial<MissionControlAgentTraceSnapshot> | null> {
+  const params = new URLSearchParams();
+  if (sessionId) params.set('session_id', sessionId);
+  params.set('limit', String(limit));
+  if (compact) params.set('compact', '1');
+  return await maybeFetchOfficialJson<Partial<MissionControlAgentTraceSnapshot>>(
+    `/mission-control/agents/trace?${params.toString()}`,
+    accessToken,
+  );
 }
 
 function formatModelRef(model: string | null | undefined, provider?: string | null, baseUrl?: string | null): string {
@@ -1393,13 +1623,44 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
   }
 }
 
+export async function loadMissionControlAgentSessions(accessToken?: string, limit = 100): Promise<MissionControlAgentsSessionsSnapshot> {
+  const payload = await fetchMissionControlAgentSessions(accessToken, limit);
+  return normalizeAgentSessionsSnapshot(payload);
+}
+
 export async function loadMissionControlSessions(accessToken?: string): Promise<MissionControlSessionsSnapshot> {
   try {
-    const [payload, status] = await Promise.all([
+    const payload = await fetchMissionControlAgentSessions(accessToken, 200);
+    if (payload) {
+      const normalized = normalizeAgentSessionsSnapshot(payload);
+      const items = normalized.items.map((item) =>
+        normalizeSessionItem({
+          id: item.sessionId,
+          source: item.source,
+          model: item.model,
+          title: item.title,
+          startedAt: item.startedAt ?? 0,
+          endedAt: item.endedAt,
+          messageCount: item.messageCount,
+          preview: item.preview,
+          lastActive: item.lastActiveAt ?? item.startedAt ?? 0,
+        }),
+      );
+      const totalMessages = items.reduce((total, item) => total + item.messageCount, 0);
+      return normalizeSessions({
+        totalSessions: normalized.stats.totalSessions,
+        totalMessages,
+        activeAgents: normalized.stats.activeAgents,
+        toolCallsToday: fallbackSessions.toolCallsToday,
+        items,
+      });
+    }
+
+    const [legacyPayload, status] = await Promise.all([
       fetchOfficialSessions(accessToken, 50),
       fetchOfficialStatus(accessToken),
     ]);
-    return deriveSessionsSnapshot(payload, status);
+    return deriveSessionsSnapshot(legacyPayload, status);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1409,24 +1670,44 @@ export async function loadMissionControlSessions(accessToken?: string): Promise<
   }
 }
 
-export async function loadMissionControlCapabilities(_accessToken?: string): Promise<MissionControlCapabilities> {
-  return normalizeCapabilities({
-    schemaVersion: 'core-safe-v1',
-    trace: {
-      stream: false,
-      compact: false,
-      namedSseTraceEvent: false,
-    },
-  });
+export async function loadMissionControlCapabilities(accessToken?: string): Promise<MissionControlCapabilities> {
+  try {
+    const payload = await fetchMissionControlAgents(accessToken);
+    if (payload) {
+      return normalizeCapabilities({
+        schemaVersion: payload.schemaVersion ?? fallbackCapabilities.schemaVersion,
+        trace: payload.capabilities?.trace,
+        traceModes: payload.capabilities?.traceModes ?? fallbackCapabilities.traceModes,
+      });
+    }
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) {
+      throw error;
+    }
+  }
+
+  return fallbackCapabilities;
 }
 
 export async function loadMissionControlAgentTrace(
-  _sessionId?: string,
-  _accessToken?: string,
-  _limit = 300,
-  _compact = false,
+  sessionId?: string,
+  accessToken?: string,
+  limit = 300,
+  compact = false,
 ): Promise<MissionControlAgentTraceSnapshot> {
-  return fallbackAgentTrace;
+  try {
+    const payload = await fetchMissionControlAgentTrace(sessionId, accessToken, limit, compact);
+    if (payload) {
+      return normalizeAgentTracePayload(payload);
+    }
+    return normalizeAgentTracePayload(fallbackAgentTrace);
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) {
+      throw error;
+    }
+
+    return normalizeAgentTracePayload(fallbackAgentTrace);
+  }
 }
 
 export async function loadMissionControlCron(accessToken?: string): Promise<MissionControlCronSnapshot> {
