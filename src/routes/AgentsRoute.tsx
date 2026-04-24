@@ -410,7 +410,8 @@ export function AgentsRoute() {
       return;
     }
 
-    const base = (import.meta.env.VITE_HERMES_API_BASE_URL || '/api').replace(/\/$/, '');
+    const localBase = (import.meta.env.VITE_MISSION_CONTROL_LOCAL_API_BASE_URL || '/api/local').replace(/\/$/, '');
+    const officialBase = (import.meta.env.VITE_HERMES_API_BASE_URL || '/api').replace(/\/$/, '');
     const params = new URLSearchParams();
     if (selectedSessionId) params.set('session_id', selectedSessionId);
     params.set('limit', String(LIVE_TRACE_LIMIT));
@@ -421,7 +422,19 @@ export function AgentsRoute() {
     }
 
     setTraceLoading(true);
-    const source = new EventSource(`${base}/mission-control/agents/trace/stream?${params.toString()}`, { withCredentials: true });
+    const streamCandidates = [
+      {
+        url: `${localBase}/mission-control/agents/trace/stream?${params.toString()}`,
+      },
+      {
+        url: `${officialBase}/mission-control/agents/trace/stream?${new URLSearchParams(
+          Array.from(params.entries()).filter(([key]) => key !== 'access_token'),
+        ).toString()}`,
+      },
+    ].filter((candidate, index, array) => array.findIndex((item) => item.url === candidate.url) === index);
+
+    let candidateIndex = 0;
+    let source: EventSource | null = null;
 
     const handleTraceFrame = (rawData: string) => {
       try {
@@ -433,29 +446,35 @@ export function AgentsRoute() {
       }
     };
 
-    source.onmessage = (event) => {
-      handleTraceFrame(event.data);
+    const connect = (index: number) => {
+      source?.close();
+      source = new EventSource(streamCandidates[index].url, { withCredentials: true });
+      source.onmessage = (event) => {
+        handleTraceFrame(event.data);
+      };
+
+      if (capabilities.trace.namedSseTraceEvent) {
+        source.addEventListener('trace', (event) => {
+          const messageEvent = event as MessageEvent<string>;
+          handleTraceFrame(messageEvent.data);
+        });
+      }
+
+      source.onerror = () => {
+        source?.close();
+        if (candidateIndex + 1 < streamCandidates.length) {
+          candidateIndex += 1;
+          connect(candidateIndex);
+          return;
+        }
+        setSseFallbackToPolling(true);
+      };
     };
 
-    if (capabilities.trace.namedSseTraceEvent) {
-      source.addEventListener('trace', (event) => {
-        const messageEvent = event as MessageEvent<string>;
-        handleTraceFrame(messageEvent.data);
-      });
-    }
-
-    source.addEventListener('error', () => {
-      source.close();
-      setSseFallbackToPolling(true);
-    });
-
-    source.onerror = () => {
-      source.close();
-      setSseFallbackToPolling(true);
-    };
+    connect(candidateIndex);
 
     return () => {
-      source.close();
+      source?.close();
     };
   }, [selectedSessionId, liveMode, storedToken, sseFallbackToPolling, selectableSessions.length, capabilities]);
 

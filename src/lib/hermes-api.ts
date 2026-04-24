@@ -646,8 +646,16 @@ function apiBaseUrl() {
   return import.meta.env.VITE_HERMES_API_BASE_URL || '/api';
 }
 
+function localApiBaseUrl() {
+  return import.meta.env.VITE_MISSION_CONTROL_LOCAL_API_BASE_URL || '/api/local';
+}
+
 function apiUrl(path: string) {
   return `${apiBaseUrl().replace(/\/$/, '')}${path}`;
+}
+
+function localApiUrl(path: string) {
+  return `${localApiBaseUrl().replace(/\/$/, '')}${path}`;
 }
 
 function buildHeaders(accessToken?: string): Record<string, string> {
@@ -1266,6 +1274,31 @@ async function fetchOfficialJson<T>(path: string, accessToken?: string): Promise
   return await parseResponse<T>(response, path.replace(/^\//, ''));
 }
 
+async function maybeFetchLocalJson<T>(
+  path: string,
+  accessToken?: string,
+): Promise<{ payload: T | null; response: Response | null }> {
+  try {
+    const response = await fetch(localApiUrl(path), {
+      headers: buildHeaders(accessToken),
+      cache: 'no-store',
+    });
+
+    if (response.status === 401) {
+      throw new MissionControlAuthError();
+    }
+
+    if (!response.ok) {
+      return { payload: null, response };
+    }
+
+    return { payload: await response.json() as T, response };
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) throw error;
+    return { payload: null, response: null };
+  }
+}
+
 async function maybeFetchOfficialJson<T>(path: string, accessToken?: string): Promise<T | null> {
   try {
     return await fetchOfficialJson<T>(path, accessToken);
@@ -1288,10 +1321,14 @@ async function fetchOfficialSessions(accessToken?: string, limit = 50): Promise<
 }
 
 async function fetchMissionControlAgents(accessToken?: string): Promise<OfficialMissionControlAgentsPayload | null> {
+  const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentsPayload>('/mission-control/agents', accessToken);
+  if (local) return local;
   return await maybeFetchOfficialJson<OfficialMissionControlAgentsPayload>('/mission-control/agents', accessToken);
 }
 
 async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100): Promise<OfficialMissionControlAgentSessionsPayload | null> {
+  const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}`, accessToken);
+  if (local) return local;
   return await maybeFetchOfficialJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}`, accessToken);
 }
 
@@ -1305,6 +1342,11 @@ async function fetchMissionControlAgentTrace(
   if (sessionId) params.set('session_id', sessionId);
   params.set('limit', String(limit));
   if (compact) params.set('compact', '1');
+  const { payload: local } = await maybeFetchLocalJson<Partial<MissionControlAgentTraceSnapshot>>(
+    `/mission-control/agents/trace?${params.toString()}`,
+    accessToken,
+  );
+  if (local) return local;
   return await maybeFetchOfficialJson<Partial<MissionControlAgentTraceSnapshot>>(
     `/mission-control/agents/trace?${params.toString()}`,
     accessToken,
@@ -1574,7 +1616,7 @@ export async function loadMissionControlSnapshot(accessToken?: string): Promise<
 
 async function loadLocalMissionControlMachineStatus(accessToken?: string): Promise<MissionControlMachineStatus | null> {
   try {
-    const response = await fetch('/api/local/system', {
+    const response = await fetch(localApiUrl('/system'), {
       headers: buildHeaders(accessToken),
       cache: 'no-store',
     });
@@ -1745,8 +1787,16 @@ export async function loadMissionControlAlerts(accessToken?: string): Promise<Mi
 
 export async function loadMissionControlKnowledge(accessToken?: string): Promise<MissionControlKnowledgeSnapshot> {
   try {
-    const payload = await fetchOfficialJson<Partial<MissionControlKnowledgeSnapshot>>('/knowledge', accessToken);
-    return normalizeKnowledge(payload);
+    const { payload, response } = await maybeFetchLocalJson<Partial<MissionControlKnowledgeSnapshot>>('/knowledge', accessToken);
+    if (payload) {
+      return normalizeKnowledge(payload);
+    }
+    if (response && response.status < 500 && response.status !== 404) {
+      return normalizeKnowledge(fallbackKnowledge);
+    }
+
+    const officialPayload = await fetchOfficialJson<Partial<MissionControlKnowledgeSnapshot>>('/knowledge', accessToken);
+    return normalizeKnowledge(officialPayload);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1760,6 +1810,37 @@ export async function loadMissionControlKnowledgeFile(
   sourcePath: string,
   accessToken?: string,
 ): Promise<MissionControlKnowledgeFilePayload> {
+  try {
+    const { payload, response } = await maybeFetchLocalJson<MissionControlKnowledgeFilePayload>(
+      `/knowledge/file?path=${encodeURIComponent(sourcePath)}`,
+      accessToken,
+    );
+
+    if (payload) {
+      return {
+        ...payload,
+        path: redactHomePath(payload.path) ?? payload.path,
+        sourcePath: redactHomePath(payload.sourcePath) ?? payload.sourcePath,
+      };
+    }
+
+    if (response) {
+      if (response.status === 403) {
+        throw new Error('Knowledge file API returned 403');
+      }
+      if (response.status < 500 && response.status !== 404) {
+        throw new Error(`Knowledge file API returned ${response.status}`);
+      }
+    }
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) {
+      throw error;
+    }
+    if (error instanceof Error && /Knowledge file API returned/.test(error.message)) {
+      throw error;
+    }
+  }
+
   const response = await fetch(apiUrl(`/knowledge/file?path=${encodeURIComponent(sourcePath)}`), {
     headers: buildHeaders(accessToken),
     cache: 'no-store',
