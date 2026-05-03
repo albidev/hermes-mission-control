@@ -1960,11 +1960,9 @@ export async function loadMissionControlConfig(accessToken?: string): Promise<Mi
       updatedAt: readNullableString(status?.gateway_updated_at),
       config: parsedConfig ?? {},
     });
-  } catch (error) {
-    if (error instanceof MissionControlAuthError) {
-      throw error;
-    }
-
+  } catch (_error) {
+    // Config is optional reference data. If the official dashboard auth drifts
+    // after a restart, degrade here instead of locking the whole cockpit.
     return fallbackConfig;
   }
 }

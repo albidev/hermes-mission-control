@@ -7,6 +7,8 @@ if [[ -z "$TOKEN" ]]; then
   TOKEN="${API_SERVER_KEY:-$(launchctl getenv API_SERVER_KEY 2>/dev/null || true)}"
 fi
 
+PROXY_BASE="http://127.0.0.1:5174/api"
+
 pass() { echo "[OK] $1"; }
 warn() { echo "[WARN] $1"; }
 fail() { echo "[FAIL] $1"; exit 1; }
@@ -34,14 +36,32 @@ request() {
   return 1
 }
 
-echo "[smoke] API base: $API_BASE"
+echo "[smoke] Running health checks..."
+echo "[smoke] API base (direct): $API_BASE"
+echo "[smoke] API base (proxy) : $PROXY_BASE"
 if [[ -n "$TOKEN" ]]; then
-  echo "[smoke] auth token present"
+  echo "[smoke] Auth token: present"
 else
-  echo "[smoke] no auth token present"
+  echo "[smoke] Auth token: MISSING — tokenless tests only"
 fi
 
-request "$API_BASE/status" >/dev/null && pass "status reachable" || fail "status unreachable"
-request "$API_BASE/mission-control/agents" >/dev/null && pass "agents reachable" || fail "agents unreachable"
-request "$API_BASE/mission-control/sessions?limit=3" >/dev/null && pass "sessions reachable" || fail "sessions unreachable"
-request "$API_BASE/mission-control/agents/trace?limit=5&compact=1" >/dev/null && pass "trace reachable" || fail "trace unreachable"
+echo ""
+echo "--- Direct backend tests (:9119) ---"
+request "$API_BASE/status" >/dev/null       && pass "status reachable"       || fail "status unreachable"
+request "$API_BASE/tools/toolsets" >/dev/null && pass "toolsets reachable"     || fail "toolsets unreachable"
+request "$API_BASE/skills" >/dev/null       && pass "skills reachable"       || fail "skills unreachable"
+request "$API_BASE/config" >/dev/null       && pass "config reachable"       || fail "config unreachable"
+request "$API_BASE/cron/jobs" >/dev/null    && pass "cron reachable"         || fail "cron unreachable"
+request "$API_BASE/local/system" >/dev/null && pass "system reachable"       || fail "system unreachable"
+
+echo ""
+echo "--- Frontend proxy tests (:5174) ---"
+request "$PROXY_BASE/status" >/dev/null       && pass "proxy status reachable"       || fail "proxy status unreachable"
+request "$PROXY_BASE/tools/toolsets" >/dev/null && pass "proxy toolsets reachable"   || fail "proxy toolsets unreachable"
+request "$PROXY_BASE/skills" >/dev/null       && pass "proxy skills reachable"       || fail "proxy skills unreachable"
+request "$PROXY_BASE/config" >/dev/null       && pass "proxy config reachable"       || fail "proxy config unreachable"
+request "$PROXY_BASE/cron/jobs" >/dev/null    && pass "proxy cron reachable"         || fail "proxy cron unreachable"
+request "$PROXY_BASE/local/system" >/dev/null && pass "proxy system reachable"       || fail "proxy system unreachable"
+
+echo ""
+echo "[smoke] All tests passed."

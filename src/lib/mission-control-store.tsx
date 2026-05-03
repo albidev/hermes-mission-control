@@ -300,8 +300,9 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     void refreshAll(initialToken || undefined);
     void refreshConfig(initialToken || undefined).catch((error) => {
       if (error instanceof MissionControlAuthError) {
-        setAuthRequired(true);
-        setAuthError('Access token required to enter the cockpit.');
+        // Config is optional. Keep the cockpit live even if the config surface rejects auth.
+        setAuthRequired(false);
+        setAuthError(null);
         setConfig(getFallbackConfig());
       }
     });
@@ -355,10 +356,14 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     setStoredToken(nextToken);
     setTokenDraft(nextToken);
     persistStoredValue(MISSION_CONTROL_TOKEN_STORAGE_KEY, nextToken);
-    await Promise.all([
-      refreshAll(nextToken || undefined),
-      refreshConfig(nextToken || undefined),
-    ]);
+    await refreshAll(nextToken || undefined);
+    await refreshConfig(nextToken || undefined).catch((error) => {
+      if (error instanceof MissionControlAuthError) {
+        setConfig(getFallbackConfig());
+        return;
+      }
+      throw error;
+    });
   }, [refreshAll, refreshConfig]);
 
   const logout = useCallback(() => {
