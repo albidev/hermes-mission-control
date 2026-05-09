@@ -643,7 +643,7 @@ const fallbackSnapshot: MissionControlSnapshot = {
 
 
 function apiBaseUrl() {
-  return import.meta.env.VITE_HERMES_API_BASE_URL || '/api';
+  return localApiBaseUrl();
 }
 
 function localApiBaseUrl() {
@@ -655,7 +655,7 @@ function apiUrl(path: string) {
 }
 
 function localApiUrl(path: string) {
-  return `${localApiBaseUrl().replace(/\/$/, '')}${path}`;
+  return apiUrl(path);
 }
 
 function buildHeaders(accessToken?: string): Record<string, string> {
@@ -1328,8 +1328,7 @@ async function fetchMissionControlAgents(accessToken?: string): Promise<Official
 
 async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100): Promise<OfficialMissionControlAgentSessionsPayload | null> {
   const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}`, accessToken);
-  if (local) return local;
-  return await maybeFetchOfficialJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}`, accessToken);
+  return local ?? null;
 }
 
 async function fetchMissionControlAgentTrace(
@@ -1580,13 +1579,13 @@ function deriveRecentSignals(
 
 export async function loadMissionControlSnapshot(accessToken?: string): Promise<MissionControlSnapshot> {
   try {
-    const [status, modelInfo, configRaw, sessions, cron, machine] = await Promise.all([
-      fetchOfficialStatus(accessToken),
-      fetchOfficialModelInfo(accessToken),
-      maybeFetchOfficialJson<Record<string, unknown>>('/config', accessToken),
-      loadMissionControlSessions(accessToken),
+    const [status, modelInfo, configRaw, machine, sessions, cron] = await Promise.all([
+      maybeFetchLocalJson<OfficialStatusPayload>('/status', accessToken).then((r) => r.payload),
+      maybeFetchLocalJson<OfficialModelInfoPayload>('/model/info', accessToken).then((r) => r.payload),
+      maybeFetchLocalJson<Record<string, unknown>>('/config', accessToken).then((r) => r.payload),
+      loadLocalMissionControlMachineStatus(accessToken),
+      fetchMissionControlAgentSessions(accessToken, 50),
       loadMissionControlCron(accessToken),
-      loadMissionControlMachineStatus(accessToken),
     ]);
 
     const alerts = deriveAlerts(status, machine, sessions, cron);
@@ -1646,15 +1645,12 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
   }
 
   try {
-    const status = await fetchOfficialStatus(accessToken);
-    const gatewayRunning = readBoolean(status?.gateway_running, false);
+    // No official backend available; return local-only degraded status
     return normalizeMachineStatus({
       ...fallbackMachine,
-      source: 'core-api',
-      health: gatewayRunning ? 'degraded' : 'offline',
-      summary: gatewayRunning
-        ? 'Local telemetry unavailable; gateway is reachable via core API only.'
-        : 'Local telemetry unavailable and gateway is offline.',
+      source: 'local-psutil',
+      health: 'degraded',
+      summary: 'Local telemetry active; no official backend connected.',
     });
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
@@ -1699,8 +1695,8 @@ export async function loadMissionControlSessions(accessToken?: string): Promise<
     }
 
     const [legacyPayload, status] = await Promise.all([
-      fetchOfficialSessions(accessToken, 50),
-      fetchOfficialStatus(accessToken),
+      fetchMissionControlAgentSessions(accessToken, 50),
+      maybeFetchLocalJson<OfficialStatusPayload>('/status', accessToken).then((r) => r.payload),
     ]);
     return deriveSessionsSnapshot(legacyPayload, status);
   } catch (error) {
@@ -1754,7 +1750,7 @@ export async function loadMissionControlAgentTrace(
 
 export async function loadMissionControlCron(accessToken?: string): Promise<MissionControlCronSnapshot> {
   try {
-    const jobs = await fetchOfficialJson<Array<Record<string, unknown>>>('/cron/jobs', accessToken);
+    const { payload: jobs } = await maybeFetchLocalJson<Array<Record<string, unknown>>>('/cron/jobs', accessToken);
     const items = Array.isArray(jobs) ? jobs.filter(isRecord).map((job) => normalizeOfficialCronJob(job)) : [];
     const queuedJobs = items.filter((job) => job.enabled && job.state !== 'paused' && Boolean(job.nextRunAt)).length;
     return normalizeCron({ queuedJobs, items });
@@ -1770,12 +1766,12 @@ export async function loadMissionControlCron(accessToken?: string): Promise<Miss
 export async function loadMissionControlAlerts(accessToken?: string): Promise<MissionControlAlertsSnapshot> {
   try {
     const [status, machine, sessions, cron] = await Promise.all([
-      fetchOfficialStatus(accessToken),
+      maybeFetchLocalJson<OfficialStatusPayload>('/status', accessToken).then((r) => r.payload),
       loadMissionControlMachineStatus(accessToken),
       loadMissionControlSessions(accessToken),
       loadMissionControlCron(accessToken),
     ]);
-    return deriveAlerts(status, machine, sessions, cron);
+    return deriveAlerts(status ?? null, machine, sessions, cron);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1795,8 +1791,8 @@ export async function loadMissionControlKnowledge(accessToken?: string): Promise
       return normalizeKnowledge(fallbackKnowledge);
     }
 
-    const officialPayload = await fetchOfficialJson<Partial<MissionControlKnowledgeSnapshot>>('/knowledge', accessToken);
-    return normalizeKnowledge(officialPayload);
+    // No official backend available; return fallback knowledge
+    return normalizeKnowledge(fallbackKnowledge);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1863,102 +1859,30 @@ export async function loadMissionControlKnowledgeFile(
 }
 
 export async function loadMissionControlTools(accessToken?: string): Promise<MissionControlToolsSnapshot> {
-  try {
-    const payload = await fetchOfficialJson<Array<Record<string, unknown>>>('/tools/toolsets', accessToken);
-    const toolsets = (Array.isArray(payload) ? payload : []).filter(isRecord).map((item) => {
-      const tools = readStringArray(item.tools).sort((a, b) => a.localeCompare(b));
-      return normalizeToolset({
-        name: readString(item.name, 'toolset'),
-        description: readString(item.description),
-        directTools: tools,
-        includes: [],
-        resolvedTools: tools,
-        toolCount: tools.length,
-        isComposite: false,
-        available: readBoolean(item.available, true),
-        requirements: readBoolean(item.configured, true) ? [] : ['configuration required'],
-      });
-    });
-    const toolCatalog = toolsets.flatMap((toolset) => toolset.resolvedTools.map((name) => ({
-      name,
-      toolset: toolset.name,
-      available: toolset.available,
-      sourcePath: null,
-    })));
-    const availableToolsets = toolsets.filter((toolset) => toolset.available);
-    return normalizeTools({
-      available: toolsets.length > 0,
-      count: toolsets.length,
-      toolCount: toolCatalog.length,
-      toolsets,
-      availableToolsets,
-      toolCatalog,
-      resolvedTools: [...new Set(toolCatalog.map((item) => item.name))].sort((a, b) => a.localeCompare(b)),
-    });
-  } catch (error) {
-    if (error instanceof MissionControlAuthError) {
-      throw error;
-    }
-
-    return fallbackTools;
-  }
+  const { payload } = await maybeFetchLocalJson<MissionControlToolsSnapshot>('/tools', accessToken);
+  if (payload) return normalizeTools(payload);
+  return fallbackTools;
 }
 
 export async function loadMissionControlSkills(accessToken?: string): Promise<MissionControlSkillsSnapshot> {
-  try {
-    const payload = await fetchOfficialJson<Array<Record<string, unknown>>>('/skills', accessToken);
-    const skills = (Array.isArray(payload) ? payload : []).filter(isRecord).map((item) => normalizeSkillItem({
-      id: readString(item.id) || readString(item.name, 'skill-item'),
-      name: readString(item.name, 'Unnamed skill'),
-      description: readString(item.description),
-      enabled: readBoolean(item.enabled, true),
-      model: readString(item.model, 'unknown'),
-      tags: readStringArray(item.tags),
-      category: readString(item.category) || undefined,
-      filePath: readString(item.file_path) || readString(item.filePath) || undefined,
-    }));
-    const categoryMap = new Map<string, MissionControlSkillCategory>();
-    for (const skill of skills) {
-      const categoryName = skill.category || 'Uncategorized';
-      const existing = categoryMap.get(categoryName) ?? { name: categoryName, count: 0, skills: [] };
-      existing.skills.push(skill.name);
-      existing.count = existing.skills.length;
-      categoryMap.set(categoryName, existing);
-    }
-    const categories = [...categoryMap.values()].sort((a, b) => a.name.localeCompare(b.name));
-    return normalizeSkills({
-      available: skills.length > 0,
-      count: skills.length,
-      hint: skills.length > 0 ? null : 'No skills exposed by the Hermes dashboard.',
-      skills,
-      categories,
-    });
-  } catch (error) {
-    if (error instanceof MissionControlAuthError) {
-      throw error;
-    }
-
-    return fallbackSkills;
-  }
+  const { payload } = await maybeFetchLocalJson<MissionControlSkillsSnapshot>('/skills', accessToken);
+  if (payload) return normalizeSkills(payload);
+  return fallbackSkills;
 }
 
 export async function loadMissionControlConfig(accessToken?: string): Promise<MissionControlConfigSnapshot> {
   try {
-    const [status, parsedConfig, rawConfig] = await Promise.all([
-      fetchOfficialStatus(accessToken),
-      fetchOfficialJson<Record<string, unknown>>('/config', accessToken),
-      fetchOfficialJson<{ yaml?: string }>('/config/raw', accessToken),
-    ]);
-    const content = typeof rawConfig?.yaml === 'string' ? rawConfig.yaml : '';
-    const path = readString(status?.config_path, fallbackConfig.path);
+    const { payload: configPayload } = await maybeFetchLocalJson<{ content?: string; hash?: string; path?: string }>('/config', accessToken);
+    const content = typeof configPayload?.content === 'string' ? configPayload.content : '';
+    const configPath = configPayload?.path ?? fallbackConfig.path;
     return normalizeConfig({
       available: true,
-      path,
-      exists: Boolean(content.trim()) || Boolean(path),
+      path: configPath,
+      exists: Boolean(content.trim()) || Boolean(configPath),
       content,
-      hash: hashText(content),
-      updatedAt: readNullableString(status?.gateway_updated_at),
-      config: parsedConfig ?? {},
+      hash: typeof configPayload?.hash === 'string' ? configPayload.hash : hashText(content),
+      updatedAt: null,
+      config: {},
     });
   } catch (_error) {
     // Config is optional reference data. If the official dashboard auth drifts
@@ -1978,61 +1902,25 @@ function buildLogFilePath(name: string): string {
 }
 
 export async function loadMissionControlLogs(
+  fileKeys: readonly string[],
   accessToken?: string,
   options?: { maxFiles?: number; maxLines?: number },
 ): Promise<MissionControlLogsSnapshot> {
-  const fileKeys = ['agent', 'errors', 'gateway'];
-  const limit = Math.max(1, Math.min(options?.maxLines ?? 160, 500));
-  const selectedKeys = fileKeys.slice(0, Math.max(1, Math.min(options?.maxFiles ?? fileKeys.length, fileKeys.length)));
-
-  try {
-    const payloads = await Promise.all(selectedKeys.map(async (key) => {
-      const result = await fetchOfficialJson<{ file?: string; lines?: string[] }>(`/logs?file=${encodeURIComponent(key)}&lines=${limit}`, accessToken);
-      const lines = Array.isArray(result.lines) ? result.lines : [];
-      return {
-        key,
-        entries: lines.map((line, index) => ({
-          lineNumber: index + 1,
-          level: inferLogLevel(String(line)),
-          text: String(line),
-        })),
-      };
-    }));
-
-    const files = payloads.map((payload) => ({
-      name: `${payload.key}.log`,
-      path: buildLogFilePath(`${payload.key}.log`),
-      updatedAt: null,
-      sizeBytes: 0,
-      entryCount: payload.entries.length,
-      entries: payload.entries,
-    }));
-
-    return normalizeLogs({
-      available: true,
-      path: '~/.hermes/logs',
-      fileCount: files.length,
-      totalEntries: files.reduce((total, file) => total + file.entries.length, 0),
-      generatedAt: new Date().toISOString(),
-      files,
-    });
-  } catch (error) {
-    if (error instanceof MissionControlAuthError) {
-      throw error;
-    }
-
-    return fallbackLogs;
-  }
+  // No local logs endpoint available in standalone mode
+  void accessToken;
+  void options;
+  void fileKeys;
+  return fallbackLogs;
 }
 
-export async function saveMissionControlConfig(accessToken: string | undefined, content: string, _expectedHash?: string | null): Promise<MissionControlConfigSnapshot> {
-  const response = await fetch(apiUrl('/config/raw'), {
+export async function saveMissionControlConfig(accessToken: string | undefined, content: string, expectedHash?: string | null): Promise<MissionControlConfigSnapshot> {
+  const response = await fetch(apiUrl('/config'), {
     method: 'PUT',
     headers: {
       ...buildHeaders(accessToken),
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ yaml_text: content }),
+    body: JSON.stringify({ content, hash: expectedHash ?? null }),
   });
 
   if (response.status === 401) {

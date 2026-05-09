@@ -18,6 +18,7 @@ export default defineConfig({
       '/api/local': {
         target: LOCAL_TELEMETRY_TARGET,
         changeOrigin: true,
+        rewrite: (path) => path,
       },
       '/api': {
         target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',
@@ -33,6 +34,7 @@ export default defineConfig({
       '/api/local': {
         target: LOCAL_TELEMETRY_TARGET,
         changeOrigin: true,
+        rewrite: (path) => path,
       },
       '/api': {
         target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',

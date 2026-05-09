@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import json
 import os
 import platform
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -154,8 +156,10 @@ def _extract_query_token(handler: BaseHTTPRequestHandler) -> Optional[str]:
 
 def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool = False) -> bool:
     expected = _resolve_access_token()
+    # If no token is configured, allow localhost connections for development
     if not expected:
-        return False
+        client_ip = handler.client_address[0] if handler.client_address else None
+        return client_ip in ("127.0.0.1", "::1", "localhost")
     candidate = _extract_bearer_token(handler.headers.get("Authorization"))
     if not candidate and allow_query_token:
         candidate = _extract_query_token(handler)
@@ -463,7 +467,309 @@ def _parse_float(value: str | None, default: float, minimum: float | None = None
         parsed = max(minimum, parsed)
     if maximum is not None:
         parsed = min(maximum, parsed)
-    return parsed
+
+
+def _get_hermes_home() -> Path:
+    return Path.home() / '.hermes'
+
+
+def _read_runtime_status() -> Optional[Dict[str, Any]]:
+    path = _get_hermes_home() / 'runtime_status.json'
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _read_version() -> str:
+    try:
+        init_file = _get_hermes_home() / 'hermes-agent' / 'hermes_cli' / '__init__.py'
+        if not init_file.exists():
+            return '0.0.0'
+        text = init_file.read_text()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('__version__'):
+                parts = stripped.split('=', 1)
+                if len(parts) == 2:
+                    return parts[1].strip().strip(chr(34) + chr(39))
+    except Exception:
+        pass
+    return '0.0.0'
+
+
+def _collect_status_payload() -> Dict[str, Any]:
+    version = _read_version()
+    runtime = _read_runtime_status()
+    gateway_pid = None
+    gateway_running = False
+    gateway_state = None
+    gateway_platforms: Dict[str, Any] = {}
+    gateway_exit_reason = None
+    gateway_updated_at = None
+
+    try:
+        pid_file = _get_hermes_home() / 'gateway.pid'
+        if pid_file.exists():
+            raw = pid_file.read_text().strip()
+            if raw:
+                try:
+                    data = json.loads(raw)
+                    candidate = data.get('pid') if isinstance(data, dict) else int(raw)
+                except (json.JSONDecodeError, ValueError):
+                    candidate = int(raw)
+                if candidate and psutil.pid_exists(candidate):
+                    gateway_pid = candidate
+                    gateway_running = True
+    except Exception:
+        pass
+
+    if runtime:
+        gateway_state = runtime.get('gateway_state')
+        gateway_platforms = runtime.get('platforms') or {}
+        gateway_exit_reason = runtime.get('exit_reason')
+        gateway_updated_at = runtime.get('updated_at')
+        if not gateway_running:
+            gateway_state = gateway_state if gateway_state in ('stopped', 'startup_failed') else 'stopped'
+            gateway_platforms = {}
+
+    active_sessions = 0
+    try:
+        sessions_dir = _get_hermes_home() / 'sessions'
+        if sessions_dir.exists():
+            now = time.time()
+            for entry in os.scandir(sessions_dir):
+                if entry.is_file() and entry.name.endswith('.json'):
+                    try:
+                        data = json.loads(open(entry.path).read())
+                        ended = data.get('ended_at')
+                        last_active = max(
+                            data.get('last_active', 0),
+                            data.get('started_at', 0),
+                        )
+                        if ended is None and (now - last_active) < 300:
+                            active_sessions += 1
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    return {
+        'version': version,
+        'gateway_running': gateway_running,
+        'gateway_pid': gateway_pid,
+        'gateway_state': gateway_state,
+        'gateway_platforms': gateway_platforms,
+        'gateway_exit_reason': gateway_exit_reason,
+        'gateway_updated_at': gateway_updated_at,
+        'active_sessions': active_sessions,
+    }
+
+
+def _collect_model_info() -> Dict[str, Any]:
+    config_path = _get_hermes_home() / 'config.yaml'
+    default = {
+        'provider': 'unknown',
+        'model': 'unknown',
+        'base_url': None,
+        'has_api_key': False,
+        'context_length': None,
+    }
+    if not config_path.exists():
+        return default
+    try:
+        import yaml
+        text = config_path.read_text()
+        config = yaml.safe_load(text) or {}
+        model = config.get('model') or {}
+        env_path = _get_hermes_home() / '.env'
+        has_key = False
+        if env_path.exists():
+            env_text = env_path.read_text()
+            for kw in ['API_KEY', 'HF_TOKEN', 'TOKEN']:
+                if kw in env_text:
+                    has_key = True
+                    break
+        return {
+            'provider': model.get('provider', 'unknown'),
+            'model': model.get('default', 'unknown'),
+            'base_url': model.get('base_url'),
+            'has_api_key': has_key,
+            'context_length': model.get('context_length'),
+        }
+    except Exception:
+        return default
+
+
+def _collect_cron_jobs() -> list[Dict[str, Any]]:
+    jobs_path = _get_hermes_home() / 'cron' / 'jobs.json'
+    if not jobs_path.exists():
+        return []
+    try:
+        data = json.loads(jobs_path.read_text())
+        return data.get('jobs', [])
+    except Exception:
+        return []
+
+
+def _read_config_snapshot() -> Dict[str, Any]:
+    config_path = _get_hermes_home() / 'config.yaml'
+    if not config_path.exists():
+        return {'hash': None, 'size': 0, 'content': '', 'path': str(config_path)}
+    text = config_path.read_text()
+    h = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    return {
+        'hash': h,
+        'size': len(text),
+        'content': text,
+        'path': str(config_path),
+        'updated_at': _isoformat_mtime(config_path),
+    }
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    fd = None
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp.exists():
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        raise
+
+
+
+
+
+def _collect_tools() -> Dict[str, Any]:
+    """Build a tools snapshot from what we can discover locally."""
+    toolsets_list: list[Dict[str, Any]] = []
+    tool_catalog: list[Dict[str, Any]] = []
+    resolved: list[str] = []
+
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    tc_path = project_root / "hermes_cli" / "tools_config.py"
+
+    try:
+        if tc_path.exists():
+            tc_text = tc_path.read_text()
+            m = re.search(r"CONFIGURABLE_TOOLSETS\s*=\s*\[", tc_text)
+            if m:
+                brace_start = tc_text.find("[", m.start())
+                brace_end = brace_start + 1
+                depth = 1
+                while brace_end < len(tc_text) and depth > 0:
+                    if tc_text[brace_end] == "[": depth += 1
+                    elif tc_text[brace_end] == "]": depth -= 1
+                    brace_end += 1
+                raw = tc_text[brace_start + 1:brace_end - 1]
+                # Parse entries with simple regex
+                entries = re.findall(r'\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"[^)]*\)', raw)
+                for name, label, desc in entries:
+                    direct = [name] if name != "skills" else ["list", "view", "manage"]
+                    toolsets_list.append({
+                        "name": name,
+                        "description": label or desc,
+                        "directTools": direct,
+                        "includes": [],
+                        "resolvedTools": direct,
+                        "toolCount": len(direct),
+                        "isComposite": False,
+                        "available": True,
+                        "requirements": [],
+                    })
+                    for d in direct:
+                        tool_catalog.append({"name": d, "toolset": name, "available": True})
+                        resolved.append(d)
+    except Exception:
+        pass
+
+    if not toolsets_list:
+        toolsets_list = [
+            {"name": "terminal", "description": "Terminal", "directTools": ["terminal"], "includes": [], "resolvedTools": ["terminal"], "toolCount": 1, "isComposite": False, "available": True, "requirements": []},
+            {"name": "file", "description": "File", "directTools": ["file"], "includes": [], "resolvedTools": ["file"], "toolCount": 1, "isComposite": False, "available": True, "requirements": []},
+        ]
+        tool_catalog = [{"name": "terminal", "toolset": "terminal", "available": True}, {"name": "file", "toolset": "file", "available": True}]
+        resolved = ["terminal", "file"]
+
+    return {
+        "available": True,
+        "count": len(toolsets_list),
+        "toolCount": len(tool_catalog),
+        "toolsets": toolsets_list,
+        "availableToolsets": toolsets_list,
+        "toolCatalog": tool_catalog,
+        "resolvedTools": list(dict.fromkeys(resolved)),
+    }
+
+def _collect_skills() -> Dict[str, Any]:
+    """Scan ~/.hermes/skills/ to build a skills snapshot."""
+    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_list: list[Dict[str, Any]] = []
+    categories_map: Dict[str, list[str]] = {}
+
+    if skills_dir.exists():
+        for entry in skills_dir.iterdir():
+            if entry.is_dir() and not entry.name.startswith("."):
+                category = "general"
+                readme = entry / "SKILL.md"
+                desc = ""
+                if readme.exists():
+                    desc = readme.read_text().splitlines()[0].strip("# ").strip()
+                # Try to find sub-categories
+                subdirs = [d.name for d in entry.iterdir() if d.is_dir() and not d.name.startswith(".")]
+                if subdirs:
+                    for sub in subdirs:
+                        if sub not in categories_map:
+                            categories_map[sub] = []
+                        categories_map[sub].append(entry.name)
+                else:
+                    if category not in categories_map:
+                        categories_map[category] = []
+                    categories_map[category].append(entry.name)
+
+                skills_list.append({
+                    "id": entry.name,
+                    "name": entry.name,
+                    "description": desc or entry.name,
+                    "enabled": True,
+                    "model": "",
+                    "tags": [],
+                    "category": category,
+                    "filePath": str(entry),
+                })
+
+    categories = []
+    for name, skill_names in sorted(categories_map.items()):
+        categories.append({
+            "name": name,
+            "description": f"Skills in {name}",
+            "count": len(skill_names),
+            "skills": skill_names,
+        })
+
+    return {
+        "available": True,
+        "count": len(skills_list),
+        "hint": None,
+        "skills": skills_list,
+        "categories": categories,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -523,6 +829,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/health":
             self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
             return
+        if parsed.path == "/api/local/health":
+            self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
+            return
         if parsed.path == "/api/local/system":
             if not _is_authorized(self):
                 self._unauthorized()
@@ -563,6 +872,13 @@ class Handler(BaseHTTPRequestHandler):
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
             self._json(200, load_agents_sessions_snapshot(limit=limit))
             return
+        if parsed.path == "/api/local/sessions":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
+            self._json(200, load_agents_sessions_snapshot(limit=limit))
+            return
         if parsed.path == "/api/local/mission-control/agents/trace":
             if not _is_authorized(self):
                 self._unauthorized()
@@ -582,7 +898,124 @@ class Handler(BaseHTTPRequestHandler):
             interval = _parse_float((params.get("interval") or [None])[0], default=2.0, minimum=0.5, maximum=30.0)
             self._stream_trace(session_id=session_id, limit=limit, compact=compact, interval=interval)
             return
+        if parsed.path == '/api/local/status':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _collect_status_payload())
+            return
+        if parsed.path == '/api/local/model/info':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _collect_model_info())
+            return
+        if parsed.path == '/api/local/cron/jobs':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            jobs = _collect_cron_jobs()
+            self._json(200, {'jobs': jobs, 'count': len(jobs)})
+            return
+        if parsed.path == '/api/local/config':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _read_config_snapshot())
+            return
+        if parsed.path == '/api/local/tools':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _collect_tools())
+            return
+        if parsed.path == '/api/local/skills':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _collect_skills())
+            return
         self._json(404, {"error": "not_found", "path": self.path})
+
+    def do_PUT(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == '/api/local/config':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            content = data.get('content', '')
+            expected_hash = data.get('hash', '')
+            config_path = _get_hermes_home() / 'config.yaml'
+            if config_path.exists():
+                current_text = config_path.read_text()
+                current_hash = hashlib.sha256(current_text.encode('utf-8')).hexdigest()
+                if expected_hash and expected_hash != current_hash:
+                    self._json(409, {'error': 'hash_mismatch', 'detail': 'Config changed since last read.', 'currentHash': current_hash})
+                    return
+            try:
+                import yaml
+                yaml.safe_load(content)
+            except Exception as exc:
+                self._json(400, {'error': 'invalid_yaml', 'detail': str(exc)})
+                return
+            if config_path.exists():
+                backup = config_path.with_suffix(f'.yaml.bak.{int(time.time())}')
+                try:
+                    backup.write_text(config_path.read_text(), encoding='utf-8')
+                except OSError:
+                    pass
+            try:
+                _atomic_write_text(config_path, content)
+            except OSError as exc:
+                self._json(500, {'error': 'write_failed', 'detail': str(exc)})
+                return
+            new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+            self._json(200, {'success': True, 'hash': new_hash, 'size': len(content), 'path': str(config_path)})
+            return
+        self._json(404, {'error': 'not_found', 'path': self.path})
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == '/api/local/gateway/restart':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            # Attempt restart; don't crash if hermes CLI isn't available.
+            try:
+                subprocess.Popen(
+                    ['hermes', 'gateway', 'restart'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except FileNotFoundError:
+                self._json(200, {'success': False, 'detail': 'hermes CLI not found on PATH.', 'manual': True})
+                return
+            except Exception as exc:
+                self._json(200, {'success': False, 'detail': str(exc), 'manual': True})
+                return
+            self._json(202, {'success': True, 'detail': 'Gateway restart initiated.'})
+            return
+        self._json(404, {'error': 'not_found', 'path': self.path})
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        for key, value in self._cors_headers().items():
+            self.send_header(key, value)
+        self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-API-Key')
+        self.send_header('Access-Control-Allow-Credentials', 'true')
+        self.end_headers()
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
         return

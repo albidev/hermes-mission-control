@@ -94,7 +94,7 @@ function persistStoredValue(key: string, value: string) {
 }
 
 function getApiBaseUrl() {
-  return import.meta.env.VITE_HERMES_API_BASE_URL || '/api';
+  return import.meta.env.VITE_MISSION_CONTROL_LOCAL_API_BASE_URL || '/api/local';
 }
 
 function buildHeaders(token?: string) {
@@ -117,7 +117,8 @@ function readJsonPayload<T>(payload: unknown): T {
 }
 
 export function MissionControlProvider({ children }: { children: ReactNode }) {
-  const initialToken = typeof window === 'undefined' ? '' : readStoredValue(MISSION_CONTROL_TOKEN_STORAGE_KEY, '');
+  const envToken = (typeof import.meta.env !== 'undefined' && import.meta.env.VITE_MISSION_CONTROL_TOKEN) || '';
+  const initialToken = typeof window === 'undefined' ? '' : readStoredValue(MISSION_CONTROL_TOKEN_STORAGE_KEY, envToken);
   const initialTheme = typeof window === 'undefined' ? 'system' : (readStoredValue('mission-control-theme', 'system') as ThemeMode);
 
   const [snapshot, setSnapshot] = useState<MissionControlSnapshot>(getFallbackSnapshot());
@@ -139,10 +140,10 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
 
   const gatewayActions = useMemo<MissionControlGatewayAction[]>(
     () => [
-      { id: 'refresh', label: 'Refresh snapshot', hint: 'Reload all live Mission Control data.', endpoint: '/api/status', method: 'GET' },
-      { id: 'reload-config', label: 'Reload config', hint: 'Re-read config.yaml from disk.', endpoint: '/api/config/raw', method: 'GET' },
-      { id: 'probe-health', label: 'Probe gateway', hint: 'Hit /api/status to verify the dashboard backend.', endpoint: '/api/status', method: 'GET' },
-      { id: 'restart-gateway', label: 'Restart gateway', hint: 'Request a safe process restart.', endpoint: '/api/gateway/restart', method: 'POST' },
+      { id: 'refresh', label: 'Refresh snapshot', hint: 'Reload all live Mission Control data.', endpoint: '/status', method: 'GET' },
+      { id: 'reload-config', label: 'Reload config', hint: 'Re-read config.yaml from disk.', endpoint: '/config', method: 'GET' },
+      { id: 'probe-health', label: 'Probe gateway', hint: 'Hit /api/local/status to verify the telemetry backend.', endpoint: '/status', method: 'GET' },
+      { id: 'restart-gateway', label: 'Restart gateway', hint: 'Request a safe process restart.', endpoint: '/gateway/restart', method: 'POST' },
     ],
     [],
   );
