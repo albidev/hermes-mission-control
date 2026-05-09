@@ -1021,6 +1021,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-API-Key')
         self.send_header('Access-Control-Allow-Credentials', 'true')
+        self.send_header('Access-Control-Max-Age', '0')
         self.end_headers()
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
