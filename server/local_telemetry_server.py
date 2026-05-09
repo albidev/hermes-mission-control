@@ -781,6 +781,12 @@ class Handler(BaseHTTPRequestHandler):
                 "Access-Control-Allow-Origin": request_origin,
                 "Vary": "Origin",
             }
+        # Dev mode: mirror the incoming origin so browser sidecars work without explicit config.
+        if request_origin:
+            return {
+                "Access-Control-Allow-Origin": request_origin,
+                "Vary": "Origin",
+            }
         return {}
 
     def _json(self, status: int, payload: Dict[str, Any], extra_headers: Optional[Dict[str, str]] = None) -> None:
