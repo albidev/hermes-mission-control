@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import socket
 import subprocess
 import sys
@@ -156,14 +157,17 @@ def _extract_query_token(handler: BaseHTTPRequestHandler) -> Optional[str]:
 
 def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool = False) -> bool:
     expected = _resolve_access_token()
-    # If no token is configured, allow localhost connections for development
-    if not expected:
-        client_ip = handler.client_address[0] if handler.client_address else None
-        return client_ip in ("127.0.0.1", "::1", "localhost")
     candidate = _extract_bearer_token(handler.headers.get("Authorization"))
     if not candidate and allow_query_token:
         candidate = _extract_query_token(handler)
-    if not candidate:
+
+    # Telemetry sidecar is bound to localhost by default — always allow local callers.
+    client_ip = handler.client_address[0] if handler.client_address else None
+    if client_ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+
+    # For non-local callers (if ever exposed externally), require the token.
+    if not expected or not candidate:
         return False
     return hmac.compare_digest(candidate, expected)
 
@@ -617,13 +621,22 @@ def _collect_cron_jobs() -> list[Dict[str, Any]]:
 def _read_config_snapshot() -> Dict[str, Any]:
     config_path = _get_hermes_home() / 'config.yaml'
     if not config_path.exists():
-        return {'hash': None, 'size': 0, 'content': '', 'path': str(config_path)}
+        return {'hash': None, 'size': 0, 'content': '', 'config': {}, 'path': str(config_path), 'updated_at': None}
     text = config_path.read_text()
     h = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    parsed_config: Dict[str, Any] = {}
+    try:
+        import yaml
+        parsed = yaml.safe_load(text)
+        if isinstance(parsed, dict):
+            parsed_config = parsed
+    except Exception:
+        pass
     return {
         'hash': h,
         'size': len(text),
         'content': text,
+        'config': parsed_config,
         'path': str(config_path),
         'updated_at': _isoformat_mtime(config_path),
     }
@@ -769,6 +782,66 @@ def _collect_skills() -> Dict[str, Any]:
         "hint": None,
         "skills": skills_list,
         "categories": categories,
+    }
+
+
+def _collect_logs(max_files: int = 10, max_lines: int = 160) -> Dict[str, Any]:
+    """Read latest log files from ~/.hermes/logs/."""
+    logs_dir = Path.home() / ".hermes" / "logs"
+    files_list: list[Dict[str, Any]] = []
+    total_entries = 0
+
+    if logs_dir.exists():
+        all_files = sorted(
+            [f for f in logs_dir.iterdir() if f.is_file() and not f.name.startswith(".")],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        # Prioritize gateway and agent logs by boosting them when present.
+        priority_names = {"gateway.log", "gateway.error.log", "agent.log", "dashboard-api.error.log", "mission-control-telemetry.error.log", "mission-control.error.log", "tui_gateway_crash.log"}
+        priority_files = [f for f in all_files if f.name in priority_names]
+        other_files = [f for f in all_files if f.name not in priority_names]
+        merged = priority_files + other_files
+        for log_file in merged[:max_files]:
+            try:
+                stat = log_file.stat()
+                size_bytes = stat.st_size
+                # Read last max_lines lines efficiently
+                entries: list[Dict[str, Any]] = []
+                try:
+                    with open(log_file, "r", encoding="utf-8", errors="replace") as fh:
+                        lines = fh.readlines()
+                except Exception:
+                    lines = []
+                trimmed = lines[-max_lines:] if len(lines) > max_lines else lines
+                for idx, raw_line in enumerate(trimmed, start=max(1, len(lines) - len(trimmed) + 1)):
+                    line = raw_line.rstrip("\n\r")
+                    level: str = "info"
+                    lower = line.lower()
+                    if "error" in lower or "exception" in lower or "traceback" in lower or "failed" in lower:
+                        level = "error"
+                    elif "warn" in lower or "warning" in lower or "deprecated" in lower:
+                        level = "warn"
+                    entries.append({"lineNumber": idx, "level": level, "text": line})
+                files_list.append({
+                    "name": log_file.name,
+                    "path": str(log_file),
+                    "updatedAt": _isoformat_mtime(log_file),
+                    "sizeBytes": size_bytes,
+                    "entryCount": len(entries),
+                    "entries": entries,
+                })
+                total_entries += len(entries)
+            except Exception:
+                continue
+
+    return {
+        "available": True,
+        "path": str(logs_dir),
+        "fileCount": len(files_list),
+        "totalEntries": total_entries,
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "files": files_list,
     }
 
 
@@ -940,6 +1013,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._unauthorized()
                 return
             self._json(200, _collect_skills())
+            return
+        if parsed.path == '/api/local/logs':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            # Parse query params for optional limits
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                max_files = int(query.get('maxFiles', ['10'])[0])
+            except (ValueError, IndexError):
+                max_files = 10
+            try:
+                max_lines = int(query.get('maxLines', ['160'])[0])
+            except (ValueError, IndexError):
+                max_lines = 160
+            self._json(200, _collect_logs(max_files=max_files, max_lines=max_lines))
             return
         self._json(404, {"error": "not_found", "path": self.path})
 

@@ -1872,9 +1872,10 @@ export async function loadMissionControlSkills(accessToken?: string): Promise<Mi
 
 export async function loadMissionControlConfig(accessToken?: string): Promise<MissionControlConfigSnapshot> {
   try {
-    const { payload: configPayload } = await maybeFetchLocalJson<{ content?: string; hash?: string; path?: string }>('/config', accessToken);
+    const { payload: configPayload } = await maybeFetchLocalJson<{ content?: string; hash?: string; path?: string; config?: Record<string, unknown> }>('/config', accessToken);
     const content = typeof configPayload?.content === 'string' ? configPayload.content : '';
     const configPath = configPayload?.path ?? fallbackConfig.path;
+    const parsedConfig = isPlainObject(configPayload?.config) ? (configPayload.config as Record<string, unknown>) : {};
     return normalizeConfig({
       available: true,
       path: configPath,
@@ -1882,7 +1883,7 @@ export async function loadMissionControlConfig(accessToken?: string): Promise<Mi
       content,
       hash: typeof configPayload?.hash === 'string' ? configPayload.hash : hashText(content),
       updatedAt: null,
-      config: {},
+      config: parsedConfig,
     });
   } catch (_error) {
     // Config is optional reference data. If the official dashboard auth drifts
@@ -1902,15 +1903,20 @@ function buildLogFilePath(name: string): string {
 }
 
 export async function loadMissionControlLogs(
-  fileKeys: readonly string[],
   accessToken?: string,
   options?: { maxFiles?: number; maxLines?: number },
 ): Promise<MissionControlLogsSnapshot> {
-  // No local logs endpoint available in standalone mode
-  void accessToken;
-  void options;
-  void fileKeys;
-  return fallbackLogs;
+  const params = new URLSearchParams();
+  if (options?.maxFiles != null) {
+    params.set('maxFiles', String(options.maxFiles));
+  }
+  if (options?.maxLines != null) {
+    params.set('maxLines', String(options.maxLines));
+  }
+  const query = params.toString();
+  const path = `/logs${query ? '?' + query : ''}`;
+  const { payload } = await maybeFetchLocalJson<MissionControlLogsSnapshot>(path, accessToken);
+  return normalizeLogs(payload);
 }
 
 export async function saveMissionControlConfig(accessToken: string | undefined, content: string, expectedHash?: string | null): Promise<MissionControlConfigSnapshot> {
