@@ -161,9 +161,12 @@ def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool =
     if not candidate and allow_query_token:
         candidate = _extract_query_token(handler)
 
-    # Telemetry sidecar is bound to localhost by default — always allow local callers.
+    # Telemetry sidecar — always allow local and Tailscale callers (no token required).
     client_ip = handler.client_address[0] if handler.client_address else None
     if client_ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    # Tailscale IP range: 100.64.0.0/10 (typically 100.x.x.x)
+    if client_ip and client_ip.startswith("100."):
         return True
 
     # For non-local callers (if ever exposed externally), require the token.
@@ -1118,7 +1121,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST", "127.0.0.1")
+    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST", "0.0.0.0")
     port = int(os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT", "8765"))
 
     sampler = threading.Thread(target=_cpu_sampler, name="mc-cpu-sampler", daemon=True)
