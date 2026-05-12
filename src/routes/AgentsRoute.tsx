@@ -332,6 +332,14 @@ export function AgentsRoute() {
     };
   }, [visibleTrace]);
 
+  const timelineEvents = useMemo(() => {
+    return [...(visibleTrace?.events ?? [])].sort((a, b) => {
+      if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+      if (b.turnId !== a.turnId) return b.turnId - a.turnId;
+      return b.id.localeCompare(a.id);
+    });
+  }, [visibleTrace?.events]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -761,8 +769,8 @@ export function AgentsRoute() {
 
           {!traceLoading && visibleTrace && view === 'timeline' ? (
             <div className="flex flex-col gap-2">
-              {visibleTrace.events.length > 0 ? (
-                visibleTrace.events.map((event) => (
+              {timelineEvents.length > 0 ? (
+                timelineEvents.map((event) => (
                   <button
                     key={event.id}
                     type="button"
