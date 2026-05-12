@@ -1030,14 +1030,17 @@ export function AgentsRoute() {
           <div className="flex flex-col gap-3 text-sm">
             {(() => {
               const linked = selectedEvent.callId ? callDetailsByCallId.get(selectedEvent.callId) : undefined;
-              const requestDetail =
-                selectedEvent.request ??
-                linked?.request ??
-                (selectedEvent.type === 'turn_started' ? selectedEvent.detail : undefined);
-              const responseDetail =
-                selectedEvent.response ??
-                linked?.response ??
-                (selectedEvent.type === 'assistant_response' ? selectedEvent.detail : undefined);
+              const isToolEvent = selectedEvent.type.startsWith('tool_call');
+              const requestDetail = isToolEvent
+                ? selectedEvent.request ?? linked?.request
+                : selectedEvent.type === 'turn_started'
+                  ? selectedEvent.detail
+                  : undefined;
+              const responseDetail = isToolEvent
+                ? selectedEvent.response ?? linked?.response
+                : selectedEvent.type === 'assistant_response'
+                  ? selectedEvent.detail
+                  : undefined;
               const eventDetail = !requestDetail && !responseDetail ? selectedEvent.detail : undefined;
               const requestLabel = selectedEvent.type.startsWith('tool_call') ? 'Tool request' : 'Request';
               const responseLabel = selectedEvent.type.startsWith('tool_call') ? 'Tool response' : 'Response';
