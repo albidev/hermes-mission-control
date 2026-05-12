@@ -258,9 +258,9 @@ export function SkillsRoute() {
                     </div>
                   </div>
 
-                  <div className="text-xs text-text-subtle truncate">
-                    {skill.source} · {skill.identifier}{skill.repo ? ` · ${skill.repo}` : ''}{skill.path ? ` · ${skill.path}` : ''}
-                  </div>
+                      <div className="text-xs text-text-muted truncate">
+                        {(skill.category || 'uncategorized') + (skill.model ? ` · ${skill.model}` : '')}
+                      </div>
 
                   {skill.tags.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
