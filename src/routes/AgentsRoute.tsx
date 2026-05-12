@@ -52,6 +52,32 @@ type BadgeVisual = {
   className: string;
 };
 
+type TraceActionFilter = 'user_message' | 'thought' | 'tool_call' | 'skill_used' | 'assistant_response' | 'turn' | 'other';
+
+const TRACE_ACTION_FILTERS: Array<{ id: TraceActionFilter; label: string }> = [
+  { id: 'user_message', label: 'User' },
+  { id: 'thought', label: 'Thought' },
+  { id: 'tool_call', label: 'Tool call' },
+  { id: 'skill_used', label: 'Skill' },
+  { id: 'assistant_response', label: 'Assistant' },
+  { id: 'turn', label: 'Turn' },
+  { id: 'other', label: 'Other' },
+];
+
+function getTraceActionFilter(event: MissionControlAgentTraceEvent): TraceActionFilter {
+  if (event.type === 'user_message') return 'user_message';
+  if (event.type === 'thought') return 'thought';
+  if (event.type.startsWith('tool_call')) return 'tool_call';
+  if (event.type === 'skill_used') return 'skill_used';
+  if (event.type === 'assistant_response') return 'assistant_response';
+  if (event.type.startsWith('turn_')) return 'turn';
+  return 'other';
+}
+
+function getTraceActionLabel(filter: TraceActionFilter): string {
+  return TRACE_ACTION_FILTERS.find((item) => item.id === filter)?.label ?? 'Other';
+}
+
 function getEventTypeBadge(event: MissionControlAgentTraceEvent): BadgeVisual {
   if (event.type.startsWith('tool_call')) {
     return {
@@ -234,6 +260,7 @@ export function AgentsRoute() {
   const [view, setView] = useState<'timeline' | 'dag'>('timeline');
   const [liveMode, setLiveMode] = useState(true);
   const [liveTraceScope, setLiveTraceScope] = useState<LiveTraceScope>('current');
+  const [selectedActionFilters, setSelectedActionFilters] = useState<TraceActionFilter[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentSessionItem[]>([]);
   const [trace, setTrace] = useState<MissionControlAgentTraceSnapshot | null>(null);
@@ -361,8 +388,61 @@ export function AgentsRoute() {
     };
   }, [trace, liveMode, liveTraceScope]);
 
+  const completedToolCallIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const event of visibleTrace?.events ?? []) {
+      if (event.type === 'tool_call_completed' && event.callId) {
+        ids.add(event.callId);
+      }
+    }
+    return ids;
+  }, [visibleTrace?.events]);
+
+  const actionFilterSet = useMemo(() => new Set(selectedActionFilters), [selectedActionFilters]);
+  const actionFilterActive = selectedActionFilters.length > 0;
+
+  const toggleActionFilter = (filter: TraceActionFilter) => {
+    setSelectedActionFilters((current) =>
+      current.includes(filter) ? current.filter((item) => item !== filter) : [...current, filter],
+    );
+  };
+
+  const actionFilterCounts = useMemo(() => {
+    const counts = new Map<TraceActionFilter, number>();
+    for (const event of visibleTrace?.events ?? []) {
+      const filter = getTraceActionFilter(event);
+      counts.set(filter, (counts.get(filter) ?? 0) + 1);
+    }
+    return counts;
+  }, [visibleTrace?.events]);
+
+  const filteredTrace = useMemo(() => {
+    if (!visibleTrace || !actionFilterActive) return visibleTrace;
+
+    const events = visibleTrace.events.filter((event) => actionFilterSet.has(getTraceActionFilter(event)));
+    const eventIds = new Set(events.map((event) => event.id));
+    const nodes = visibleTrace.nodes.filter((node) => eventIds.has(node.id));
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = visibleTrace.edges.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
+
+    return {
+      ...visibleTrace,
+      events,
+      nodes,
+      edges,
+    };
+  }, [visibleTrace, actionFilterActive, actionFilterSet]);
+
+  const timelineEvents = useMemo(() => {
+    return [...(filteredTrace?.events ?? [])].sort((a, b) => {
+      if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+      if (b.turnId !== a.turnId) return b.turnId - a.turnId;
+      return b.id.localeCompare(a.id);
+    });
+  }, [filteredTrace?.events]);
+
   const dagLayout = useMemo(() => {
-    if (!visibleTrace || visibleTrace.nodes.length === 0) {
+    if (!filteredTrace || filteredTrace.nodes.length === 0) {
       return {
         width: 1200,
         height: 420,
@@ -372,7 +452,7 @@ export function AgentsRoute() {
       };
     }
 
-    const sortedNodes = [...visibleTrace.nodes].sort((a, b) => {
+    const sortedNodes = [...filteredTrace.nodes].sort((a, b) => {
       if (a.turnId !== b.turnId) return a.turnId - b.turnId;
       if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
       return a.id.localeCompare(b.id);
@@ -396,7 +476,7 @@ export function AgentsRoute() {
 
     const byId = new Map(nodes.map((item) => [item.node.id, item]));
 
-    const edges = visibleTrace.edges
+    const edges = filteredTrace.edges
       .map((edge, index) => {
         const from = byId.get(edge.from);
         const to = byId.get(edge.to);
@@ -429,26 +509,7 @@ export function AgentsRoute() {
       nodes,
       edges,
     };
-  }, [visibleTrace]);
-
-  const completedToolCallIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const event of visibleTrace?.events ?? []) {
-      if (event.type === 'tool_call_completed' && event.callId) {
-        ids.add(event.callId);
-      }
-    }
-    return ids;
-  }, [visibleTrace?.events]);
-
-  const timelineEvents = useMemo(() => {
-    return [...(visibleTrace?.events ?? [])].sort((a, b) => {
-      if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
-      if (b.turnId !== a.turnId) return b.turnId - a.turnId;
-      return b.id.localeCompare(a.id);
-    });
-  }, [visibleTrace?.events]);
-
+  }, [filteredTrace]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -499,10 +560,10 @@ export function AgentsRoute() {
   }, [liveMode, selectedAgentId]);
 
   useEffect(() => {
-    if (!selectedEvent || !visibleTrace) return;
-    if (visibleTrace.events.some((event) => event.id === selectedEvent.id)) return;
+    if (!selectedEvent || !filteredTrace) return;
+    if (filteredTrace.events.some((event) => event.id === selectedEvent.id)) return;
     setSelectedEvent(null);
-  }, [selectedEvent, visibleTrace]);
+  }, [selectedEvent, filteredTrace]);
 
   useEffect(() => {
     if (!selectedSessionId) return;
@@ -861,6 +922,43 @@ export function AgentsRoute() {
             </select>
           </div>
 
+          {visibleTrace ? (
+            <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium text-text">Action taxonomy</span>
+                  <span className="text-[11px] text-text-subtle">Select one or more event classes to filter Timeline and DAG.</span>
+                </div>
+                {actionFilterActive ? (
+                  <button type="button" className="pill pill-subtle pill-button text-[11px]" onClick={() => setSelectedActionFilters([])}>
+                    Clear filters
+                  </button>
+                ) : (
+                  <Badge variant="default">All actions</Badge>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {TRACE_ACTION_FILTERS.map((filter) => {
+                  const count = actionFilterCounts.get(filter.id) ?? 0;
+                  const active = actionFilterSet.has(filter.id);
+                  return (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      className={`pill pill-button text-[11px] ${active ? 'nav-link-active' : 'pill-subtle'}`}
+                      onClick={() => toggleActionFilter(filter.id)}
+                      disabled={count === 0 && !active}
+                      title={`${getTraceActionLabel(filter.id)} events`}
+                    >
+                      {filter.label}
+                      <span className="text-text-subtle">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
           {visibleTrace?.session ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-text-subtle">
               <Badge variant={visibleTrace.mode === 'live' ? 'positive' : 'default'}>{visibleTrace.mode}</Badge>
@@ -879,6 +977,12 @@ export function AgentsRoute() {
           {liveMode && trace && visibleTrace && trace.events.length > visibleTrace.events.length ? (
             <p className="text-xs text-text-subtle">
               Showing {visibleTrace.events.length} of {trace.events.length} events in live scope.
+            </p>
+          ) : null}
+
+          {actionFilterActive && visibleTrace && filteredTrace ? (
+            <p className="text-xs text-text-subtle">
+              Filtered to {filteredTrace.events.length} of {visibleTrace.events.length} scoped events: {selectedActionFilters.map(getTraceActionLabel).join(', ')}.
             </p>
           ) : null}
 
@@ -922,7 +1026,9 @@ export function AgentsRoute() {
                   );
                 })
               ) : (
-                <div className="text-sm text-text-muted italic">No trace events yet for this session.</div>
+                <div className="text-sm text-text-muted italic">
+                  {actionFilterActive ? 'No trace events match the selected action filters.' : 'No trace events yet for this session.'}
+                </div>
               )}
             </div>
           ) : null}
