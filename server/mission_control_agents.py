@@ -415,6 +415,10 @@ def _normalize_trace_session_ref(item: dict[str, Any] | None) -> dict[str, Any] 
     }
 
 
+def _has_error_value(value: Any) -> bool:
+    return value not in (None, "", False)
+
+
 def _tool_result_status(raw_content: str) -> tuple[str, str]:
     text = raw_content.strip()
     if not text:
@@ -422,17 +426,21 @@ def _tool_result_status(raw_content: str) -> tuple[str, str]:
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
-            error_value = parsed.get("error") or parsed.get("detail") if parsed.get("status") in {"error", "failed"} else parsed.get("error")
+            status = parsed.get("status")
+            status_text = status.lower() if isinstance(status, str) else ""
             if parsed.get("success") is False or parsed.get("ok") is False:
                 return "bad", "failed"
-            if isinstance(parsed.get("status"), str) and parsed.get("status") in {"error", "failed"}:
+            if isinstance(parsed.get("exit_code"), int) and parsed.get("exit_code") != 0:
                 return "bad", "failed"
-            if error_value:
+            if status_text in {"error", "failed"}:
                 return "bad", "failed"
+            if _has_error_value(parsed.get("error")):
+                return "bad", "failed"
+            return "good", "completed"
     except Exception:
         pass
     lower = text.lower()
-    if "traceback" in lower or '"error"' in lower or "error:" in lower:
+    if "traceback" in lower or "error:" in lower:
         return "bad", "failed"
     return "good", "completed"
 
