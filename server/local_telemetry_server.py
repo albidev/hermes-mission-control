@@ -734,8 +734,54 @@ def _collect_tools() -> Dict[str, Any]:
         "resolvedTools": list(dict.fromkeys(resolved)),
     }
 
+def _parse_skill_yaml_frontmatter(text: str) -> Dict[str, Any]:
+    """Extract YAML frontmatter between --- and --- from a SKILL.md file."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+    if end_idx is None:
+        return {}
+    yaml_text = "\n".join(lines[1:end_idx])
+    try:
+        import yaml
+        data = yaml.safe_load(yaml_text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+_SKILLS_EXCLUDED_DIRS = {".archive", ".hub", ".curator_backups", ".git"}
+
+
+def _find_skill_md_files(skills_dir: Path) -> list[Path]:
+    """Recursively find all SKILL.md files, excluding special directories."""
+    results = []
+    try:
+        for entry in skills_dir.rglob("SKILL.md"):
+            # Skip if any parent directory is excluded
+            rel = entry.relative_to(skills_dir)
+            parts = rel.parts[:-1]  # all parts except the filename
+            if any(p.startswith(".") or p in _SKILLS_EXCLUDED_DIRS for p in parts):
+                continue
+            results.append(entry)
+    except Exception:
+        pass
+    return results
+
+
 def _collect_skills() -> Dict[str, Any]:
     """Scan ~/.hermes/skills/ to build an installed skills snapshot.
+
+    Recursively discovers all SKILL.md files, parses their YAML frontmatter
+    to extract name, description, tags, and computes category from the
+    first-level subdirectory.
 
     Reads skills.disabled (and skills.platform_disabled for the local
     platform) from config.yaml to determine each skill's enabled state.
@@ -765,36 +811,58 @@ def _collect_skills() -> Dict[str, Any]:
     categories_map: Dict[str, list[str]] = {}
 
     if skills_dir.exists():
-        for entry in skills_dir.iterdir():
-            if entry.is_dir() and not entry.name.startswith("."):
-                category = "general"
-                readme = entry / "SKILL.md"
-                desc = ""
-                if readme.exists():
-                    desc = readme.read_text().splitlines()[0].strip("# ").strip()
-                # Try to find sub-categories
-                subdirs = [d.name for d in entry.iterdir() if d.is_dir() and not d.name.startswith(".")]
-                if subdirs:
-                    for sub in subdirs:
-                        if sub not in categories_map:
-                            categories_map[sub] = []
-                        categories_map[sub].append(entry.name)
-                else:
-                    if category not in categories_map:
-                        categories_map[category] = []
-                    categories_map[category].append(entry.name)
+        skill_md_files = _find_skill_md_files(skills_dir)
 
-                skill_name = entry.name
-                skills_list.append({
-                    "id": skill_name,
-                    "name": skill_name,
-                    "description": desc or skill_name,
-                    "enabled": skill_name not in disabled_names,
-                    "model": "",
-                    "tags": [],
-                    "category": category,
-                    "filePath": str(entry),
-                })
+        for md_path in skill_md_files:
+            rel = md_path.relative_to(skills_dir)
+            parts = rel.parts[:-1]  # everything except "SKILL.md"
+
+            # Compute category: first subdirectory level, or "general"
+            category = parts[0] if parts else "general"
+
+            # Parse YAML frontmatter
+            try:
+                text = md_path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                text = ""
+            frontmatter = _parse_skill_yaml_frontmatter(text) if text else {}
+
+            # Extract name from YAML, fallback to the leaf directory name
+            skill_name = str(frontmatter.get("name", "") or "")
+            if not skill_name:
+                skill_name = parts[-1] if parts else "unknown"
+
+            # Extract description from YAML, fallback to empty
+            desc = str(frontmatter.get("description", "") or "")
+
+            # Extract tags from YAML metadata.hermes.tags
+            tags: list[str] = []
+            metadata = frontmatter.get("metadata")
+            if isinstance(metadata, dict):
+                hermes_meta = metadata.get("hermes")
+                if isinstance(hermes_meta, dict):
+                    raw_tags = hermes_meta.get("tags", [])
+                    if isinstance(raw_tags, list):
+                        tags = [str(t) for t in raw_tags]
+
+            # Build the display path (relative to skills dir without filename)
+            rel_dir = "/".join(parts) if parts else category
+
+            skills_list.append({
+                "id": skill_name,
+                "name": skill_name,
+                "description": desc or skill_name,
+                "enabled": skill_name not in disabled_names,
+                "model": "",
+                "tags": tags,
+                "category": category,
+                "filePath": str(md_path.parent),
+            })
+
+            # Track in categories_map
+            if category not in categories_map:
+                categories_map[category] = []
+            categories_map[category].append(skill_name)
 
     categories = []
     for name, skill_names in sorted(categories_map.items()):
