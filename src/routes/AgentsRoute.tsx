@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Activity, Bot, Clock3, Cpu, Gauge, GitBranch, Layers, ListTree, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
@@ -160,6 +160,14 @@ export function AgentsRoute() {
   const [sseFallbackToPolling, setSseFallbackToPolling] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<MissionControlAgentTraceEvent | null>(null);
   const [rawPayloadViewer, setRawPayloadViewer] = useState<{ title: string; content: string } | null>(null);
+  const hasTraceRef = useRef(false);
+  const traceStreamAvailable = capabilities.trace.stream;
+  const traceCompactAvailable = capabilities.trace.compact;
+  const traceNamedSseEventAvailable = capabilities.trace.namedSseTraceEvent;
+
+  useEffect(() => {
+    hasTraceRef.current = Boolean(trace);
+  }, [trace]);
 
   const orderedSessions = useMemo<MissionControlAgentSessionItem[]>(
     () => [...agentSessions].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0)),
@@ -468,7 +476,7 @@ export function AgentsRoute() {
   }, [selectedAgent]);
 
   useEffect(() => {
-    if (!liveMode || sseFallbackToPolling || !capabilities.trace.stream) {
+    if (!liveMode || sseFallbackToPolling || !traceStreamAvailable) {
       return;
     }
 
@@ -490,11 +498,13 @@ export function AgentsRoute() {
     params.set('limit', String(LIVE_TRACE_LIMIT));
     params.set('interval', '1.5');
     if (storedToken) params.set('access_token', storedToken);
-    if (capabilities.trace.compact) {
+    if (traceCompactAvailable) {
       params.set('compact', '1');
     }
 
-    setTraceLoading(true);
+    if (!hasTraceRef.current) {
+      setTraceLoading(true);
+    }
     const streamCandidates = [
       {
         url: `${localBase}/mission-control/agents/trace/stream?${params.toString()}`,
@@ -526,7 +536,7 @@ export function AgentsRoute() {
         handleTraceFrame(event.data);
       };
 
-      if (capabilities.trace.namedSseTraceEvent) {
+      if (traceNamedSseEventAvailable) {
         source.addEventListener('trace', (event) => {
           const messageEvent = event as MessageEvent<string>;
           handleTraceFrame(messageEvent.data);
@@ -549,10 +559,10 @@ export function AgentsRoute() {
     return () => {
       source?.close();
     };
-  }, [selectedSessionId, liveMode, storedToken, sseFallbackToPolling, selectableSessions.length, capabilities]);
+  }, [selectedSessionId, liveMode, storedToken, sseFallbackToPolling, selectableSessions.length, traceCompactAvailable, traceNamedSseEventAvailable, traceStreamAvailable]);
 
   useEffect(() => {
-    if (liveMode && !sseFallbackToPolling && capabilities.trace.stream) {
+    if (liveMode && !sseFallbackToPolling && traceStreamAvailable) {
       return;
     }
 
@@ -565,12 +575,14 @@ export function AgentsRoute() {
         return;
       }
 
-      setTraceLoading(true);
+      if (!hasTraceRef.current) {
+        setTraceLoading(true);
+      }
       const payload = await loadMissionControlAgentTrace(
         selectedSessionId || undefined,
         storedToken || undefined,
         liveMode ? LIVE_TRACE_LIMIT : 0,
-        liveMode && capabilities.trace.compact,
+        liveMode && traceCompactAvailable,
       );
       if (!cancelled) {
         setTrace(payload);
@@ -593,7 +605,7 @@ export function AgentsRoute() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSessionId, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling, capabilities]);
+  }, [selectedSessionId, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
 
   return (
     <div className="flex flex-col gap-6">
