@@ -1939,6 +1939,33 @@ export async function loadMissionControlSkillsCatalog(
   return normalizeSkillsCatalog(payload);
 }
 
+export type ToggleSkillResult = {
+  success: boolean;
+  skillName: string;
+  enabled: boolean;
+  detail: string;
+};
+
+export async function toggleMissionControlSkill(
+  skillName: string,
+  enabled: boolean,
+  accessToken?: string,
+): Promise<ToggleSkillResult | null> {
+  try {
+    const response = await fetch(localApiUrl('/skills/toggle'), {
+      method: 'POST',
+      headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skillName, enabled }),
+    });
+    if (response.status === 401) throw new MissionControlAuthError();
+    if (!response.ok) return null;
+    return await response.json() as ToggleSkillResult;
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) throw error;
+    return null;
+  }
+}
+
 export async function loadMissionControlConfig(accessToken?: string): Promise<MissionControlConfigSnapshot> {
   try {
     const { payload: configPayload } = await maybeFetchLocalJson<{ content?: string; hash?: string; path?: string; config?: Record<string, unknown> }>('/config', accessToken);

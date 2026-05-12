@@ -735,8 +735,32 @@ def _collect_tools() -> Dict[str, Any]:
     }
 
 def _collect_skills() -> Dict[str, Any]:
-    """Scan ~/.hermes/skills/ to build an installed skills snapshot."""
+    """Scan ~/.hermes/skills/ to build an installed skills snapshot.
+
+    Reads skills.disabled (and skills.platform_disabled for the local
+    platform) from config.yaml to determine each skill's enabled state.
+    """
     skills_dir = Path.home() / ".hermes" / "skills"
+
+    # Read disabled skill names from config.yaml
+    disabled_names: set[str] = set()
+    config_path = _get_hermes_home() / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+            text = config_path.read_text()
+            cfg = yaml.safe_load(text) or {}
+            skills_cfg = cfg.get("skills", {})
+            disabled_names = set(skills_cfg.get("disabled", []))
+            # Also include platform_disabled for 'local'
+            platform_cfg = skills_cfg.get("platform_disabled", {})
+            if isinstance(platform_cfg, dict):
+                local_disabled = platform_cfg.get("local")
+                if local_disabled and isinstance(local_disabled, list):
+                    disabled_names |= set(local_disabled)
+        except Exception:
+            pass
+
     skills_list: list[Dict[str, Any]] = []
     categories_map: Dict[str, list[str]] = {}
 
@@ -760,11 +784,12 @@ def _collect_skills() -> Dict[str, Any]:
                         categories_map[category] = []
                     categories_map[category].append(entry.name)
 
+                skill_name = entry.name
                 skills_list.append({
-                    "id": entry.name,
-                    "name": entry.name,
-                    "description": desc or entry.name,
-                    "enabled": True,
+                    "id": skill_name,
+                    "name": skill_name,
+                    "description": desc or skill_name,
+                    "enabled": skill_name not in disabled_names,
                     "model": "",
                     "tags": [],
                     "category": category,
@@ -1192,6 +1217,61 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {'success': False, 'detail': str(exc), 'manual': True})
                 return
             self._json(202, {'success': True, 'detail': 'Gateway restart initiated.'})
+            return
+        if parsed.path == '/api/local/skills/toggle':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            skill_name = data.get('skillName', '').strip()
+            if not skill_name:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing skillName.'})
+                return
+            desired_enabled = bool(data.get('enabled', True))
+            config_path = _get_hermes_home() / 'config.yaml'
+            try:
+                import yaml
+                current_text = config_path.read_text()
+                cfg = yaml.safe_load(current_text) or {}
+            except Exception as exc:
+                self._json(500, {'error': 'read_failed', 'detail': str(exc)})
+                return
+            cfg.setdefault('skills', {})
+            disabled: list = list(cfg['skills'].get('disabled', []))
+            if desired_enabled:
+                # Remove from disabled list
+                disabled = [d for d in disabled if d != skill_name]
+            else:
+                # Add to disabled list if not already present
+                if skill_name not in disabled:
+                    disabled.append(skill_name)
+            cfg['skills']['disabled'] = sorted(disabled)
+            new_text = yaml.safe_dump(cfg, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            try:
+                backup = config_path.with_suffix(f'.yaml.bak.{int(time.time())}')
+                backup.write_text(current_text, encoding='utf-8')
+            except OSError:
+                pass
+            try:
+                _atomic_write_text(config_path, new_text)
+            except OSError as exc:
+                self._json(500, {'error': 'write_failed', 'detail': str(exc)})
+                return
+            self._json(200, {
+                'success': True,
+                'skillName': skill_name,
+                'enabled': desired_enabled,
+                'detail': f"Skill '{skill_name}' {'enabled' if desired_enabled else 'disabled'}.",
+            })
             return
         self._json(404, {'error': 'not_found', 'path': self.path})
 

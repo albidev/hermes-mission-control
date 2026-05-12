@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type ElementType } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ElementType } from 'react';
 import { Brain, FolderTree, LibraryBig, Power, RefreshCw, Search } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
-import { loadMissionControlSkillsCatalog, type MissionControlSkillsCatalogSnapshot } from '../lib/hermes-api';
+import { ToggleSwitch } from '../components/ui/ToggleSwitch';
+import { loadMissionControlSkillsCatalog, toggleMissionControlSkill, type MissionControlSkillsCatalogSnapshot } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 
 function MetricCard({
@@ -37,16 +38,36 @@ function statusVariant(status: string): 'positive' | 'accent' | 'warning' | 'def
 }
 
 export function SkillsRoute() {
-  const { skills, snapshot, storedToken } = useMissionControl();
+  const { skills, snapshot, storedToken, refreshAll } = useMissionControl();
   const [activeTab, setActiveTab] = useState<'installed' | 'catalog'>('installed');
   const [catalog, setCatalog] = useState<MissionControlSkillsCatalogSnapshot | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [togglingSkills, setTogglingSkills] = useState<Set<string>>(new Set());
 
   const enabled = skills.skills.filter((skill) => skill.enabled).length;
   const disabled = skills.skills.length - enabled;
   const installedNames = useMemo(() => new Set(skills.skills.map((skill) => skill.name.toLowerCase())), [skills.skills]);
+
+  const handleToggle = useCallback(async (skillName: string, currentlyEnabled: boolean) => {
+    setTogglingSkills((prev) => new Set(prev).add(skillName));
+    try {
+      const result = await toggleMissionControlSkill(skillName, !currentlyEnabled, storedToken || undefined);
+      if (result?.success) {
+        // Refresh skills list to pick up new disabled state from backend
+        await refreshAll(storedToken || undefined, { silent: true, includeReference: true });
+      }
+    } catch {
+      // Silently fail — state stays unchanged
+    } finally {
+      setTogglingSkills((prev) => {
+        const next = new Set(prev);
+        next.delete(skillName);
+        return next;
+      });
+    }
+  }, [storedToken, refreshAll]);
 
   const refreshCatalog = async () => {
     setCatalogLoading(true);
@@ -161,9 +182,15 @@ export function SkillsRoute() {
                       <p className="text-sm font-medium text-text truncate">{skill.name}</p>
                       <p className="text-xs text-text-muted line-clamp-2">{skill.description}</p>
                     </div>
-                    <Badge variant={skill.enabled ? 'positive' : 'warning'}>
-                      {skill.enabled ? 'enabled' : 'disabled'}
-                    </Badge>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <ToggleSwitch
+                        id={`toggle-${skill.id}`}
+                        checked={skill.enabled}
+                        disabled={togglingSkills.has(skill.name)}
+                        onChange={() => handleToggle(skill.name, skill.enabled)}
+                        label={skill.enabled ? 'enabled' : 'disabled'}
+                      />
+                    </div>
                   </div>
 
                   <div className="text-xs text-text-subtle">
