@@ -146,69 +146,51 @@ export function SkillsRoute() {
       </div>
 
       {activeTab === 'installed' ? (
-        <>
-          <Card padding="none">
-            <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-              <div className="flex flex-col gap-0.5">
-                <span className="eyebrow">Categories</span>
-                <h3 className="text-sm font-semibold text-text">Skill families</h3>
-              </div>
-              <span className="text-xs text-text-subtle">{skills.categories.length} categories</span>
+        <Card padding="none">
+          <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <span className="eyebrow">Installed</span>
+              <h3 className="text-sm font-semibold text-text mt-0.5">Every installed skill</h3>
+              <p className="text-xs text-text-subtle mt-1">
+                {skills.skills.length} skills · {enabled} enabled · {disabled} disabled
+              </p>
             </div>
+          </div>
 
-            <div className="p-4 flex flex-wrap gap-2">
-              {skills.categories.map((category) => (
-                <Badge key={category.name} variant="default">
-                  {category.name} · {category.count}
-                </Badge>
-              ))}
-            </div>
-          </Card>
-
-          <Card padding="none">
-            <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-              <div>
-                <span className="eyebrow">Installed</span>
-                <h3 className="text-sm font-semibold text-text mt-0.5">Every installed skill</h3>
-              </div>
-              <Badge variant="default">{disabled} disabled</Badge>
-            </div>
-
-            <div className="divide-y divide-border-subtle">
-              {skills.skills.map((skill) => (
-                <div key={skill.id} className="px-4 py-3 flex flex-col gap-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-text truncate">{skill.name}</p>
-                      <p className="text-xs text-text-muted line-clamp-2">{skill.description}</p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <ToggleSwitch
-                        id={`toggle-${skill.id}`}
-                        checked={skill.enabled}
-                        disabled={togglingSkills.has(skill.name)}
-                        onChange={() => handleToggle(skill.name, skill.enabled)}
-                        label={skill.enabled ? 'enabled' : 'disabled'}
-                      />
-                    </div>
+          <div className="divide-y divide-border-subtle">
+            {skills.skills.map((skill) => (
+              <div key={skill.id} className="px-4 py-3 flex flex-col gap-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-text truncate">{skill.name}</p>
+                    <p className="text-xs text-text-muted line-clamp-2">{skill.description}</p>
                   </div>
-
-                  <div className="text-xs text-text-subtle">
-                    {(skill.category || 'uncategorized') + (skill.model ? ` · ${skill.model}` : '')}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <ToggleSwitch
+                      id={`toggle-${skill.id}`}
+                      checked={skill.enabled}
+                      disabled={togglingSkills.has(skill.name)}
+                      onChange={() => handleToggle(skill.name, skill.enabled)}
+                      label={skill.enabled ? 'enabled' : 'disabled'}
+                    />
                   </div>
-
-                  {skill.tags.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {skill.tags.map((tag) => (
-                        <Badge key={tag} variant="default">{tag}</Badge>
-                      ))}
-                    </div>
-                  ) : null}
                 </div>
-              ))}
-            </div>
-          </Card>
-        </>
+
+                <div className="text-xs text-text-subtle">
+                  {(skill.category || 'uncategorized') + (skill.model ? ` · ${skill.model}` : '')}
+                </div>
+
+                {skill.tags.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {skill.tags.map((tag) => (
+                      <Badge key={tag} variant="default">{tag}</Badge>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </Card>
       ) : (
         <Card padding="none">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
