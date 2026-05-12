@@ -1579,15 +1579,16 @@ function deriveRecentSignals(
 
 export async function loadMissionControlSnapshot(accessToken?: string): Promise<MissionControlSnapshot> {
   try {
-    const [status, modelInfo, configRaw, machine, sessions, cron] = await Promise.all([
+    const [status, modelInfo, configRaw, machine, cron] = await Promise.all([
       maybeFetchLocalJson<OfficialStatusPayload>('/status', accessToken).then((r) => r.payload),
       maybeFetchLocalJson<OfficialModelInfoPayload>('/model/info', accessToken).then((r) => r.payload),
       maybeFetchLocalJson<Record<string, unknown>>('/config', accessToken).then((r) => r.payload),
       loadLocalMissionControlMachineStatus(accessToken),
-      fetchMissionControlAgentSessions(accessToken, 50),
       loadMissionControlCron(accessToken),
     ]);
 
+    const sessions = fallbackSessions;
+    const knowledgeSharing = fallbackKnowledge;
     const alerts = deriveAlerts(status, machine, sessions, cron);
     return normalizeSnapshot({
       backendHealth: deriveBackendHealth(status, machine),
@@ -1598,7 +1599,7 @@ export async function loadMissionControlSnapshot(accessToken?: string): Promise<
       queuedJobs: cron.queuedJobs,
       toolCallsToday: sessions.toolCallsToday,
       recentSignals: deriveRecentSignals(status, modelInfo, sessions, cron, alerts, machine),
-      knowledgeSharing: await loadMissionControlKnowledge(accessToken),
+      knowledgeSharing,
       machine,
       sessions,
       cron,
@@ -1765,13 +1766,12 @@ export async function loadMissionControlCron(accessToken?: string): Promise<Miss
 
 export async function loadMissionControlAlerts(accessToken?: string): Promise<MissionControlAlertsSnapshot> {
   try {
-    const [status, machine, sessions, cron] = await Promise.all([
+    const [status, machine, cron] = await Promise.all([
       maybeFetchLocalJson<OfficialStatusPayload>('/status', accessToken).then((r) => r.payload),
       loadMissionControlMachineStatus(accessToken),
-      loadMissionControlSessions(accessToken),
       loadMissionControlCron(accessToken),
     ]);
-    return deriveAlerts(status ?? null, machine, sessions, cron);
+    return deriveAlerts(status ?? null, machine, fallbackSessions, cron);
   } catch (error) {
     if (error instanceof MissionControlAuthError) {
       throw error;
@@ -1873,15 +1873,21 @@ export async function loadMissionControlSkills(accessToken?: string): Promise<Mi
 export async function loadMissionControlConfig(accessToken?: string): Promise<MissionControlConfigSnapshot> {
   try {
     const { payload: configPayload } = await maybeFetchLocalJson<{ content?: string; hash?: string; path?: string; config?: Record<string, unknown> }>('/config', accessToken);
-    const content = typeof configPayload?.content === 'string' ? configPayload.content : '';
-    const configPath = configPayload?.path ?? fallbackConfig.path;
-    const parsedConfig = isPlainObject(configPayload?.config) ? (configPayload.config as Record<string, unknown>) : {};
+
+    if (!configPayload) {
+      return fallbackConfig;
+    }
+
+    const content = typeof configPayload.content === 'string' ? configPayload.content : '';
+    const configPath = configPayload.path ?? fallbackConfig.path;
+    const parsedConfig = isRecord(configPayload.config) ? configPayload.config : {};
+
     return normalizeConfig({
       available: true,
       path: configPath,
       exists: Boolean(content.trim()) || Boolean(configPath),
       content,
-      hash: typeof configPayload?.hash === 'string' ? configPayload.hash : hashText(content),
+      hash: typeof configPayload.hash === 'string' ? configPayload.hash : hashText(content),
       updatedAt: null,
       config: parsedConfig,
     });

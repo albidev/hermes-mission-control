@@ -54,7 +54,7 @@ type MissionControlContextValue = {
   storedToken: string;
   tokenDraft: string;
   setTokenDraft: (value: string) => void;
-  refreshAll: (token?: string, options?: { silent?: boolean }) => Promise<void>;
+  refreshAll: (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean; includeSessions?: boolean }) => Promise<void>;
   unlock: (token: string) => Promise<void>;
   logout: () => void;
   actionResult: MissionControlActionResult | null;
@@ -185,67 +185,94 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     return updated;
   }, []);
 
-  const refreshAll = useCallback(async (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean }) => {
+  const refreshReferenceData = useCallback(async (token?: string) => {
+    const [knowledgeRes, toolsRes, skillsRes] = await Promise.allSettled([
+      loadMissionControlKnowledge(token),
+      loadMissionControlTools(token),
+      loadMissionControlSkills(token),
+    ]);
+
+    if (knowledgeRes.status === 'fulfilled') {
+      const nextKnowledge = knowledgeRes.value;
+      setKnowledge((previous) => (nextKnowledge.available ? nextKnowledge : previous));
+    }
+
+    if (toolsRes.status === 'fulfilled') {
+      const nextTools = toolsRes.value;
+      setTools((previous) => (nextTools.available ? nextTools : previous));
+    }
+
+    if (skillsRes.status === 'fulfilled') {
+      const nextSkills = skillsRes.value;
+      setSkills((previous) => (nextSkills.available ? nextSkills : previous));
+    }
+  }, []);
+
+  const refreshAll = useCallback(async (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean; includeSessions?: boolean }) => {
     const silent = options?.silent ?? false;
     const includeReference = options?.includeReference ?? true;
     const includeSnapshot = options?.includeSnapshot ?? !silent;
+    const includeSessions = options?.includeSessions ?? !silent;
     if (!silent) {
       setLoading(true);
     }
 
+    if (includeReference) {
+      void refreshReferenceData(token);
+    }
+
     try {
-      const [machine, sessions, cron, alerts] = await Promise.all([
-        loadMissionControlMachineStatus(token),
-        loadMissionControlSessions(token),
-        loadMissionControlCron(token),
-        loadMissionControlAlerts(token),
-      ]);
-
-      setSnapshot((previous) => {
-        const nextMachine = machine as MissionControlSnapshot['machine'];
-        const nextSessions = sessions as MissionControlSnapshot['sessions'];
-        const nextCron = cron as MissionControlSnapshot['cron'];
-        const nextAlerts = alerts as MissionControlSnapshot['alerts'];
-
-        const machineValue = nextMachine.source === 'fallback' && previous.machine.source !== 'fallback' ? previous.machine : nextMachine;
-        const sessionsValue = nextSessions.totalSessions === 0 && previous.sessions.totalSessions > 0 ? previous.sessions : nextSessions;
-        const cronValue = nextCron.items.length === 0 && previous.cron.items.length > 0 ? previous.cron : nextCron;
-        const alertsValue =
-          nextAlerts.items.length === 1 && nextAlerts.items[0]?.id === 'fallback-gateway' && previous.alerts.items.length > 0
-            ? previous.alerts
-            : nextAlerts;
-
-        return {
-          ...previous,
-          machine: machineValue,
-          sessions: sessionsValue,
-          cron: cronValue,
-          alerts: alertsValue,
-          activeAgents: sessionsValue.activeAgents,
-        };
+      const updateMachine = loadMissionControlMachineStatus(token).then((machine) => {
+        setSnapshot((previous) => {
+          const nextMachine = machine as MissionControlSnapshot['machine'];
+          const machineValue = nextMachine.source === 'fallback' && previous.machine.source !== 'fallback' ? previous.machine : nextMachine;
+          return { ...previous, machine: machineValue };
+        });
       });
 
-      if (includeReference) {
-        const [knowledgeRes, toolsRes, skillsRes] = await Promise.allSettled([
-          loadMissionControlKnowledge(token),
-          loadMissionControlTools(token),
-          loadMissionControlSkills(token),
-        ]);
+      const updateSessions = includeSessions
+        ? loadMissionControlSessions(token).then((sessions) => {
+            setSnapshot((previous) => {
+              const nextSessions = sessions as MissionControlSnapshot['sessions'];
+              const sessionsValue = nextSessions.totalSessions === 0 && previous.sessions.totalSessions > 0 ? previous.sessions : nextSessions;
+              return {
+                ...previous,
+                sessions: sessionsValue,
+                activeAgents: sessionsValue.activeAgents,
+              };
+            });
+          })
+        : Promise.resolve();
 
-        if (knowledgeRes.status === 'fulfilled') {
-          const nextKnowledge = knowledgeRes.value;
-          setKnowledge((previous) => (nextKnowledge.available ? nextKnowledge : previous));
-        }
+      const updateCron = loadMissionControlCron(token).then((cron) => {
+        setSnapshot((previous) => {
+          const nextCron = cron as MissionControlSnapshot['cron'];
+          const cronValue = nextCron.items.length === 0 && previous.cron.items.length > 0 ? previous.cron : nextCron;
+          return {
+            ...previous,
+            cron: cronValue,
+            queuedJobs: cronValue.queuedJobs,
+          };
+        });
+      });
 
-        if (toolsRes.status === 'fulfilled') {
-          const nextTools = toolsRes.value;
-          setTools((previous) => (nextTools.available ? nextTools : previous));
-        }
+      const updateAlerts = loadMissionControlAlerts(token).then((alerts) => {
+        setSnapshot((previous) => {
+          const nextAlerts = alerts as MissionControlSnapshot['alerts'];
+          const alertsValue =
+            nextAlerts.items.length === 1 && nextAlerts.items[0]?.id === 'fallback-gateway' && previous.alerts.items.length > 0
+              ? previous.alerts
+              : nextAlerts;
+          return { ...previous, alerts: alertsValue };
+        });
+      });
 
-        if (skillsRes.status === 'fulfilled') {
-          const nextSkills = skillsRes.value;
-          setSkills((previous) => (nextSkills.available ? nextSkills : previous));
-        }
+      const liveResults = await Promise.allSettled([updateMachine, updateSessions, updateCron, updateAlerts]);
+      const authFailure = liveResults.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected' && result.reason instanceof MissionControlAuthError,
+      );
+      if (authFailure) {
+        throw authFailure.reason;
       }
 
       if (includeSnapshot) {
@@ -295,7 +322,7 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [refreshReferenceData]);
 
   useEffect(() => {
     void refreshAll(initialToken || undefined);
@@ -321,11 +348,15 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       ticks += 1;
       const includeReference = ticks % 4 === 0 || !tools.available || !skills.available || !knowledge.available;
       const includeSnapshot = ticks % 4 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
+      const includeConfig = ticks % 4 === 0 || !config.available;
       void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot });
+      if (includeConfig) {
+        void refreshConfig(storedToken || undefined).catch(() => {});
+      }
     }, 15000);
 
     return () => window.clearInterval(interval);
-  }, [authRequired, knowledge.available, refreshAll, skills.available, snapshot.activeModel, storedToken, tools.available]);
+  }, [authRequired, config.available, knowledge.available, refreshAll, refreshConfig, skills.available, snapshot.activeModel, storedToken, tools.available]);
 
   useEffect(() => {
     if (authRequired || typeof document === 'undefined' || typeof window === 'undefined') {
