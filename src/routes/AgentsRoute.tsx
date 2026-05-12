@@ -106,23 +106,33 @@ function getEventTypeBadge(event: MissionControlAgentTraceEvent): BadgeVisual {
   return { variant: 'default', className: '' };
 }
 
-function getEventStatusBadge(event: MissionControlAgentTraceEvent): BadgeVisual | null {
-  if (event.status === 'failed' || event.tone === 'bad') {
+function getEffectiveEventStatus(event: MissionControlAgentTraceEvent, completedToolCallIds: Set<string>): string {
+  if (event.type === 'tool_call_started' && event.callId && completedToolCallIds.has(event.callId)) {
+    return 'completed';
+  }
+
+  if (event.status === 'failed' || event.tone === 'bad') return 'failed';
+  if (event.status === 'running') return 'running';
+  if (event.tone === 'warn') return 'warning';
+  return event.status || 'completed';
+}
+
+function getEventStatusBadge(event: MissionControlAgentTraceEvent, completedToolCallIds: Set<string>): BadgeVisual | null {
+  const status = getEffectiveEventStatus(event, completedToolCallIds);
+
+  if (status === 'failed') {
     return { variant: 'negative', className: '' };
   }
 
-  if (event.status === 'running' || event.tone === 'warn') {
+  if (status === 'running' || status === 'warning') {
     return { variant: 'warning', className: '' };
   }
 
   return null;
 }
 
-function getEventStatusLabel(event: MissionControlAgentTraceEvent): string {
-  if (event.status === 'failed' || event.tone === 'bad') return 'failed';
-  if (event.status === 'running') return 'running';
-  if (event.tone === 'warn') return 'warning';
-  return event.status || 'status';
+function getEventStatusLabel(event: MissionControlAgentTraceEvent, completedToolCallIds: Set<string>): string {
+  return getEffectiveEventStatus(event, completedToolCallIds);
 }
 
 function summarizeRawPayload(value: string, limit = 1200): string {
@@ -420,6 +430,16 @@ export function AgentsRoute() {
       edges,
     };
   }, [visibleTrace]);
+
+  const completedToolCallIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const event of visibleTrace?.events ?? []) {
+      if (event.type === 'tool_call_completed' && event.callId) {
+        ids.add(event.callId);
+      }
+    }
+    return ids;
+  }, [visibleTrace?.events]);
 
   const timelineEvents = useMemo(() => {
     return [...(visibleTrace?.events ?? [])].sort((a, b) => {
@@ -875,7 +895,7 @@ export function AgentsRoute() {
               {timelineEvents.length > 0 ? (
                 timelineEvents.map((event) => {
                   const badge = getEventTypeBadge(event);
-                  const statusBadge = getEventStatusBadge(event);
+                  const statusBadge = getEventStatusBadge(event, completedToolCallIds);
                   return (
                     <button
                       key={event.id}
@@ -885,7 +905,7 @@ export function AgentsRoute() {
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={badge.variant} className={badge.className}>{event.type.replaceAll('_', ' ')}</Badge>
-                        {statusBadge ? <Badge variant={statusBadge.variant} className={statusBadge.className}>{getEventStatusLabel(event)}</Badge> : null}
+                        {statusBadge ? <Badge variant={statusBadge.variant} className={statusBadge.className}>{getEventStatusLabel(event, completedToolCallIds)}</Badge> : null}
                         <span className="text-sm font-medium text-text">{event.label}</span>
                         <span className="text-xs text-text-subtle ml-auto">{formatRelativeTime(event.timestamp)}</span>
                       </div>
@@ -964,10 +984,11 @@ export function AgentsRoute() {
 
                   {dagLayout.nodes.map((item) => {
                     const linkedEvent = eventById.get(item.node.id);
+                    const effectiveStatus = linkedEvent ? getEffectiveEventStatus(linkedEvent, completedToolCallIds) : item.node.status;
                     const statusAccent =
-                      item.node.status === 'failed'
+                      effectiveStatus === 'failed'
                         ? 'border-l-negative'
-                        : item.node.status === 'running'
+                        : effectiveStatus === 'running'
                           ? 'border-l-warning'
                           : 'border-l-positive';
 
