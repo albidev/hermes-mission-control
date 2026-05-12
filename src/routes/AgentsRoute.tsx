@@ -161,6 +161,7 @@ export function AgentsRoute() {
   const [selectedEvent, setSelectedEvent] = useState<MissionControlAgentTraceEvent | null>(null);
   const [rawPayloadViewer, setRawPayloadViewer] = useState<{ title: string; content: string } | null>(null);
   const hasTraceRef = useRef(false);
+  const manualSessionSelectionRef = useRef(false);
   const traceStreamAvailable = capabilities.trace.stream;
   const traceCompactAvailable = capabilities.trace.compact;
   const traceNamedSseEventAvailable = capabilities.trace.namedSseTraceEvent;
@@ -168,6 +169,14 @@ export function AgentsRoute() {
   useEffect(() => {
     hasTraceRef.current = Boolean(trace);
   }, [trace]);
+
+  const selectSession = (sessionId: string, manual = false) => {
+    manualSessionSelectionRef.current = manual;
+    hasTraceRef.current = false;
+    setTrace(null);
+    setTraceLoading(Boolean(sessionId));
+    setSelectedSessionId(sessionId);
+  };
 
   const orderedSessions = useMemo<MissionControlAgentSessionItem[]>(
     () => [...agentSessions].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0)),
@@ -193,7 +202,7 @@ export function AgentsRoute() {
     const preferred = liveRichSession ?? richSession ?? selectableSessions[0];
 
     if (preferred) {
-      setSelectedSessionId(preferred.sessionId);
+      selectSession(preferred.sessionId);
     }
   }, [selectableSessions, selectedSessionId]);
 
@@ -394,6 +403,10 @@ export function AgentsRoute() {
   }, [selectedSessionId, liveMode]);
 
   useEffect(() => {
+    manualSessionSelectionRef.current = false;
+  }, [liveMode, selectedAgentId]);
+
+  useEffect(() => {
     if (!selectedEvent || !visibleTrace) return;
     if (visibleTrace.events.some((event) => event.id === selectedEvent.id)) return;
     setSelectedEvent(null);
@@ -402,7 +415,8 @@ export function AgentsRoute() {
   useEffect(() => {
     if (!selectedSessionId) return;
     if (selectableSessions.some((session) => session.sessionId === selectedSessionId)) return;
-    setSelectedSessionId(selectableSessions[0]?.sessionId ?? '');
+    manualSessionSelectionRef.current = false;
+    selectSession(selectableSessions[0]?.sessionId ?? '');
   }, [selectedSessionId, selectableSessions]);
 
   useEffect(() => {
@@ -417,12 +431,17 @@ export function AgentsRoute() {
 
     const current = selectableSessions.find((session) => session.sessionId === selectedSessionId);
     if (!current) {
-      setSelectedSessionId(freshest.sessionId);
+      manualSessionSelectionRef.current = false;
+      selectSession(freshest.sessionId);
+      return;
+    }
+
+    if (manualSessionSelectionRef.current) {
       return;
     }
 
     if (freshest.sessionId !== current.sessionId && (freshest.lastActiveAt ?? 0) > (current.lastActiveAt ?? 0) + 5) {
-      setSelectedSessionId(freshest.sessionId);
+      selectSession(freshest.sessionId);
     }
   }, [liveMode, selectableSessions, selectedSessionId]);
 
@@ -730,7 +749,7 @@ export function AgentsRoute() {
             <select
               className="auth-input py-2 text-sm"
               value={selectedSessionId}
-              onChange={(event) => setSelectedSessionId(event.target.value)}
+              onChange={(event) => selectSession(event.target.value, true)}
               disabled={selectableSessions.length === 0}
             >
               {selectableSessions.length === 0 ? (
