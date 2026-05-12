@@ -100,7 +100,7 @@ export function SkillsRoute() {
         </div>
 
         <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-          <MetricCard icon={Brain} label="Installed" value={String(skills.count)} hint="local capabilities" />
+          <MetricCard icon={Brain} label="Installed" value={String(skills.count)} hint={`local capabilities · ${catalog?.count ?? 0} in catalog`} />
           <MetricCard icon={LibraryBig} label="Catalog" value={String(catalog?.count ?? 0)} hint="discoverable skills" />
           <MetricCard icon={Power} label="Enabled" value={String(enabled)} hint="currently active" />
           <MetricCard icon={FolderTree} label="Model" value={snapshot.activeModel} hint="current primary model" />
