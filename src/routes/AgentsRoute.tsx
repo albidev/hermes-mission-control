@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Activity, Bot, Clock3, Cpu, Gauge, GitBranch, Layers, ListTree, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
@@ -79,6 +79,71 @@ const DAG_PADDING_Y = 40;
 function getAgentKey(source?: string, model?: string): string {
   return `${source || 'unknown'}::${model || 'unknown'}`;
 }
+
+const AgentRegistryCard = memo(function AgentRegistryCard({
+  registry,
+  selectedAgentId,
+}: {
+  registry: AgentAggregate[];
+  selectedAgentId: string;
+}) {
+  return (
+    <Card padding="none">
+      <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
+        <div className="flex flex-col gap-0.5">
+          <span className="eyebrow">Agent registry</span>
+          <h3 className="text-sm font-semibold text-text">Per-agent stats by source + model</h3>
+        </div>
+        <Badge variant="default">{registry.length} agents</Badge>
+      </div>
+
+      <div className="divide-y divide-border-subtle">
+        {registry.length > 0 ? (
+          registry.map((agent) => {
+            const isSelected = selectedAgentId === agent.id;
+            return <AgentRegistryRow key={agent.id} agent={agent} isSelected={isSelected} />;
+          })
+        ) : (
+          <div className="px-4 py-8 text-center text-sm text-text-muted italic">No agent registry data yet.</div>
+        )}
+      </div>
+    </Card>
+  );
+});
+
+const AgentRegistryRow = memo(function AgentRegistryRow({
+  agent,
+  isSelected,
+}: {
+  agent: AgentAggregate;
+  isSelected: boolean;
+}) {
+  return (
+    <div className={`px-4 py-3 grid grid-cols-1 lg:grid-cols-12 gap-2 items-center ${isSelected ? 'bg-surface-sunken/70' : ''}`}>
+      <div className="lg:col-span-5 min-w-0">
+        <p className="text-sm font-medium text-text break-all">{agent.source}</p>
+        <p className="text-xs text-text-muted break-all">{agent.model}</p>
+      </div>
+
+      <div className="lg:col-span-2 flex items-center gap-2">
+        <Badge variant={agent.liveSessions > 0 ? 'positive' : 'default'}>{agent.liveSessions > 0 ? 'running' : 'idle'}</Badge>
+      </div>
+
+      <div className="lg:col-span-5 flex flex-wrap items-center gap-2 text-xs text-text-subtle">
+        <span className="inline-flex items-center gap-1"><Cpu className="h-3.5 w-3.5" /> sessions {agent.totalSessions}</span>
+        <span className="inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> msgs {agent.totalMessages}</span>
+        <span>last active {formatRelativeTime(agent.lastActive)}</span>
+        <span className="text-text-muted">({formatTimestamp(agent.lastActive)})</span>
+        <Link
+          to={`/agents/${encodeURIComponent(agent.id)}`}
+          className={`pill pill-button text-[11px] ${isSelected ? 'nav-link-active' : 'pill-subtle'}`}
+        >
+          Open flow
+        </Link>
+      </div>
+    </div>
+  );
+});
 
 export function AgentsRoute() {
   const { agentId } = useParams<{ agentId?: string }>();
@@ -813,50 +878,7 @@ export function AgentsRoute() {
         </div>
       </Card>
 
-      <Card padding="none">
-        <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Agent registry</span>
-            <h3 className="text-sm font-semibold text-text">Per-agent stats by source + model</h3>
-          </div>
-          <Badge variant="default">{registry.length} agents</Badge>
-        </div>
-
-        <div className="divide-y divide-border-subtle">
-          {registry.length > 0 ? (
-            registry.map((agent) => {
-              const isSelected = selectedAgentId === agent.id;
-              return (
-                <div key={agent.id} className={`px-4 py-3 grid grid-cols-1 lg:grid-cols-12 gap-2 items-center ${isSelected ? 'bg-surface-sunken/70' : ''}`}>
-                  <div className="lg:col-span-5 min-w-0">
-                    <p className="text-sm font-medium text-text break-all">{agent.source}</p>
-                    <p className="text-xs text-text-muted break-all">{agent.model}</p>
-                  </div>
-
-                  <div className="lg:col-span-2 flex items-center gap-2">
-                    <Badge variant={agent.liveSessions > 0 ? 'positive' : 'default'}>{agent.liveSessions > 0 ? 'running' : 'idle'}</Badge>
-                  </div>
-
-                  <div className="lg:col-span-5 flex flex-wrap items-center gap-2 text-xs text-text-subtle">
-                    <span className="inline-flex items-center gap-1"><Cpu className="h-3.5 w-3.5" /> sessions {agent.totalSessions}</span>
-                    <span className="inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> msgs {agent.totalMessages}</span>
-                    <span>last active {formatRelativeTime(agent.lastActive)}</span>
-                    <span className="text-text-muted">({formatTimestamp(agent.lastActive)})</span>
-                    <Link
-                      to={`/agents/${encodeURIComponent(agent.id)}`}
-                      className={`pill pill-button text-[11px] ${isSelected ? 'nav-link-active' : 'pill-subtle'}`}
-                    >
-                      Open flow
-                    </Link>
-                  </div>
-                </div>
-              );
-            })
-          ) : (
-            <div className="px-4 py-8 text-center text-sm text-text-muted italic">No agent registry data yet.</div>
-          )}
-        </div>
-      </Card>
+      <AgentRegistryCard registry={registry} selectedAgentId={selectedAgentId} />
 
       <Modal
         open={Boolean(selectedEvent)}
