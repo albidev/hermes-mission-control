@@ -47,14 +47,12 @@ function MetricCard({
   );
 }
 
-function getEventTypeBadge(event: MissionControlAgentTraceEvent): {
+type BadgeVisual = {
   variant: 'default' | 'positive' | 'warning' | 'negative' | 'accent';
   className: string;
-} {
-  if (event.tone === 'bad') {
-    return { variant: 'negative', className: '' };
-  }
+};
 
+function getEventTypeBadge(event: MissionControlAgentTraceEvent): BadgeVisual {
   if (event.type.startsWith('tool_call')) {
     return {
       variant: 'default',
@@ -97,11 +95,34 @@ function getEventTypeBadge(event: MissionControlAgentTraceEvent): {
     };
   }
 
+  if (event.tone === 'bad') {
+    return { variant: 'negative', className: '' };
+  }
+
   if (event.tone === 'warn') {
     return { variant: 'warning', className: '' };
   }
 
   return { variant: 'default', className: '' };
+}
+
+function getEventStatusBadge(event: MissionControlAgentTraceEvent): BadgeVisual | null {
+  if (event.status === 'failed' || event.tone === 'bad') {
+    return { variant: 'negative', className: '' };
+  }
+
+  if (event.status === 'running' || event.tone === 'warn') {
+    return { variant: 'warning', className: '' };
+  }
+
+  return null;
+}
+
+function getEventStatusLabel(event: MissionControlAgentTraceEvent): string {
+  if (event.status === 'failed' || event.tone === 'bad') return 'failed';
+  if (event.status === 'running') return 'running';
+  if (event.tone === 'warn') return 'warning';
+  return event.status || 'status';
 }
 
 function summarizeRawPayload(value: string, limit = 1200): string {
@@ -854,6 +875,7 @@ export function AgentsRoute() {
               {timelineEvents.length > 0 ? (
                 timelineEvents.map((event) => {
                   const badge = getEventTypeBadge(event);
+                  const statusBadge = getEventStatusBadge(event);
                   return (
                     <button
                       key={event.id}
@@ -863,6 +885,7 @@ export function AgentsRoute() {
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={badge.variant} className={badge.className}>{event.type.replaceAll('_', ' ')}</Badge>
+                        {statusBadge ? <Badge variant={statusBadge.variant} className={statusBadge.className}>{getEventStatusLabel(event)}</Badge> : null}
                         <span className="text-sm font-medium text-text">{event.label}</span>
                         <span className="text-xs text-text-subtle ml-auto">{formatRelativeTime(event.timestamp)}</span>
                       </div>
