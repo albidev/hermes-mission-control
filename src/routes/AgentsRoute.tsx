@@ -940,8 +940,14 @@ export function AgentsRoute() {
                 selectedEvent.response ??
                 linked?.response ??
                 (selectedEvent.type === 'assistant_response' ? selectedEvent.detail : undefined);
+              const eventDetail = !requestDetail && !responseDetail ? selectedEvent.detail : undefined;
               const requestLabel = selectedEvent.type.startsWith('tool_call') ? 'Tool request' : 'Request';
               const responseLabel = selectedEvent.type.startsWith('tool_call') ? 'Tool response' : 'Response';
+              const eventLabel = selectedEvent.type === 'user_message'
+                ? 'User message'
+                : selectedEvent.type === 'thought'
+                  ? 'Thought'
+                  : 'Event detail';
 
               return (
                 <>
@@ -977,9 +983,25 @@ export function AgentsRoute() {
                     </div>
                   ) : null}
 
-                  {!requestDetail && !responseDetail ? (
+                  {eventDetail ? (
                     <div className="card p-3">
-                      <p className="text-sm text-text-muted">No request/response payload available for this event.</p>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="text-[11px] uppercase tracking-wide text-text-subtle">{eventLabel}</p>
+                      </div>
+                      <pre className="text-xs text-text break-words whitespace-pre-wrap font-mono">{summarizeRawPayload(eventDetail)}</pre>
+                      <button
+                        type="button"
+                        className="mt-2 w-full text-xs px-3 py-2 rounded border border-border-subtle text-text hover:bg-surface-raised"
+                        onClick={() => setRawPayloadViewer({ title: `${eventLabel} (raw)`, content: eventDetail })}
+                      >
+                        Open raw detail
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {!requestDetail && !responseDetail && !eventDetail ? (
+                    <div className="card p-3">
+                      <p className="text-sm text-text-muted">No detail payload available for this event.</p>
                     </div>
                   ) : null}
                 </>
