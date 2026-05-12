@@ -47,10 +47,61 @@ function MetricCard({
   );
 }
 
-function toneToVariant(tone?: string) {
-  if (tone === 'bad') return 'negative' as const;
-  if (tone === 'warn') return 'warning' as const;
-  return 'positive' as const;
+function getEventTypeBadge(event: MissionControlAgentTraceEvent): {
+  variant: 'default' | 'positive' | 'warning' | 'negative' | 'accent';
+  className: string;
+} {
+  if (event.tone === 'bad') {
+    return { variant: 'negative', className: '' };
+  }
+
+  if (event.type.startsWith('tool_call')) {
+    return {
+      variant: 'default',
+      className: 'bg-sky-500/10 text-sky-500 dark:text-sky-300 border border-sky-400/25',
+    };
+  }
+
+  if (event.type === 'skill_used') {
+    return {
+      variant: 'default',
+      className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border border-emerald-400/25',
+    };
+  }
+
+  if (event.type === 'thought') {
+    return {
+      variant: 'default',
+      className: 'bg-violet-500/10 text-violet-600 dark:text-violet-300 border border-violet-400/25',
+    };
+  }
+
+  if (event.type === 'user_message') {
+    return {
+      variant: 'default',
+      className: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-300 border border-cyan-400/25',
+    };
+  }
+
+  if (event.type === 'assistant_response') {
+    return {
+      variant: 'default',
+      className: 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-300 border border-fuchsia-400/25',
+    };
+  }
+
+  if (event.type.startsWith('turn_')) {
+    return {
+      variant: 'default',
+      className: 'bg-amber-500/10 text-amber-600 dark:text-amber-300 border border-amber-400/25',
+    };
+  }
+
+  if (event.tone === 'warn') {
+    return { variant: 'warning', className: '' };
+  }
+
+  return { variant: 'default', className: '' };
 }
 
 function summarizeRawPayload(value: string, limit = 1200): string {
@@ -801,29 +852,32 @@ export function AgentsRoute() {
           {!traceLoading && visibleTrace && view === 'timeline' ? (
             <div className="flex flex-col gap-2">
               {timelineEvents.length > 0 ? (
-                timelineEvents.map((event) => (
-                  <button
-                    key={event.id}
-                    type="button"
-                    onClick={() => setSelectedEvent(event)}
-                    className="card p-3 flex flex-col gap-1.5 min-w-0 text-left hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={toneToVariant(event.tone)}>{event.type.replaceAll('_', ' ')}</Badge>
-                      <span className="text-sm font-medium text-text">{event.label}</span>
-                      <span className="text-xs text-text-subtle ml-auto">{formatRelativeTime(event.timestamp)}</span>
-                    </div>
-                    <p className="text-xs text-text-muted break-words">{summarizeEventPreview(event.detail)}</p>
-                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-subtle">
-                      <span>turn {event.turnId}</span>
-                      {event.toolName ? <span>tool {event.toolName}</span> : null}
-                      {event.skillName ? <span>skill {event.skillName}</span> : null}
-                      {event.callId ? <span>call {event.callId}</span> : null}
-                      <span>{formatTimestamp(event.timestamp)}</span>
-                      <span className="text-text-muted">tap for details</span>
-                    </div>
-                  </button>
-                ))
+                timelineEvents.map((event) => {
+                  const badge = getEventTypeBadge(event);
+                  return (
+                    <button
+                      key={event.id}
+                      type="button"
+                      onClick={() => setSelectedEvent(event)}
+                      className="card p-3 flex flex-col gap-1.5 min-w-0 text-left hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={badge.variant} className={badge.className}>{event.type.replaceAll('_', ' ')}</Badge>
+                        <span className="text-sm font-medium text-text">{event.label}</span>
+                        <span className="text-xs text-text-subtle ml-auto">{formatRelativeTime(event.timestamp)}</span>
+                      </div>
+                      <p className="text-xs text-text-muted break-words">{summarizeEventPreview(event.detail)}</p>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-subtle">
+                        <span>turn {event.turnId}</span>
+                        {event.toolName ? <span>tool {event.toolName}</span> : null}
+                        {event.skillName ? <span>skill {event.skillName}</span> : null}
+                        {event.callId ? <span>call {event.callId}</span> : null}
+                        <span>{formatTimestamp(event.timestamp)}</span>
+                        <span className="text-text-muted">tap for details</span>
+                      </div>
+                    </button>
+                  );
+                })
               ) : (
                 <div className="text-sm text-text-muted italic">No trace events yet for this session.</div>
               )}
