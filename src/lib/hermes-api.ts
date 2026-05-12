@@ -235,6 +235,28 @@ export type MissionControlSkillsSnapshot = {
   categories: MissionControlSkillCategory[];
 };
 
+export type MissionControlSkillCatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  identifier: string;
+  trustLevel: 'builtin' | 'trusted' | 'community' | string;
+  repo?: string | null;
+  path?: string | null;
+  tags: string[];
+  installed: boolean;
+};
+
+export type MissionControlSkillsCatalogSnapshot = {
+  available: boolean;
+  count: number;
+  hint: string | null;
+  skills: MissionControlSkillCatalogItem[];
+  sources: Record<string, number>;
+  timedOut: string[];
+};
+
 export type MissionControlConfigSnapshot = {
   available: boolean;
   path: string;
@@ -567,6 +589,15 @@ const fallbackSkills: MissionControlSkillsSnapshot = {
     { name: 'Automation', count: 1, skills: ['cron-orchestrator'] },
     { name: 'Knowledge', count: 1, skills: ['knowledge-synthesizer'] },
   ],
+};
+
+const fallbackSkillsCatalog: MissionControlSkillsCatalogSnapshot = {
+  available: false,
+  count: 0,
+  hint: 'Skills Hub catalog unavailable.',
+  skills: [],
+  sources: {},
+  timedOut: [],
 };
 
 const fallbackConfig: MissionControlConfigSnapshot = {
@@ -1082,6 +1113,31 @@ function normalizeSkills(input: Partial<MissionControlSkillsSnapshot> | undefine
     hint: input?.hint ?? fallbackSkills.hint,
     skills,
     categories,
+  };
+}
+
+function normalizeSkillsCatalog(input: Partial<MissionControlSkillsCatalogSnapshot> | undefined): MissionControlSkillsCatalogSnapshot {
+  const rawSkills = input?.skills ?? fallbackSkillsCatalog.skills;
+  const skills = rawSkills.map((item) => ({
+    id: item.id ?? item.identifier ?? item.name ?? 'skill-catalog-item',
+    name: item.name ?? 'Unnamed skill',
+    description: item.description ?? '',
+    source: item.source ?? 'unknown',
+    identifier: item.identifier ?? item.id ?? item.name ?? 'unknown',
+    trustLevel: item.trustLevel ?? 'community',
+    repo: item.repo ?? null,
+    path: item.path ?? null,
+    tags: item.tags ?? [],
+    installed: Boolean(item.installed),
+  }));
+
+  return {
+    available: input?.available ?? fallbackSkillsCatalog.available,
+    count: Number(input?.count ?? skills.length),
+    hint: input?.hint ?? fallbackSkillsCatalog.hint,
+    skills,
+    sources: input?.sources ?? fallbackSkillsCatalog.sources,
+    timedOut: input?.timedOut ?? fallbackSkillsCatalog.timedOut,
   };
 }
 
@@ -1870,6 +1926,19 @@ export async function loadMissionControlSkills(accessToken?: string): Promise<Mi
   return fallbackSkills;
 }
 
+export async function loadMissionControlSkillsCatalog(
+  accessToken?: string,
+  options?: { query?: string; source?: string; limit?: number },
+): Promise<MissionControlSkillsCatalogSnapshot> {
+  const params = new URLSearchParams();
+  if (options?.query) params.set('query', options.query);
+  if (options?.source && options.source !== 'all') params.set('source', options.source);
+  if (options?.limit != null) params.set('limit', String(options.limit));
+  const query = params.toString();
+  const { payload } = await maybeFetchLocalJson<MissionControlSkillsCatalogSnapshot>(`/skills/catalog${query ? '?' + query : ''}`, accessToken);
+  return normalizeSkillsCatalog(payload);
+}
+
 export async function loadMissionControlConfig(accessToken?: string): Promise<MissionControlConfigSnapshot> {
   try {
     const { payload: configPayload } = await maybeFetchLocalJson<{ content?: string; hash?: string; path?: string; config?: Record<string, unknown> }>('/config', accessToken);
@@ -1957,6 +2026,10 @@ export function getFallbackTools(): MissionControlToolsSnapshot {
 
 export function getFallbackSkills(): MissionControlSkillsSnapshot {
   return fallbackSkills;
+}
+
+export function getFallbackSkillsCatalog(): MissionControlSkillsCatalogSnapshot {
+  return fallbackSkillsCatalog;
 }
 
 export function getFallbackConfig(): MissionControlConfigSnapshot {

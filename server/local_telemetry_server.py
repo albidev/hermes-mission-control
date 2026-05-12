@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -734,7 +735,7 @@ def _collect_tools() -> Dict[str, Any]:
     }
 
 def _collect_skills() -> Dict[str, Any]:
-    """Scan ~/.hermes/skills/ to build a skills snapshot."""
+    """Scan ~/.hermes/skills/ to build an installed skills snapshot."""
     skills_dir = Path.home() / ".hermes" / "skills"
     skills_list: list[Dict[str, Any]] = []
     categories_map: Dict[str, list[str]] = {}
@@ -785,6 +786,81 @@ def _collect_skills() -> Dict[str, Any]:
         "hint": None,
         "skills": skills_list,
         "categories": categories,
+    }
+
+
+def _collect_skills_catalog(query: str = "", source: str = "all", limit: int = 500) -> Dict[str, Any]:
+    """Collect available skills from the published Hermes Skills Hub index."""
+    installed_snapshot = _collect_skills()
+    installed_names = {str(skill.get("name") or skill.get("id") or "").lower() for skill in installed_snapshot.get("skills", [])}
+
+    try:
+        with urllib.request.urlopen("https://hermes-agent.nousresearch.com/docs/api/skills-index.json", timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        return {
+            "available": False,
+            "count": 0,
+            "hint": f"Skills catalog unavailable: {exc}",
+            "skills": [],
+            "sources": {},
+            "timedOut": [],
+        }
+
+    raw_items = payload.get("skills", []) if isinstance(payload, dict) else []
+    normalized_query = (query or "").strip().lower()
+    source_filter = (source or "all").strip().lower()
+    requested_limit = max(1, min(int(limit), 5000))
+    source_counts: Dict[str, int] = {}
+    items = []
+
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        item_source = str(raw.get("source") or "unknown")
+        source_counts[item_source] = source_counts.get(item_source, 0) + 1
+        if source_filter != "all" and item_source.lower() != source_filter:
+            continue
+
+        name = str(raw.get("name") or "")
+        identifier = str(raw.get("identifier") or name)
+        tags = raw.get("tags") if isinstance(raw.get("tags"), list) else []
+        haystack = " ".join([
+            name,
+            str(raw.get("description") or ""),
+            item_source,
+            identifier,
+            str(raw.get("repo") or ""),
+            str(raw.get("path") or ""),
+            *[str(tag) for tag in tags],
+        ]).lower()
+        if normalized_query and normalized_query not in haystack:
+            continue
+
+        items.append({
+            "id": identifier,
+            "name": name,
+            "description": str(raw.get("description") or ""),
+            "source": item_source,
+            "identifier": identifier,
+            "trustLevel": str(raw.get("trust_level") or raw.get("trustLevel") or "community"),
+            "repo": raw.get("repo") or None,
+            "path": raw.get("path") or None,
+            "tags": [str(tag) for tag in tags],
+            "installed": name.lower() in installed_names,
+        })
+
+    trust_rank = {"builtin": 0, "trusted": 1, "community": 2}
+    items.sort(key=lambda item: (trust_rank.get(str(item.get("trustLevel")), 3), str(item.get("source")) != "official", str(item.get("name", "")).lower()))
+    items = items[:requested_limit]
+
+    return {
+        "available": True,
+        "count": len(items),
+        "hint": "Available skills from the centralized Hermes Skills Hub index. Installed skills come from /api/local/skills.",
+        "skills": items,
+        "sources": source_counts,
+        "timedOut": [],
     }
 
 
@@ -1016,6 +1092,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._unauthorized()
                 return
             self._json(200, _collect_skills())
+            return
+        if parsed.path == '/api/local/skills/catalog':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            search_query = query.get('query', [''])[0]
+            source = query.get('source', ['all'])[0] or 'all'
+            try:
+                limit = int(query.get('limit', ['5000'])[0])
+            except (ValueError, IndexError):
+                limit = 500
+            self._json(200, _collect_skills_catalog(query=search_query, source=source, limit=limit))
             return
         if parsed.path == '/api/local/logs':
             if not _is_authorized(self):
