@@ -1,4 +1,5 @@
 import { RefreshCw, Rocket, Settings } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { MissionControlGatewayAction } from '../../lib/mission-control-store';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -14,6 +15,7 @@ export function QuickActions({
   runGatewayAction,
   actionLoading,
 }: QuickActionsProps) {
+  const navigate = useNavigate();
   const refreshAction = gatewayActions.find((a) => a.id === 'refresh');
   const restartAction = gatewayActions.find((a) => a.id === 'restart-gateway');
 
@@ -57,9 +59,7 @@ export function QuickActions({
           variant="ghost"
           size="sm"
           icon={<Settings className="h-3.5 w-3.5" />}
-          onClick={() => {
-            window.location.hash = '#settings';
-          }}
+          onClick={() => navigate('/config')}
         >
           Settings
         </Button>
