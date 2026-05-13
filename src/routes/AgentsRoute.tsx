@@ -1010,7 +1010,6 @@ export function AgentsRoute() {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={badge.variant} className={badge.className}>{event.type.replaceAll('_', ' ')}</Badge>
                         {statusBadge ? <Badge variant={statusBadge.variant} className={statusBadge.className}>{getEventStatusLabel(event, completedToolCallIds)}</Badge> : null}
-                        <span className="text-sm font-medium text-text">{event.label}</span>
                         <span className="text-xs text-text-subtle ml-auto">{formatRelativeTime(event.timestamp)}</span>
                       </div>
                       <p className="text-xs text-text-muted break-words">{summarizeEventPreview(event.detail)}</p>
