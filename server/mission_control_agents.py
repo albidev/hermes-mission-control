@@ -536,7 +536,8 @@ def _build_trace_from_messages(
     for message_index, raw_message in enumerate(messages):
         message = raw_message if isinstance(raw_message, dict) else {}
         role = str(message.get("role") or "")
-        if role == "user":
+        starts_new_turn = role == "user"
+        if starts_new_turn:
             turn_id += 1
         elif turn_id == 0:
             turn_id = 1
@@ -548,7 +549,18 @@ def _build_trace_from_messages(
         content = _normalize_text(message.get("content"))
         reasoning = _normalize_text(message.get("reasoning") or message.get("reasoning_content"))
 
-        if role == "user":
+        if starts_new_turn:
+            append_event({
+                "id": next_id("evt"),
+                "type": "turn_started",
+                "label": f"Turn {turn_id} started",
+                "detail": content or f"Turn {turn_id}",
+                "tone": "good",
+                "status": "completed",
+                "timestamp": timestamp,
+                "sessionId": session_ref.get("sessionId") if session_ref else "",
+                "turnId": turn_id,
+            })
             append_event({
                 "id": next_id("evt"),
                 "type": "user_message",
