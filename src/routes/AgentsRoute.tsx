@@ -82,42 +82,42 @@ function getEventTypeBadge(event: MissionControlAgentTraceEvent): BadgeVisual {
   if (event.type.startsWith('tool_call')) {
     return {
       variant: 'default',
-      className: 'bg-sky-500/10 text-sky-500 dark:text-sky-300 border border-sky-400/25',
+      className: '!bg-sky-500/15 !text-sky-600 dark:!text-sky-300 !border !border-sky-400/35',
     };
   }
 
   if (event.type === 'skill_used') {
     return {
       variant: 'default',
-      className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border border-emerald-400/25',
+      className: '!bg-emerald-500/15 !text-emerald-700 dark:!text-emerald-300 !border !border-emerald-400/35',
     };
   }
 
   if (event.type === 'thought') {
     return {
       variant: 'default',
-      className: 'bg-violet-500/10 text-violet-600 dark:text-violet-300 border border-violet-400/25',
+      className: '!bg-violet-500/15 !text-violet-700 dark:!text-violet-300 !border !border-violet-400/35',
     };
   }
 
   if (event.type === 'user_message') {
     return {
       variant: 'default',
-      className: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-300 border border-cyan-400/25',
+      className: '!bg-cyan-500/15 !text-cyan-700 dark:!text-cyan-300 !border !border-cyan-400/35',
     };
   }
 
   if (event.type === 'assistant_response') {
     return {
       variant: 'default',
-      className: 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-300 border border-fuchsia-400/25',
+      className: '!bg-fuchsia-500/15 !text-fuchsia-700 dark:!text-fuchsia-300 !border !border-fuchsia-400/35',
     };
   }
 
   if (event.type.startsWith('turn_')) {
     return {
       variant: 'default',
-      className: 'bg-amber-500/10 text-amber-600 dark:text-amber-300 border border-amber-400/25',
+      className: '!bg-amber-500/15 !text-amber-700 dark:!text-amber-300 !border !border-amber-400/35',
     };
   }
 
