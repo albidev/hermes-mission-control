@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Activity, Bot, Clock3, Cpu, Gauge, GitBranch, Layers, ListTree, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -243,10 +243,10 @@ const AgentRegistryRow = memo(function AgentRegistryRow({
         <span>last active {formatRelativeTime(agent.lastActive)}</span>
         <span className="text-text-muted">({formatTimestamp(agent.lastActive)})</span>
         <Link
-          to={`/agents/${encodeURIComponent(agent.id)}`}
+          to={`/agents/${encodeURIComponent(agent.id)}?mode=${agent.liveSessions > 0 ? 'live' : 'post'}`}
           className={`pill pill-button text-[11px] ${isSelected ? 'nav-link-active' : 'pill-subtle'}`}
         >
-          Open flow
+          Open workflow
         </Link>
       </div>
     </div>
@@ -255,10 +255,12 @@ const AgentRegistryRow = memo(function AgentRegistryRow({
 
 export function AgentsRoute() {
   const { agentId } = useParams<{ agentId?: string }>();
+  const [searchParams] = useSearchParams();
   const selectedAgentId = agentId ? decodeURIComponent(agentId) : '';
+  const requestedMode = searchParams.get('mode');
   const { snapshot, storedToken } = useMissionControl();
   const [view, setView] = useState<'timeline' | 'dag'>('timeline');
-  const [liveMode, setLiveMode] = useState(true);
+  const [liveMode, setLiveMode] = useState(() => requestedMode !== 'post');
   const [liveTraceScope, setLiveTraceScope] = useState<LiveTraceScope>('current');
   const [selectedActionFilters, setSelectedActionFilters] = useState<TraceActionFilter[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
@@ -279,6 +281,11 @@ export function AgentsRoute() {
     hasTraceRef.current = Boolean(trace);
   }, [trace]);
 
+  useEffect(() => {
+    if (requestedMode === 'live') setLiveMode(true);
+    if (requestedMode === 'post') setLiveMode(false);
+  }, [requestedMode]);
+
   const selectSession = (sessionId: string, manual = false) => {
     manualSessionSelectionRef.current = manual;
     hasTraceRef.current = false;
@@ -297,11 +304,25 @@ export function AgentsRoute() {
     return orderedSessions.filter((session) => session.status === 'live' && (session.lastActiveAt ?? 0) >= cutoff);
   }, [orderedSessions]);
 
+  const allSelectedAgentSessions = useMemo(() => {
+    if (!selectedAgentId) return orderedSessions;
+    return orderedSessions.filter((session) => getAgentKey(session.source, session.model) === selectedAgentId);
+  }, [orderedSessions, selectedAgentId]);
+
   const baseSessions = liveMode ? trulyLiveSessions : orderedSessions;
   const selectableSessions = useMemo(() => {
     if (!selectedAgentId) return baseSessions;
     return baseSessions.filter((session) => getAgentKey(session.source, session.model) === selectedAgentId);
   }, [baseSessions, selectedAgentId]);
+
+  useEffect(() => {
+    if (!selectedAgentId || !liveMode) return;
+    if (selectableSessions.length > 0 || allSelectedAgentSessions.length === 0) return;
+
+    manualSessionSelectionRef.current = false;
+    setSelectedSessionId('');
+    setLiveMode(false);
+  }, [allSelectedAgentSessions.length, liveMode, selectableSessions.length, selectedAgentId]);
 
   useEffect(() => {
     if (selectedSessionId) return;
