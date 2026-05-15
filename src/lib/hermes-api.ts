@@ -257,6 +257,19 @@ export type MissionControlSkillsCatalogSnapshot = {
   timedOut: string[];
 };
 
+export type MissionControlSkillFile = {
+  name: string;
+  path: string;
+  size: number;
+  content: string;
+};
+
+export type MissionControlSkillFilesPayload = {
+  skill: string;
+  path: string;
+  files: MissionControlSkillFile[];
+};
+
 export type MissionControlConfigSnapshot = {
   available: boolean;
   path: string;
@@ -1962,6 +1975,21 @@ export async function toggleMissionControlSkill(
     return await response.json() as ToggleSkillResult;
   } catch (error) {
     if (error instanceof MissionControlAuthError) throw error;
+    return null;
+  }
+}
+
+export async function loadMissionControlSkillFiles(
+  skillName: string,
+  accessToken?: string,
+): Promise<MissionControlSkillFilesPayload | null> {
+  try {
+    const { payload } = await maybeFetchLocalJson<MissionControlSkillFilesPayload>(
+      `/skills/files?skill=${encodeURIComponent(skillName)}`,
+      accessToken,
+    );
+    return payload;
+  } catch {
     return null;
   }
 }

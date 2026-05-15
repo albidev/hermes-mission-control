@@ -957,6 +957,174 @@ def _collect_skills_catalog(query: str = "", source: str = "all", limit: int = 5
     }
 
 
+_SKILL_FILE_READ_LIMIT = 200_000  # 200 KB max for a single file read
+
+
+def _is_within_skills_dir(path: Path) -> bool:
+    """Check that a resolved path is inside ~/.hermes/skills/."""
+    skills_root = (Path.home() / ".hermes" / "skills").resolve()
+    try:
+        path.resolve().relative_to(skills_root)
+        return True
+    except ValueError:
+        return False
+
+
+def _collect_skill_detail(skill_name: str) -> Dict[str, Any]:
+    """Return the SKILL.md content and a file listing for a named skill.
+
+    Searches ~/.hermes/skills/ for a SKILL.md whose frontmatter ``name``
+    matches *skill_name* (case-insensitive).  Falls back to matching the
+    leaf directory name.
+    """
+    skills_dir = Path.home() / ".hermes" / "skills"
+    if not skills_dir.exists():
+        return {"success": False, "error": "skills_directory_not_found"}
+
+    target = skill_name.strip().lower()
+    matched_dir: Optional[Path] = None
+
+    for md_path in _find_skill_md_files(skills_dir):
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        fm = _parse_skill_yaml_frontmatter(text)
+        fm_name = str(fm.get("name", "") or "").strip().lower()
+        dir_name = md_path.parent.name.lower()
+        if fm_name == target or dir_name == target:
+            matched_dir = md_path.parent
+            break
+
+    if matched_dir is None:
+        return {"success": False, "error": "skill_not_found", "detail": f"No skill named '{skill_name}'"}
+
+    # Read SKILL.md content
+    skill_md = matched_dir / "SKILL.md"
+    skill_md_content = ""
+    if skill_md.exists():
+        try:
+            raw = skill_md.read_text(encoding="utf-8", errors="replace")
+            skill_md_content = raw[:_SKILL_FILE_READ_LIMIT]
+        except Exception:
+            skill_md_content = ""
+
+    # List all files in the skill directory (non-recursive, skip hidden)
+    files: list[Dict[str, Any]] = []
+    try:
+        for entry in sorted(matched_dir.iterdir(), key=lambda p: (not p.is_file(), p.name.lower())):
+            if entry.name.startswith("."):
+                continue
+            file_info: Dict[str, Any] = {
+                "name": entry.name,
+                "isDir": entry.is_dir(),
+            }
+            if entry.is_file():
+                try:
+                    file_info["size"] = entry.stat().st_size
+                except OSError:
+                    file_info["size"] = 0
+            files.append(file_info)
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "name": skill_name,
+        "dirPath": str(matched_dir),
+        "skillMdContent": skill_md_content,
+        "files": files,
+    }
+
+
+def _read_skill_file(file_path_str: str) -> Dict[str, Any]:
+    """Read a single file from inside ~/.hermes/skills/.
+
+    *file_path_str* must be an absolute path or a path relative to the
+    skills directory.  Directory-traversal is blocked.
+    """
+    candidate = Path(file_path_str)
+    if not candidate.is_absolute():
+        candidate = Path.home() / ".hermes" / "skills" / candidate
+
+    resolved = candidate.resolve()
+    if not _is_within_skills_dir(resolved):
+        return {"success": False, "error": "forbidden", "detail": "Path is outside skills directory."}
+    if not resolved.exists():
+        return {"success": False, "error": "not_found", "detail": f"File not found: {file_path_str}"}
+    if resolved.is_dir():
+        return {"success": False, "error": "is_directory", "detail": "Use the list endpoint for directories."}
+
+    try:
+        stat = resolved.stat()
+        content = resolved.read_text(encoding="utf-8", errors="replace")[:_SKILL_FILE_READ_LIMIT]
+        return {
+            "success": True,
+            "path": str(resolved),
+            "name": resolved.name,
+            "content": content,
+            "size": stat.st_size,
+        }
+    except Exception as exc:
+        return {"success": False, "error": "read_failed", "detail": str(exc)}
+
+
+def _collect_skill_files_recursive(skill_name: str) -> Dict[str, Any]:
+    """Return all files with their contents for a named skill (recursive)."""
+    skills_dir = Path.home() / ".hermes" / "skills"
+    if not skills_dir.exists():
+        raise FileNotFoundError("Skills directory not found")
+
+    target = skill_name.strip().lower()
+    matched_dir: Optional[Path] = None
+
+    for md_path in _find_skill_md_files(skills_dir):
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        fm = _parse_skill_yaml_frontmatter(text)
+        fm_name = str(fm.get("name", "") or "").strip().lower()
+        dir_name = md_path.parent.name.lower()
+        if fm_name == target or dir_name == target:
+            matched_dir = md_path.parent
+            break
+
+    if matched_dir is None:
+        raise FileNotFoundError(f"Skill '{skill_name}' not found")
+
+    base = matched_dir.resolve()
+    files: list[Dict[str, Any]] = []
+
+    for p in sorted(base.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(base)
+        parts = rel.parts
+        if any(part.startswith(".") or part == "node_modules" for part in parts):
+            continue
+        try:
+            content = p.read_text(encoding="utf-8", errors="replace")[:_SKILL_FILE_READ_LIMIT]
+        except Exception:
+            content = ""
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = 0
+        files.append({
+            "name": str(rel),
+            "path": str(rel),
+            "size": size,
+            "content": content,
+        })
+
+    return {
+        "skill": skill_name,
+        "path": str(base),
+        "files": files,
+    }
+
+
 def _collect_logs(max_files: int = 10, max_lines: int = 160) -> Dict[str, Any]:
     """Read latest log files from ~/.hermes/logs/."""
     logs_dir = Path.home() / ".hermes" / "logs"
@@ -1198,6 +1366,21 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, IndexError):
                 limit = 500
             self._json(200, _collect_skills_catalog(query=search_query, source=source, limit=limit))
+            return
+        if parsed.path == '/api/local/skills/files':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            skill_name = (params.get("skill") or [""])[0].strip()
+            if not skill_name:
+                self._json(400, {"error": "missing_skill", "detail": "Query parameter 'skill' is required."})
+                return
+            try:
+                payload = _collect_skill_files_recursive(skill_name)
+            except FileNotFoundError:
+                self._json(404, {"error": "not_found", "detail": f"Skill '{skill_name}' not found."})
+                return
+            self._json(200, payload)
             return
         if parsed.path == '/api/local/logs':
             if not _is_authorized(self):

@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useMemo, useState, type ElementType } from 'react';
-import { Brain, FolderTree, LibraryBig, Power, RefreshCw, Search } from 'lucide-react';
+import { Brain, FolderTree, LibraryBig, Power, RefreshCw, Search, FileText, X } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { ToggleSwitch } from '../components/ui/ToggleSwitch';
-import { loadMissionControlSkillsCatalog, toggleMissionControlSkill, type MissionControlSkillsCatalogSnapshot } from '../lib/hermes-api';
+import { Modal } from '../components/Modal';
+import {
+  loadMissionControlSkillsCatalog,
+  loadMissionControlSkillFiles,
+  toggleMissionControlSkill,
+  type MissionControlSkillsCatalogSnapshot,
+  type MissionControlSkillFilesPayload,
+  type MissionControlSkillFile,
+} from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 
 function MetricCard({
@@ -37,6 +48,144 @@ function statusVariant(status: string): 'positive' | 'accent' | 'warning' | 'def
   return 'default';
 }
 
+function SkillDetailPanel({
+  skillName,
+  skillDescription,
+  onClose,
+  onToggle,
+  isEnabled,
+  isToggling,
+}: {
+  skillName: string;
+  skillDescription?: string;
+  onClose: () => void;
+  onToggle?: () => void;
+  isEnabled?: boolean;
+  isToggling?: boolean;
+}) {
+  const [files, setFiles] = useState<MissionControlSkillFilesPayload | null>(null);
+  const [filesLoading, setFilesLoading] = useState(true);
+  const [filesError, setFilesError] = useState<string | null>(null);
+  const [activeFile, setActiveFile] = useState<MissionControlSkillFile | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFilesLoading(true);
+    setFilesError(null);
+    setActiveFile(null);
+
+    loadMissionControlSkillFiles(skillName)
+      .then((result) => {
+        if (cancelled) return;
+        if (result) {
+          setFiles(result);
+          const mdFile = result.files.find((f) => f.name.toLowerCase().endsWith('.md'));
+          if (mdFile) setActiveFile(mdFile);
+        } else {
+          setFilesError('Could not load skill files.');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setFilesError('Could not load skill files.');
+      })
+      .finally(() => {
+        if (!cancelled) setFilesLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [skillName]);
+
+  const fileTree = files?.files ?? [];
+
+  return (
+    <Modal
+      open
+      title={skillName}
+      subtitle={skillDescription}
+      onClose={onClose}
+      footer={
+        onToggle ? (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-text-subtle">
+              {isToggling ? 'Updating…' : isEnabled ? 'Skill is enabled' : 'Skill is disabled'}
+            </span>
+            <Button
+              size="sm"
+              variant={isEnabled ? 'secondary' : 'primary'}
+              onClick={onToggle}
+              disabled={isToggling}
+            >
+              {isEnabled ? 'Disable' : 'Enable'}
+            </Button>
+          </div>
+        ) : null
+      }
+    >
+      <div className="flex flex-col gap-4">
+        {filesLoading ? (
+          <p className="text-sm text-text-muted">Loading skill files…</p>
+        ) : filesError ? (
+          <p className="text-sm text-warning">{filesError}</p>
+        ) : fileTree.length === 0 ? (
+          <p className="text-sm text-text-muted">No files found in this skill directory.</p>
+        ) : (
+          <div className="flex flex-col lg:flex-row gap-4 min-h-[400px]">
+            {/* File tree sidebar */}
+            <div className="lg:w-56 shrink-0 border-b lg:border-b-0 lg:border-r border-border-subtle pb-3 lg:pb-0 lg:pr-3">
+              <p className="eyebrow mb-2">Files</p>
+              <div className="flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-x-visible">
+                {fileTree.map((file) => (
+                  <button
+                    key={file.path}
+                    type="button"
+                    onClick={() => setActiveFile(file)}
+                    className={[
+                      'flex items-center gap-1.5 px-2 py-1 rounded-md text-xs whitespace-nowrap transition-colors text-left',
+                      activeFile?.path === file.path
+                        ? 'bg-accent/10 text-accent'
+                        : 'text-text-muted hover:text-text hover:bg-surface-raised',
+                    ].join(' ')}
+                  >
+                    <FileText className="h-3 w-3 shrink-0" />
+                    <span className="truncate max-w-[180px]">{file.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* File content */}
+            <div className="flex-1 min-w-0">
+              {activeFile ? (
+                <>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <p className="text-xs font-medium text-text-subtle truncate">{activeFile.path}</p>
+                    <span className="text-xs text-text-muted shrink-0">{activeFile.size} bytes</span>
+                  </div>
+                  <div className="rounded-lg border border-border-subtle bg-surface-raised p-4 overflow-x-auto">
+                    {activeFile.name.toLowerCase().endsWith('.md') ? (
+                      <div className="prose prose-sm prose-invert max-w-none prose-headings:text-text prose-p:text-text-muted prose-a:text-accent prose-code:text-accent prose-pre:bg-surface prose-pre:border prose-pre:border-border-subtle">
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                          {activeFile.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <pre className="text-xs text-text-muted whitespace-pre-wrap break-words font-mono leading-relaxed">
+                        {activeFile.content}
+                      </pre>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-text-muted">Select a file to view its contents.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 export function SkillsRoute() {
   const { skills, snapshot, storedToken, refreshAll } = useMissionControl();
   const [activeTab, setActiveTab] = useState<'installed' | 'catalog'>('installed');
@@ -45,6 +194,7 @@ export function SkillsRoute() {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [togglingSkills, setTogglingSkills] = useState<Set<string>>(new Set());
+  const [detailSkill, setDetailSkill] = useState<{ name: string; description: string; enabled?: boolean } | null>(null);
 
   const enabled = skills.skills.filter((skill) => skill.enabled).length;
   const disabled = skills.skills.length - enabled;
@@ -159,13 +309,20 @@ export function SkillsRoute() {
 
           <div className="divide-y divide-border-subtle">
             {skills.skills.map((skill) => (
-              <div key={skill.id} className="px-4 py-3 flex flex-col gap-2">
+              <div
+                key={skill.id}
+                className="px-4 py-3 flex flex-col gap-2 cursor-pointer hover:bg-surface-raised/40 transition-colors"
+                onClick={() => setDetailSkill({ name: skill.name, description: skill.description, enabled: skill.enabled })}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setDetailSkill({ name: skill.name, description: skill.description, enabled: skill.enabled }); }}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-text truncate">{skill.name}</p>
                     <p className="text-xs text-text-muted line-clamp-2">{skill.description}</p>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <ToggleSwitch
                       id={`toggle-${skill.id}`}
                       checked={skill.enabled}
@@ -285,6 +442,17 @@ export function SkillsRoute() {
           </div>
         </Card>
       )}
+
+      {detailSkill ? (
+        <SkillDetailPanel
+          skillName={detailSkill.name}
+          skillDescription={detailSkill.description}
+          onClose={() => setDetailSkill(null)}
+          onToggle={detailSkill.enabled !== undefined ? () => handleToggle(detailSkill.name, detailSkill.enabled!) : undefined}
+          isEnabled={detailSkill.enabled}
+          isToggling={togglingSkills.has(detailSkill.name)}
+        />
+      ) : null}
     </div>
   );
 }
