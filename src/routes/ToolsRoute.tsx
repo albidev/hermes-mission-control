@@ -1,7 +1,9 @@
-import { Blocks, CheckCircle2, Hammer, KeyRound } from 'lucide-react';
+import { useState } from 'react';
+import { Blocks, CheckCircle2, Hammer, KeyRound, ChevronRight } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { useMissionControl } from '../lib/mission-control-store';
+import { Modal } from '../components/Modal';
 
 function MetricCard({
   icon: Icon,
@@ -26,8 +28,95 @@ function MetricCard({
   );
 }
 
+function ToolDetailPanel({
+  toolsetName,
+  onClose,
+}: {
+  toolsetName: string;
+  onClose: () => void;
+}) {
+  const { tools } = useMissionControl();
+  const toolset = tools.availableToolsets.find((ts) => ts.name === toolsetName);
+  const toolCatalog = tools.toolCatalog.filter((tc) => tc.toolset === toolsetName);
+
+  return (
+    <Modal
+      open
+      title={toolsetName}
+      subtitle={toolset ? `${toolset.toolCount} tools · ${toolset.isComposite ? 'composite' : 'direct'}` : 'Toolset detail'}
+      onClose={onClose}
+    >
+      <div className="flex flex-col gap-4">
+        {toolset ? (
+          <>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant={toolset.available ? 'positive' : 'warning'}>
+                {toolset.available ? 'available' : 'needs key'}
+              </Badge>
+              {toolset.isComposite ? <Badge variant="accent">composite</Badge> : <Badge variant="default">direct</Badge>}
+            </div>
+
+            {toolset.description ? (
+              <p className="text-sm text-text-muted">{toolset.description}</p>
+            ) : null}
+
+            {toolset.requirements.length > 0 ? (
+              <div>
+                <p className="eyebrow mb-2">Requirements</p>
+                <div className="flex flex-wrap gap-2">
+                  {toolset.requirements.map((req) => (
+                    <Badge key={req} variant="warning">{req}</Badge>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {toolCatalog.length > 0 ? (
+              <div>
+                <p className="eyebrow mb-2">Tools ({toolCatalog.length})</p>
+                <div className="flex flex-wrap gap-2">
+                  {toolCatalog.map((tool) => (
+                    <Badge key={tool.name} variant={tool.available ? 'positive' : 'default'}>
+                      {tool.name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {toolset.directTools.length > 0 ? (
+              <div>
+                <p className="eyebrow mb-2">Direct tools</p>
+                <div className="flex flex-wrap gap-2">
+                  {toolset.directTools.map((tool) => (
+                    <Badge key={tool} variant="default">{tool}</Badge>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {toolset.includes.length > 0 ? (
+              <div>
+                <p className="eyebrow mb-2">Includes</p>
+                <div className="flex flex-wrap gap-2">
+                  {toolset.includes.map((inc) => (
+                    <Badge key={inc} variant="accent">{inc}</Badge>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <p className="text-sm text-text-muted">Toolset not found.</p>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 export function ToolsRoute() {
   const { tools } = useMissionControl();
+  const [detailTool, setDetailTool] = useState<string | null>(null);
 
   const readyCount = tools.availableToolsets.filter((toolset) => toolset.available).length;
   const blockedCount = tools.availableToolsets.filter((toolset) => !toolset.available).length;
@@ -59,15 +148,25 @@ export function ToolsRoute() {
 
         <div className="divide-y divide-border-subtle">
           {tools.availableToolsets.map((toolset) => (
-            <div key={toolset.name} className="px-4 py-3 flex flex-col gap-2">
+            <div
+              key={toolset.name}
+              className="px-4 py-3 flex flex-col gap-2 cursor-pointer hover:bg-surface-raised/40 transition-colors"
+              onClick={() => setDetailTool(toolset.name)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setDetailTool(toolset.name); }}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-text truncate">{toolset.name}</p>
                   <p className="text-xs text-text-muted line-clamp-2">{toolset.description || 'No description provided.'}</p>
                 </div>
-                <Badge variant={toolset.available ? 'positive' : 'warning'}>
-                  {toolset.available ? 'available' : 'needs key'}
-                </Badge>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Badge variant={toolset.available ? 'positive' : 'warning'}>
+                    {toolset.available ? 'available' : 'needs key'}
+                  </Badge>
+                  <ChevronRight className="h-4 w-4 text-text-subtle" />
+                </div>
               </div>
 
               <div className="text-xs text-text-subtle">
@@ -85,6 +184,13 @@ export function ToolsRoute() {
           ))}
         </div>
       </Card>
+
+      {detailTool ? (
+        <ToolDetailPanel
+          toolName={detailTool}
+          onClose={() => setDetailTool(null)}
+        />
+      ) : null}
     </div>
   );
 }
