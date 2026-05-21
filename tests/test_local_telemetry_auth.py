@@ -100,60 +100,60 @@ class LocalTelemetryAuthTests(unittest.TestCase):
             self._request(f"/api/local/system?access_token={encoded}")
         self.assertEqual(exc.exception.code, 401)
 
-    def test_mission_control_agent_endpoints_are_served_from_sidecar(self):
+    def test_mission_control_agent_endpoints_are_served_from_db_and_gateway(self):
+        """Verify MC discovers sessions from gateway index + SessionDB, not sidecar files."""
         sessions_dir = Path.home() / ".hermes" / "sessions"
         sessions_dir.mkdir(parents=True, exist_ok=True)
-        session_id = "mc-sidecar-test-session"
-        sidecar_path = sessions_dir / f"session_{session_id}.json"
+        session_id = "mc-db-test-session"
         index_path = sessions_dir / "sessions.json"
-        original_sidecar = sidecar_path.read_text(encoding="utf-8", errors="replace") if sidecar_path.exists() else None
         original_index = index_path.read_text(encoding="utf-8", errors="replace") if index_path.exists() else None
 
-        payload = {
-            "platform": "discord",
-            "model": "gpt-5.4",
-            "session_start": "2026-04-24T12:00:00+00:00",
-            "last_updated": "2999-04-24T12:00:05+00:00",
-            "message_count": 4,
-            "messages": [
-                {"role": "user", "content": "Ship the sidecar trace feed.", "timestamp": "2026-04-24T12:00:00+00:00"},
-                {
-                    "role": "assistant",
-                    "timestamp": "2026-04-24T12:00:01+00:00",
-                    "tool_calls": [
-                        {
-                            "id": "call_sidecar_trace",
-                            "function": {
-                                "name": "search_files",
-                                "arguments": '{"pattern":"mission-control"}',
-                            },
-                        }
-                    ],
-                },
-                {
-                    "role": "tool",
-                    "tool_call_id": "call_sidecar_trace",
-                    "tool_name": "search_files",
-                    "content": '{"success": true, "total_count": 1}',
-                    "timestamp": "2026-04-24T12:00:02+00:00",
-                },
-                {"role": "assistant", "content": "Done.", "timestamp": "2026-04-24T12:00:03+00:00"},
-            ],
-        }
+        # Write gateway index entry
         index_payload = {
             "discord-home": {
                 "session_id": session_id,
                 "platform": "discord",
-                "display_name": "Mission Control sidecar test",
+                "display_name": "Mission Control DB test",
                 "chat_type": "channel",
                 "created_at": "2026-04-24T12:00:00+00:00",
                 "updated_at": "2999-04-24T12:00:05+00:00",
             }
         }
 
+        # Write a JSONL transcript for trace
+        jsonl_path = sessions_dir / f"{session_id}.jsonl"
+        original_jsonl = jsonl_path.read_text(encoding="utf-8", errors="replace") if jsonl_path.exists() else None
+        jsonl_messages = [
+            {"role": "user", "content": "Ship the trace feed.", "timestamp": "2026-04-24T12:00:00+00:00"},
+            {
+                "role": "assistant",
+                "timestamp": "2026-04-24T12:00:01+00:00",
+                "tool_calls": [
+                    {
+                        "id": "call_db_trace",
+                        "function": {
+                            "name": "search_files",
+                            "arguments": '{"pattern":"mission-control"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_db_trace",
+                "tool_name": "search_files",
+                "content": '{"success": true, "total_count": 1}',
+                "timestamp": "2026-04-24T12:00:02+00:00",
+            },
+            {"role": "assistant", "content": "Done.", "timestamp": "2026-04-24T12:00:03+00:00"},
+        ]
+
         try:
-            sidecar_path.write_text(json.dumps(payload), encoding="utf-8")
             index_path.write_text(json.dumps(index_payload), encoding="utf-8")
+            jsonl_path.write_text(
+                "\n".join(json.dumps(m) for m in jsonl_messages),
+                encoding="utf-8",
+            )
 
             with self._request("/api/local/mission-control/agents", token="phase1-secret") as response:
                 self.assertEqual(response.status, 200)
@@ -161,15 +161,14 @@ class LocalTelemetryAuthTests(unittest.TestCase):
 
             self.assertTrue(agents_payload["available"])
             self.assertTrue(agents_payload["capabilities"]["trace"]["stream"])
-            self.assertTrue(any(item["model"] == "gpt-5.4" for item in agents_payload["items"]))
 
-            with self._request("/api/local/mission-control/sessions?limit=1", token="phase1-secret") as response:
+            with self._request("/api/local/mission-control/sessions?limit=10", token="phase1-secret") as response:
                 self.assertEqual(response.status, 200)
                 sessions_payload = json.loads(response.read().decode("utf-8"))
 
-            self.assertEqual(len(sessions_payload["items"]), 1)
-            self.assertEqual(sessions_payload["items"][0]["sessionId"], session_id)
-            self.assertEqual(sessions_payload["items"][0]["traceMode"], "transcript")
+            matching = [i for i in sessions_payload["items"] if i["sessionId"] == session_id]
+            self.assertTrue(len(matching) == 1, f"Session {session_id} not found in MC sessions list")
+            self.assertEqual(matching[0]["traceMode"], "transcript")
 
             with self._request(
                 f"/api/local/mission-control/agents/trace?session_id={session_id}&compact=1&limit=20",
@@ -183,14 +182,6 @@ class LocalTelemetryAuthTests(unittest.TestCase):
             self.assertTrue(any(event["type"] == "tool_call_started" for event in trace_payload["events"]))
             self.assertTrue(any(event["type"] == "tool_call_completed" for event in trace_payload["events"]))
         finally:
-            if original_sidecar is None:
-                try:
-                    sidecar_path.unlink()
-                except FileNotFoundError:
-                    pass
-            else:
-                sidecar_path.write_text(original_sidecar, encoding="utf-8")
-
             if original_index is None:
                 try:
                     index_path.unlink()
@@ -198,6 +189,14 @@ class LocalTelemetryAuthTests(unittest.TestCase):
                     pass
             else:
                 index_path.write_text(original_index, encoding="utf-8")
+
+            if original_jsonl is None:
+                try:
+                    jsonl_path.unlink()
+                except FileNotFoundError:
+                    pass
+            else:
+                jsonl_path.write_text(original_jsonl, encoding="utf-8")
 
     def test_knowledge_endpoints_index_vault_and_return_file_content(self):
         hermes_home = Path.home() / ".hermes"
