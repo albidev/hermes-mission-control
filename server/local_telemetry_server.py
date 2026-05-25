@@ -1,16 +1,37 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
+import hmac
+import hashlib
 import json
 import os
 import platform
+import re
 import socket
+import subprocess
+import sys
 import threading
+import time
+import urllib.parse
+import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from statistics import median
-from typing import Any, Deque, Dict
+from typing import Any, Deque, Dict, Optional
 
 import psutil
+
+SERVER_DIR = Path(__file__).resolve().parent
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
+
+from mission_control_agents import (
+    load_agent_trace_snapshot,
+    load_agents_sessions_snapshot,
+    load_agents_snapshot,
+)
 
 
 def gb(value: float) -> float:
@@ -110,32 +131,1417 @@ def collect_system_snapshot() -> Dict[str, Any]:
     }
 
 
+def _resolve_access_token() -> Optional[str]:
+    token = (os.getenv("MISSION_CONTROL_TOKEN") or "").strip()
+    if token:
+        return token
+    fallback = (os.getenv("API_SERVER_KEY") or "").strip()
+    return fallback or None
+
+
+def _extract_bearer_token(header_value: Optional[str]) -> Optional[str]:
+    if not header_value:
+        return None
+    scheme, _, token = header_value.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token or None
+
+
+def _extract_query_token(handler: BaseHTTPRequestHandler) -> Optional[str]:
+    parsed = urllib.parse.urlparse(handler.path)
+    params = urllib.parse.parse_qs(parsed.query)
+    token = (params.get("access_token") or [""])[0].strip()
+    return token or None
+
+
+def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool = False) -> bool:
+    expected = _resolve_access_token()
+    candidate = _extract_bearer_token(handler.headers.get("Authorization"))
+    if not candidate and allow_query_token:
+        candidate = _extract_query_token(handler)
+
+    # Telemetry sidecar — always allow local and Tailscale callers (no token required).
+    client_ip = handler.client_address[0] if handler.client_address else None
+    if client_ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    # Tailscale IP range: 100.64.0.0/10 (typically 100.x.x.x)
+    if client_ip and client_ip.startswith("100."):
+        return True
+
+    # For non-local callers (if ever exposed externally), require the token.
+    if not expected or not candidate:
+        return False
+    return hmac.compare_digest(candidate, expected)
+
+
+_KNOWLEDGE_CORE_FILES = {"SOUL.md", "USER.md", "AGENTS.md"}
+_KNOWLEDGE_EXCLUDED_FILENAMES = {"IDENTITY.md"}
+_KNOWLEDGE_SKIPPED_DIRS = {".git", ".obsidian", ".agents", "node_modules", "dist", "build", ".trash", "__pycache__"}
+
+
+def _knowledge_vault_root() -> Path:
+    override = os.environ.get("HERMES_OBSIDIAN_VAULT") or os.environ.get("MISSION_CONTROL_VAULT_PATH")
+    if override:
+        return Path(os.path.expanduser(override)).resolve()
+    return (Path.home() / "Documents" / "Hermes").resolve()
+
+
+def _knowledge_core_root() -> Path:
+    return (Path.home() / ".hermes").resolve()
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _display_knowledge_path(path: Path) -> str:
+    resolved = path.resolve()
+    home_root = Path.home().resolve()
+    vault_root = _knowledge_vault_root().resolve()
+
+    if resolved == vault_root:
+        return "~/Documents/Hermes"
+    if _path_is_within(resolved, vault_root):
+        relative = resolved.relative_to(vault_root).as_posix()
+        return f"~/Documents/Hermes/{relative}" if relative else "~/Documents/Hermes"
+    if _path_is_within(resolved, home_root):
+        relative = resolved.relative_to(home_root).as_posix()
+        return f"~/{relative}" if relative else "~"
+    return str(resolved)
+
+
+def _isoformat_mtime(path: Path) -> Optional[str]:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        return None
+
+
+def _read_text_file(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _is_allowed_vault_note(path: Path, vault_root: Path) -> bool:
+    if path.name in _KNOWLEDGE_EXCLUDED_FILENAMES or path.suffix.lower() != ".md":
+        return False
+    try:
+        relative = path.resolve().relative_to(vault_root.resolve())
+    except ValueError:
+        return False
+    parents = relative.parts[:-1]
+    if any(part.startswith(".") or part in _KNOWLEDGE_SKIPPED_DIRS for part in parents):
+        return False
+    return True
+
+
+def _is_allowed_knowledge_file(path: Path) -> bool:
+    resolved = path.resolve()
+    vault_root = _knowledge_vault_root().resolve()
+    core_root = _knowledge_core_root().resolve()
+    if _path_is_within(resolved, vault_root):
+        return _is_allowed_vault_note(resolved, vault_root)
+    if _path_is_within(resolved, core_root):
+        return resolved.name in _KNOWLEDGE_CORE_FILES and resolved.parent == core_root and resolved.suffix.lower() == ".md"
+    return False
+
+
+def _extract_markdown_title(content: str, fallback: str) -> str:
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            title = stripped.lstrip("#").strip()
+            if title:
+                return title
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:120]
+    return fallback
+
+
+def _extract_markdown_excerpt(content: str) -> str:
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith(("- ", "* ")):
+            stripped = stripped[2:].strip()
+        return stripped[:240]
+    return ""
+
+
+def _extract_markdown_highlights(content: str, limit: int = 4) -> list[str]:
+    highlights: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("- ", "* ")):
+            bullet = stripped[2:].strip()
+            if bullet:
+                highlights.append(bullet[:160])
+        elif stripped.startswith("##"):
+            heading = stripped.lstrip("#").strip()
+            if heading:
+                highlights.append(heading[:160])
+        if len(highlights) >= limit:
+            break
+    return highlights
+
+
+def _build_knowledge_item(
+    path: Path,
+    *,
+    section_id: str,
+    root: Optional[Path] = None,
+    full_preview: bool = False,
+) -> Dict[str, Any]:
+    content = _read_text_file(path)
+    title = _extract_markdown_title(content, path.stem)
+    excerpt = _extract_markdown_excerpt(content)
+    relative_path = path.name
+    if root is not None and _path_is_within(path, root):
+        relative_path = path.relative_to(root).as_posix()
+    preview = content if full_preview else (content[:800] if content else excerpt)
+    return {
+        "id": f"{section_id}:{relative_path}",
+        "title": title,
+        "path": relative_path,
+        "sourcePath": _display_knowledge_path(path),
+        "updatedAt": _isoformat_mtime(path),
+        "excerpt": excerpt,
+        "highlights": _extract_markdown_highlights(content),
+        "contentPreview": preview,
+    }
+
+
+def collect_knowledge_snapshot() -> Dict[str, Any]:
+    vault_root = _knowledge_vault_root().resolve()
+    sections: list[Dict[str, Any]] = []
+    all_items: list[Dict[str, Any]] = []
+
+    core_candidates = [
+        ("soul", "~/.hermes/SOUL.md", Path.home() / ".hermes" / "SOUL.md"),
+        ("user", "~/.hermes/USER.md", Path.home() / ".hermes" / "USER.md"),
+        ("agents", "~/.hermes/AGENTS.md", Path.home() / ".hermes" / "AGENTS.md"),
+    ]
+    for section_id, title, file_path in core_candidates:
+        items: list[Dict[str, Any]] = []
+        if file_path.exists() and file_path.is_file():
+            try:
+                items.append(_build_knowledge_item(file_path, section_id=section_id, full_preview=True))
+            except OSError:
+                pass
+        sections.append({"id": section_id, "title": title, "items": items})
+        all_items.extend(items)
+
+    vault_items: list[Dict[str, Any]] = []
+    if vault_root.exists() and vault_root.is_dir():
+        def _sort_key(path: Path) -> tuple[int, float, str]:
+            priority = 0 if path.name == "Knowledge Sharing.md" else 1
+            try:
+                mtime = -path.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            return (priority, mtime, path.as_posix())
+
+        vault_candidates = [
+            path
+            for path in sorted(vault_root.rglob("*.md"), key=_sort_key)
+            if path.is_file() and _is_allowed_vault_note(path, vault_root)
+        ]
+        max_items = int(os.environ.get("MISSION_CONTROL_KNOWLEDGE_MAX_FILES", "80"))
+        selected_candidates = vault_candidates[:max_items]
+        knowledge_sharing = next((path for path in vault_candidates if path.name == "Knowledge Sharing.md"), None)
+        if knowledge_sharing is not None and knowledge_sharing not in selected_candidates:
+            selected_candidates = [knowledge_sharing, *selected_candidates[:-1]] if selected_candidates else [knowledge_sharing]
+
+        for path in selected_candidates:
+            try:
+                vault_items.append(_build_knowledge_item(path, section_id="vault-notes", root=vault_root))
+            except OSError:
+                continue
+
+    sections.append({"id": "vault-notes", "title": "Vault knowledge", "items": vault_items})
+    all_items.extend(vault_items)
+
+    primary = next((item for item in vault_items if item["path"] == "Knowledge Sharing.md"), None)
+    if primary is None and all_items:
+        primary = all_items[0]
+    if primary is None:
+        primary = {
+            "id": "knowledge-sharing",
+            "title": "Knowledge Sharing",
+            "path": "Knowledge Sharing.md",
+            "sourcePath": "~/Documents/Hermes/Knowledge Sharing.md",
+            "updatedAt": None,
+            "excerpt": "Create shared vault notes to surface them here.",
+            "highlights": [],
+            "contentPreview": "",
+        }
+
+    return {
+        "available": bool(all_items),
+        "vaultPath": _display_knowledge_path(vault_root),
+        "title": primary["title"],
+        "path": primary["path"],
+        "updatedAt": primary.get("updatedAt"),
+        "excerpt": primary.get("excerpt", ""),
+        "highlights": primary.get("highlights", []),
+        "primary": primary,
+        "items": all_items,
+        "sections": sections,
+    }
+
+
+def _resolve_knowledge_request_path(requested_path: str) -> Path:
+    raw = (requested_path or "").strip()
+    if not raw:
+        raise FileNotFoundError("missing path")
+
+    vault_root = _knowledge_vault_root().resolve()
+    core_root = _knowledge_core_root().resolve()
+    if raw == "~/Documents/Hermes":
+        candidate = vault_root
+    elif raw.startswith("~/Documents/Hermes/"):
+        candidate = vault_root / raw[len("~/Documents/Hermes/"):]
+    elif raw == "~/.hermes":
+        candidate = core_root
+    elif raw.startswith("~/.hermes/"):
+        candidate = core_root / raw[len("~/.hermes/"):]
+    elif raw.startswith("~/"):
+        candidate = Path.home() / raw[2:]
+    else:
+        candidate = Path(os.path.expanduser(raw))
+
+    resolved = candidate.resolve(strict=True)
+    if not _path_is_within(resolved, vault_root) and not _path_is_within(resolved, core_root):
+        raise PermissionError(raw)
+    if not resolved.is_file():
+        raise FileNotFoundError(raw)
+    if not _is_allowed_knowledge_file(resolved):
+        raise PermissionError(raw)
+    return resolved
+
+
+def collect_knowledge_file_payload(requested_path: str) -> Dict[str, Any]:
+    file_path = _resolve_knowledge_request_path(requested_path)
+    content = _read_text_file(file_path)
+    vault_root = _knowledge_vault_root().resolve()
+    relative_path = file_path.relative_to(vault_root).as_posix() if _path_is_within(file_path, vault_root) else file_path.name
+    return {
+        "success": True,
+        "title": _extract_markdown_title(content, file_path.stem),
+        "path": relative_path,
+        "sourcePath": _display_knowledge_path(file_path),
+        "updatedAt": _isoformat_mtime(file_path),
+        "excerpt": _extract_markdown_excerpt(content),
+        "highlights": _extract_markdown_highlights(content),
+        "content": content,
+        "contentLength": len(content),
+    }
+
+
+def _parse_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int(value: str | None, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value) if value is not None else default
+    except Exception:
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
+def _parse_float(value: str | None, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
+    try:
+        parsed = float(value) if value is not None else default
+    except Exception:
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+
+
+def _get_hermes_home() -> Path:
+    return Path.home() / '.hermes'
+
+
+def _read_runtime_status() -> Optional[Dict[str, Any]]:
+    path = _get_hermes_home() / 'runtime_status.json'
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _read_version() -> str:
+    try:
+        init_file = _get_hermes_home() / 'hermes-agent' / 'hermes_cli' / '__init__.py'
+        if not init_file.exists():
+            return '0.0.0'
+        text = init_file.read_text()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('__version__'):
+                parts = stripped.split('=', 1)
+                if len(parts) == 2:
+                    return parts[1].strip().strip(chr(34) + chr(39))
+    except Exception:
+        pass
+    return '0.0.0'
+
+
+def _collect_status_payload() -> Dict[str, Any]:
+    version = _read_version()
+    runtime = _read_runtime_status()
+    gateway_pid = None
+    gateway_running = False
+    gateway_state = None
+    gateway_platforms: Dict[str, Any] = {}
+    gateway_exit_reason = None
+    gateway_updated_at = None
+
+    try:
+        pid_file = _get_hermes_home() / 'gateway.pid'
+        if pid_file.exists():
+            raw = pid_file.read_text().strip()
+            if raw:
+                try:
+                    data = json.loads(raw)
+                    candidate = data.get('pid') if isinstance(data, dict) else int(raw)
+                except (json.JSONDecodeError, ValueError):
+                    candidate = int(raw)
+                if candidate and psutil.pid_exists(candidate):
+                    gateway_pid = candidate
+                    gateway_running = True
+    except Exception:
+        pass
+
+    if runtime:
+        gateway_state = runtime.get('gateway_state')
+        gateway_platforms = runtime.get('platforms') or {}
+        gateway_exit_reason = runtime.get('exit_reason')
+        gateway_updated_at = runtime.get('updated_at')
+        if not gateway_running:
+            gateway_state = gateway_state if gateway_state in ('stopped', 'startup_failed') else 'stopped'
+            gateway_platforms = {}
+
+    active_sessions = 0
+    try:
+        sessions_dir = _get_hermes_home() / 'sessions'
+        if sessions_dir.exists():
+            now = time.time()
+            for entry in os.scandir(sessions_dir):
+                if entry.is_file() and entry.name.endswith('.json'):
+                    try:
+                        data = json.loads(open(entry.path).read())
+                        ended = data.get('ended_at')
+                        last_active = max(
+                            data.get('last_active', 0),
+                            data.get('started_at', 0),
+                        )
+                        if ended is None and (now - last_active) < 300:
+                            active_sessions += 1
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    return {
+        'version': version,
+        'gateway_running': gateway_running,
+        'gateway_pid': gateway_pid,
+        'gateway_state': gateway_state,
+        'gateway_platforms': gateway_platforms,
+        'gateway_exit_reason': gateway_exit_reason,
+        'gateway_updated_at': gateway_updated_at,
+        'active_sessions': active_sessions,
+    }
+
+
+def _collect_model_info() -> Dict[str, Any]:
+    config_path = _get_hermes_home() / 'config.yaml'
+    default = {
+        'provider': 'unknown',
+        'model': 'unknown',
+        'base_url': None,
+        'has_api_key': False,
+        'context_length': None,
+    }
+    if not config_path.exists():
+        return default
+    try:
+        import yaml
+        text = config_path.read_text()
+        config = yaml.safe_load(text) or {}
+        model = config.get('model') or {}
+        env_path = _get_hermes_home() / '.env'
+        has_key = False
+        if env_path.exists():
+            env_text = env_path.read_text()
+            for kw in ['API_KEY', 'HF_TOKEN', 'TOKEN']:
+                if kw in env_text:
+                    has_key = True
+                    break
+        return {
+            'provider': model.get('provider', 'unknown'),
+            'model': model.get('default', 'unknown'),
+            'base_url': model.get('base_url'),
+            'has_api_key': has_key,
+            'context_length': model.get('context_length'),
+        }
+    except Exception:
+        return default
+
+
+def _collect_cron_jobs() -> list[Dict[str, Any]]:
+    jobs_path = _get_hermes_home() / 'cron' / 'jobs.json'
+    if not jobs_path.exists():
+        return []
+    try:
+        data = json.loads(jobs_path.read_text())
+        return data.get('jobs', [])
+    except Exception:
+        return []
+
+
+def _read_config_snapshot() -> Dict[str, Any]:
+    config_path = _get_hermes_home() / 'config.yaml'
+    if not config_path.exists():
+        return {'hash': None, 'size': 0, 'content': '', 'config': {}, 'path': str(config_path), 'updated_at': None}
+    text = config_path.read_text()
+    h = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    parsed_config: Dict[str, Any] = {}
+    try:
+        import yaml
+        parsed = yaml.safe_load(text)
+        if isinstance(parsed, dict):
+            parsed_config = parsed
+    except Exception:
+        pass
+    return {
+        'hash': h,
+        'size': len(text),
+        'content': text,
+        'config': parsed_config,
+        'path': str(config_path),
+        'updated_at': _isoformat_mtime(config_path),
+    }
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    fd = None
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp.exists():
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        raise
+
+
+
+
+
+def _collect_tools() -> Dict[str, Any]:
+    """Build a tools snapshot from what we can discover locally."""
+    toolsets_list: list[Dict[str, Any]] = []
+    tool_catalog: list[Dict[str, Any]] = []
+    resolved: list[str] = []
+
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    tc_path = project_root / "hermes_cli" / "tools_config.py"
+
+    try:
+        if tc_path.exists():
+            tc_text = tc_path.read_text()
+            m = re.search(r"CONFIGURABLE_TOOLSETS\s*=\s*\[", tc_text)
+            if m:
+                brace_start = tc_text.find("[", m.start())
+                brace_end = brace_start + 1
+                depth = 1
+                while brace_end < len(tc_text) and depth > 0:
+                    if tc_text[brace_end] == "[": depth += 1
+                    elif tc_text[brace_end] == "]": depth -= 1
+                    brace_end += 1
+                raw = tc_text[brace_start + 1:brace_end - 1]
+                # Parse entries with simple regex
+                entries = re.findall(r'\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"[^)]*\)', raw)
+                for name, label, desc in entries:
+                    direct = [name] if name != "skills" else ["list", "view", "manage"]
+                    toolsets_list.append({
+                        "name": name,
+                        "description": label or desc,
+                        "directTools": direct,
+                        "includes": [],
+                        "resolvedTools": direct,
+                        "toolCount": len(direct),
+                        "isComposite": False,
+                        "available": True,
+                        "requirements": [],
+                    })
+                    for d in direct:
+                        tool_catalog.append({"name": d, "toolset": name, "available": True})
+                        resolved.append(d)
+    except Exception:
+        pass
+
+    if not toolsets_list:
+        toolsets_list = [
+            {"name": "terminal", "description": "Terminal", "directTools": ["terminal"], "includes": [], "resolvedTools": ["terminal"], "toolCount": 1, "isComposite": False, "available": True, "requirements": []},
+            {"name": "file", "description": "File", "directTools": ["file"], "includes": [], "resolvedTools": ["file"], "toolCount": 1, "isComposite": False, "available": True, "requirements": []},
+        ]
+        tool_catalog = [{"name": "terminal", "toolset": "terminal", "available": True}, {"name": "file", "toolset": "file", "available": True}]
+        resolved = ["terminal", "file"]
+
+    return {
+        "available": True,
+        "count": len(toolsets_list),
+        "toolCount": len(tool_catalog),
+        "toolsets": toolsets_list,
+        "availableToolsets": toolsets_list,
+        "toolCatalog": tool_catalog,
+        "resolvedTools": list(dict.fromkeys(resolved)),
+    }
+
+def _parse_skill_yaml_frontmatter(text: str) -> Dict[str, Any]:
+    """Extract YAML frontmatter between --- and --- from a SKILL.md file."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+    if end_idx is None:
+        return {}
+    yaml_text = "\n".join(lines[1:end_idx])
+    try:
+        import yaml
+        data = yaml.safe_load(yaml_text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+_SKILLS_EXCLUDED_DIRS = {".archive", ".hub", ".curator_backups", ".git"}
+
+
+def _find_skill_md_files(skills_dir: Path) -> list[Path]:
+    """Recursively find all SKILL.md files, excluding special directories."""
+    results = []
+    try:
+        for entry in skills_dir.rglob("SKILL.md"):
+            # Skip if any parent directory is excluded
+            rel = entry.relative_to(skills_dir)
+            parts = rel.parts[:-1]  # all parts except the filename
+            if any(p.startswith(".") or p in _SKILLS_EXCLUDED_DIRS for p in parts):
+                continue
+            results.append(entry)
+    except Exception:
+        pass
+    return results
+
+
+def _collect_skills() -> Dict[str, Any]:
+    """Scan ~/.hermes/skills/ to build an installed skills snapshot.
+
+    Recursively discovers all SKILL.md files, parses their YAML frontmatter
+    to extract name, description, tags, and computes category from the
+    first-level subdirectory.
+
+    Reads skills.disabled (and skills.platform_disabled for the local
+    platform) from config.yaml to determine each skill's enabled state.
+    """
+    skills_dir = Path.home() / ".hermes" / "skills"
+
+    # Read disabled skill names from config.yaml
+    disabled_names: set[str] = set()
+    config_path = _get_hermes_home() / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+            text = config_path.read_text()
+            cfg = yaml.safe_load(text) or {}
+            skills_cfg = cfg.get("skills", {})
+            disabled_names = set(skills_cfg.get("disabled", []))
+            # Also include platform_disabled for 'local'
+            platform_cfg = skills_cfg.get("platform_disabled", {})
+            if isinstance(platform_cfg, dict):
+                local_disabled = platform_cfg.get("local")
+                if local_disabled and isinstance(local_disabled, list):
+                    disabled_names |= set(local_disabled)
+        except Exception:
+            pass
+
+    skills_list: list[Dict[str, Any]] = []
+    categories_map: Dict[str, list[str]] = {}
+
+    if skills_dir.exists():
+        skill_md_files = _find_skill_md_files(skills_dir)
+
+        for md_path in skill_md_files:
+            rel = md_path.relative_to(skills_dir)
+            parts = rel.parts[:-1]  # everything except "SKILL.md"
+
+            # Compute category: first subdirectory level, or "general"
+            category = parts[0] if parts else "general"
+
+            # Parse YAML frontmatter
+            try:
+                text = md_path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                text = ""
+            frontmatter = _parse_skill_yaml_frontmatter(text) if text else {}
+
+            # Extract name from YAML, fallback to the leaf directory name
+            skill_name = str(frontmatter.get("name", "") or "")
+            if not skill_name:
+                skill_name = parts[-1] if parts else "unknown"
+
+            # Extract description from YAML, fallback to empty
+            desc = str(frontmatter.get("description", "") or "")
+
+            # Extract tags from YAML metadata.hermes.tags
+            tags: list[str] = []
+            metadata = frontmatter.get("metadata")
+            if isinstance(metadata, dict):
+                hermes_meta = metadata.get("hermes")
+                if isinstance(hermes_meta, dict):
+                    raw_tags = hermes_meta.get("tags", [])
+                    if isinstance(raw_tags, list):
+                        tags = [str(t) for t in raw_tags]
+
+            # Build the display path (relative to skills dir without filename)
+            rel_dir = "/".join(parts) if parts else category
+
+            skills_list.append({
+                "id": skill_name,
+                "name": skill_name,
+                "description": desc or skill_name,
+                "enabled": skill_name not in disabled_names,
+                "model": "",
+                "tags": tags,
+                "category": category,
+                "filePath": str(md_path.parent),
+            })
+
+            # Track in categories_map
+            if category not in categories_map:
+                categories_map[category] = []
+            categories_map[category].append(skill_name)
+
+    categories = []
+    for name, skill_names in sorted(categories_map.items()):
+        categories.append({
+            "name": name,
+            "description": f"Skills in {name}",
+            "count": len(skill_names),
+            "skills": skill_names,
+        })
+
+    return {
+        "available": True,
+        "count": len(skills_list),
+        "hint": None,
+        "skills": skills_list,
+        "categories": categories,
+    }
+
+
+def _collect_skills_catalog(query: str = "", source: str = "all", limit: int = 500) -> Dict[str, Any]:
+    """Collect available skills from the published Hermes Skills Hub index."""
+    installed_snapshot = _collect_skills()
+    installed_names = {str(skill.get("name") or skill.get("id") or "").lower() for skill in installed_snapshot.get("skills", [])}
+
+    try:
+        with urllib.request.urlopen("https://hermes-agent.nousresearch.com/docs/api/skills-index.json", timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        return {
+            "available": False,
+            "count": 0,
+            "hint": f"Skills catalog unavailable: {exc}",
+            "skills": [],
+            "sources": {},
+            "timedOut": [],
+        }
+
+    raw_items = payload.get("skills", []) if isinstance(payload, dict) else []
+    normalized_query = (query or "").strip().lower()
+    source_filter = (source or "all").strip().lower()
+    requested_limit = max(1, min(int(limit), 5000))
+    source_counts: Dict[str, int] = {}
+    items = []
+
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        item_source = str(raw.get("source") or "unknown")
+        source_counts[item_source] = source_counts.get(item_source, 0) + 1
+        if source_filter != "all" and item_source.lower() != source_filter:
+            continue
+
+        name = str(raw.get("name") or "")
+        identifier = str(raw.get("identifier") or name)
+        tags = raw.get("tags") if isinstance(raw.get("tags"), list) else []
+        haystack = " ".join([
+            name,
+            str(raw.get("description") or ""),
+            item_source,
+            identifier,
+            str(raw.get("repo") or ""),
+            str(raw.get("path") or ""),
+            *[str(tag) for tag in tags],
+        ]).lower()
+        if normalized_query and normalized_query not in haystack:
+            continue
+
+        items.append({
+            "id": identifier,
+            "name": name,
+            "description": str(raw.get("description") or ""),
+            "source": item_source,
+            "identifier": identifier,
+            "trustLevel": str(raw.get("trust_level") or raw.get("trustLevel") or "community"),
+            "repo": raw.get("repo") or None,
+            "path": raw.get("path") or None,
+            "tags": [str(tag) for tag in tags],
+            "installed": name.lower() in installed_names,
+        })
+
+    trust_rank = {"builtin": 0, "trusted": 1, "community": 2}
+    items.sort(key=lambda item: (trust_rank.get(str(item.get("trustLevel")), 3), str(item.get("source")) != "official", str(item.get("name", "")).lower()))
+    items = items[:requested_limit]
+
+    return {
+        "available": True,
+        "count": len(items),
+        "hint": "Available skills from the centralized Hermes Skills Hub index. Installed skills come from /api/local/skills.",
+        "skills": items,
+        "sources": source_counts,
+        "timedOut": [],
+    }
+
+
+_SKILL_FILE_READ_LIMIT = 200_000  # 200 KB max for a single file read
+
+
+def _is_within_skills_dir(path: Path) -> bool:
+    """Check that a resolved path is inside ~/.hermes/skills/."""
+    skills_root = (Path.home() / ".hermes" / "skills").resolve()
+    try:
+        path.resolve().relative_to(skills_root)
+        return True
+    except ValueError:
+        return False
+
+
+def _collect_skill_detail(skill_name: str) -> Dict[str, Any]:
+    """Return the SKILL.md content and a file listing for a named skill.
+
+    Searches ~/.hermes/skills/ for a SKILL.md whose frontmatter ``name``
+    matches *skill_name* (case-insensitive).  Falls back to matching the
+    leaf directory name.
+    """
+    skills_dir = Path.home() / ".hermes" / "skills"
+    if not skills_dir.exists():
+        return {"success": False, "error": "skills_directory_not_found"}
+
+    target = skill_name.strip().lower()
+    matched_dir: Optional[Path] = None
+
+    for md_path in _find_skill_md_files(skills_dir):
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        fm = _parse_skill_yaml_frontmatter(text)
+        fm_name = str(fm.get("name", "") or "").strip().lower()
+        dir_name = md_path.parent.name.lower()
+        if fm_name == target or dir_name == target:
+            matched_dir = md_path.parent
+            break
+
+    if matched_dir is None:
+        return {"success": False, "error": "skill_not_found", "detail": f"No skill named '{skill_name}'"}
+
+    # Read SKILL.md content
+    skill_md = matched_dir / "SKILL.md"
+    skill_md_content = ""
+    if skill_md.exists():
+        try:
+            raw = skill_md.read_text(encoding="utf-8", errors="replace")
+            skill_md_content = raw[:_SKILL_FILE_READ_LIMIT]
+        except Exception:
+            skill_md_content = ""
+
+    # List all files in the skill directory (non-recursive, skip hidden)
+    files: list[Dict[str, Any]] = []
+    try:
+        for entry in sorted(matched_dir.iterdir(), key=lambda p: (not p.is_file(), p.name.lower())):
+            if entry.name.startswith("."):
+                continue
+            file_info: Dict[str, Any] = {
+                "name": entry.name,
+                "isDir": entry.is_dir(),
+            }
+            if entry.is_file():
+                try:
+                    file_info["size"] = entry.stat().st_size
+                except OSError:
+                    file_info["size"] = 0
+            files.append(file_info)
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "name": skill_name,
+        "dirPath": str(matched_dir),
+        "skillMdContent": skill_md_content,
+        "files": files,
+    }
+
+
+def _read_skill_file(file_path_str: str) -> Dict[str, Any]:
+    """Read a single file from inside ~/.hermes/skills/.
+
+    *file_path_str* must be an absolute path or a path relative to the
+    skills directory.  Directory-traversal is blocked.
+    """
+    candidate = Path(file_path_str)
+    if not candidate.is_absolute():
+        candidate = Path.home() / ".hermes" / "skills" / candidate
+
+    resolved = candidate.resolve()
+    if not _is_within_skills_dir(resolved):
+        return {"success": False, "error": "forbidden", "detail": "Path is outside skills directory."}
+    if not resolved.exists():
+        return {"success": False, "error": "not_found", "detail": f"File not found: {file_path_str}"}
+    if resolved.is_dir():
+        return {"success": False, "error": "is_directory", "detail": "Use the list endpoint for directories."}
+
+    try:
+        stat = resolved.stat()
+        content = resolved.read_text(encoding="utf-8", errors="replace")[:_SKILL_FILE_READ_LIMIT]
+        return {
+            "success": True,
+            "path": str(resolved),
+            "name": resolved.name,
+            "content": content,
+            "size": stat.st_size,
+        }
+    except Exception as exc:
+        return {"success": False, "error": "read_failed", "detail": str(exc)}
+
+
+def _collect_skill_files_recursive(skill_name: str) -> Dict[str, Any]:
+    """Return all files with their contents for a named skill (recursive)."""
+    skills_dir = Path.home() / ".hermes" / "skills"
+    if not skills_dir.exists():
+        raise FileNotFoundError("Skills directory not found")
+
+    target = skill_name.strip().lower()
+    matched_dir: Optional[Path] = None
+
+    for md_path in _find_skill_md_files(skills_dir):
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        fm = _parse_skill_yaml_frontmatter(text)
+        fm_name = str(fm.get("name", "") or "").strip().lower()
+        dir_name = md_path.parent.name.lower()
+        if fm_name == target or dir_name == target:
+            matched_dir = md_path.parent
+            break
+
+    if matched_dir is None:
+        raise FileNotFoundError(f"Skill '{skill_name}' not found")
+
+    base = matched_dir.resolve()
+    files: list[Dict[str, Any]] = []
+
+    for p in sorted(base.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(base)
+        parts = rel.parts
+        if any(part.startswith(".") or part == "node_modules" for part in parts):
+            continue
+        try:
+            content = p.read_text(encoding="utf-8", errors="replace")[:_SKILL_FILE_READ_LIMIT]
+        except Exception:
+            content = ""
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = 0
+        files.append({
+            "name": str(rel),
+            "path": str(rel),
+            "size": size,
+            "content": content,
+        })
+
+    return {
+        "skill": skill_name,
+        "path": str(base),
+        "files": files,
+    }
+
+
+def _collect_logs(max_files: int = 10, max_lines: int = 160) -> Dict[str, Any]:
+    """Read latest log files from ~/.hermes/logs/."""
+    logs_dir = Path.home() / ".hermes" / "logs"
+    files_list: list[Dict[str, Any]] = []
+    total_entries = 0
+
+    if logs_dir.exists():
+        all_files = sorted(
+            [f for f in logs_dir.iterdir() if f.is_file() and not f.name.startswith(".")],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        # Prioritize gateway and agent logs by boosting them when present.
+        priority_names = {"gateway.log", "gateway.error.log", "agent.log", "dashboard-api.error.log", "mission-control-telemetry.error.log", "mission-control.error.log", "tui_gateway_crash.log"}
+        priority_files = [f for f in all_files if f.name in priority_names]
+        other_files = [f for f in all_files if f.name not in priority_names]
+        merged = priority_files + other_files
+        for log_file in merged[:max_files]:
+            try:
+                stat = log_file.stat()
+                size_bytes = stat.st_size
+                # Read last max_lines lines efficiently
+                entries: list[Dict[str, Any]] = []
+                try:
+                    with open(log_file, "r", encoding="utf-8", errors="replace") as fh:
+                        lines = fh.readlines()
+                except Exception:
+                    lines = []
+                trimmed = lines[-max_lines:] if len(lines) > max_lines else lines
+                for idx, raw_line in enumerate(trimmed, start=max(1, len(lines) - len(trimmed) + 1)):
+                    line = raw_line.rstrip("\n\r")
+                    level: str = "info"
+                    lower = line.lower()
+                    if "error" in lower or "exception" in lower or "traceback" in lower or "failed" in lower:
+                        level = "error"
+                    elif "warn" in lower or "warning" in lower or "deprecated" in lower:
+                        level = "warn"
+                    entries.append({"lineNumber": idx, "level": level, "text": line})
+                files_list.append({
+                    "name": log_file.name,
+                    "path": str(log_file),
+                    "updatedAt": _isoformat_mtime(log_file),
+                    "sizeBytes": size_bytes,
+                    "entryCount": len(entries),
+                    "entries": entries,
+                })
+                total_entries += len(entries)
+            except Exception:
+                continue
+
+    return {
+        "available": True,
+        "path": str(logs_dir),
+        "fileCount": len(files_list),
+        "totalEntries": total_entries,
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "files": files_list,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
-    def _json(self, status: int, payload: Dict[str, Any]) -> None:
+    def _cors_headers(self) -> Dict[str, str]:
+        configured_origin = (os.getenv("MISSION_CONTROL_ALLOWED_ORIGIN") or "").strip()
+        request_origin = (self.headers.get("Origin") or "").strip()
+        if configured_origin and request_origin and request_origin == configured_origin:
+            return {
+                "Access-Control-Allow-Origin": request_origin,
+                "Vary": "Origin",
+            }
+        # Dev mode: mirror the incoming origin so browser sidecars work without explicit config.
+        if request_origin:
+            return {
+                "Access-Control-Allow-Origin": request_origin,
+                "Vary": "Origin",
+            }
+        return {}
+
+    def _json(self, status: int, payload: Dict[str, Any], extra_headers: Optional[Dict[str, str]] = None) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        for key, value in self._cors_headers().items():
+            self.send_header(key, value)
+        if extra_headers:
+            for key, value in extra_headers.items():
+                self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def _unauthorized(self) -> None:
+        self._json(
+            401,
+            {"error": "invalid_api_key", "detail": "Mission Control local telemetry requires a bearer token."},
+            extra_headers={"WWW-Authenticate": 'Bearer realm="Mission Control"'},
+        )
+
+    def _stream_trace(self, session_id: str | None, limit: int, compact: bool, interval: float) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("Connection", "keep-alive")
+        for key, value in self._cors_headers().items():
+            self.send_header(key, value)
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        while True:
+            payload = load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact)
+            frame = f"event: trace\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+            try:
+                self.wfile.write(frame)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                break
+            time.sleep(interval)
+
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/health":
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        if parsed.path == "/health":
             self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
             return
-        if self.path == "/api/local/system":
+        if parsed.path == "/api/local/health":
+            self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
+            return
+        if parsed.path == "/api/local/system":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
             self._json(200, collect_system_snapshot())
             return
+        if parsed.path == "/api/local/knowledge":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, collect_knowledge_snapshot())
+            return
+        if parsed.path == "/api/local/knowledge/file":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            requested_path = (params.get("path") or [""])[0]
+            try:
+                payload = collect_knowledge_file_payload(requested_path)
+            except PermissionError:
+                self._json(403, {"error": "forbidden", "detail": "Knowledge path is outside allowed roots."})
+                return
+            except FileNotFoundError:
+                self._json(404, {"error": "not_found", "detail": "Knowledge file not found."})
+                return
+            self._json(200, payload)
+            return
+        if parsed.path == "/api/local/mission-control/agents":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, load_agents_snapshot())
+            return
+        if parsed.path == "/api/local/mission-control/sessions":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
+            self._json(200, load_agents_sessions_snapshot(limit=limit))
+            return
+        if parsed.path == "/api/local/sessions":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
+            self._json(200, load_agents_sessions_snapshot(limit=limit))
+            return
+        if parsed.path == "/api/local/mission-control/agents/trace":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            session_id = (params.get("session_id") or [None])[0] or None
+            limit = _parse_int((params.get("limit") or [None])[0], default=300, minimum=0, maximum=1000)
+            compact = _parse_bool((params.get("compact") or [None])[0], default=False)
+            self._json(200, load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact))
+            return
+        if parsed.path == "/api/local/mission-control/agents/trace/stream":
+            if not _is_authorized(self, allow_query_token=True):
+                self._unauthorized()
+                return
+            session_id = (params.get("session_id") or [None])[0] or None
+            limit = _parse_int((params.get("limit") or [None])[0], default=300, minimum=0, maximum=1000)
+            compact = _parse_bool((params.get("compact") or [None])[0], default=True)
+            interval = _parse_float((params.get("interval") or [None])[0], default=2.0, minimum=0.5, maximum=30.0)
+            self._stream_trace(session_id=session_id, limit=limit, compact=compact, interval=interval)
+            return
+        if parsed.path == '/api/local/status':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _collect_status_payload())
+            return
+        if parsed.path == '/api/local/model/info':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _collect_model_info())
+            return
+        if parsed.path == '/api/local/cron/jobs':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            jobs = _collect_cron_jobs()
+            self._json(200, {'jobs': jobs, 'count': len(jobs)})
+            return
+        if parsed.path == '/api/local/config':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _read_config_snapshot())
+            return
+        if parsed.path == '/api/local/tools':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _collect_tools())
+            return
+        if parsed.path == '/api/local/skills':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, _collect_skills())
+            return
+        if parsed.path == '/api/local/skills/catalog':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            search_query = query.get('query', [''])[0]
+            source = query.get('source', ['all'])[0] or 'all'
+            try:
+                limit = int(query.get('limit', ['5000'])[0])
+            except (ValueError, IndexError):
+                limit = 500
+            self._json(200, _collect_skills_catalog(query=search_query, source=source, limit=limit))
+            return
+        if parsed.path == '/api/local/skills/files':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            skill_name = (params.get("skill") or [""])[0].strip()
+            if not skill_name:
+                self._json(400, {"error": "missing_skill", "detail": "Query parameter 'skill' is required."})
+                return
+            try:
+                payload = _collect_skill_files_recursive(skill_name)
+            except FileNotFoundError:
+                self._json(404, {"error": "not_found", "detail": f"Skill '{skill_name}' not found."})
+                return
+            self._json(200, payload)
+            return
+        if parsed.path == '/api/local/logs':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            # Parse query params for optional limits
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                max_files = int(query.get('maxFiles', ['10'])[0])
+            except (ValueError, IndexError):
+                max_files = 10
+            try:
+                max_lines = int(query.get('maxLines', ['160'])[0])
+            except (ValueError, IndexError):
+                max_lines = 160
+            self._json(200, _collect_logs(max_files=max_files, max_lines=max_lines))
+            return
         self._json(404, {"error": "not_found", "path": self.path})
+
+    def do_PUT(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == '/api/local/config':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            content = data.get('content', '')
+            expected_hash = data.get('hash', '')
+            config_path = _get_hermes_home() / 'config.yaml'
+            if config_path.exists():
+                current_text = config_path.read_text()
+                current_hash = hashlib.sha256(current_text.encode('utf-8')).hexdigest()
+                if expected_hash and expected_hash != current_hash:
+                    self._json(409, {'error': 'hash_mismatch', 'detail': 'Config changed since last read.', 'currentHash': current_hash})
+                    return
+            try:
+                import yaml
+                yaml.safe_load(content)
+            except Exception as exc:
+                self._json(400, {'error': 'invalid_yaml', 'detail': str(exc)})
+                return
+            if config_path.exists():
+                backup = config_path.with_suffix(f'.yaml.bak.{int(time.time())}')
+                try:
+                    backup.write_text(config_path.read_text(), encoding='utf-8')
+                except OSError:
+                    pass
+            try:
+                _atomic_write_text(config_path, content)
+            except OSError as exc:
+                self._json(500, {'error': 'write_failed', 'detail': str(exc)})
+                return
+            new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+            self._json(200, {'success': True, 'hash': new_hash, 'size': len(content), 'path': str(config_path)})
+            return
+        self._json(404, {'error': 'not_found', 'path': self.path})
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == '/api/local/gateway/restart':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            # Attempt restart; don't crash if hermes CLI isn't available.
+            try:
+                subprocess.Popen(
+                    ['hermes', 'gateway', 'restart'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except FileNotFoundError:
+                self._json(200, {'success': False, 'detail': 'hermes CLI not found on PATH.', 'manual': True})
+                return
+            except Exception as exc:
+                self._json(200, {'success': False, 'detail': str(exc), 'manual': True})
+                return
+            self._json(202, {'success': True, 'detail': 'Gateway restart initiated.'})
+            return
+        if parsed.path == '/api/local/skills/toggle':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            skill_name = data.get('skillName', '').strip()
+            if not skill_name:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing skillName.'})
+                return
+            desired_enabled = bool(data.get('enabled', True))
+            config_path = _get_hermes_home() / 'config.yaml'
+            try:
+                import yaml
+                current_text = config_path.read_text()
+                cfg = yaml.safe_load(current_text) or {}
+            except Exception as exc:
+                self._json(500, {'error': 'read_failed', 'detail': str(exc)})
+                return
+            cfg.setdefault('skills', {})
+            disabled: list = list(cfg['skills'].get('disabled', []))
+            if desired_enabled:
+                # Remove from disabled list
+                disabled = [d for d in disabled if d != skill_name]
+            else:
+                # Add to disabled list if not already present
+                if skill_name not in disabled:
+                    disabled.append(skill_name)
+            cfg['skills']['disabled'] = sorted(disabled)
+            new_text = yaml.safe_dump(cfg, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            try:
+                backup = config_path.with_suffix(f'.yaml.bak.{int(time.time())}')
+                backup.write_text(current_text, encoding='utf-8')
+            except OSError:
+                pass
+            try:
+                _atomic_write_text(config_path, new_text)
+            except OSError as exc:
+                self._json(500, {'error': 'write_failed', 'detail': str(exc)})
+                return
+            self._json(200, {
+                'success': True,
+                'skillName': skill_name,
+                'enabled': desired_enabled,
+                'detail': f"Skill '{skill_name}' {'enabled' if desired_enabled else 'disabled'}.",
+            })
+            return
+        self._json(404, {'error': 'not_found', 'path': self.path})
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        for key, value in self._cors_headers().items():
+            self.send_header(key, value)
+        self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-API-Key')
+        self.send_header('Access-Control-Allow-Credentials', 'true')
+        self.send_header('Access-Control-Max-Age', '0')
+        self.end_headers()
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
         return
 
 
 def main() -> None:
-    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST", "127.0.0.1")
+    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST", "0.0.0.0")
     port = int(os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT", "8765"))
 
     sampler = threading.Thread(target=_cpu_sampler, name="mc-cpu-sampler", daemon=True)

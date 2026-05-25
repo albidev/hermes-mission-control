@@ -36,7 +36,7 @@ export function LogsRoute() {
     async function refreshLogs() {
       try {
         const payload = await loadMissionControlLogs(storedToken || undefined, {
-          maxFiles: 6,
+          maxFiles: 10,
           maxLines: 160,
         });
         if (cancelled) return;
@@ -87,7 +87,7 @@ export function LogsRoute() {
     });
   }, [files]);
 
-  const visibleFiles = useMemo(() => sortedFiles.slice(0, 3), [sortedFiles]);
+  const visibleFiles = useMemo(() => sortedFiles.slice(0, 10), [sortedFiles]);
 
   useEffect(() => {
     if (visibleFiles.length === 0) {

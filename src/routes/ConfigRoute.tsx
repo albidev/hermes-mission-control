@@ -130,7 +130,7 @@ export function ConfigRoute() {
     setPendingEdits({});
     setSearchQuery('');
     setShowChangedOnly(false);
-  }, [config.content, config.config]);
+  }, [config]);
 
   useEffect(() => {
     setSectionOpen((previous) => {

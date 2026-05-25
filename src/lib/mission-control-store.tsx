@@ -54,7 +54,7 @@ type MissionControlContextValue = {
   storedToken: string;
   tokenDraft: string;
   setTokenDraft: (value: string) => void;
-  refreshAll: (token?: string, options?: { silent?: boolean }) => Promise<void>;
+  refreshAll: (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean; includeSessions?: boolean }) => Promise<void>;
   unlock: (token: string) => Promise<void>;
   logout: () => void;
   actionResult: MissionControlActionResult | null;
@@ -94,7 +94,7 @@ function persistStoredValue(key: string, value: string) {
 }
 
 function getApiBaseUrl() {
-  return import.meta.env.VITE_HERMES_API_BASE_URL || '/api';
+  return import.meta.env.VITE_MISSION_CONTROL_LOCAL_API_BASE_URL || '/api/local';
 }
 
 function buildHeaders(token?: string) {
@@ -117,7 +117,8 @@ function readJsonPayload<T>(payload: unknown): T {
 }
 
 export function MissionControlProvider({ children }: { children: ReactNode }) {
-  const initialToken = typeof window === 'undefined' ? '' : readStoredValue(MISSION_CONTROL_TOKEN_STORAGE_KEY, '');
+  const envToken = (typeof import.meta.env !== 'undefined' && import.meta.env.VITE_MISSION_CONTROL_TOKEN) || '';
+  const initialToken = typeof window === 'undefined' ? '' : readStoredValue(MISSION_CONTROL_TOKEN_STORAGE_KEY, envToken);
   const initialTheme = typeof window === 'undefined' ? 'system' : (readStoredValue('mission-control-theme', 'system') as ThemeMode);
 
   const [snapshot, setSnapshot] = useState<MissionControlSnapshot>(getFallbackSnapshot());
@@ -139,10 +140,10 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
 
   const gatewayActions = useMemo<MissionControlGatewayAction[]>(
     () => [
-      { id: 'refresh', label: 'Refresh snapshot', hint: 'Reload all live Mission Control data.', endpoint: '/api/mission-control', method: 'GET' },
-      { id: 'reload-config', label: 'Reload config', hint: 'Re-read config.yaml from disk.', endpoint: '/api/mission-control/config', method: 'GET' },
-      { id: 'probe-health', label: 'Probe gateway', hint: 'Hit /health to verify the gateway.', endpoint: '/health', method: 'GET' },
-      { id: 'restart-gateway', label: 'Restart gateway', hint: 'Request a safe process restart.', endpoint: '/api/mission-control/restart', method: 'POST' },
+      { id: 'refresh', label: 'Refresh snapshot', hint: 'Reload all live Mission Control data.', endpoint: '/status', method: 'GET' },
+      { id: 'reload-config', label: 'Reload config', hint: 'Re-read config.yaml from disk.', endpoint: '/config', method: 'GET' },
+      { id: 'probe-health', label: 'Probe gateway', hint: 'Hit /api/local/status to verify the telemetry backend.', endpoint: '/status', method: 'GET' },
+      { id: 'restart-gateway', label: 'Restart gateway', hint: 'Request a safe process restart.', endpoint: '/gateway/restart', method: 'POST' },
     ],
     [],
   );
@@ -184,67 +185,94 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     return updated;
   }, []);
 
-  const refreshAll = useCallback(async (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean }) => {
+  const refreshReferenceData = useCallback(async (token?: string) => {
+    const [knowledgeRes, toolsRes, skillsRes] = await Promise.allSettled([
+      loadMissionControlKnowledge(token),
+      loadMissionControlTools(token),
+      loadMissionControlSkills(token),
+    ]);
+
+    if (knowledgeRes.status === 'fulfilled') {
+      const nextKnowledge = knowledgeRes.value;
+      setKnowledge((previous) => (nextKnowledge.available ? nextKnowledge : previous));
+    }
+
+    if (toolsRes.status === 'fulfilled') {
+      const nextTools = toolsRes.value;
+      setTools((previous) => (nextTools.available ? nextTools : previous));
+    }
+
+    if (skillsRes.status === 'fulfilled') {
+      const nextSkills = skillsRes.value;
+      setSkills((previous) => (nextSkills.available ? nextSkills : previous));
+    }
+  }, []);
+
+  const refreshAll = useCallback(async (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean; includeSessions?: boolean }) => {
     const silent = options?.silent ?? false;
     const includeReference = options?.includeReference ?? true;
     const includeSnapshot = options?.includeSnapshot ?? !silent;
+    const includeSessions = options?.includeSessions ?? !silent;
     if (!silent) {
       setLoading(true);
     }
 
+    if (includeReference) {
+      void refreshReferenceData(token);
+    }
+
     try {
-      const [machine, sessions, cron, alerts] = await Promise.all([
-        loadMissionControlMachineStatus(token),
-        loadMissionControlSessions(token),
-        loadMissionControlCron(token),
-        loadMissionControlAlerts(token),
-      ]);
-
-      setSnapshot((previous) => {
-        const nextMachine = machine as MissionControlSnapshot['machine'];
-        const nextSessions = sessions as MissionControlSnapshot['sessions'];
-        const nextCron = cron as MissionControlSnapshot['cron'];
-        const nextAlerts = alerts as MissionControlSnapshot['alerts'];
-
-        const machineValue = nextMachine.source === 'fallback' && previous.machine.source !== 'fallback' ? previous.machine : nextMachine;
-        const sessionsValue = nextSessions.totalSessions === 0 && previous.sessions.totalSessions > 0 ? previous.sessions : nextSessions;
-        const cronValue = nextCron.items.length === 0 && previous.cron.items.length > 0 ? previous.cron : nextCron;
-        const alertsValue =
-          nextAlerts.items.length === 1 && nextAlerts.items[0]?.id === 'fallback-gateway' && previous.alerts.items.length > 0
-            ? previous.alerts
-            : nextAlerts;
-
-        return {
-          ...previous,
-          machine: machineValue,
-          sessions: sessionsValue,
-          cron: cronValue,
-          alerts: alertsValue,
-          activeAgents: sessionsValue.activeAgents,
-        };
+      const updateMachine = loadMissionControlMachineStatus(token).then((machine) => {
+        setSnapshot((previous) => {
+          const nextMachine = machine as MissionControlSnapshot['machine'];
+          const machineValue = nextMachine.source === 'fallback' && previous.machine.source !== 'fallback' ? previous.machine : nextMachine;
+          return { ...previous, machine: machineValue };
+        });
       });
 
-      if (includeReference) {
-        const [knowledgeRes, toolsRes, skillsRes] = await Promise.allSettled([
-          loadMissionControlKnowledge(token),
-          loadMissionControlTools(token),
-          loadMissionControlSkills(token),
-        ]);
+      const updateSessions = includeSessions
+        ? loadMissionControlSessions(token).then((sessions) => {
+            setSnapshot((previous) => {
+              const nextSessions = sessions as MissionControlSnapshot['sessions'];
+              const sessionsValue = nextSessions.totalSessions === 0 && previous.sessions.totalSessions > 0 ? previous.sessions : nextSessions;
+              return {
+                ...previous,
+                sessions: sessionsValue,
+                activeAgents: sessionsValue.activeAgents,
+              };
+            });
+          })
+        : Promise.resolve();
 
-        if (knowledgeRes.status === 'fulfilled') {
-          const nextKnowledge = knowledgeRes.value;
-          setKnowledge((previous) => (nextKnowledge.available ? nextKnowledge : previous));
-        }
+      const updateCron = loadMissionControlCron(token).then((cron) => {
+        setSnapshot((previous) => {
+          const nextCron = cron as MissionControlSnapshot['cron'];
+          const cronValue = nextCron.items.length === 0 && previous.cron.items.length > 0 ? previous.cron : nextCron;
+          return {
+            ...previous,
+            cron: cronValue,
+            queuedJobs: cronValue.queuedJobs,
+          };
+        });
+      });
 
-        if (toolsRes.status === 'fulfilled') {
-          const nextTools = toolsRes.value;
-          setTools((previous) => (nextTools.available ? nextTools : previous));
-        }
+      const updateAlerts = loadMissionControlAlerts(token).then((alerts) => {
+        setSnapshot((previous) => {
+          const nextAlerts = alerts as MissionControlSnapshot['alerts'];
+          const alertsValue =
+            nextAlerts.items.length === 1 && nextAlerts.items[0]?.id === 'fallback-gateway' && previous.alerts.items.length > 0
+              ? previous.alerts
+              : nextAlerts;
+          return { ...previous, alerts: alertsValue };
+        });
+      });
 
-        if (skillsRes.status === 'fulfilled') {
-          const nextSkills = skillsRes.value;
-          setSkills((previous) => (nextSkills.available ? nextSkills : previous));
-        }
+      const liveResults = await Promise.allSettled([updateMachine, updateSessions, updateCron, updateAlerts]);
+      const authFailure = liveResults.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected' && result.reason instanceof MissionControlAuthError,
+      );
+      if (authFailure) {
+        throw authFailure.reason;
       }
 
       if (includeSnapshot) {
@@ -294,11 +322,18 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [refreshReferenceData]);
 
   useEffect(() => {
     void refreshAll(initialToken || undefined);
-    void refreshConfig(initialToken || undefined);
+    void refreshConfig(initialToken || undefined).catch((error) => {
+      if (error instanceof MissionControlAuthError) {
+        // Config is optional. Keep the cockpit live even if the config surface rejects auth.
+        setAuthRequired(false);
+        setAuthError(null);
+        setConfig(getFallbackConfig());
+      }
+    });
     // Initial boot only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -313,11 +348,15 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       ticks += 1;
       const includeReference = ticks % 4 === 0 || !tools.available || !skills.available || !knowledge.available;
       const includeSnapshot = ticks % 4 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
+      const includeConfig = ticks % 4 === 0 || !config.available;
       void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot });
+      if (includeConfig) {
+        void refreshConfig(storedToken || undefined).catch(() => {});
+      }
     }, 15000);
 
     return () => window.clearInterval(interval);
-  }, [authRequired, knowledge.available, refreshAll, skills.available, snapshot.activeModel, storedToken, tools.available]);
+  }, [authRequired, config.available, knowledge.available, refreshAll, refreshConfig, skills.available, snapshot.activeModel, storedToken, tools.available]);
 
   useEffect(() => {
     if (authRequired || typeof document === 'undefined' || typeof window === 'undefined') {
@@ -349,10 +388,14 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     setStoredToken(nextToken);
     setTokenDraft(nextToken);
     persistStoredValue(MISSION_CONTROL_TOKEN_STORAGE_KEY, nextToken);
-    await Promise.all([
-      refreshAll(nextToken || undefined),
-      refreshConfig(nextToken || undefined),
-    ]);
+    await refreshAll(nextToken || undefined);
+    await refreshConfig(nextToken || undefined).catch((error) => {
+      if (error instanceof MissionControlAuthError) {
+        setConfig(getFallbackConfig());
+        return;
+      }
+      throw error;
+    });
   }, [refreshAll, refreshConfig]);
 
   const logout = useCallback(() => {

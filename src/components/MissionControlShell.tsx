@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   Bot,
@@ -31,6 +31,7 @@ export function MissionControlShell() {
     authRequired,
     authError,
     loading,
+    storedToken,
     tokenDraft,
     setTokenDraft,
     unlock,
@@ -41,6 +42,7 @@ export function MissionControlShell() {
 
   const [sideOpen, setSideOpen] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
+  const tokenInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeNav = navItems.find((item) => (item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)));
   const isOverviewRoute = activeNav?.to === '/';
@@ -48,6 +50,18 @@ export function MissionControlShell() {
   useEffect(() => {
     setSideOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (!authRequired) {
+      return;
+    }
+    setSideOpen(false);
+    const raf = window.requestAnimationFrame(() => {
+      tokenInputRef.current?.focus();
+      tokenInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [authRequired]);
 
   const toggleSidebar = useCallback(() => {
     if (typeof window !== 'undefined' && window.matchMedia('(min-width: 980px)').matches) {
@@ -73,7 +87,7 @@ export function MissionControlShell() {
       <div className="ambient ambient-a" />
       <div className="ambient ambient-b" />
 
-      <div className={`layout-frame ${sideOpen ? 'is-open' : ''} ${sideCollapsed ? 'is-collapsed' : ''}`}>
+      <div className={`layout-frame ${sideOpen ? 'is-open' : ''} ${sideCollapsed ? 'is-collapsed' : ''} ${authRequired ? 'is-locked' : ''}`}>
         <aside className="card side-menu" aria-label="Mission Control navigation">
           <div className="side-menu-head">
             <div className="side-menu-head-top">
@@ -147,52 +161,62 @@ export function MissionControlShell() {
             </div>
           </header>
 
+          <section className={`route-stage ${isOverviewRoute ? 'is-overview' : ''}`}>
+            <Outlet />
+          </section>
+
           {authRequired ? (
-            <section className="card auth-card page-card">
-              <p className="eyebrow">Access required</p>
-              <h2>Locked cockpit.</h2>
-              <p className="lede">
-                This dashboard is gated behind a bearer token. Enter it once and the route shell will stay unlocked until you log out.
-              </p>
-
-              <div className="auth-status">
-                <span className="pill status offline">locked</span>
-                <span className="mini-note">{loading ? 'checking access' : 'awaiting token'}</span>
-                <span className="mini-note">theme: {resolvedTheme}</span>
-              </div>
-
-              <form className="auth-form" onSubmit={handleUnlock}>
-                <label className="auth-label" htmlFor="mission-control-token">
-                  Access token
-                </label>
-                <input
-                  id="mission-control-token"
-                  className="auth-input"
-                  type="password"
-                  autoComplete="current-password"
-                  inputMode="text"
-                  value={tokenDraft}
-                  onChange={(event) => setTokenDraft(event.target.value)}
-                  placeholder="Paste bearer token"
-                />
-
-                {authError ? <p className="auth-error">{authError}</p> : null}
-
-                <div className="auth-actions">
-                  <button className="auth-primary" type="submit" disabled={loading}>
-                    {loading ? 'Unlocking…' : 'Unlock cockpit'}
-                  </button>
-                  <button className="auth-secondary" type="button" onClick={logout}>
-                    Clear stored token
-                  </button>
+            <div className="auth-overlay" role="presentation">
+              <section className="card auth-card auth-modal page-card" role="dialog" aria-modal="true" aria-labelledby="mission-control-auth-title">
+                <div className="auth-modal-topbar">
+                  <div className="auth-lock-mark" aria-hidden>
+                    <svg viewBox="0 0 24 24" className="lock-icon auth-lock-icon">
+                      <path d="M7.5 10V8.2A4.5 4.5 0 0 1 12 3.7a4.5 4.5 0 0 1 4.5 4.5V10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      <rect x="5.5" y="10" width="13" height="10" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                    </svg>
+                  </div>
+                  <ThemeSelector showLabel={false} className="auth-theme-toggle" />
                 </div>
-              </form>
-            </section>
-          ) : (
-            <section className={`route-stage ${isOverviewRoute ? 'is-overview' : ''}`}>
-              <Outlet />
-            </section>
-          )}
+
+                <p className="eyebrow">Access required</p>
+                <h2 id="mission-control-auth-title">Locked cockpit.</h2>
+                <p className="lede">
+                  Mission Control is visible but frozen until you enter the bearer token. Nice dashboard, shame if someone actually got in.
+                </p>
+
+                <form className="auth-form" onSubmit={handleUnlock}>
+                  <label className="auth-label" htmlFor="mission-control-token">
+                    Access token
+                  </label>
+                  <input
+                    ref={tokenInputRef}
+                    id="mission-control-token"
+                    className="auth-input"
+                    type="password"
+                    autoComplete="current-password"
+                    inputMode="text"
+                    value={tokenDraft}
+                    onChange={(event) => setTokenDraft(event.target.value)}
+                    placeholder="Paste bearer token"
+                  />
+
+                  {authError ? <p className="auth-error">{authError}</p> : null}
+
+                  <div className="auth-actions">
+                    <button className="auth-primary" type="submit" disabled={loading}>
+                      {loading ? 'Unlocking…' : 'Unlock cockpit'}
+                    </button>
+                  </div>
+
+                  {storedToken ? (
+                    <button className="auth-reset" type="button" onClick={logout}>
+                      Use a different token
+                    </button>
+                  ) : null}
+                </form>
+              </section>
+            </div>
+          ) : null}
         </section>
       </div>
     </main>
