@@ -135,29 +135,22 @@ def _read_gateway_sessions_index() -> dict[str, dict[str, Any]]:
     return result
 
 
-def _read_session_sidecar(session_id: str) -> dict[str, Any] | None:
-    return _safe_read_json(_sessions_dir() / f"session_{session_id}.json")
-
-
 def _read_session_jsonl(session_id: str) -> list[dict[str, Any]]:
     return _safe_read_jsonl(_sessions_dir() / f"{session_id}.jsonl")
 
 
-def _iter_sidecar_session_ids() -> list[str]:
-    ids: list[tuple[float, str]] = []
-    for path in _sessions_dir().glob("session_*.json"):
-        if path.name == "sessions.json":
-            continue
-        session_id = path.stem.removeprefix("session_")
-        if not session_id:
-            continue
-        try:
-            mtime = path.stat().st_mtime
-        except Exception:
-            mtime = 0
-        ids.append((mtime, session_id))
-    ids.sort(key=lambda item: item[0], reverse=True)
-    return [session_id for _, session_id in ids]
+def _iter_db_session_ids() -> list[str]:
+    """Discover session IDs from SessionDB (replaces sidecar-based discovery)."""
+    db = _try_get_session_db()
+    try:
+        if db is None:
+            return []
+        rows = db.list_sessions_rich(limit=500, order_by_last_active=True)
+        return [str(row.get("id", "")) for row in rows if row.get("id")]
+    except Exception:
+        return []
+    finally:
+        _close_session_db(db)
 
 
 def _try_get_session_db():
@@ -223,13 +216,10 @@ def _derive_preview(messages: list[dict[str, Any]] | None, fallback: str = "") -
     return _single_line_preview(fallback, limit=180)
 
 
-def _trace_mode_for_artifacts(session_id: str, db_row: dict[str, Any] | None, sidecar: dict[str, Any] | None) -> str:
+def _trace_mode_for_artifacts(session_id: str, db_row: dict[str, Any] | None) -> str:
     if db_row:
         return _TRACE_MODE_NATIVE
     if _read_session_jsonl(session_id):
-        return _TRACE_MODE_TRANSCRIPT
-    messages = sidecar.get("messages") if isinstance(sidecar, dict) else None
-    if isinstance(messages, list) and messages:
         return _TRACE_MODE_TRANSCRIPT
     return _TRACE_MODE_UNAVAILABLE
 
@@ -299,7 +289,7 @@ def _build_session_item(
     )
     status = "live" if _is_live(last_active_at, ended_at, live_window_seconds) else ("ended" if ended_at is not None else "idle")
     agent_id = _build_agent_key(source, model)
-    trace_mode = _trace_mode_for_artifacts(session_id, db_row, sidecar)
+    trace_mode = _trace_mode_for_artifacts(session_id, db_row)
     return {
         "sessionId": session_id,
         "agentId": agent_id,
@@ -321,15 +311,14 @@ def _build_session_item(
 
 def _collect_agent_sessions(live_window_seconds: int = 300) -> list[dict[str, Any]]:
     index_map = _read_gateway_sessions_index()
-    sidecar_ids = _iter_sidecar_session_ids()
-    session_ids = list(dict.fromkeys(sidecar_ids + list(index_map.keys())))
+    db_ids = _iter_db_session_ids()
+    session_ids = list(dict.fromkeys(db_ids + list(index_map.keys())))
     db = _try_get_session_db()
     try:
         items: list[dict[str, Any]] = []
         for session_id in session_ids:
-            sidecar = _read_session_sidecar(session_id)
             db_row = _get_db_rich_row(db, session_id)
-            item = _build_session_item(session_id, index_map.get(session_id), sidecar, db_row, live_window_seconds)
+            item = _build_session_item(session_id, index_map.get(session_id), None, db_row, live_window_seconds)
             items.append(item)
         items.sort(key=lambda item: item.get("lastActiveAt") or 0, reverse=True)
         return items
@@ -707,17 +696,6 @@ def _build_trace_from_transcript(session_id: str, limit: int = 300, compact: boo
                 compact=compact,
                 warnings=["Native tool-call trace unavailable; built from transcript artifacts."],
             )
-    sidecar = _read_session_sidecar(session_id)
-    messages = sidecar.get("messages") if isinstance(sidecar, dict) and isinstance(sidecar.get("messages"), list) else None
-    if messages:
-        return _build_trace_from_messages(
-            session_item,
-            messages,
-            trace_mode=_TRACE_MODE_TRANSCRIPT,
-            limit=limit,
-            compact=compact,
-            warnings=["Native tool-call trace unavailable; built from sidecar transcript only."],
-        )
     return None
 
 
@@ -730,7 +708,7 @@ def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False
         if not messages:
             return None
         row = _get_db_rich_row(db, session_id)
-        session_item = _build_session_item(session_id, _read_gateway_sessions_index().get(session_id), _read_session_sidecar(session_id), row, 300)
+        session_item = _build_session_item(session_id, _read_gateway_sessions_index().get(session_id), None, row, 300)
         return _build_trace_from_messages(session_item, messages, trace_mode=_TRACE_MODE_NATIVE, limit=limit, compact=compact)
     finally:
         _close_session_db(db)
