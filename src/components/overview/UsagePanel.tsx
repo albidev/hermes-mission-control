@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { DollarSign, Layers, Zap } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, DollarSign, Layers, Zap } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { loadSessionsUsage, type MissionControlSessionsUsageSnapshot } from '../../lib/hermes-api';
 import { useMissionControl } from '../../lib/mission-control-store';
 
 function formatTokens(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
@@ -31,7 +33,7 @@ export function UsagePanel() {
 
   if (!usage || !usage.available) return null;
 
-  const { totals, byModel } = usage;
+  const { totals } = usage;
 
   return (
     <Card padding="none">
@@ -40,72 +42,57 @@ export function UsagePanel() {
           <span className="eyebrow">Usage</span>
           <h2 className="text-sm font-semibold text-text">Token consumption &amp; cost estimate</h2>
         </div>
-        <span className="text-xs text-text-muted">{totals.sessionCount} sessions tracked</span>
+        <Link to="/usage" className="pill pill-subtle pill-button text-xs flex items-center gap-1">
+          Details <ArrowRight size={12} />
+        </Link>
       </div>
 
-      <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface/50 p-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400">
-            <Layers size={18} />
+      <div className="p-4 flex flex-wrap items-center gap-6">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400">
+            <Layers size={16} />
           </div>
-          <div className="min-w-0">
-            <p className="text-[11px] text-text-muted uppercase tracking-wide">Total tokens</p>
-            <p className="text-lg font-semibold text-text tabular-nums">{formatTokens(totals.totalTokens)}</p>
-            <p className="text-[11px] text-text-subtle">{formatTokens(totals.inputTokens)} in · {formatTokens(totals.outputTokens)} out</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface/50 p-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
-            <DollarSign size={18} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[11px] text-text-muted uppercase tracking-wide">Estimated cost</p>
-            <p className="text-lg font-semibold text-text tabular-nums">{formatCost(totals.estimatedCostUsd)}</p>
-            <p className="text-[11px] text-text-subtle">across all sessions</p>
+          <div>
+            <p className="text-[11px] text-text-muted uppercase tracking-wide">Tokens</p>
+            <p className="text-base font-semibold text-text tabular-nums">{formatTokens(totals.totalTokens)}</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface/50 p-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
-            <Zap size={18} />
+        <div className="h-8 w-px bg-border-subtle" />
+
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+            <DollarSign size={16} />
           </div>
-          <div className="min-w-0">
-            <p className="text-[11px] text-text-muted uppercase tracking-wide">Cache savings</p>
-            <p className="text-lg font-semibold text-text tabular-nums">{formatTokens(totals.cacheReadTokens)}</p>
-            <p className="text-[11px] text-text-subtle">cache read tokens</p>
+          <div>
+            <p className="text-[11px] text-text-muted uppercase tracking-wide">Cost</p>
+            <p className="text-base font-semibold text-text tabular-nums">{formatCost(totals.estimatedCostUsd)}</p>
           </div>
+        </div>
+
+        <div className="h-8 w-px bg-border-subtle" />
+
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
+            <Zap size={16} />
+          </div>
+          <div>
+            <p className="text-[11px] text-text-muted uppercase tracking-wide">Cache</p>
+            <p className="text-base font-semibold text-text tabular-nums">{formatTokens(totals.cacheReadTokens)}</p>
+          </div>
+        </div>
+
+        <div className="h-8 w-px bg-border-subtle" />
+
+        <div>
+          <p className="text-[11px] text-text-muted uppercase tracking-wide">In / Out</p>
+          <p className="text-base font-semibold text-text tabular-nums">
+            {formatTokens(totals.inputTokens)} <span className="text-text-subtle font-normal">in</span>
+            {' · '}
+            {formatTokens(totals.outputTokens)} <span className="text-text-subtle font-normal">out</span>
+          </p>
         </div>
       </div>
-
-      {byModel.length > 0 && (
-        <div className="px-4 pb-4">
-          <div className="rounded-lg border border-border-subtle overflow-hidden">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-surface/30 text-text-muted">
-                  <th className="text-left px-3 py-2 font-medium">Model</th>
-                  <th className="text-right px-3 py-2 font-medium">Sessions</th>
-                  <th className="text-right px-3 py-2 font-medium">In tokens</th>
-                  <th className="text-right px-3 py-2 font-medium">Out tokens</th>
-                  <th className="text-right px-3 py-2 font-medium">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {byModel.map((entry) => (
-                  <tr key={entry.model} className="border-t border-border-subtle/50">
-                    <td className="px-3 py-2 font-mono text-text break-all">{entry.model}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-text-muted">{entry.sessionCount}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-text-muted">{formatTokens(entry.inputTokens)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-text-muted">{formatTokens(entry.outputTokens)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-text">{formatCost(entry.estimatedCostUsd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </Card>
   );
 }
