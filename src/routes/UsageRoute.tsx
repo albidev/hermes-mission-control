@@ -136,14 +136,60 @@ export function UsageRoute() {
             <span className="eyebrow">Breakdown</span>
             <h3 className="text-sm font-semibold text-text">Per-model usage</h3>
           </div>
-          <div className="overflow-x-auto">
+
+          {/* Mobile: stacked cards */}
+          <div className="md:hidden divide-y divide-border-subtle/50">
+            {byModel.map((entry) => {
+              const pct = totals && totals.totalTokens > 0
+                ? ((entry.totalTokens / totals.totalTokens) * 100).toFixed(1)
+                : '0';
+              return (
+                <div key={entry.model} className="px-4 py-3">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="font-mono text-xs text-text truncate">{entry.model}</span>
+                    <Badge variant="default" className="text-[10px] shrink-0">{pct}%</Badge>
+                  </div>
+                  <div className="flex items-baseline justify-between mb-1.5">
+                    <span className="text-sm font-semibold text-text tabular-nums">{formatTokens(entry.totalTokens)}</span>
+                    <span className="text-xs text-text-muted">{entry.sessionCount} sessions</span>
+                  </div>
+                  {entry.estimatedCostUsd > 0 ? (
+                    <span className="text-xs font-medium text-emerald-400">{formatCost(entry.estimatedCostUsd)}</span>
+                  ) : null}
+                  <div className="flex gap-3 mt-1.5 text-[11px] text-text-subtle tabular-nums">
+                    <span>{formatTokens(entry.inputTokens)} in</span>
+                    <span>{formatTokens(entry.outputTokens)} out</span>
+                    {entry.cacheReadTokens > 0 ? <span>{formatTokens(entry.cacheReadTokens)} cache</span> : null}
+                    {entry.reasoningTokens > 0 ? <span>{formatTokens(entry.reasoningTokens)} reason</span> : null}
+                  </div>
+                </div>
+              );
+            })}
+            {totals ? (
+              <div className="px-4 py-3 bg-surface/30">
+                <div className="flex items-baseline justify-between mb-1">
+                  <span className="text-xs font-medium text-text">Total</span>
+                  <span className="text-xs text-text-muted">{totals.sessionCount} sessions</span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm font-semibold text-text tabular-nums">{formatTokens(totals.totalTokens)}</span>
+                  {totals.estimatedCostUsd > 0 ? (
+                    <span className="text-xs font-medium text-emerald-400">{formatCost(totals.estimatedCostUsd)}</span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Desktop: table */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-surface/30 text-text-muted">
                   <th className="text-left px-4 py-2.5 font-medium">Model</th>
                   <th className="text-right px-4 py-2.5 font-medium">Sessions</th>
                   <th className="text-right px-4 py-2.5 font-medium">Input tokens</th>
-                  <th className="text-right px-4 py-2.5 font-medium hidden md:table-cell">Output tokens</th>
+                  <th className="text-right px-4 py-2.5 font-medium">Output tokens</th>
                   <th className="text-right px-4 py-2.5 font-medium hidden lg:table-cell">Cache read</th>
                   <th className="text-right px-4 py-2.5 font-medium hidden lg:table-cell">Reasoning</th>
                   <th className="text-right px-4 py-2.5 font-medium">Total tokens</th>
@@ -160,12 +206,12 @@ export function UsageRoute() {
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-text break-all">{entry.model}</span>
-                          <Badge variant="default" className="text-[10px] shrink-0 hidden sm:inline-flex">{pct}%</Badge>
+                          <Badge variant="default" className="text-[10px] shrink-0">{pct}%</Badge>
                         </div>
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-text-muted">{entry.sessionCount}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-text-muted">{formatTokens(entry.inputTokens)}</td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-text-muted hidden md:table-cell">{formatTokens(entry.outputTokens)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-text-muted">{formatTokens(entry.outputTokens)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-text-muted hidden lg:table-cell">{formatTokens(entry.cacheReadTokens)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-text-muted hidden lg:table-cell">{formatTokens(entry.reasoningTokens)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-medium text-text">{formatTokens(entry.totalTokens)}</td>
@@ -180,7 +226,7 @@ export function UsageRoute() {
                     <td className="px-4 py-2.5 text-text">Total</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{totals.sessionCount}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.inputTokens)}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-text hidden md:table-cell">{formatTokens(totals.outputTokens)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.outputTokens)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text hidden lg:table-cell">{formatTokens(totals.cacheReadTokens)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text hidden lg:table-cell">{formatTokens(totals.reasoningTokens)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.totalTokens)}</td>
