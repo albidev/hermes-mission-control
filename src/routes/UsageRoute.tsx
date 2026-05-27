@@ -92,7 +92,7 @@ export function UsageRoute() {
 
         {/* Summary cards */}
         {totals ? (
-          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-4 grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard
               icon={Layers}
               label="Total tokens"
@@ -143,9 +143,9 @@ export function UsageRoute() {
                   <th className="text-left px-4 py-2.5 font-medium">Model</th>
                   <th className="text-right px-4 py-2.5 font-medium">Sessions</th>
                   <th className="text-right px-4 py-2.5 font-medium">Input tokens</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Output tokens</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Cache read</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Reasoning</th>
+                  <th className="text-right px-4 py-2.5 font-medium hidden md:table-cell">Output tokens</th>
+                  <th className="text-right px-4 py-2.5 font-medium hidden lg:table-cell">Cache read</th>
+                  <th className="text-right px-4 py-2.5 font-medium hidden lg:table-cell">Reasoning</th>
                   <th className="text-right px-4 py-2.5 font-medium">Total tokens</th>
                   <th className="text-right px-4 py-2.5 font-medium">Est. cost</th>
                 </tr>
@@ -160,14 +160,14 @@ export function UsageRoute() {
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-text break-all">{entry.model}</span>
-                          <Badge variant="default" className="text-[10px] shrink-0">{pct}%</Badge>
+                          <Badge variant="default" className="text-[10px] shrink-0 hidden sm:inline-flex">{pct}%</Badge>
                         </div>
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-text-muted">{entry.sessionCount}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-text-muted">{formatTokens(entry.inputTokens)}</td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-text-muted">{formatTokens(entry.outputTokens)}</td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-text-muted">{formatTokens(entry.cacheReadTokens)}</td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-text-muted">{formatTokens(entry.reasoningTokens)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-text-muted hidden md:table-cell">{formatTokens(entry.outputTokens)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-text-muted hidden lg:table-cell">{formatTokens(entry.cacheReadTokens)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-text-muted hidden lg:table-cell">{formatTokens(entry.reasoningTokens)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-medium text-text">{formatTokens(entry.totalTokens)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-medium text-text">{formatCost(entry.estimatedCostUsd)}</td>
                     </tr>
@@ -180,9 +180,9 @@ export function UsageRoute() {
                     <td className="px-4 py-2.5 text-text">Total</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{totals.sessionCount}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.inputTokens)}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.outputTokens)}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.cacheReadTokens)}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.reasoningTokens)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text hidden md:table-cell">{formatTokens(totals.outputTokens)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text hidden lg:table-cell">{formatTokens(totals.cacheReadTokens)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text hidden lg:table-cell">{formatTokens(totals.reasoningTokens)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.totalTokens)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatCost(totals.estimatedCostUsd)}</td>
                   </tr>
