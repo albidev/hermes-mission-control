@@ -306,6 +306,13 @@ def _build_session_item(
         "messageCount": message_count,
         "traceMode": trace_mode,
         "preview": preview,
+        # Token usage (from SessionDB)
+        "inputTokens": _coerce_int((db_row or {}).get("input_tokens"), 0),
+        "outputTokens": _coerce_int((db_row or {}).get("output_tokens"), 0),
+        "cacheReadTokens": _coerce_int((db_row or {}).get("cache_read_tokens"), 0),
+        "cacheWriteTokens": _coerce_int((db_row or {}).get("cache_write_tokens"), 0),
+        "reasoningTokens": _coerce_int((db_row or {}).get("reasoning_tokens"), 0),
+        "estimatedCostUsd": float((db_row or {}).get("estimated_cost_usd") or 0.0),
     }
 
 
@@ -341,6 +348,72 @@ def load_agents_sessions_snapshot(limit: int = 100, live_window_seconds: int = 3
             "liveSessions": len(live_sessions),
             "activeAgents": len({item["agentId"] for item in live_sessions}),
         },
+    }
+
+
+def load_sessions_usage(live_window_seconds: int = 300) -> dict[str, Any]:
+    """Aggregate token usage and cost across all sessions, with per-model breakdown."""
+    all_items = _collect_agent_sessions(live_window_seconds=live_window_seconds)
+    totals = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "totalTokens": 0,
+        "estimatedCostUsd": 0.0,
+        "sessionCount": len(all_items),
+    }
+    by_model: dict[str, dict[str, Any]] = {}
+    for item in all_items:
+        inp = item.get("inputTokens", 0)
+        out = item.get("outputTokens", 0)
+        cache_r = item.get("cacheReadTokens", 0)
+        cache_w = item.get("cacheWriteTokens", 0)
+        reasoning = item.get("reasoningTokens", 0)
+        cost = item.get("estimatedCostUsd", 0.0)
+        total = inp + out + cache_r + cache_w + reasoning
+        totals["inputTokens"] += inp
+        totals["outputTokens"] += out
+        totals["cacheReadTokens"] += cache_r
+        totals["cacheWriteTokens"] += cache_w
+        totals["reasoningTokens"] += reasoning
+        totals["totalTokens"] += total
+        totals["estimatedCostUsd"] += cost
+        model = item.get("model", "unknown")
+        bucket = by_model.get(model)
+        if bucket is None:
+            bucket = {
+                "model": model,
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0,
+                "totalTokens": 0,
+                "estimatedCostUsd": 0.0,
+                "sessionCount": 0,
+            }
+            by_model[model] = bucket
+        bucket["inputTokens"] += inp
+        bucket["outputTokens"] += out
+        bucket["cacheReadTokens"] += cache_r
+        bucket["cacheWriteTokens"] += cache_w
+        bucket["reasoningTokens"] += reasoning
+        bucket["totalTokens"] += total
+        bucket["estimatedCostUsd"] += cost
+        bucket["sessionCount"] += 1
+    # Sort by cost descending
+    breakdown = sorted(by_model.values(), key=lambda b: b["estimatedCostUsd"], reverse=True)
+    # Round cost to 6 decimal places
+    totals["estimatedCostUsd"] = round(totals["estimatedCostUsd"], 6)
+    for b in breakdown:
+        b["estimatedCostUsd"] = round(b["estimatedCostUsd"], 6)
+    return {
+        "success": True,
+        "available": True,
+        "totals": totals,
+        "byModel": breakdown,
     }
 
 

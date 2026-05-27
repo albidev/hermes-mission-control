@@ -10,6 +10,7 @@ import { ActivityFeed } from './ActivityFeed';
 import { AttentionNeeded } from './AttentionNeeded';
 import { QuickActions } from './QuickActions';
 import { AgentsPanel } from './AgentsPanel';
+import { UsagePanel } from './UsagePanel';
 import { formatRelativeTime } from '../../lib/format';
 
 function SectionLink({
@@ -125,6 +126,8 @@ export function OverviewDashboard() {
             />
 
             <AgentsPanel activeAgents={snapshot.activeAgents} sessions={sessions} />
+
+            <UsagePanel />
 
             <AttentionNeeded alerts={alerts.items} />
           </div>

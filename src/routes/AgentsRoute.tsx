@@ -18,6 +18,12 @@ import {
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 type AgentAggregate = MissionControlAgentRegistryItem & {
   id: string;
   totalMessages: number;
@@ -989,6 +995,20 @@ export function AgentsRoute() {
               <span>skills {visibleTrace.stats.skills}</span>
               <span>thoughts {visibleTrace.stats.thoughts}</span>
               <span>errors {visibleTrace.stats.errors}</span>
+              {(() => {
+                const agentSession = orderedSessions.find((s) => s.sessionId === selectedSessionId);
+                if (!agentSession || agentSession.inputTokens + agentSession.outputTokens === 0) return null;
+                return (
+                  <>
+                    <span className="tabular-nums" title={`In: ${agentSession.inputTokens.toLocaleString()} · Out: ${agentSession.outputTokens.toLocaleString()} · Cache: ${agentSession.cacheReadTokens.toLocaleString()} · Reasoning: ${agentSession.reasoningTokens.toLocaleString()}`}>
+                      tokens {formatTokenCount(agentSession.inputTokens + agentSession.outputTokens)}
+                    </span>
+                    {agentSession.estimatedCostUsd > 0 ? (
+                      <span className="tabular-nums">${agentSession.estimatedCostUsd.toFixed(3)}</span>
+                    ) : null}
+                  </>
+                );
+              })()}
               <Badge variant={liveMode && !sseFallbackToPolling ? 'positive' : 'default'}>
                 {liveMode && !sseFallbackToPolling ? 'transport: sse' : 'transport: polling'}
               </Badge>

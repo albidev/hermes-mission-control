@@ -381,6 +381,12 @@ export type MissionControlAgentSessionItem = {
   messageCount: number;
   traceMode: MissionControlTraceMode;
   preview: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  estimatedCostUsd: number;
 };
 
 export type MissionControlAgentsSessionsSnapshot = {
@@ -861,6 +867,12 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
     messageCount: readNumber(input?.messageCount, 0),
     traceMode: normalizeTraceMode(input?.traceMode),
     preview: readString(input?.preview),
+    inputTokens: readNumber(input?.inputTokens, 0),
+    outputTokens: readNumber(input?.outputTokens, 0),
+    cacheReadTokens: readNumber(input?.cacheReadTokens, 0),
+    cacheWriteTokens: readNumber(input?.cacheWriteTokens, 0),
+    reasoningTokens: readNumber(input?.reasoningTokens, 0),
+    estimatedCostUsd: readNumber(input?.estimatedCostUsd, 0),
   };
 }
 
@@ -1398,6 +1410,47 @@ async function fetchMissionControlAgents(accessToken?: string): Promise<Official
 async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100): Promise<OfficialMissionControlAgentSessionsPayload | null> {
   const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}`, accessToken);
   return local ?? null;
+}
+
+export type MissionControlSessionsUsageSnapshot = {
+  success: boolean;
+  available: boolean;
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    sessionCount: number;
+  };
+  byModel: Array<{
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    sessionCount: number;
+  }>;
+};
+
+const fallbackUsage: MissionControlSessionsUsageSnapshot = {
+  success: false,
+  available: false,
+  totals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, estimatedCostUsd: 0, sessionCount: 0 },
+  byModel: [],
+};
+
+export async function loadSessionsUsage(accessToken?: string): Promise<MissionControlSessionsUsageSnapshot> {
+  try {
+    const { payload: local } = await maybeFetchLocalJson<MissionControlSessionsUsageSnapshot>('/sessions/usage', accessToken);
+    if (local && local.success) return local;
+  } catch { /* ignore */ }
+  return fallbackUsage;
 }
 
 async function fetchMissionControlAgentTrace(

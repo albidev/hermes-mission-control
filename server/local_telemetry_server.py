@@ -31,6 +31,7 @@ from mission_control_agents import (
     load_agent_trace_snapshot,
     load_agents_sessions_snapshot,
     load_agents_snapshot,
+    load_sessions_usage,
 )
 
 
@@ -1297,6 +1298,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
             self._json(200, load_agents_sessions_snapshot(limit=limit))
+            return
+        if parsed.path == "/api/local/sessions/usage":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, load_sessions_usage())
             return
         if parsed.path == "/api/local/mission-control/agents/trace":
             if not _is_authorized(self):
