@@ -5,6 +5,7 @@ import { OverviewLayout } from './routes/OverviewRoute';
 import { OverviewDashboard } from './components/overview/OverviewDashboard';
 import { SessionsRoute } from './routes/SessionsRoute';
 import { AgentsRoute } from './routes/AgentsRoute';
+import { UsageRoute } from './routes/UsageRoute';
 import { KnowledgeRoute } from './routes/KnowledgeRoute';
 import { ToolsRoute } from './routes/ToolsRoute';
 import { SkillsRoute } from './routes/SkillsRoute';
@@ -23,6 +24,7 @@ function App() {
             <Route path="sessions" element={<SessionsRoute />} />
             <Route path="agents" element={<AgentsRoute />} />
             <Route path="agents/:agentId" element={<AgentsRoute />} />
+            <Route path="usage" element={<UsageRoute />} />
             <Route path="knowledge" element={<KnowledgeRoute />} />
             <Route path="tools" element={<ToolsRoute />} />
             <Route path="skills" element={<SkillsRoute />} />

@@ -4,6 +4,7 @@ import {
   Bot,
   Brain,
   BookOpen,
+  DollarSign,
   LayoutDashboard,
   MessageSquare,
   ScrollText,
@@ -18,6 +19,7 @@ const navItems: Array<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
   { to: '/sessions', label: 'Sessions', icon: MessageSquare },
   { to: '/agents', label: 'Agents', icon: Bot },
+  { to: '/usage', label: 'Usage', icon: DollarSign },
   { to: '/knowledge', label: 'Knowledge', icon: BookOpen },
   { to: '/tools', label: 'Tools', icon: Wrench },
   { to: '/skills', label: 'Skills', icon: Brain },
@@ -97,7 +99,7 @@ export function MissionControlShell() {
               </button>
             </div>
             <strong>Operator panel</strong>
-            <span className="mini-note">Gateway, sessions, agents, tools, skills, config, logs</span>
+            <span className="mini-note">Gateway, sessions, agents, usage, tools, skills, config, logs</span>
           </div>
 
           <nav className="side-nav" aria-label="Mission Control routes">
