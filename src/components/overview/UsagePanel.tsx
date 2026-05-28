@@ -62,7 +62,7 @@ export function UsagePanel() {
           label="Total tokens"
           value={formatTokens(totals.totalTokens)}
           sub={`${formatTokens(totals.inputTokens)} in · ${formatTokens(totals.outputTokens)} out`}
-          color="text-text"
+          color="text-sky-400"
         />
         <MiniStat
           label="Estimated cost"

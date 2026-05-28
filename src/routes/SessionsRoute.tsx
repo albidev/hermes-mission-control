@@ -166,7 +166,7 @@ export function SessionsRoute() {
                         <span className="text-sky-400" title={`Input: ${agent.inputTokens.toLocaleString()}`}>
                           ↓{formatTokens(agent.inputTokens)}
                         </span>
-                        <span className="text-emerald-400" title={`Output: ${agent.outputTokens.toLocaleString()}`}>
+                        <span className="text-sky-400" title={`Output: ${agent.outputTokens.toLocaleString()}`}>
                           ↑{formatTokens(agent.outputTokens)}
                         </span>
                         <span className="font-medium text-text" title={`Total: ${totalSessionTokens.toLocaleString()}`}>
