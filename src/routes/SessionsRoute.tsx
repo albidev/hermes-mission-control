@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, Bot, Clock3, DollarSign, Layers, MessagesSquare } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Activity, Bot, Clock3, DollarSign, Layers, MessagesSquare, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
@@ -58,7 +59,6 @@ export function SessionsRoute() {
     return () => { cancelled = true; };
   }, [storedToken]);
 
-  // Build a lookup map from agent sessions by session ID
   const agentSessionMap = useMemo(() => {
     const map = new Map<string, MissionControlAgentSessionItem>();
     if (agentSessions?.items) {
@@ -74,7 +74,6 @@ export function SessionsRoute() {
     [snapshot.sessions.items],
   );
 
-  // Aggregate totals from agent sessions
   const totalTokens = agentSessions?.items.reduce((sum, s) => sum + s.inputTokens + s.outputTokens, 0) ?? 0;
   const totalCost = agentSessions?.items.reduce((sum, s) => sum + s.estimatedCostUsd, 0) ?? 0;
 
@@ -150,26 +149,49 @@ export function SessionsRoute() {
                       <p className="text-sm font-medium text-text truncate">{session.title}</p>
                       <p className="text-xs text-text-muted truncate">{session.source} · {session.model}</p>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {hasTokens ? (
-                        <span className="text-[11px] tabular-nums text-text-subtle" title={`In: ${agent.inputTokens.toLocaleString()} · Out: ${agent.outputTokens.toLocaleString()}`}>
-                          {formatTokens(agent.inputTokens + agent.outputTokens)} tok
-                        </span>
-                      ) : null}
-                      {agent && agent.estimatedCostUsd > 0 ? (
-                        <span className="text-[11px] tabular-nums text-emerald-400">{formatCost(agent.estimatedCostUsd)}</span>
-                      ) : null}
-                      <Badge variant="default">{session.messageCount} msgs</Badge>
-                    </div>
+                    <Badge variant="default" className="shrink-0">{session.messageCount} msgs</Badge>
                   </div>
 
                   <p className="text-xs text-text-muted line-clamp-2">
                     {session.preview || 'No preview available.'}
                   </p>
 
+                  {/* Token usage row */}
+                  {hasTokens ? (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
+                      <span className="text-sky-400" title="Input tokens">
+                        ↓ {formatTokens(agent.inputTokens)} in
+                      </span>
+                      <span className="text-emerald-400" title="Output tokens">
+                        ↑ {formatTokens(agent.outputTokens)} out
+                      </span>
+                      <span className="font-medium text-text" title="Total tokens">
+                        = {formatTokens(agent.inputTokens + agent.outputTokens)} total
+                      </span>
+                      {agent.estimatedCostUsd > 0 ? (
+                        <span className="text-emerald-400 font-medium">{formatCost(agent.estimatedCostUsd)}</span>
+                      ) : null}
+                      {agent.cacheReadTokens > 0 ? (
+                        <span className="text-violet-400" title="Cache read tokens">
+                          ⚡ {formatTokens(agent.cacheReadTokens)} cache
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
                   <div className="flex items-center justify-between text-xs text-text-subtle">
                     <span>Started {formatTimestamp(session.startedAt)}</span>
-                    <span>Active {formatRelativeTime(session.lastActive)}</span>
+                    <div className="flex items-center gap-3">
+                      <span>Active {formatRelativeTime(session.lastActive)}</span>
+                      <Link
+                        to={`/agents?session=${encodeURIComponent(session.id)}`}
+                        className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors"
+                        title="Open in Agents"
+                      >
+                        <Workflow size={12} />
+                        Trace
+                      </Link>
+                    </div>
                   </div>
                 </div>
               );

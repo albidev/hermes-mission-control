@@ -264,12 +264,13 @@ export function AgentsRoute() {
   const [searchParams] = useSearchParams();
   const selectedAgentId = agentId ? decodeURIComponent(agentId) : '';
   const requestedMode = searchParams.get('mode');
+  const requestedSession = searchParams.get('session');
   const { snapshot, storedToken } = useMissionControl();
   const [view, setView] = useState<'timeline' | 'dag'>('timeline');
   const [liveMode, setLiveMode] = useState(() => requestedMode !== 'post');
   const [liveTraceScope, setLiveTraceScope] = useState<LiveTraceScope>('current');
   const [selectedActionFilters, setSelectedActionFilters] = useState<TraceActionFilter[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string>('');
+  const [selectedSessionId, setSelectedSessionId] = useState<string>(requestedSession ?? '');
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentSessionItem[]>([]);
   const [trace, setTrace] = useState<MissionControlAgentTraceSnapshot | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
