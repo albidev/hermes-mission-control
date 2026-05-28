@@ -91,39 +91,39 @@ export function SessionsRoute() {
         <div className="p-4 grid grid-cols-2 xl:grid-cols-6 gap-3">
           <MetricCard
             icon={MessagesSquare}
-            label="Tracked sessions"
+            label="Tracked"
             value={String(snapshot.sessions.totalSessions)}
-            hint="total in storage"
+            hint="sessions"
           />
           <MetricCard
             icon={Activity}
             label="Messages"
             value={String(snapshot.sessions.totalMessages)}
-            hint="conversation history"
+            hint="total"
+          />
+          <MetricCard
+            icon={Layers}
+            label="Tokens"
+            value={formatTokens(totalTokens)}
+            hint="in + out"
+          />
+          <MetricCard
+            icon={DollarSign}
+            label="Cost"
+            value={formatCost(totalCost)}
+            hint="estimated"
           />
           <MetricCard
             icon={Bot}
-            label="Active agents"
+            label="Agents"
             value={String(snapshot.sessions.activeAgents)}
-            hint="current snapshot"
+            hint="active"
           />
           <MetricCard
             icon={Clock3}
             label="Tool calls"
             value={String(snapshot.sessions.toolCallsToday)}
             hint="today"
-          />
-          <MetricCard
-            icon={Layers}
-            label="Total tokens"
-            value={formatTokens(totalTokens)}
-            hint="across all sessions"
-          />
-          <MetricCard
-            icon={DollarSign}
-            label="Estimated cost"
-            value={formatCost(totalCost)}
-            hint="total spend"
           />
         </div>
       </Card>
@@ -142,8 +142,10 @@ export function SessionsRoute() {
             sortedSessions.map((session) => {
               const agent = agentSessionMap.get(session.id);
               const hasTokens = agent && (agent.inputTokens + agent.outputTokens > 0);
+              const totalSessionTokens = agent ? agent.inputTokens + agent.outputTokens : 0;
               return (
                 <div key={session.id} className="px-4 py-3 flex flex-col gap-2">
+                  {/* Row 1: title + msgs badge */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-text truncate">{session.title}</p>
@@ -152,46 +154,49 @@ export function SessionsRoute() {
                     <Badge variant="default" className="shrink-0">{session.messageCount} msgs</Badge>
                   </div>
 
+                  {/* Row 2: preview */}
                   <p className="text-xs text-text-muted line-clamp-2">
                     {session.preview || 'No preview available.'}
                   </p>
 
-                  {/* Token usage row */}
+                  {/* Row 3: token usage — clean two-column layout */}
                   {hasTokens ? (
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
-                      <span className="text-sky-400" title="Input tokens">
-                        ↓ {formatTokens(agent.inputTokens)} in
-                      </span>
-                      <span className="text-emerald-400" title="Output tokens">
-                        ↑ {formatTokens(agent.outputTokens)} out
-                      </span>
-                      <span className="font-medium text-text" title="Total tokens">
-                        = {formatTokens(agent.inputTokens + agent.outputTokens)} total
-                      </span>
-                      {agent.estimatedCostUsd > 0 ? (
-                        <span className="text-emerald-400 font-medium">{formatCost(agent.estimatedCostUsd)}</span>
-                      ) : null}
-                      {agent.cacheReadTokens > 0 ? (
-                        <span className="text-violet-400" title="Cache read tokens">
-                          ⚡ {formatTokens(agent.cacheReadTokens)} cache
+                    <div className="flex items-center justify-between gap-3 text-xs tabular-nums">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-sky-400" title={`Input: ${agent.inputTokens.toLocaleString()}`}>
+                          ↓{formatTokens(agent.inputTokens)}
                         </span>
+                        <span className="text-emerald-400" title={`Output: ${agent.outputTokens.toLocaleString()}`}>
+                          ↑{formatTokens(agent.outputTokens)}
+                        </span>
+                        <span className="font-medium text-text" title={`Total: ${totalSessionTokens.toLocaleString()}`}>
+                          = {formatTokens(totalSessionTokens)}
+                        </span>
+                        {agent.cacheReadTokens > 0 ? (
+                          <span className="text-violet-400 hidden sm:inline" title={`Cache: ${agent.cacheReadTokens.toLocaleString()}`}>
+                            ⚡{formatTokens(agent.cacheReadTokens)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {agent.estimatedCostUsd > 0 ? (
+                        <span className="text-emerald-400 font-medium shrink-0">{formatCost(agent.estimatedCostUsd)}</span>
                       ) : null}
                     </div>
                   ) : null}
 
-                  <div className="flex items-center justify-between text-xs text-text-subtle">
-                    <span>Started {formatTimestamp(session.startedAt)}</span>
-                    <div className="flex items-center gap-3">
-                      <span>Active {formatRelativeTime(session.lastActive)}</span>
-                      <Link
-                        to={`/agents?session=${encodeURIComponent(session.id)}`}
-                        className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors"
-                        title="Open in Agents"
-                      >
-                        <Workflow size={12} />
-                        Trace
-                      </Link>
-                    </div>
+                  {/* Row 4: timestamps + trace CTA */}
+                  <div className="flex items-center gap-2 text-xs text-text-subtle">
+                    <span className="truncate">{formatRelativeTime(session.lastActive)}</span>
+                    <span className="text-border-subtle">·</span>
+                    <span className="truncate hidden sm:inline">Started {formatTimestamp(session.startedAt)}</span>
+                    <Link
+                      to={`/agents?session=${encodeURIComponent(session.id)}`}
+                      className="ml-auto inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors shrink-0"
+                      title="Open trace in Agents"
+                    >
+                      <Workflow size={12} />
+                      <span>Trace</span>
+                    </Link>
                   </div>
                 </div>
               );
