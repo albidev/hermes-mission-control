@@ -127,12 +127,12 @@ export function OverviewDashboard() {
 
             <AgentsPanel activeAgents={snapshot.activeAgents} sessions={sessions} />
 
-            <UsagePanel />
-
             <AttentionNeeded alerts={alerts.items} />
           </div>
 
           <div className="lg:col-span-2 flex flex-col gap-6">
+            <UsagePanel />
+
             <ActivityFeed signals={feedSignals} />
 
             <SectionCard
