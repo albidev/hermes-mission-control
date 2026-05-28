@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, DollarSign, Layers, Zap } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { loadSessionsUsage, type MissionControlSessionsUsageSnapshot } from '../../lib/hermes-api';
 import { useMissionControl } from '../../lib/mission-control-store';
@@ -17,6 +17,16 @@ function formatCost(usd: number): string {
   if (usd >= 0.01) return `$${usd.toFixed(3)}`;
   if (usd > 0) return `$${usd.toFixed(4)}`;
   return '$0.00';
+}
+
+function MiniStat({ label, value, sub, color }: { label: string; value: string; sub?: string; color: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] text-text-muted uppercase tracking-wide">{label}</span>
+      <span className={`text-sm font-semibold tabular-nums ${color}`}>{value}</span>
+      {sub ? <span className="text-[10px] text-text-subtle">{sub}</span> : null}
+    </div>
+  );
 }
 
 export function UsagePanel() {
@@ -47,51 +57,31 @@ export function UsagePanel() {
         </Link>
       </div>
 
-      <div className="p-4 flex flex-wrap items-center gap-6">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400">
-            <Layers size={16} />
-          </div>
-          <div>
-            <p className="text-[11px] text-text-muted uppercase tracking-wide">Tokens</p>
-            <p className="text-base font-semibold text-text tabular-nums">{formatTokens(totals.totalTokens)}</p>
-          </div>
-        </div>
-
-        <div className="h-8 w-px bg-border-subtle" />
-
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
-            <DollarSign size={16} />
-          </div>
-          <div>
-            <p className="text-[11px] text-text-muted uppercase tracking-wide">Cost</p>
-            <p className="text-base font-semibold text-text tabular-nums">{formatCost(totals.estimatedCostUsd)}</p>
-          </div>
-        </div>
-
-        <div className="h-8 w-px bg-border-subtle" />
-
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
-            <Zap size={16} />
-          </div>
-          <div>
-            <p className="text-[11px] text-text-muted uppercase tracking-wide">Cache</p>
-            <p className="text-base font-semibold text-text tabular-nums">{formatTokens(totals.cacheReadTokens)}</p>
-          </div>
-        </div>
-
-        <div className="h-8 w-px bg-border-subtle" />
-
-        <div>
-          <p className="text-[11px] text-text-muted uppercase tracking-wide">In / Out</p>
-          <p className="text-base font-semibold text-text tabular-nums">
-            {formatTokens(totals.inputTokens)} <span className="text-text-subtle font-normal">in</span>
-            {' · '}
-            {formatTokens(totals.outputTokens)} <span className="text-text-subtle font-normal">out</span>
-          </p>
-        </div>
+      <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <MiniStat
+          label="Total tokens"
+          value={formatTokens(totals.totalTokens)}
+          sub={`${formatTokens(totals.inputTokens)} in · ${formatTokens(totals.outputTokens)} out`}
+          color="text-text"
+        />
+        <MiniStat
+          label="Estimated cost"
+          value={formatCost(totals.estimatedCostUsd)}
+          sub="across all sessions"
+          color="text-emerald-400"
+        />
+        <MiniStat
+          label="Cache read"
+          value={formatTokens(totals.cacheReadTokens)}
+          sub="tokens cached"
+          color="text-violet-400"
+        />
+        <MiniStat
+          label="Reasoning"
+          value={formatTokens(totals.reasoningTokens)}
+          sub="extended thinking"
+          color="text-amber-400"
+        />
       </div>
     </Card>
   );
