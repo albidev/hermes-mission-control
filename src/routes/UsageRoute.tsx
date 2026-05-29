@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
-import { DollarSign, Layers, Zap, TrendingUp, RefreshCw } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { DollarSign, Layers, Zap, TrendingUp, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { loadSessionsUsage, type MissionControlSessionsUsageSnapshot } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+
+type ModelEntry = MissionControlSessionsUsageSnapshot['byModel'][number];
+type SortKey = 'model' | 'sessionCount' | 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'reasoningTokens' | 'totalTokens' | 'estimatedCostUsd';
+type SortDir = 'asc' | 'desc';
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
@@ -48,10 +52,56 @@ function StatCard({
   );
 }
 
+const SORT_LABELS: Record<SortKey, string> = {
+  model: 'Model',
+  sessionCount: 'Sessions',
+  inputTokens: 'Input tokens',
+  outputTokens: 'Output tokens',
+  cacheReadTokens: 'Cache read',
+  reasoningTokens: 'Reasoning',
+  totalTokens: 'Total tokens',
+  estimatedCostUsd: 'Est. cost',
+};
+
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  if (!active) return <ArrowUpDown size={12} className="text-text-subtle" />;
+  return dir === 'desc' ? <ArrowDown size={12} className="text-sky-400" /> : <ArrowUp size={12} className="text-sky-400" />;
+}
+
+function ThSortable({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+  className = '',
+}: {
+  label: string;
+  sortKey: SortKey;
+  activeKey: SortKey;
+  dir: SortDir;
+  onSort: (key: SortKey) => void;
+  className?: string;
+}) {
+  return (
+    <th
+      className={`px-4 py-2.5 font-medium cursor-pointer select-none hover:text-text transition-colors ${className}`}
+      onClick={() => onSort(sortKey)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <SortIcon active={activeKey === sortKey} dir={dir} />
+      </span>
+    </th>
+  );
+}
+
 export function UsageRoute() {
   const { storedToken } = useMissionControl();
   const [usage, setUsage] = useState<MissionControlSessionsUsageSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>('totalTokens');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   const fetchUsage = async () => {
     setLoading(true);
@@ -70,6 +120,30 @@ export function UsageRoute() {
 
   const totals = usage?.totals;
   const byModel = usage?.byModel ?? [];
+
+  const handleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'model' ? 'asc' : 'desc');
+    }
+  };
+
+  const sorted = useMemo(() => {
+    const arr = byModel.filter(e =>
+      e.totalTokens > 0 || e.estimatedCostUsd > 0 || e.sessionCount > 0
+    );
+    arr.sort((a, b) => {
+      if (sortKey === 'model') {
+        return sortDir === 'asc' ? a.model.localeCompare(b.model) : b.model.localeCompare(a.model);
+      }
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      return sortDir === 'asc' ? av - bv : bv - av;
+    });
+    return arr;
+  }, [byModel, sortKey, sortDir]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -130,16 +204,40 @@ export function UsageRoute() {
       </Card>
 
       {/* Per-model breakdown */}
-      {byModel.length > 0 ? (
+      {sorted.length > 0 ? (
         <Card padding="none">
-          <div className="px-4 pt-4 pb-3 border-b border-border-subtle">
-            <span className="eyebrow">Breakdown</span>
-            <h3 className="text-sm font-semibold text-text">Per-model usage</h3>
+          <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
+            <div>
+              <span className="eyebrow">Breakdown</span>
+              <h3 className="text-sm font-semibold text-text">Per-model usage</h3>
+            </div>
+            {/* Mobile sort control */}
+            <div className="md:hidden flex items-center gap-1.5">
+              <span className="text-[11px] text-text-muted">Sort:</span>
+              <select
+                className="bg-surface border border-border-subtle rounded px-2 py-1 text-xs text-text"
+                value={`${sortKey}:${sortDir}`}
+                onChange={(e) => {
+                  const [k, d] = e.target.value.split(':') as [SortKey, SortDir];
+                  setSortKey(k);
+                  setSortDir(d);
+                }}
+              >
+                {(Object.keys(SORT_LABELS) as SortKey[]).flatMap(k => {
+                  const dirs: SortDir[] = k === 'model' ? ['asc', 'desc'] : ['desc', 'asc'];
+                  return dirs.map(d => (
+                    <option key={`${k}:${d}`} value={`${k}:${d}`}>
+                      {SORT_LABELS[k]} {d === 'asc' ? '↑' : '↓'}
+                    </option>
+                  ));
+                })}
+              </select>
+            </div>
           </div>
 
           {/* Mobile: stacked cards */}
           <div className="md:hidden divide-y divide-border-subtle/50">
-            {byModel.map((entry) => {
+            {sorted.map((entry) => {
               const pct = totals && totals.totalTokens > 0
                 ? ((entry.totalTokens / totals.totalTokens) * 100).toFixed(1)
                 : '0';
@@ -186,18 +284,18 @@ export function UsageRoute() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-surface/30 text-text-muted">
-                  <th className="text-left px-4 py-2.5 font-medium">Model</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Sessions</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Input tokens</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Output tokens</th>
-                  <th className="text-right px-4 py-2.5 font-medium hidden lg:table-cell">Cache read</th>
-                  <th className="text-right px-4 py-2.5 font-medium hidden lg:table-cell">Reasoning</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Total tokens</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Est. cost</th>
+                  <ThSortable label="Model" sortKey="model" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-left" />
+                  <ThSortable label="Sessions" sortKey="sessionCount" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
+                  <ThSortable label="Input tokens" sortKey="inputTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
+                  <ThSortable label="Output tokens" sortKey="outputTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
+                  <ThSortable label="Cache read" sortKey="cacheReadTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right hidden lg:table-cell" />
+                  <ThSortable label="Reasoning" sortKey="reasoningTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right hidden lg:table-cell" />
+                  <ThSortable label="Total tokens" sortKey="totalTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
+                  <ThSortable label="Est. cost" sortKey="estimatedCostUsd" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
                 </tr>
               </thead>
               <tbody>
-                {byModel.map((entry) => {
+                {sorted.map((entry) => {
                   const pct = totals && totals.totalTokens > 0
                     ? ((entry.totalTokens / totals.totalTokens) * 100).toFixed(1)
                     : '0';
