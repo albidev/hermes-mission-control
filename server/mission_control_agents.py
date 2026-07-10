@@ -154,10 +154,16 @@ def _iter_db_session_ids() -> list[str]:
 
 
 def _try_get_session_db():
+    """Open the Hermes session store strictly read-only for telemetry.
+
+    Mission Control only observes sessions.  A writable ``SessionDB()`` runs
+    schema/FTS initialization on every request and competes with the gateway's
+    writer, which is precisely the wrong thing for a polling sidecar to do.
+    """
     try:
         from hermes_state import SessionDB
 
-        return SessionDB()
+        return SessionDB(read_only=True)
     except Exception:
         return None
 
