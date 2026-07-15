@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -129,6 +130,120 @@ def collect_system_snapshot() -> Dict[str, Any]:
         },
         "processMemoryMb": process_memory_mb,
         "summary": summary,
+    }
+
+
+_USAGE_PROVIDERS = ("codex", "ollama", "openrouter")
+
+
+def _sanitize_usage_window(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    result: Dict[str, Any] = {}
+    for key in ("usedPercent", "resetsAt", "windowMinutes"):
+        if key in value and value[key] is not None:
+            result[key] = value[key]
+    return result or None
+
+
+def _sanitize_provider_usage(provider: str, payload: Any) -> Dict[str, Any]:
+    if not isinstance(payload, list):
+        return {"provider": provider, "available": False, "source": "cli", "error": "Invalid CodexBar response."}
+
+    item = next((entry for entry in payload if isinstance(entry, dict) and entry.get("provider") == provider), None)
+    if not isinstance(item, dict):
+        return {"provider": provider, "available": False, "source": "cli", "error": "Provider not returned by CodexBar."}
+
+    error = item.get("error")
+    if isinstance(error, dict):
+        return {
+            "provider": provider,
+            "available": False,
+            "source": item.get("source") or "cli",
+            "error": str(error.get("message") or "Provider unavailable.")[:240],
+        }
+
+    usage = item.get("usage") if isinstance(item.get("usage"), dict) else {}
+    sanitized: Dict[str, Any] = {
+        "provider": provider,
+        "available": True,
+        "source": item.get("source") or "cli",
+        "updatedAt": usage.get("updatedAt"),
+        "primary": _sanitize_usage_window(usage.get("primary")),
+        "secondary": _sanitize_usage_window(usage.get("secondary")),
+        "tertiary": _sanitize_usage_window(usage.get("tertiary")),
+        "pace": item.get("pace") if isinstance(item.get("pace"), dict) else None,
+    }
+    if provider == "openrouter":
+        openrouter = usage.get("openRouterUsage")
+        if isinstance(openrouter, dict):
+            sanitized["openRouter"] = {
+                key: openrouter[key]
+                for key in ("balance", "totalCredits", "totalUsage", "keyUsageDaily", "keyUsageWeekly", "keyUsageMonthly", "usedPercent")
+                if key in openrouter
+            }
+    if provider == "codex":
+        credits = item.get("credits")
+        if isinstance(credits, dict) and "remaining" in credits:
+            sanitized["creditsRemaining"] = credits.get("remaining")
+        codex_credits = usage.get("codexResetCredits")
+        if isinstance(codex_credits, dict) and "availableCount" in codex_credits:
+            sanitized["resetCreditsAvailable"] = codex_credits.get("availableCount")
+    return sanitized
+
+
+def collect_provider_usage() -> Dict[str, Any]:
+    cache_path = Path.home() / ".hermes" / "cache" / "mission-control-provider-usage.json"
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if isinstance(cached, dict) and isinstance(cached.get("providers"), list):
+            return cached
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    executable = shutil.which("codexbar") or "/opt/homebrew/bin/codexbar"
+    providers = []
+    for provider in _USAGE_PROVIDERS:
+        try:
+            completed = subprocess.run(
+                [executable, "usage", "--provider", provider, "--json", "--no-color"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            stdout, stderr, returncode = completed.stdout, completed.stderr, completed.returncode
+            try:
+                payload = json.loads(stdout)
+            except json.JSONDecodeError:
+                raw_output = stdout.strip()
+                try:
+                    decoded = json.loads(raw_output)
+                    payload = json.loads(decoded) if isinstance(decoded, str) else decoded
+                except (json.JSONDecodeError, TypeError):
+                    start = raw_output.find("[")
+                    end = raw_output.rfind("]")
+                    try:
+                        payload = json.loads(raw_output[start:end + 1]) if start >= 0 and end > start else None
+                    except json.JSONDecodeError:
+                        payload = None
+            result = _sanitize_provider_usage(provider, payload)
+            if returncode != 0 and result.get("available"):
+                result["available"] = False
+                result["error"] = "CodexBar returned a provider error."
+            providers.append(result)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            providers.append({
+                "provider": provider,
+                "available": False,
+                "source": "cli",
+                "error": "CodexBar unavailable." if isinstance(exc, OSError) else "CodexBar timed out.",
+            })
+    return {
+        "success": any(provider.get("available") for provider in providers),
+        "available": True,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "providers": providers,
     }
 
 
@@ -476,6 +591,7 @@ def _parse_float(value: str | None, default: float, minimum: float | None = None
         parsed = max(minimum, parsed)
     if maximum is not None:
         parsed = min(maximum, parsed)
+    return parsed
 
 
 def _get_hermes_home() -> Path:
@@ -1304,6 +1420,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._unauthorized()
                 return
             self._json(200, load_sessions_usage())
+            return
+        if parsed.path == "/api/local/provider-usage":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, collect_provider_usage())
             return
         if parsed.path == "/api/local/mission-control/agents/trace":
             if not _is_authorized(self):

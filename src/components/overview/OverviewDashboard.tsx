@@ -11,6 +11,7 @@ import { AttentionNeeded } from './AttentionNeeded';
 import { QuickActions } from './QuickActions';
 import { AgentsPanel } from './AgentsPanel';
 import { UsagePanel } from './UsagePanel';
+import { ProviderUsagePanel } from './ProviderUsagePanel';
 import { formatRelativeTime } from '../../lib/format';
 
 function SectionLink({
@@ -132,6 +133,7 @@ export function OverviewDashboard() {
 
           <div className="lg:col-span-2 flex flex-col gap-6">
             <UsagePanel />
+            <ProviderUsagePanel />
 
             <ActivityFeed signals={feedSignals} />
 

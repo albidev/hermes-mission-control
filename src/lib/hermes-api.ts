@@ -1453,6 +1453,56 @@ export async function loadSessionsUsage(accessToken?: string): Promise<MissionCo
   return fallbackUsage;
 }
 
+export type MissionControlProviderUsageWindow = {
+  usedPercent?: number;
+  resetsAt?: string;
+  windowMinutes?: number;
+};
+
+export type MissionControlProviderUsage = {
+  provider: 'codex' | 'ollama' | 'openrouter' | string;
+  available: boolean;
+  source?: string;
+  updatedAt?: string | null;
+  primary?: MissionControlProviderUsageWindow | null;
+  secondary?: MissionControlProviderUsageWindow | null;
+  tertiary?: MissionControlProviderUsageWindow | null;
+  pace?: Record<string, unknown> | null;
+  openRouter?: {
+    balance?: number;
+    totalCredits?: number;
+    totalUsage?: number;
+    keyUsageDaily?: number;
+    keyUsageWeekly?: number;
+    keyUsageMonthly?: number;
+    usedPercent?: number;
+  };
+  creditsRemaining?: number;
+  resetCreditsAvailable?: number;
+  error?: string;
+};
+
+export type MissionControlProviderUsageSnapshot = {
+  success: boolean;
+  available: boolean;
+  updatedAt?: string;
+  providers: MissionControlProviderUsage[];
+};
+
+const fallbackProviderUsage: MissionControlProviderUsageSnapshot = {
+  success: false,
+  available: false,
+  providers: [],
+};
+
+export async function loadProviderUsage(accessToken?: string): Promise<MissionControlProviderUsageSnapshot> {
+  try {
+    const { payload: local } = await maybeFetchLocalJson<MissionControlProviderUsageSnapshot>('/provider-usage', accessToken);
+    if (local && local.available) return local;
+  } catch { /* provider usage is an optional overview panel */ }
+  return fallbackProviderUsage;
+}
+
 async function fetchMissionControlAgentTrace(
   sessionId?: string,
   accessToken?: string,
