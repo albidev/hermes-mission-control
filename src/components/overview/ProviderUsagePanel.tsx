@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Cloud, RefreshCw } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Cloud, RefreshCw } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { loadProviderUsage, type MissionControlProviderUsage, type MissionControlProviderUsageSnapshot } from '../../lib/hermes-api';
 import { useMissionControl } from '../../lib/mission-control-store';
@@ -130,9 +129,7 @@ export function ProviderUsagePanel() {
         </div>
         <div className="flex items-center gap-2">
           {refreshing ? <RefreshCw size={12} className="text-text-subtle animate-spin" /> : null}
-          <Link to="/usage" className="pill pill-subtle pill-button text-xs flex items-center gap-1">
-            Details <ArrowRight size={12} />
-          </Link>
+          <span className="text-[10px] text-text-subtle">Live · 60s</span>
         </div>
       </div>
       <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
