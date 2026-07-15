@@ -26,42 +26,68 @@ function formatReset(value?: string): string {
   return `reset ${date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
 }
 
-function providerPrimaryValue(provider: MissionControlProviderUsage): string {
-  if (provider.provider === 'openrouter') return formatBalance(provider.openRouter?.balance);
-  return formatPercent(provider.primary?.usedPercent);
+function mainWindow(provider: MissionControlProviderUsage) {
+  return provider.primary ?? provider.secondary ?? null;
 }
 
-function providerSecondary(provider: MissionControlProviderUsage): string {
+function mainMetricLabel(provider: MissionControlProviderUsage): string {
+  if (provider.provider === 'openrouter') return 'Balance';
+  return provider.primary ? 'Session' : 'Weekly';
+}
+
+function secondaryMetric(provider: MissionControlProviderUsage): string {
   if (provider.provider === 'openrouter') {
     const monthly = provider.openRouter?.keyUsageMonthly;
-    return typeof monthly === 'number' ? `monthly ${formatBalance(monthly)}` : 'credits & rate limit';
+    return typeof monthly === 'number' ? `Monthly ${formatBalance(monthly)}` : 'Credits & rate limit';
   }
+  if (provider.provider === 'codex' && !provider.primary) return 'Reset credits available';
   return provider.secondary?.usedPercent !== undefined
-    ? `weekly ${formatPercent(provider.secondary.usedPercent)}`
-    : formatReset(provider.primary?.resetsAt);
+    ? `Weekly ${formatPercent(provider.secondary.usedPercent)}`
+    : 'Weekly —';
+}
+
+function resetLabel(provider: MissionControlProviderUsage): string {
+  if (provider.provider === 'openrouter') return 'API key';
+  const reset = mainWindow(provider)?.resetsAt;
+  return reset ? formatReset(reset) : 'Reset unknown';
+}
+
+function mainMetricValue(provider: MissionControlProviderUsage): string {
+  if (provider.provider === 'openrouter') return formatBalance(provider.openRouter?.balance);
+  return formatPercent(mainWindow(provider)?.usedPercent);
 }
 
 function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
   const label = PROVIDER_LABELS[provider.provider] ?? provider.provider;
   const unavailable = !provider.available;
   return (
-    <div className="rounded-lg border border-border-subtle bg-surface/40 p-3 flex flex-col gap-2 min-w-0">
+    <div className="rounded-lg border border-border-subtle bg-surface/40 p-3 flex flex-col gap-3 min-w-0 min-h-[124px]">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-text truncate">{label}</span>
         <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${unavailable ? 'bg-amber-400' : 'bg-emerald-400'}`} />
       </div>
       {unavailable ? (
-        <span className="text-xs text-text-muted line-clamp-2">{provider.error || 'Unavailable'}</span>
+        <div className="flex flex-1 items-center">
+          <span className="text-xs text-text-muted line-clamp-2">{provider.error || 'Unavailable'}</span>
+        </div>
       ) : (
-        <>
-          <span className={`text-lg font-semibold tabular-nums ${provider.provider === 'openrouter' ? 'text-emerald-400' : 'text-sky-400'}`}>
-            {providerPrimaryValue(provider)}
-          </span>
-          <span className="text-[10px] text-text-subtle truncate">
-            {providerSecondary(provider)}
-            {provider.provider !== 'openrouter' && provider.primary?.resetsAt ? ` · ${formatReset(provider.primary.resetsAt)}` : ''}
-          </span>
-        </>
+        <div className="flex flex-1 flex-col justify-between gap-3">
+          <div className="flex items-end justify-between gap-2">
+            <div className="min-w-0">
+              <span className="text-[10px] text-text-muted uppercase tracking-wide">{mainMetricLabel(provider)}</span>
+              <div className={`text-xl font-semibold tabular-nums ${provider.provider === 'openrouter' ? 'text-emerald-400' : 'text-sky-400'}`}>
+                {mainMetricValue(provider)}
+              </div>
+            </div>
+            {typeof provider.resetCreditsAvailable === 'number' ? (
+              <span className="text-[10px] text-text-subtle text-right">{provider.resetCreditsAvailable} reset credits</span>
+            ) : null}
+          </div>
+          <div className="flex items-center justify-between gap-2 text-[10px] text-text-subtle truncate">
+            <span className="truncate">{secondaryMetric(provider)}</span>
+            <span className="truncate text-right">{resetLabel(provider)}</span>
+          </div>
+        </div>
       )}
     </div>
   );
