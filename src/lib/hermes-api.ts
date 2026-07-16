@@ -387,6 +387,7 @@ export type MissionControlAgentSessionItem = {
   cacheWriteTokens: number;
   reasoningTokens: number;
   estimatedCostUsd: number;
+  costStatus: string;
 };
 
 export type MissionControlAgentsSessionsSnapshot = {
@@ -873,6 +874,7 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
     cacheWriteTokens: readNumber(input?.cacheWriteTokens, 0),
     reasoningTokens: readNumber(input?.reasoningTokens, 0),
     estimatedCostUsd: readNumber(input?.estimatedCostUsd, 0),
+    costStatus: readString(input?.costStatus),
   };
 }
 
@@ -1424,6 +1426,7 @@ export type MissionControlSessionsUsageSnapshot = {
     totalTokens: number;
     estimatedCostUsd: number;
     sessionCount: number;
+    pricedSessionCount: number;
   };
   byModel: Array<{
     model: string;
@@ -1435,13 +1438,14 @@ export type MissionControlSessionsUsageSnapshot = {
     totalTokens: number;
     estimatedCostUsd: number;
     sessionCount: number;
+    pricedSessionCount: number;
   }>;
 };
 
 const fallbackUsage: MissionControlSessionsUsageSnapshot = {
   success: false,
   available: false,
-  totals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, estimatedCostUsd: 0, sessionCount: 0 },
+  totals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, estimatedCostUsd: 0, sessionCount: 0, pricedSessionCount: 0 },
   byModel: [],
 };
 

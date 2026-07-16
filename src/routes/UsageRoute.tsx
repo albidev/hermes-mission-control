@@ -25,6 +25,18 @@ function formatCost(usd: number): string {
   return '$0.00';
 }
 
+function formatCostCoverage(usd: number, pricedSessions: number, totalSessions: number): string {
+  if (pricedSessions <= 0 || totalSessions <= 0) return 'N/A';
+  if (pricedSessions < totalSessions) return 'Partial';
+  return formatCost(usd);
+}
+
+function costCoverageHint(pricedSessions: number, totalSessions: number): string {
+  if (pricedSessions <= 0 || totalSessions <= 0) return 'pricing unavailable';
+  if (pricedSessions < totalSessions) return `${pricedSessions}/${totalSessions} sessions priced`;
+  return 'all sessions priced';
+}
+
 function StatCard({
   icon: Icon,
   label,
@@ -169,16 +181,16 @@ export function UsageRoute() {
           <div className="p-4 grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard
               icon={Layers}
-              label="Total tokens"
+              label="Processed tokens"
               value={formatTokens(totals.totalTokens)}
-              hint={`${formatTokens(totals.inputTokens)} in · ${formatTokens(totals.outputTokens)} out`}
+              hint={`${formatTokens(totals.inputTokens)} new · ${formatTokens(totals.cacheReadTokens)} cached · ${formatTokens(totals.outputTokens)} out`}
               color="bg-sky-500/10 text-sky-400"
             />
             <StatCard
               icon={DollarSign}
               label="Estimated cost"
-              value={formatCost(totals.estimatedCostUsd)}
-              hint="across all sessions"
+              value={formatCostCoverage(totals.estimatedCostUsd, totals.pricedSessionCount, totals.sessionCount)}
+              hint={costCoverageHint(totals.pricedSessionCount, totals.sessionCount)}
               color="bg-emerald-500/10 text-emerald-400"
             />
             <StatCard
@@ -251,9 +263,9 @@ export function UsageRoute() {
                     <span className="text-sm font-semibold text-text tabular-nums">{formatTokens(entry.totalTokens)}</span>
                     <span className="text-xs text-text-muted">{entry.sessionCount} sessions</span>
                   </div>
-                  {entry.estimatedCostUsd > 0 ? (
-                    <span className="text-xs font-medium text-emerald-400">{formatCost(entry.estimatedCostUsd)}</span>
-                  ) : null}
+                  <span className="text-xs font-medium text-emerald-400">
+                    {formatCostCoverage(entry.estimatedCostUsd, entry.pricedSessionCount, entry.sessionCount)}
+                  </span>
                   <div className="flex gap-3 mt-1.5 text-[11px] text-text-subtle tabular-nums">
                     <span>{formatTokens(entry.inputTokens)} in</span>
                     <span>{formatTokens(entry.outputTokens)} out</span>
@@ -271,9 +283,9 @@ export function UsageRoute() {
                 </div>
                 <div className="flex items-baseline justify-between">
                   <span className="text-sm font-semibold text-text tabular-nums">{formatTokens(totals.totalTokens)}</span>
-                  {totals.estimatedCostUsd > 0 ? (
-                    <span className="text-xs font-medium text-emerald-400">{formatCost(totals.estimatedCostUsd)}</span>
-                  ) : null}
+                  <span className="text-xs font-medium text-emerald-400">
+                    {formatCostCoverage(totals.estimatedCostUsd, totals.pricedSessionCount, totals.sessionCount)}
+                  </span>
                 </div>
               </div>
             ) : null}
@@ -290,7 +302,7 @@ export function UsageRoute() {
                   <ThSortable label="Output tokens" sortKey="outputTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
                   <ThSortable label="Cache read" sortKey="cacheReadTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right hidden lg:table-cell" />
                   <ThSortable label="Reasoning" sortKey="reasoningTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right hidden lg:table-cell" />
-                  <ThSortable label="Total tokens" sortKey="totalTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
+                  <ThSortable label="Processed tokens" sortKey="totalTokens" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
                   <ThSortable label="Est. cost" sortKey="estimatedCostUsd" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="text-right" />
                 </tr>
               </thead>
@@ -313,7 +325,7 @@ export function UsageRoute() {
                       <td className="px-4 py-2.5 text-right tabular-nums text-text-muted hidden lg:table-cell">{formatTokens(entry.cacheReadTokens)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-text-muted hidden lg:table-cell">{formatTokens(entry.reasoningTokens)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-medium text-text">{formatTokens(entry.totalTokens)}</td>
-                      <td className="px-4 py-2.5 text-right tabular-nums font-medium text-text">{formatCost(entry.estimatedCostUsd)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums font-medium text-text">{formatCostCoverage(entry.estimatedCostUsd, entry.pricedSessionCount, entry.sessionCount)}</td>
                     </tr>
                   );
                 })}
@@ -328,7 +340,7 @@ export function UsageRoute() {
                     <td className="px-4 py-2.5 text-right tabular-nums text-text hidden lg:table-cell">{formatTokens(totals.cacheReadTokens)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text hidden lg:table-cell">{formatTokens(totals.reasoningTokens)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.totalTokens)}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatCost(totals.estimatedCostUsd)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatCostCoverage(totals.estimatedCostUsd, totals.pricedSessionCount, totals.sessionCount)}</td>
                   </tr>
                 </tfoot>
               ) : null}

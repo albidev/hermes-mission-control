@@ -19,6 +19,12 @@ function formatCost(usd: number): string {
   return '$0.00';
 }
 
+function formatCostCoverage(usd: number, pricedSessions: number, totalSessions: number): string {
+  if (pricedSessions <= 0 || totalSessions <= 0) return 'N/A';
+  if (pricedSessions < totalSessions) return 'Partial';
+  return formatCost(usd);
+}
+
 function MiniStat({ label, value, sub, color }: { label: string; value: string; sub?: string; color: string }) {
   return (
     <div className="flex flex-col gap-0.5">
@@ -59,15 +65,15 @@ export function UsagePanel() {
 
       <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
         <MiniStat
-          label="Total tokens"
+          label="Processed tokens"
           value={formatTokens(totals.totalTokens)}
-          sub={`${formatTokens(totals.inputTokens)} in · ${formatTokens(totals.outputTokens)} out`}
+          sub={`${formatTokens(totals.inputTokens)} new · ${formatTokens(totals.cacheReadTokens)} cached · ${formatTokens(totals.outputTokens)} out`}
           color="text-sky-400"
         />
         <MiniStat
           label="Estimated cost"
-          value={formatCost(totals.estimatedCostUsd)}
-          sub="across all sessions"
+          value={formatCostCoverage(totals.estimatedCostUsd, totals.pricedSessionCount, totals.sessionCount)}
+          sub={`${totals.pricedSessionCount}/${totals.sessionCount} sessions priced`}
           color="text-emerald-400"
         />
         <MiniStat
