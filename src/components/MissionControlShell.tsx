@@ -54,6 +54,15 @@ export function MissionControlShell() {
   }, [location.pathname]);
 
   useEffect(() => {
+    if (!sideOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSideOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sideOpen]);
+
+  useEffect(() => {
     if (!authRequired) {
       return;
     }
@@ -139,6 +148,15 @@ export function MissionControlShell() {
             </button>
           </div>
         </aside>
+
+        {sideOpen ? (
+          <button
+            className="mobile-nav-backdrop"
+            type="button"
+            aria-label="Close navigation"
+            onClick={() => setSideOpen(false)}
+          />
+        ) : null}
 
         <section className="workspace-column">
           <header className={`card workspace-bar ${isOverviewRoute ? 'is-overview' : ''}`}>

@@ -1083,7 +1083,7 @@ export function AgentsRoute() {
                 </p>
               </div>
 
-              <div className="rounded-lg border border-border-subtle bg-surface-sunken overflow-auto max-h-[640px]">
+              <div className="mobile-agent-dag rounded-lg border border-border-subtle bg-surface-sunken overflow-auto max-h-[640px]">
                 <div
                   className="relative"
                   style={{

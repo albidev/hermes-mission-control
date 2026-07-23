@@ -496,7 +496,7 @@ export function ConfigRoute() {
 
           <form className="p-4 flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void handleSave(); }}>
             <textarea
-              className="w-full min-h-[620px] rounded-lg border border-border bg-surface p-3 text-sm font-mono text-text resize-y"
+              className="w-full mobile-config-editor min-h-[620px] rounded-lg border border-border bg-surface p-3 text-sm font-mono text-text resize-y"
               value={draft}
               onChange={(event) => handleYamlChange(event.target.value)}
               spellCheck={false}

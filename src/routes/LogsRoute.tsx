@@ -193,7 +193,7 @@ export function LogsRoute() {
                 </div>
               </div>
 
-              <div className="max-h-[700px] overflow-y-auto divide-y divide-border-subtle">
+              <div className="mobile-log-stream max-h-[700px] overflow-y-auto divide-y divide-border-subtle">
                 {activeFile.entries.length > 0 ? (
                   [...activeFile.entries]
                     .sort((a, b) => b.lineNumber - a.lineNumber)
