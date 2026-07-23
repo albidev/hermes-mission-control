@@ -115,7 +115,27 @@ export function ProviderUsagePanel() {
     };
   }, [storedToken]);
 
-  if (!snapshot?.available) return null;
+  if (!snapshot?.available) {
+    return (
+      <Card padding="none">
+        <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Cloud size={15} className="text-sky-400" />
+            <div className="flex flex-col gap-0.5">
+              <span className="eyebrow">Provider usage</span>
+              <h2 className="text-sm font-semibold text-text">Cloud limits &amp; balances</h2>
+            </div>
+          </div>
+          {refreshing ? <RefreshCw size={12} className="text-text-subtle animate-spin" /> : null}
+        </div>
+        <div className="p-4">
+          <p className="text-sm text-text-muted">
+            {snapshot ? 'Provider usage is temporarily unavailable.' : 'Loading provider usage…'}
+          </p>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card padding="none">
