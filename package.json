@@ -1,14 +1,17 @@
 {
   "name": "hermes-mission-control",
-  "private": true,
+  "private": false,
   "version": "0.1.0",
+  "packageManager": "pnpm@10.33.2",
   "description": "Standalone operational dashboard for Hermes with live telemetry and zero core dependencies.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:telemetry": "./scripts/run-local-telemetry.sh",
-    "dev:full": "concurrently -k -n telemetry,vite -c blue,green \"npm run dev:telemetry\" \"npm run dev\"",
+    "dev:full": "concurrently -k -n telemetry,vite -c blue,green \"pnpm dev:telemetry\" \"pnpm dev\"",
     "build": "vite build",
+    "test": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test:smoke": "bash scripts/smoke-test-telemetry.sh",
     "preview": "vite preview"
   },
   "dependencies": {

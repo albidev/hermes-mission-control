@@ -2,9 +2,7 @@
 set -euo pipefail
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export HOME="/Users/albi"
-
-OUTPUT_DIR="$HOME/.hermes/cache"
+OUTPUT_DIR="${MISSION_CONTROL_CACHE_DIR:-$HOME/.hermes/cache}"
 OUTPUT="$OUTPUT_DIR/mission-control-provider-usage.json"
 TMP="$OUTPUT.tmp.$$"
 mkdir -p "$OUTPUT_DIR"

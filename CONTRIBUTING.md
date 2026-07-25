@@ -11,14 +11,14 @@ Mission Control is intentionally a **satellite application**. It lives under `ap
 - Open an issue or discussion for large changes.
 - Keep the core isolated: new data sources go into `server/local_telemetry_server.py`, not `hermes_cli/web_server.py`.
 - Match the existing TypeScript/React patterns and Tailwind conventions.
-- Run `npm run build` before submitting.
+- Run `pnpm build` and `pnpm test` before submitting.
 
 ## Development
 
 ```bash
 cd apps/mission-control
-npm install
-npm run dev:full
+pnpm install
+pnpm dev:full
 ```
 
 The telemetry server is a Python sidecar in `server/`. It does not hot-reload; restart it after backend changes.

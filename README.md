@@ -1,5 +1,7 @@
 # Hermes Mission Control
 
+![Hermes Mission Control cover](docs/images/mission-control-cover.svg)
+
 Standalone operational dashboard for [Hermes](https://hermes-agent.nousresearch.com). It runs next to your Hermes agent, reads local telemetry, and gives you a cockpit for sessions, agents, usage, tools, skills, config, and logs.
 
 ## About
@@ -32,9 +34,9 @@ All data flows through `/api/local/*` endpoints. In development, Vite proxies th
 
 ```bash
 cd apps/mission-control
-npm install
-pip install -r server/requirements.txt
-npm run dev:full
+pnpm install
+python3 -m pip install -r server/requirements.txt
+pnpm dev:full
 ```
 
 This starts:
@@ -44,8 +46,8 @@ This starts:
 To run them separately:
 
 ```bash
-npm run dev:telemetry   # port 8765
-npm run dev             # port 5174
+pnpm dev:telemetry   # port 8765
+pnpm dev             # port 5174
 ```
 
 ## Configuration
@@ -55,7 +57,8 @@ Create `apps/mission-control/.env` from `.env.example`:
 ```bash
 VITE_MISSION_CONTROL_LOCAL_API_BASE_URL=/api/local
 VITE_MISSION_CONTROL_TOKEN=your_token
-MISSION_CONTROL_DEV_HOSTS=100.84.148.17
+# Optional: comma-separated local/Tailscale hostnames or IPs
+MISSION_CONTROL_DEV_HOSTS=
 ```
 
 The bearer token is shared between the telemetry server and the UI. The telemetry server reads it from `.env` via the launcher script.
@@ -67,17 +70,25 @@ Vite listens on all interfaces (`host: true`) and `allowedHosts` is read from `M
 ## Building
 
 ```bash
-npm run build
+pnpm build
 ```
 
 Static output lands in `dist/` and can be served by any static host.
 
-## Testing endpoints
+## Testing
 
 ```bash
-export MISSION_CONTROL_TOKEN=your_token
-bash scripts/smoke-test-telemetry.sh
+pnpm build
+pnpm test
 ```
+
+For a live telemetry sidecar, start `pnpm dev:telemetry` in one terminal, export `MISSION_CONTROL_TOKEN`, then run:
+
+```bash
+pnpm test:smoke
+```
+
+CI runs the frontend build and Python test suite on pushes and pull requests.
 
 ## Security notes
 

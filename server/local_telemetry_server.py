@@ -278,15 +278,8 @@ def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool =
     if not candidate and allow_query_token:
         candidate = _extract_query_token(handler)
 
-    # Telemetry sidecar — always allow local and Tailscale callers (no token required).
-    client_ip = handler.client_address[0] if handler.client_address else None
-    if client_ip in ("127.0.0.1", "::1", "localhost"):
-        return True
-    # Tailscale IP range: 100.64.0.0/10 (typically 100.x.x.x)
-    if client_ip and client_ip.startswith("100."):
-        return True
-
-    # For non-local callers (if ever exposed externally), require the token.
+    # Protected telemetry endpoints require the bearer token regardless of source
+    # address. `/health` remains the unauthenticated liveness probe.
     if not expected or not candidate:
         return False
     return hmac.compare_digest(candidate, expected)
