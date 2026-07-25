@@ -53,7 +53,7 @@ export function UsagePanel() {
 
   return (
     <Card padding="none">
-      <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
+      <div className="px-3 pt-3 pb-2 border-b border-border-subtle flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
           <span className="eyebrow">Usage</span>
           <h2 className="text-sm font-semibold text-text">Token consumption &amp; cost estimate</h2>
@@ -63,7 +63,7 @@ export function UsagePanel() {
         </Link>
       </div>
 
-      <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="p-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MiniStat
           label="Processed tokens"
           value={formatTokens(totals.totalTokens)}

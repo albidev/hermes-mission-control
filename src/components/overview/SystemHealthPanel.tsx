@@ -122,7 +122,7 @@ export function SystemHealthPanel({
         </Badge>
       </div>
 
-      <div className="p-4 flex flex-col gap-3">
+      <div className="p-3 flex flex-col gap-2.5">
         {/* Machine health */}
         <div className="flex items-center gap-2 pb-2 border-b border-border-subtle">
           <Server className="h-4 w-4 text-text-muted" />
@@ -173,11 +173,6 @@ export function SystemHealthPanel({
             'positive'
           }
         />
-
-        {/* Summary */}
-        <p className="text-xs text-text-muted pt-1 border-t border-border-subtle line-clamp-2">
-          {machine.summary}
-        </p>
       </div>
     </Card>
   );

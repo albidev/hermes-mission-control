@@ -21,14 +21,14 @@ export function QuickActions({
 
   return (
     <Card padding="none">
-      <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
+      <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
           <span className="eyebrow">Controls</span>
           <h2 className="text-sm font-semibold text-text">Quick actions</h2>
         </div>
       </div>
 
-      <div className="p-4 flex flex-wrap items-center gap-2">
+      <div className="p-3 flex flex-wrap items-center gap-2">
         {refreshAction && (
           <Button
             variant="secondary"

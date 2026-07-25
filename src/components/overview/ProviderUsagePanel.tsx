@@ -60,7 +60,7 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
   const label = PROVIDER_LABELS[provider.provider] ?? provider.provider;
   const unavailable = !provider.available;
   return (
-    <div className="rounded-lg border border-border-subtle bg-surface/40 p-3 flex flex-col gap-3 min-w-0 min-h-[124px]">
+    <div className="rounded-lg border border-border-subtle bg-surface/40 p-2.5 flex flex-col gap-2 min-w-0 min-h-[108px]">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-text truncate">{label}</span>
         <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${unavailable ? 'bg-amber-400' : 'bg-emerald-400'}`} />
@@ -70,11 +70,11 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
           <span className="text-xs text-text-muted line-clamp-2">{provider.error || 'Unavailable'}</span>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col justify-between gap-3">
+        <div className="flex flex-1 flex-col justify-between gap-2">
           <div className="flex items-end justify-between gap-2">
             <div className="min-w-0">
               <span className="text-[10px] text-text-muted uppercase tracking-wide">{mainMetricLabel(provider)}</span>
-              <div className={`text-xl font-semibold tabular-nums ${provider.provider === 'openrouter' ? 'text-emerald-400' : 'text-sky-400'}`}>
+              <div className={`text-lg font-semibold tabular-nums ${provider.provider === 'openrouter' ? 'text-emerald-400' : 'text-sky-400'}`}>
                 {mainMetricValue(provider)}
               </div>
             </div>
@@ -115,11 +115,31 @@ export function ProviderUsagePanel() {
     };
   }, [storedToken]);
 
-  if (!snapshot?.available) return null;
+  if (!snapshot?.available) {
+    return (
+      <Card padding="none">
+        <div className="px-3 pt-3 pb-2 border-b border-border-subtle flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Cloud size={15} className="text-sky-400" />
+            <div className="flex flex-col gap-0.5">
+              <span className="eyebrow">Provider usage</span>
+              <h2 className="text-sm font-semibold text-text">Cloud limits &amp; balances</h2>
+            </div>
+          </div>
+          {refreshing ? <RefreshCw size={12} className="text-text-subtle animate-spin" /> : null}
+        </div>
+        <div className="p-3">
+          <p className="text-sm text-text-muted">
+            {snapshot ? 'Provider usage is temporarily unavailable.' : 'Loading provider usage…'}
+          </p>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card padding="none">
-      <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
+      <div className="px-3 pt-3 pb-2 border-b border-border-subtle flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Cloud size={15} className="text-sky-400" />
           <div className="flex flex-col gap-0.5">
@@ -132,7 +152,7 @@ export function ProviderUsagePanel() {
           <span className="text-[10px] text-text-subtle">Live · 60s</span>
         </div>
       </div>
-      <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="p-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
         {snapshot.providers.map((provider) => <ProviderCard key={provider.provider} provider={provider} />)}
       </div>
     </Card>

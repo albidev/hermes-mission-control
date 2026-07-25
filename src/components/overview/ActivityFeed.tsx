@@ -27,7 +27,7 @@ export function ActivityFeed({ signals }: { signals: Signal[] }) {
 
   return (
     <Card padding="none">
-      <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
+      <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
           <span className="eyebrow">Events</span>
           <h2 className="text-sm font-semibold text-text">Live feed</h2>
@@ -40,17 +40,17 @@ export function ActivityFeed({ signals }: { signals: Signal[] }) {
 
       <div
         ref={listRef}
-        className="flex flex-col divide-y divide-border-subtle max-h-72 overflow-y-auto"
+        className="flex flex-col divide-y divide-border-subtle max-h-56 overflow-y-auto"
       >
         {signals.length > 0 ? (
-          signals.slice(0, 5).map((signal, i) => {
+          signals.slice(0, 4).map((signal, i) => {
             const Icon = signalIcon(signal.label);
             const toneClass = signalToneClass(signal.tone);
 
             return (
               <div
                 key={`${signal.label}-${i}`}
-                className={`flex items-start gap-3 px-4 py-3 ${toneClass} border-l-2`}
+                className={`flex items-start gap-3 px-3 py-2.5 ${toneClass} border-l-2`}
               >
                 <div className="mt-0.5 flex-shrink-0">
                   <Icon className="h-4 w-4 text-text-muted" />
@@ -69,7 +69,7 @@ export function ActivityFeed({ signals }: { signals: Signal[] }) {
             );
           })
         ) : (
-          <div className="flex items-center justify-center py-8">
+          <div className="flex items-center justify-center py-6">
             <p className="text-sm text-text-muted italic">No signals yet.</p>
           </div>
         )}
