@@ -51,6 +51,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer }: Moda
       <section
         className={[
           'w-full h-[92vh] sm:h-auto sm:max-h-[88vh] sm:w-[min(920px,92vw)]',
+          'mobile-modal',
           'rounded-t-2xl sm:rounded-2xl border border-border bg-surface shadow-2xl',
           'flex flex-col overflow-hidden',
         ].join(' ')}

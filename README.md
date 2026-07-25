@@ -1,129 +1,94 @@
 # Hermes Mission Control
 
-Operational dashboard for Hermes with a responsive shell, route-based navigation, and live runtime telemetry.
+Standalone operational dashboard for [Hermes](https://hermes-agent.nousresearch.com). It runs next to your Hermes agent, reads local telemetry, and gives you a cockpit for sessions, agents, usage, tools, skills, config, and logs.
 
-## What this is
-A standalone frontend app that gives you one place to operate Hermes:
-- gateway and backend health
-- active model, fallback model, and agent status
-- sessions, knowledge, tools, skills, config, logs routes
-- cron/job visibility and quick actions
-- shared knowledge surfaced from Obsidian
+## About
 
-## Current UI architecture
-- Left side navigation rail with collapsible desktop mode and off-canvas mobile drawer
-- Workspace header with route context + sync metadata
-- Overview route as fast operations snapshot
-- Dedicated routes for high-density workflows (`/sessions`, `/knowledge`, `/tools`, `/skills`, `/config`, `/logs`)
+Mission Control is a local-first operator dashboard for Hermes. It combines a React/Vite frontend with a small Python telemetry sidecar, so the dashboard can run independently without coupling the open-source UI to Hermes core internals.
 
-## Local development
+**Tags:** `hermes` · `mission-control` · `operations-dashboard` · `telemetry` · `react` · `typescript` · `vite` · `tailwindcss` · `python` · `local-first` · `self-hosted`
+
+> **Satellite by design.** Mission Control has zero runtime dependency on the Hermes core backend. It talks to a small local telemetry sidecar (Python stdlib + psutil) on port `8765`.
+
+## What you get
+
+- Gateway/runtime health and system metrics
+- Active model, fallback model, and agent status
+- Sessions, agents, usage, knowledge, tools, skills, config, logs routes
+- Cron/job visibility and quick actions
+- Responsive layout: side rail on desktop, drawer on mobile
+- Draggable dashboard widgets with persisted layout
+
+## Architecture
+
+| Component | Path | Port | Stack |
+|-----------|------|------|-------|
+| Telemetry server | `server/local_telemetry_server.py` | `8765` | Python stdlib + psutil |
+| Frontend | `src/` | `5174` | React + Vite + TypeScript + Tailwind |
+
+All data flows through `/api/local/*` endpoints. In development, Vite proxies those requests to the telemetry server.
+
+## Quick start
 
 ```bash
 cd apps/mission-control
 npm install
+pip install -r server/requirements.txt
 npm run dev:full
 ```
 
-`dev:full` runs both:
-- Vite UI on `5174`
-- local telemetry backend (`/api/local/system`) on `8765`
+This starts:
+- Vite UI on `http://localhost:5174`
+- Telemetry server on `http://localhost:8765`
 
-If you want to run them separately:
-
-```bash
-npm run dev:telemetry
-npm run dev
-```
-
-The telemetry backend requires `psutil` on the Python runtime used by `scripts/run-local-telemetry.sh`.
-
-## API contract
-The app reads from Mission Control endpoints exposed by Hermes API server:
-
-```text
-GET /api/mission-control
-GET /api/mission-control/system
-```
-
-Additional route-specific data comes from dedicated Mission Control endpoints.
-
-For machine telemetry, frontend tries this order:
-1. `GET /api/local/system` (local psutil backend, preferred)
-2. `GET /api/mission-control/system` (core fallback)
-3. built-in cached fallback snapshot
-
-## Environment variables
+To run them separately:
 
 ```bash
-VITE_HERMES_API_BASE_URL=http://localhost:8642/api
+npm run dev:telemetry   # port 8765
+npm run dev             # port 5174
 ```
 
-If unset, the app uses `/api` through the Vite proxy.
+## Configuration
 
-## Auth
-If Hermes API server has `MISSION_CONTROL_TOKEN` or `API_SERVER_KEY`, Mission Control prompts for a bearer token before unlocking the dashboard.
+Create `apps/mission-control/.env` from `.env.example`:
 
-The same bearer token is now required by the local telemetry backend for `GET /api/local/system`.
-
-Auth precedence:
-1. `MISSION_CONTROL_TOKEN`
-2. `API_SERVER_KEY`
-
-This keeps the local psutil sidecar aligned with the main dashboard lock instead of quietly bypassing it.
-
-## Deep links
-You can open selected entities with query params:
-
-```text
-/?session=<session-id>
-/?cron=<job-id>
-/?alert=<alert-id>
-```
-
-## Notes from 2026-03-30
-- Knowledge page: removed highlights section from desktop detail and mobile modal.
-- Overview mobile polish: tightened spacing and fixed wrapping for metadata rows and footer controls.
-- Top status strip (`AgentStatusBar`) hardened for small screens:
-  - model label truncates correctly instead of ugly multiline breaks
-  - fallback label hidden on mobile to reduce crowding
-  - status/agent count remain readable without clipping
-- Workspace header mobile metadata now stacks vertically for readability.
-- Agents route now includes full execution trace with both required views:
-  - Timeline (default, mandatory): turn boundaries, thoughts, tool starts/completions, skill usage, assistant responses
-  - DAG: node/edge representation of execution chain for quick dependency reading
-- New backend endpoints:
-  - `GET /api/mission-control/agents/trace` (`session_id`, `limit`)
-  - `GET /api/mission-control/agents/trace/stream` (SSE live stream)
-- Live trace now prefers SSE transport with polling fallback.
-
-## Critical recovery playbook (no repo write access)
-
-If Mission Control comes up but `/api/mission-control` is `404` after reboot/update:
-
-1. Check backend directly:
 ```bash
-curl -i http://127.0.0.1:8642/api/mission-control
-```
-2. Re-apply Mission Control core compatibility fixes (idempotent), restart gateway, and run smoke checks:
-```bash
-./scripts/reapply-core-mission-control-fixes.sh
+VITE_MISSION_CONTROL_LOCAL_API_BASE_URL=/api/local
+VITE_MISSION_CONTROL_TOKEN=your_token
+MISSION_CONTROL_DEV_HOSTS=100.84.148.17
 ```
 
-You can pass an explicit Hermes core path if needed:
-```bash
-./scripts/reapply-core-mission-control-fixes.sh /path/to/hermes-agent
-```
+The bearer token is shared between the telemetry server and the UI. The telemetry server reads it from `.env` via the launcher script.
 
-3. Re-check both backend and proxied frontend endpoint:
-```bash
-curl -i http://127.0.0.1:8642/api/mission-control
-curl -i http://127.0.0.1:5174/api/mission-control
-```
+## Tailscale / LAN access
 
-## Verification
+Vite listens on all interfaces (`host: true`) and `allowedHosts` is read from `MISSION_CONTROL_DEV_HOSTS`. The telemetry server binds to `0.0.0.0`. Both accept Tailscale peer IPs.
+
+## Building
 
 ```bash
 npm run build
 ```
 
-Build must pass after UI/layout changes.
+Static output lands in `dist/` and can be served by any static host.
+
+## Testing endpoints
+
+```bash
+export MISSION_CONTROL_TOKEN=your_token
+bash scripts/smoke-test-telemetry.sh
+```
+
+## Security notes
+
+- Never commit `.env`.
+- The telemetry server requires a bearer token for every `/api/local/*` request.
+- Mission Control is a local tool: bind only to trusted networks.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

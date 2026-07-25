@@ -35,7 +35,7 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
 
   return (
     <Card padding="none">
-      <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
+      <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
           <span className="eyebrow">Attention</span>
           <h2 className="text-sm font-semibold text-text">Needs review</h2>
@@ -52,7 +52,7 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
         )}
       </div>
 
-      <div className="p-4 flex flex-col gap-3">
+      <div className="p-3 flex flex-col gap-2.5">
         {hasAttention ? (
           <>
             {/* Errors first */}
@@ -88,8 +88,8 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
             ))}
           </>
         ) : (
-          <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <CheckCircle className="h-8 w-8 text-positive" />
+          <div className="flex flex-col items-center gap-2 py-3 text-center">
+            <CheckCircle className="h-7 w-7 text-positive" />
             <p className="text-sm text-text-muted">No issues detected.</p>
           </div>
         )}

@@ -1,9 +1,15 @@
-import { useMemo } from 'react';
-import { Activity, Bot, Clock3, MessagesSquare } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Activity, Bot, Clock3, DollarSign, Layers, MessagesSquare, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
 import { useMissionControl } from '../lib/mission-control-store';
+import {
+  loadMissionControlAgentSessions,
+  type MissionControlAgentSessionItem,
+  type MissionControlAgentsSessionsSnapshot,
+} from '../lib/hermes-api';
 
 function MetricCard({
   icon: Icon,
@@ -28,13 +34,48 @@ function MetricCard({
   );
 }
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatCost(usd: number): string {
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  if (usd >= 0.01) return `$${usd.toFixed(3)}`;
+  if (usd > 0) return `$${usd.toFixed(4)}`;
+  return '$0.00';
+}
+
 export function SessionsRoute() {
-  const { snapshot } = useMissionControl();
+  const { snapshot, storedToken } = useMissionControl();
+  const [agentSessions, setAgentSessions] = useState<MissionControlAgentsSessionsSnapshot | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadMissionControlAgentSessions(storedToken ?? undefined).then((data) => {
+      if (!cancelled) setAgentSessions(data);
+    });
+    return () => { cancelled = true; };
+  }, [storedToken]);
+
+  const agentSessionMap = useMemo(() => {
+    const map = new Map<string, MissionControlAgentSessionItem>();
+    if (agentSessions?.items) {
+      for (const item of agentSessions.items) {
+        map.set(item.sessionId, item);
+      }
+    }
+    return map;
+  }, [agentSessions]);
 
   const sortedSessions = useMemo(
     () => [...snapshot.sessions.items].sort((a, b) => b.lastActive - a.lastActive),
     [snapshot.sessions.items],
   );
+
+  const totalTokens = agentSessions?.items.reduce((sum, s) => sum + s.inputTokens + s.outputTokens, 0) ?? 0;
+  const totalCost = agentSessions?.items.reduce((sum, s) => sum + s.estimatedCostUsd, 0) ?? 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -47,24 +88,36 @@ export function SessionsRoute() {
           <Badge variant="default">{snapshot.sessions.totalSessions} tracked</Badge>
         </div>
 
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="p-4 grid grid-cols-2 xl:grid-cols-6 gap-3">
           <MetricCard
             icon={MessagesSquare}
-            label="Tracked sessions"
+            label="Tracked"
             value={String(snapshot.sessions.totalSessions)}
-            hint="total in storage"
+            hint="sessions"
           />
           <MetricCard
             icon={Activity}
             label="Messages"
             value={String(snapshot.sessions.totalMessages)}
-            hint="conversation history"
+            hint="total"
+          />
+          <MetricCard
+            icon={Layers}
+            label="Tokens"
+            value={formatTokens(totalTokens)}
+            hint="in + out"
+          />
+          <MetricCard
+            icon={DollarSign}
+            label="Cost"
+            value={formatCost(totalCost)}
+            hint="estimated"
           />
           <MetricCard
             icon={Bot}
-            label="Active agents"
+            label="Agents"
             value={String(snapshot.sessions.activeAgents)}
-            hint="current snapshot"
+            hint="active"
           />
           <MetricCard
             icon={Clock3}
@@ -86,26 +139,68 @@ export function SessionsRoute() {
 
         <div className="divide-y divide-border-subtle">
           {sortedSessions.length > 0 ? (
-            sortedSessions.map((session) => (
-              <div key={session.id} className="px-4 py-3 flex flex-col gap-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-text truncate">{session.title}</p>
-                    <p className="text-xs text-text-muted truncate">{session.source} · {session.model}</p>
+            sortedSessions.map((session) => {
+              const agent = agentSessionMap.get(session.id);
+              const hasTokens = agent && (agent.inputTokens + agent.outputTokens > 0);
+              const totalSessionTokens = agent ? agent.inputTokens + agent.outputTokens : 0;
+              return (
+                <div key={session.id} className="px-4 py-3 flex flex-col gap-2">
+                  {/* Row 1: title + msgs badge */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-text truncate">{session.title}</p>
+                      <p className="text-xs text-text-muted truncate">{session.source} · {session.model}</p>
+                    </div>
+                    <Badge variant="default" className="shrink-0">{session.messageCount} msgs</Badge>
                   </div>
-                  <Badge variant="default">{session.messageCount} msgs</Badge>
-                </div>
 
-                <p className="text-xs text-text-muted line-clamp-2">
-                  {session.preview || 'No preview available.'}
-                </p>
+                  {/* Row 2: preview */}
+                  <p className="text-xs text-text-muted line-clamp-2">
+                    {session.preview || 'No preview available.'}
+                  </p>
 
-                <div className="flex items-center justify-between text-xs text-text-subtle">
-                  <span>Started {formatTimestamp(session.startedAt)}</span>
-                  <span>Active {formatRelativeTime(session.lastActive)}</span>
+                  {/* Row 3: token usage — clean two-column layout */}
+                  {hasTokens ? (
+                    <div className="flex items-center justify-between gap-3 text-xs tabular-nums">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-sky-400" title={`Input: ${agent.inputTokens.toLocaleString()}`}>
+                          ↓{formatTokens(agent.inputTokens)}
+                        </span>
+                        <span className="text-sky-400" title={`Output: ${agent.outputTokens.toLocaleString()}`}>
+                          ↑{formatTokens(agent.outputTokens)}
+                        </span>
+                        <span className="font-medium text-text" title={`Total: ${totalSessionTokens.toLocaleString()}`}>
+                          = {formatTokens(totalSessionTokens)}
+                        </span>
+                        {agent.cacheReadTokens > 0 ? (
+                          <span className="text-violet-400 hidden sm:inline" title={`Cache: ${agent.cacheReadTokens.toLocaleString()}`}>
+                            ⚡{formatTokens(agent.cacheReadTokens)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {agent.estimatedCostUsd > 0 ? (
+                        <span className="text-emerald-400 font-medium shrink-0">{formatCost(agent.estimatedCostUsd)}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* Row 4: timestamps + trace CTA */}
+                  <div className="flex items-center gap-2 text-xs text-text-subtle">
+                    <span className="truncate">{formatRelativeTime(session.lastActive)}</span>
+                    <span className="text-border-subtle">·</span>
+                    <span className="truncate hidden sm:inline">Started {formatTimestamp(session.startedAt)}</span>
+                    <Link
+                      to={`/agents?session=${encodeURIComponent(session.id)}`}
+                      className="ml-auto inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors shrink-0"
+                      title="Open trace in Agents"
+                    >
+                      <Workflow size={12} />
+                      <span>Trace</span>
+                    </Link>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="px-4 py-8 text-center text-sm text-text-muted italic">No sessions yet.</div>
           )}

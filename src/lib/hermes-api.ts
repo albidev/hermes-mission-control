@@ -381,6 +381,13 @@ export type MissionControlAgentSessionItem = {
   messageCount: number;
   traceMode: MissionControlTraceMode;
   preview: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  estimatedCostUsd: number;
+  costStatus: string;
 };
 
 export type MissionControlAgentsSessionsSnapshot = {
@@ -861,6 +868,13 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
     messageCount: readNumber(input?.messageCount, 0),
     traceMode: normalizeTraceMode(input?.traceMode),
     preview: readString(input?.preview),
+    inputTokens: readNumber(input?.inputTokens, 0),
+    outputTokens: readNumber(input?.outputTokens, 0),
+    cacheReadTokens: readNumber(input?.cacheReadTokens, 0),
+    cacheWriteTokens: readNumber(input?.cacheWriteTokens, 0),
+    reasoningTokens: readNumber(input?.reasoningTokens, 0),
+    estimatedCostUsd: readNumber(input?.estimatedCostUsd, 0),
+    costStatus: readString(input?.costStatus),
   };
 }
 
@@ -1398,6 +1412,99 @@ async function fetchMissionControlAgents(accessToken?: string): Promise<Official
 async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100): Promise<OfficialMissionControlAgentSessionsPayload | null> {
   const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}`, accessToken);
   return local ?? null;
+}
+
+export type MissionControlSessionsUsageSnapshot = {
+  success: boolean;
+  available: boolean;
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    sessionCount: number;
+    pricedSessionCount: number;
+  };
+  byModel: Array<{
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    sessionCount: number;
+    pricedSessionCount: number;
+  }>;
+};
+
+const fallbackUsage: MissionControlSessionsUsageSnapshot = {
+  success: false,
+  available: false,
+  totals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, estimatedCostUsd: 0, sessionCount: 0, pricedSessionCount: 0 },
+  byModel: [],
+};
+
+export async function loadSessionsUsage(accessToken?: string): Promise<MissionControlSessionsUsageSnapshot> {
+  try {
+    const { payload: local } = await maybeFetchLocalJson<MissionControlSessionsUsageSnapshot>('/sessions/usage', accessToken);
+    if (local && local.success) return local;
+  } catch { /* ignore */ }
+  return fallbackUsage;
+}
+
+export type MissionControlProviderUsageWindow = {
+  usedPercent?: number;
+  resetsAt?: string;
+  windowMinutes?: number;
+};
+
+export type MissionControlProviderUsage = {
+  provider: 'codex' | 'ollama' | 'openrouter' | string;
+  available: boolean;
+  source?: string;
+  updatedAt?: string | null;
+  primary?: MissionControlProviderUsageWindow | null;
+  secondary?: MissionControlProviderUsageWindow | null;
+  tertiary?: MissionControlProviderUsageWindow | null;
+  pace?: Record<string, unknown> | null;
+  openRouter?: {
+    balance?: number;
+    totalCredits?: number;
+    totalUsage?: number;
+    keyUsageDaily?: number;
+    keyUsageWeekly?: number;
+    keyUsageMonthly?: number;
+    usedPercent?: number;
+  };
+  creditsRemaining?: number;
+  resetCreditsAvailable?: number;
+  error?: string;
+};
+
+export type MissionControlProviderUsageSnapshot = {
+  success: boolean;
+  available: boolean;
+  updatedAt?: string;
+  providers: MissionControlProviderUsage[];
+};
+
+const fallbackProviderUsage: MissionControlProviderUsageSnapshot = {
+  success: false,
+  available: false,
+  providers: [],
+};
+
+export async function loadProviderUsage(accessToken?: string): Promise<MissionControlProviderUsageSnapshot> {
+  try {
+    const { payload: local } = await maybeFetchLocalJson<MissionControlProviderUsageSnapshot>('/provider-usage', accessToken);
+    if (local && local.available) return local;
+  } catch { /* provider usage is an optional overview panel */ }
+  return fallbackProviderUsage;
 }
 
 async function fetchMissionControlAgentTrace(

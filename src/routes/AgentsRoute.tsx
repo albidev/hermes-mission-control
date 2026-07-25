@@ -18,6 +18,12 @@ import {
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 type AgentAggregate = MissionControlAgentRegistryItem & {
   id: string;
   totalMessages: number;
@@ -258,12 +264,13 @@ export function AgentsRoute() {
   const [searchParams] = useSearchParams();
   const selectedAgentId = agentId ? decodeURIComponent(agentId) : '';
   const requestedMode = searchParams.get('mode');
+  const requestedSession = searchParams.get('session');
   const { snapshot, storedToken } = useMissionControl();
   const [view, setView] = useState<'timeline' | 'dag'>('timeline');
   const [liveMode, setLiveMode] = useState(() => requestedMode !== 'post');
   const [liveTraceScope, setLiveTraceScope] = useState<LiveTraceScope>('current');
   const [selectedActionFilters, setSelectedActionFilters] = useState<TraceActionFilter[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string>('');
+  const [selectedSessionId, setSelectedSessionId] = useState<string>(requestedSession ?? '');
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentSessionItem[]>([]);
   const [trace, setTrace] = useState<MissionControlAgentTraceSnapshot | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
@@ -989,6 +996,20 @@ export function AgentsRoute() {
               <span>skills {visibleTrace.stats.skills}</span>
               <span>thoughts {visibleTrace.stats.thoughts}</span>
               <span>errors {visibleTrace.stats.errors}</span>
+              {(() => {
+                const agentSession = orderedSessions.find((s) => s.sessionId === selectedSessionId);
+                if (!agentSession || agentSession.inputTokens + agentSession.outputTokens === 0) return null;
+                return (
+                  <>
+                    <span className="tabular-nums" title={`In: ${agentSession.inputTokens.toLocaleString()} · Out: ${agentSession.outputTokens.toLocaleString()} · Cache: ${agentSession.cacheReadTokens.toLocaleString()} · Reasoning: ${agentSession.reasoningTokens.toLocaleString()}`}>
+                      tokens {formatTokenCount(agentSession.inputTokens + agentSession.outputTokens)}
+                    </span>
+                    {agentSession.estimatedCostUsd > 0 ? (
+                      <span className="tabular-nums">${agentSession.estimatedCostUsd.toFixed(3)}</span>
+                    ) : null}
+                  </>
+                );
+              })()}
               <Badge variant={liveMode && !sseFallbackToPolling ? 'positive' : 'default'}>
                 {liveMode && !sseFallbackToPolling ? 'transport: sse' : 'transport: polling'}
               </Badge>
@@ -1062,7 +1083,7 @@ export function AgentsRoute() {
                 </p>
               </div>
 
-              <div className="rounded-lg border border-border-subtle bg-surface-sunken overflow-auto max-h-[640px]">
+              <div className="mobile-agent-dag rounded-lg border border-border-subtle bg-surface-sunken overflow-auto max-h-[640px]">
                 <div
                   className="relative"
                   style={{

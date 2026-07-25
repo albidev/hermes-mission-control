@@ -10,6 +10,9 @@ import { ActivityFeed } from './ActivityFeed';
 import { AttentionNeeded } from './AttentionNeeded';
 import { QuickActions } from './QuickActions';
 import { AgentsPanel } from './AgentsPanel';
+import { UsagePanel } from './UsagePanel';
+import { ProviderUsagePanel } from './ProviderUsagePanel';
+import { DashboardGrid, type DashboardWidget } from './DashboardGrid';
 import { formatRelativeTime } from '../../lib/format';
 
 function SectionLink({
@@ -46,14 +49,14 @@ function SectionCard({
 }) {
   return (
     <Card padding="none">
-      <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
+      <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
           <span className="eyebrow">{eyebrow}</span>
           <h2 className="text-sm font-semibold text-text">{title}</h2>
         </div>
         {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-3">{children}</div>
     </Card>
   );
 }
@@ -69,7 +72,6 @@ export function OverviewDashboard() {
   } = useMissionControl();
 
   const { machine, sessions, cron, alerts, backendHealth, gatewayStatus } = snapshot;
-
   const sessionItems = sessions.items.slice(0, 2);
   const cronItems = cron.items.slice(0, 3);
   const runningCron = cron.items.filter((job) => job.state === 'running').length;
@@ -111,74 +113,110 @@ export function OverviewDashboard() {
     ? eventSignals
     : snapshot.recentSignals.filter((signal) => signal.tone !== 'good').slice(0, 5);
 
-  return (
-    <div className="flex flex-col h-full">
-      <AgentStatusBar />
-
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 auto-rows-min">
-          <div className="flex flex-col gap-6">
-            <SystemHealthPanel
-              machine={machine}
-              gatewayStatus={gatewayStatus}
-              backendHealth={backendHealth}
-            />
-
-            <AgentsPanel activeAgents={snapshot.activeAgents} sessions={sessions} />
-
-            <AttentionNeeded alerts={alerts.items} />
-          </div>
-
-          <div className="lg:col-span-2 flex flex-col gap-6">
-            <ActivityFeed signals={feedSignals} />
-
-            <SectionCard
-              eyebrow="Current session"
-              title={sessionItems.length > 0 ? sessionItems[0].title : 'No active session'}
-              actions={
-                <SectionLink to="/sessions" label="All sessions">
-                  <PanelLeftClose className="h-3 w-3" />
-                </SectionLink>
-              }
-            >
-              {sessionItems.length > 0 ? (
-                <div className="flex flex-col gap-3">
-                  <p className="text-sm text-text-muted line-clamp-1">
-                    {sessionItems[0].preview || 'No preview available.'}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-subtle">
-                    <span className="flex items-center gap-1">
-                      <Rocket className="h-3.5 w-3.5" />
-                      {sessionItems[0].source}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Activity className="h-3.5 w-3.5" />
-                      {sessionItems[0].messageCount} msgs
-                    </span>
-                    <span>{formatRelativeTime(sessionItems[0].lastActive)}</span>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-text-muted italic py-1">No active sessions right now.</p>
-              )}
-            </SectionCard>
-
-            <QuickActions
-              gatewayActions={gatewayActions}
-              runGatewayAction={runGatewayAction}
-              actionLoading={actionLoading}
-            />
-
-            {cronItems.length > 0 && (
+  const widgets: DashboardWidget[] = [
+    {
+      id: 'health',
+      label: 'System health',
+      className: 'widget-health',
+      content: (
+        <SystemHealthPanel machine={machine} gatewayStatus={gatewayStatus} backendHealth={backendHealth} />
+      ),
+    },
+    {
+      id: 'provider-usage',
+      label: 'Provider usage',
+      className: 'widget-provider-usage',
+      locked: true,
+      content: <ProviderUsagePanel />,
+    },
+    {
+      id: 'usage',
+      label: 'Token usage',
+      className: 'widget-usage',
+      content: <UsagePanel />,
+    },
+    {
+      id: 'agents',
+      label: 'Agents',
+      className: 'widget-agents',
+      content: <AgentsPanel activeAgents={snapshot.activeAgents} sessions={sessions} />,
+    },
+    {
+      id: 'attention',
+      label: 'Attention needed',
+      className: 'widget-attention',
+      content: <AttentionNeeded alerts={alerts.items} />,
+    },
+    {
+      id: 'activity',
+      label: 'Live activity',
+      className: 'widget-activity',
+      content: <ActivityFeed signals={feedSignals} />,
+    },
+    {
+      id: 'current-session',
+      label: 'Current session',
+      className: 'widget-current-session',
+      content: (
+        <SectionCard
+          eyebrow="Current session"
+          title={sessionItems.length > 0 ? sessionItems[0].title : 'No active session'}
+          actions={
+            <SectionLink to="/sessions" label="All sessions">
+              <PanelLeftClose className="h-3 w-3" />
+            </SectionLink>
+          }
+        >
+          {sessionItems.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-text-muted line-clamp-1">
+                {sessionItems[0].preview || 'No preview available.'}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-subtle">
+                <span className="flex items-center gap-1">
+                  <Rocket className="h-3.5 w-3.5" />
+                  {sessionItems[0].source}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Activity className="h-3.5 w-3.5" />
+                  {sessionItems[0].messageCount} msgs
+                </span>
+                <span>{formatRelativeTime(sessionItems[0].lastActive)}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-text-muted italic py-1">No active sessions right now.</p>
+          )}
+        </SectionCard>
+      ),
+    },
+    {
+      id: 'quick-actions',
+      label: 'Quick actions',
+      className: 'widget-quick-actions',
+      content: (
+        <QuickActions
+          gatewayActions={gatewayActions}
+          runGatewayAction={runGatewayAction}
+          actionLoading={actionLoading}
+        />
+      ),
+    },
+    ...(cronItems.length > 0
+      ? [
+          {
+            id: 'cron',
+            label: 'Scheduled jobs',
+            className: 'widget-cron',
+            content: (
               <SectionCard eyebrow="Scheduled jobs" title="Cron status at a glance">
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                   <Badge variant="default">{cron.queuedJobs} queued</Badge>
                   <Badge variant={runningCron > 0 ? 'positive' : 'default'}>{runningCron} running</Badge>
                   <Badge variant={queuedCron > 0 ? 'warning' : 'default'}>{queuedCron} pending</Badge>
                 </div>
-
                 <div className="flex flex-col gap-2">
-                  {cronItems.map((job) => (
+                  {cronItems.map((job: { id: string; label: string; nextRunAt?: string | null; scheduleDisplay: string }) => (
                     <div key={job.id} className="flex items-center justify-between gap-3 text-sm">
                       <span className="min-w-0 font-medium text-text truncate">{job.label}</span>
                       <span className="text-xs text-text-muted ml-3 shrink-0">
@@ -188,10 +226,17 @@ export function OverviewDashboard() {
                   ))}
                 </div>
               </SectionCard>
-            )}
-          </div>
-        </div>
+            ),
+          } as DashboardWidget,
+        ]
+      : []),
+  ].filter((widget): widget is DashboardWidget => Boolean(widget.content));
 
+  return (
+    <div className="flex flex-col">
+      <AgentStatusBar />
+      <div className="p-4 sm:p-6">
+        <DashboardGrid widgets={widgets} />
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-6 pt-4 border-t border-border-subtle">
           <span className="text-xs text-text-subtle">
             {loading ? 'Refreshing…' : lastUpdatedAt ? `Last synced ${lastUpdatedAt}` : 'Not yet synced'}

@@ -145,7 +145,7 @@ def _iter_db_session_ids() -> list[str]:
     try:
         if db is None:
             return []
-        rows = db.list_sessions_rich(limit=500, order_by_last_active=True)
+        rows = db.list_sessions_rich(limit=2000, order_by_last_active=True)
         return [str(row.get("id", "")) for row in rows if row.get("id")]
     except Exception:
         return []
@@ -154,10 +154,16 @@ def _iter_db_session_ids() -> list[str]:
 
 
 def _try_get_session_db():
+    """Open the Hermes session store strictly read-only for telemetry.
+
+    Mission Control only observes sessions.  A writable ``SessionDB()`` runs
+    schema/FTS initialization on every request and competes with the gateway's
+    writer, which is precisely the wrong thing for a polling sidecar to do.
+    """
     try:
         from hermes_state import SessionDB
 
-        return SessionDB()
+        return SessionDB(read_only=True)
     except Exception:
         return None
 
@@ -229,6 +235,11 @@ def _coerce_int(value: Any, fallback: int = 0) -> int:
         return int(value)
     except Exception:
         return fallback
+
+
+def _coerce_token_int(value: Any) -> int:
+    """Normalize token counters; corrupted/invalid counters cannot be negative."""
+    return max(0, _coerce_int(value, 0))
 
 
 def _session_display_name(index_entry: dict[str, Any] | None, platform: str, title: str) -> str:
@@ -306,6 +317,14 @@ def _build_session_item(
         "messageCount": message_count,
         "traceMode": trace_mode,
         "preview": preview,
+        # Token usage (from SessionDB, fallback to gateway index)
+        "inputTokens": _coerce_token_int((db_row or index_entry or {}).get("input_tokens")),
+        "outputTokens": _coerce_token_int((db_row or index_entry or {}).get("output_tokens")),
+        "cacheReadTokens": _coerce_token_int((db_row or index_entry or {}).get("cache_read_tokens")),
+        "cacheWriteTokens": _coerce_token_int((db_row or index_entry or {}).get("cache_write_tokens")),
+        "reasoningTokens": _coerce_token_int((db_row or index_entry or {}).get("reasoning_tokens")),
+        "estimatedCostUsd": float((db_row or index_entry or {}).get("estimated_cost_usd") or 0.0),
+        "costStatus": _normalize_text((db_row or index_entry or {}).get("cost_status")),
     }
 
 
@@ -341,6 +360,200 @@ def load_agents_sessions_snapshot(limit: int = 100, live_window_seconds: int = 3
             "liveSessions": len(live_sessions),
             "activeAgents": len({item["agentId"] for item in live_sessions}),
         },
+    }
+
+
+def _query_db_token_aggregates() -> dict[str, Any] | None:
+    """Query cumulative token totals and per-model breakdown directly from state.db.
+
+    Returns None if the DB is unavailable.  Single SQL query — no N+1.
+    """
+    db = _try_get_session_db()
+    if db is None:
+        return None
+    try:
+        conn = getattr(db, "_conn", None)
+        if conn is None:
+            return None
+        # Newer Hermes versions keep per-call attribution in
+        # ``session_model_usage``. Older databases only have the aggregate
+        # ``sessions`` row, so retain a schema-compatible fallback while the
+        # live gateway performs its migration.
+        has_model_usage = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_model_usage'"
+        ).fetchone()
+        if has_model_usage:
+            rows = conn.execute("""
+                SELECT
+                    COALESCE(NULLIF(TRIM(model), ''), 'unknown') AS model,
+                    COUNT(DISTINCT session_id)                    AS session_count,
+                    COALESCE(SUM(input_tokens), 0)                AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0)               AS output_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0)           AS cache_read_tokens,
+                    COALESCE(SUM(cache_write_tokens), 0)          AS cache_write_tokens,
+                    COALESCE(SUM(reasoning_tokens), 0)            AS reasoning_tokens,
+                    COALESCE(SUM(estimated_cost_usd), 0.0)        AS estimated_cost_usd,
+                    COUNT(DISTINCT CASE
+                        WHEN cost_status IN ('actual', 'estimated', 'included')
+                             OR estimated_cost_usd > 0
+                             OR actual_cost_usd > 0
+                        THEN session_id END)                      AS priced_session_count
+                FROM session_model_usage
+                GROUP BY COALESCE(NULLIF(TRIM(model), ''), 'unknown')
+                ORDER BY estimated_cost_usd DESC
+            """).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT
+                    COALESCE(NULLIF(TRIM(model), ''), 'unknown') AS model,
+                    COUNT(*)                                      AS session_count,
+                    COALESCE(SUM(input_tokens), 0)                AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0)               AS output_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0)            AS cache_read_tokens,
+                    COALESCE(SUM(cache_write_tokens), 0)           AS cache_write_tokens,
+                    COALESCE(SUM(reasoning_tokens), 0)             AS reasoning_tokens,
+                    COALESCE(SUM(estimated_cost_usd), 0.0)         AS estimated_cost_usd,
+                    SUM(CASE
+                        WHEN cost_status IN ('actual', 'estimated', 'included')
+                             OR actual_cost_usd > 0
+                        THEN 1 ELSE 0 END)                         AS priced_session_count
+                FROM sessions
+                GROUP BY COALESCE(NULLIF(TRIM(model), ''), 'unknown')
+                ORDER BY estimated_cost_usd DESC
+            """).fetchall()
+
+        by_model: list[dict[str, Any]] = []
+        totals = {
+            "inputTokens": 0, "outputTokens": 0,
+            "cacheReadTokens": 0, "cacheWriteTokens": 0,
+            "reasoningTokens": 0, "totalTokens": 0,
+            "estimatedCostUsd": 0.0, "sessionCount": 0,
+            "pricedSessionCount": 0,
+        }
+        for r in rows:
+            d = dict(r)
+            model = d["model"]
+            inp = max(0, int(d["input_tokens"] or 0))
+            out = max(0, int(d["output_tokens"] or 0))
+            cr  = max(0, int(d["cache_read_tokens"] or 0))
+            cw  = max(0, int(d["cache_write_tokens"] or 0))
+            rea = max(0, int(d["reasoning_tokens"] or 0))
+            cost = max(0.0, float(d["estimated_cost_usd"] or 0.0))
+            # Reasoning is a detail of output, not an additional token bucket.
+            total = inp + out + cr + cw
+            priced = int(d["priced_session_count"] or 0)
+            by_model.append({
+                "model": model,
+                "inputTokens": inp, "outputTokens": out,
+                "cacheReadTokens": cr, "cacheWriteTokens": cw,
+                "reasoningTokens": rea, "totalTokens": total,
+                "estimatedCostUsd": round(cost, 6),
+                "sessionCount": d["session_count"],
+                "pricedSessionCount": priced,
+            })
+            totals["inputTokens"] += inp
+            totals["outputTokens"] += out
+            totals["cacheReadTokens"] += cr
+            totals["cacheWriteTokens"] += cw
+            totals["reasoningTokens"] += rea
+            totals["totalTokens"] += total
+            totals["estimatedCostUsd"] += cost
+            totals["sessionCount"] += d["session_count"]
+            totals["pricedSessionCount"] += priced
+
+        totals["estimatedCostUsd"] = round(totals["estimatedCostUsd"], 6)
+        return {"totals": totals, "byModel": by_model}
+    except Exception:
+        _log.debug("DB aggregate query failed", exc_info=True)
+        return None
+    finally:
+        _close_session_db(db)
+
+
+def load_sessions_usage(live_window_seconds: int = 300) -> dict[str, Any]:
+    """Aggregate token usage and cost across all sessions, with per-model breakdown.
+
+    Prefers a single aggregate SQL query on state.db (fast, covers ALL 1100+
+    sessions).  Falls back to the slower per-session Python loop only when the
+    DB is unavailable.
+    """
+    db_result = _query_db_token_aggregates()
+    if db_result is not None:
+        return {
+            "success": True,
+            "available": True,
+            "totals": db_result["totals"],
+            "byModel": db_result["byModel"],
+        }
+
+    # Fallback: iterate sessions in Python (slower, limited by _collect_agent_sessions)
+    all_items = _collect_agent_sessions(live_window_seconds=live_window_seconds)
+    totals = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "totalTokens": 0,
+        "estimatedCostUsd": 0.0,
+        "sessionCount": len(all_items),
+        "pricedSessionCount": 0,
+    }
+    by_model: dict[str, dict[str, Any]] = {}
+    for item in all_items:
+        inp = max(0, int(item.get("inputTokens", 0) or 0))
+        out = max(0, int(item.get("outputTokens", 0) or 0))
+        cache_r = max(0, int(item.get("cacheReadTokens", 0) or 0))
+        cache_w = max(0, int(item.get("cacheWriteTokens", 0) or 0))
+        reasoning = max(0, int(item.get("reasoningTokens", 0) or 0))
+        cost = max(0.0, float(item.get("estimatedCostUsd", 0.0) or 0.0))
+        total = inp + out + cache_r + cache_w
+        totals["inputTokens"] += inp
+        totals["outputTokens"] += out
+        totals["cacheReadTokens"] += cache_r
+        totals["cacheWriteTokens"] += cache_w
+        totals["reasoningTokens"] += reasoning
+        totals["totalTokens"] += total
+        totals["estimatedCostUsd"] += cost
+        if item.get("costStatus") in {"actual", "estimated", "included"}:
+            totals["pricedSessionCount"] += 1
+        model = item.get("model", "unknown")
+        bucket = by_model.get(model)
+        if bucket is None:
+            bucket = {
+                "model": model,
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0,
+                "totalTokens": 0,
+                "estimatedCostUsd": 0.0,
+                "sessionCount": 0,
+                "pricedSessionCount": 0,
+            }
+            by_model[model] = bucket
+        bucket["inputTokens"] += inp
+        bucket["outputTokens"] += out
+        bucket["cacheReadTokens"] += cache_r
+        bucket["cacheWriteTokens"] += cache_w
+        bucket["reasoningTokens"] += reasoning
+        bucket["totalTokens"] += total
+        bucket["estimatedCostUsd"] += cost
+        bucket["sessionCount"] += 1
+        if item.get("costStatus") in {"actual", "estimated", "included"}:
+            bucket["pricedSessionCount"] += 1
+    # Sort by cost descending
+    breakdown = sorted(by_model.values(), key=lambda b: b["estimatedCostUsd"], reverse=True)
+    # Round cost to 6 decimal places
+    totals["estimatedCostUsd"] = round(totals["estimatedCostUsd"], 6)
+    for b in breakdown:
+        b["estimatedCostUsd"] = round(b["estimatedCostUsd"], 6)
+    return {
+        "success": True,
+        "available": True,
+        "totals": totals,
+        "byModel": breakdown,
     }
 
 
