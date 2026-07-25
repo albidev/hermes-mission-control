@@ -1,4 +1,4 @@
-import { Bot, Sparkles } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import type { MissionControlSessionsSnapshot } from '../../lib/hermes-api';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
@@ -23,8 +23,6 @@ export function AgentsPanel({
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3);
 
-  const freshest = [...sessions.items].sort((a, b) => b.lastActive - a.lastActive)[0] ?? null;
-
   return (
     <Card padding="none">
       <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
@@ -37,7 +35,7 @@ export function AgentsPanel({
         </Badge>
       </div>
 
-      <div className="p-4 flex flex-col gap-3">
+      <div className="p-3 flex flex-col gap-2">
         <div className="flex items-center justify-between text-sm">
           <span className="text-text-muted">Live sessions</span>
           <span className="font-medium text-text">{liveSessions.length}</span>
@@ -66,13 +64,6 @@ export function AgentsPanel({
             <p className="text-xs text-text-subtle italic">No live model usage right now.</p>
           )}
         </div>
-
-        {freshest ? (
-          <div className="pt-2 border-t border-border-subtle flex items-center gap-1.5 text-xs text-text-subtle">
-            <Bot className="h-3.5 w-3.5" />
-            Last activity {formatRelativeTime(freshest.lastActive)}
-          </div>
-        ) : null}
       </div>
     </Card>
   );

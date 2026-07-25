@@ -49,14 +49,14 @@ function SectionCard({
 }) {
   return (
     <Card padding="none">
-      <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
+      <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
           <span className="eyebrow">{eyebrow}</span>
           <h2 className="text-sm font-semibold text-text">{title}</h2>
         </div>
         {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-3">{children}</div>
     </Card>
   );
 }
@@ -202,31 +202,35 @@ export function OverviewDashboard() {
         />
       ),
     },
-    {
-      id: 'cron',
-      label: 'Scheduled jobs',
-      className: 'widget-cron',
-      content: cronItems.length > 0 ? (
-        <SectionCard eyebrow="Scheduled jobs" title="Cron status at a glance">
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <Badge variant="default">{cron.queuedJobs} queued</Badge>
-            <Badge variant={runningCron > 0 ? 'positive' : 'default'}>{runningCron} running</Badge>
-            <Badge variant={queuedCron > 0 ? 'warning' : 'default'}>{queuedCron} pending</Badge>
-          </div>
-          <div className="flex flex-col gap-2">
-            {cronItems.map((job) => (
-              <div key={job.id} className="flex items-center justify-between gap-3 text-sm">
-                <span className="min-w-0 font-medium text-text truncate">{job.label}</span>
-                <span className="text-xs text-text-muted ml-3 shrink-0">
-                  {job.nextRunAt ? formatRelativeTime(job.nextRunAt) : job.scheduleDisplay}
-                </span>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      ) : null,
-    },
-  ];
+    ...(cronItems.length > 0
+      ? [
+          {
+            id: 'cron',
+            label: 'Scheduled jobs',
+            className: 'widget-cron',
+            content: (
+              <SectionCard eyebrow="Scheduled jobs" title="Cron status at a glance">
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <Badge variant="default">{cron.queuedJobs} queued</Badge>
+                  <Badge variant={runningCron > 0 ? 'positive' : 'default'}>{runningCron} running</Badge>
+                  <Badge variant={queuedCron > 0 ? 'warning' : 'default'}>{queuedCron} pending</Badge>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {cronItems.map((job: { id: string; label: string; nextRunAt?: string | null; scheduleDisplay: string }) => (
+                    <div key={job.id} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="min-w-0 font-medium text-text truncate">{job.label}</span>
+                      <span className="text-xs text-text-muted ml-3 shrink-0">
+                        {job.nextRunAt ? formatRelativeTime(job.nextRunAt) : job.scheduleDisplay}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </SectionCard>
+            ),
+          } as DashboardWidget,
+        ]
+      : []),
+  ].filter((widget): widget is DashboardWidget => Boolean(widget.content));
 
   return (
     <div className="flex flex-col">

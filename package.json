@@ -1,7 +1,8 @@
 {
-  "name": "mission-control",
+  "name": "hermes-mission-control",
   "private": true,
   "version": "0.1.0",
+  "description": "Standalone operational dashboard for Hermes with live telemetry and zero core dependencies.",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -31,5 +32,8 @@
     "tailwindcss": "^3.4.19",
     "typescript": "^5.6.2",
     "vite": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
