@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Bot, Clock3, DollarSign, Layers, MessagesSquare, Workflow } from 'lucide-react';
+import { Activity, Bot, Clock3, Copy, DollarSign, Layers, MessagesSquare, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
@@ -12,6 +12,8 @@ import {
   type MissionControlAgentSessionItem,
   type MissionControlAgentsSessionsSnapshot,
 } from '../lib/hermes-api';
+
+const PAGE_SIZE = 50;
 
 function MetricCard({
   icon: Icon,
@@ -52,11 +54,16 @@ function formatCost(usd: number): string {
 export function SessionsRoute() {
   const { snapshot, storedToken } = useMissionControl();
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentsSessionsSnapshot | null>(null);
+  const [loadedItems, setLoadedItems] = useState<MissionControlAgentSessionItem[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const loadSessions = async () => {
-    const data = await loadMissionControlAgentSessions(storedToken ?? undefined);
+    const data = await loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, 0);
     setAgentSessions(data);
+    setLoadedItems(data.items ?? []);
+    setHasMore((data.items?.length ?? 0) >= PAGE_SIZE);
   };
 
   const { state: pullState } = usePullToReload({
@@ -68,26 +75,43 @@ export function SessionsRoute() {
 
   useEffect(() => {
     let cancelled = false;
-    loadMissionControlAgentSessions(storedToken ?? undefined).then((data) => {
-      if (!cancelled) setAgentSessions(data);
+    loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, 0).then((data) => {
+      if (!cancelled) {
+        setAgentSessions(data);
+        setLoadedItems(data.items ?? []);
+        setHasMore((data.items?.length ?? 0) >= PAGE_SIZE);
+      }
     });
     return () => { cancelled = true; };
   }, [storedToken]);
 
   const agentSessionMap = useMemo(() => {
     const map = new Map<string, MissionControlAgentSessionItem>();
-    if (agentSessions?.items) {
-      for (const item of agentSessions.items) {
+    if (loadedItems.length) {
+      for (const item of loadedItems) {
         map.set(item.sessionId, item);
       }
     }
     return map;
-  }, [agentSessions]);
+  }, [loadedItems]);
 
   const sortedSessions = useMemo(
-    () => [...snapshot.sessions.items].sort((a, b) => b.lastActive - a.lastActive),
-    [snapshot.sessions.items],
+    () => [...loadedItems].sort((a, b) => (b.lastActiveAt ?? b.startedAt ?? 0) - (a.lastActiveAt ?? a.startedAt ?? 0)),
+    [loadedItems],
   );
+
+  const loadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, loadedItems.length);
+      const nextItems = next.items ?? [];
+      setLoadedItems((prev) => [...prev, ...nextItems]);
+      setHasMore(nextItems.length >= PAGE_SIZE);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const totalTokens = agentSessions?.items.reduce((sum, s) => sum + s.inputTokens + s.outputTokens, 0) ?? 0;
   const totalCost = agentSessions?.items.reduce((sum, s) => sum + s.estimatedCostUsd, 0) ?? 0;
@@ -156,11 +180,12 @@ export function SessionsRoute() {
         <div className="divide-y divide-border-subtle">
           {sortedSessions.length > 0 ? (
             sortedSessions.map((session) => {
-              const agent = agentSessionMap.get(session.id);
+              const agent = agentSessionMap.get(session.sessionId);
               const hasTokens = agent && (agent.inputTokens + agent.outputTokens > 0);
               const totalSessionTokens = agent ? agent.inputTokens + agent.outputTokens : 0;
+              const lastActive = session.lastActiveAt ?? session.startedAt ?? 0;
               return (
-                <div key={session.id} className="px-4 py-3 flex flex-col gap-2">
+                <div key={session.sessionId} className="px-4 py-3 flex flex-col gap-2">
                   {/* Row 1: title + msgs badge */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -168,6 +193,19 @@ export function SessionsRoute() {
                       <p className="text-xs text-text-muted truncate">{session.source} · {session.model}</p>
                     </div>
                     <Badge variant="default" className="shrink-0">{session.messageCount} msgs</Badge>
+                  </div>
+
+                  {/* Row 1b: session id (copyable for recovery) */}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(session.sessionId)}
+                      title="Copy session id"
+                      className="inline-flex items-center gap-1 text-[10px] font-mono text-text-subtle hover:text-sky-300 transition-colors truncate"
+                    >
+                      <Copy size={10} />
+                      <span className="truncate">{session.sessionId}</span>
+                    </button>
                   </div>
 
                   {/* Row 2: preview */}
@@ -202,11 +240,11 @@ export function SessionsRoute() {
 
                   {/* Row 4: timestamps + trace CTA */}
                   <div className="flex items-center gap-2 text-xs text-text-subtle">
-                    <span className="truncate">{formatRelativeTime(session.lastActive)}</span>
+                    <span className="truncate">{formatRelativeTime(lastActive)}</span>
                     <span className="text-border-subtle">·</span>
-                    <span className="truncate hidden sm:inline">Started {formatTimestamp(session.startedAt)}</span>
+                    <span className="truncate hidden sm:inline">Started {formatTimestamp(session.startedAt ?? 0)}</span>
                     <Link
-                      to={`/agents?session=${encodeURIComponent(session.id)}`}
+                      to={`/agents?session=${encodeURIComponent(session.sessionId)}`}
                       className="ml-auto inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors shrink-0"
                       title="Open trace in Agents"
                     >
@@ -221,6 +259,19 @@ export function SessionsRoute() {
             <div className="px-4 py-8 text-center text-sm text-text-muted italic">No sessions yet.</div>
           )}
         </div>
+
+        {hasMore ? (
+          <div className="p-4 border-t border-border-subtle">
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="w-full py-2 rounded-md text-sm font-medium text-sky-400 hover:text-sky-300 hover:bg-border-subtle/40 transition-colors disabled:opacity-50"
+            >
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </button>
+          </div>
+        ) : null}
       </Card>
     </div>
   );
