@@ -8,10 +8,14 @@ import {
   extractSessionKey,
   extractTranscript,
   extractInjectedSessionToken,
+  extractSessionModel,
+  eventActivity,
   isResponseFor,
   nextReconnectDelay,
   normalizeTranscript,
+  parseCommandDispatch,
   parseGatewayFrame,
+  parseSlash,
 } from '../src/lib/chat-protocol.ts';
 
 function assertEqual<T>(actual: T, expected: T) {
@@ -63,6 +67,21 @@ assertEqual(extractSessionKey({ session_key: 'stored-def' }), 'stored-def');
 assertEqual(extractSessionKey({ resumed: 'stored-ghi' }), 'stored-ghi');
 assertEqual(extractInjectedSessionToken('<script>window.__HERMES_SESSION_TOKEN__ = "gateway-token";</script>'), 'gateway-token');
 assertEqual(extractInjectedSessionToken('<html>no token</html>'), null);
+assertDeepEqual(parseSlash('/model deepseek-v4-flash'), { name: 'model', arg: 'deepseek-v4-flash' });
+assertDeepEqual(parseSlash('///help'), { name: 'help', arg: '' });
+assertDeepEqual(extractSessionModel({ info: { model: 'gemma4:31b', provider: 'ollama' } }), {
+  model: 'gemma4:31b',
+  provider: 'ollama',
+});
+assertDeepEqual(extractSessionModel({ output: 'Hermes TUI Status\nModel: deepseek-v4-flash (openrouter)' }), {
+  model: 'deepseek-v4-flash',
+  provider: 'openrouter',
+});
+assertDeepEqual(parseCommandDispatch({ type: 'prefill', message: 'draft', notice: 'ready' }), {
+  type: 'prefill',
+  message: 'draft',
+  notice: 'ready',
+});
 assertEqual(classifyAttachment('image/png', 'photo.bin'), 'image');
 assertEqual(classifyAttachment('application/pdf', 'notes.txt'), 'pdf');
 assertEqual(classifyAttachment('', 'report.pdf'), 'pdf');
@@ -90,6 +109,16 @@ assertDeepEqual(extractInteractionRequest({
   requestId: null,
   payload: { command: 'git push', description: 'Push changes', choices: ['once', 'deny'] },
 });
+assertDeepEqual(extractInteractionRequest({
+  type: 'terminal.read.request',
+  session_id: 'sid',
+  payload: { request_id: 'req-terminal', prompt: 'Paste the output' },
+}), {
+  kind: 'terminal_read',
+  sessionId: 'sid',
+  requestId: 'req-terminal',
+  payload: { request_id: 'req-terminal', prompt: 'Paste the output' },
+});
 assertEqual(extractInteractionRequest({ type: 'message.delta', payload: {} }), null);
 assertDeepEqual(extractTranscript({ messages: [{ role: 'user', text: 'hi' }, null] }), [{ role: 'user', text: 'hi' }]);
 
@@ -110,6 +139,25 @@ messages = applyGatewayEvent(messages, { type: 'message.complete', payload: { te
 assertEqual(messages.length, 1);
 assertEqual(messages[0].text, 'ABC');
 assertEqual(messages[0].status, 'complete');
+
+assertDeepEqual(eventActivity({ type: 'status.update', payload: { kind: 'compacting', text: 'Summarizing context' }}), {
+  kind: 'status',
+  label: 'Compacting context',
+  detail: 'Summarizing context',
+  state: 'running',
+});
+
+let interimMessages = applyGatewayEvent([], { type: 'message.start' }, 2100);
+interimMessages = applyGatewayEvent(interimMessages, { type: 'message.delta', payload: { text: 'first pass' } }, 2101);
+interimMessages = applyGatewayEvent(interimMessages, { type: 'message.interim', payload: { text: 'interim answer' } }, 2102);
+assertEqual(interimMessages.length, 2);
+assertEqual(interimMessages[0].text, 'first pass');
+assertEqual(interimMessages[0].status, 'complete');
+assertEqual(interimMessages[1].text, 'interim answer');
+assertEqual(interimMessages[1].status, 'streaming');
+interimMessages = applyGatewayEvent(interimMessages, { type: 'reasoning.available', payload: { reasoning: 'A concise rationale.' } }, 2103);
+assertEqual(interimMessages.at(-1)?.role, 'tool');
+assertEqual(interimMessages.at(-1)?.text, '**Reasoning**\n\nA concise rationale.');
 
 const unknownApplied = applyGatewayEvent(messages, { type: 'future.event', payload: { text: 'ignored' } }, 2004);
 assertEqual(unknownApplied, messages);

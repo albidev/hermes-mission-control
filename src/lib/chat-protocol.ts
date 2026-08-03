@@ -36,7 +36,7 @@ export type GatewayEvent = {
   payload?: Record<string, unknown>;
 };
 
-export type GatewayInteractionKind = 'approval' | 'clarify' | 'secret' | 'sudo';
+export type GatewayInteractionKind = 'approval' | 'clarify' | 'secret' | 'sudo' | 'terminal_read';
 
 export type GatewayInteractionRequest = {
   kind: GatewayInteractionKind;
@@ -44,6 +44,18 @@ export type GatewayInteractionRequest = {
   requestId: string | null;
   payload: Record<string, unknown>;
 };
+
+export type ChatModelIdentity = {
+  model: string;
+  provider?: string;
+};
+
+export type GatewayCommandDispatch =
+  | { type: 'exec' | 'plugin'; output?: string; warning?: string }
+  | { type: 'alias'; target: string }
+  | { type: 'skill'; name: string; message?: string; display?: string; notice?: string }
+  | { type: 'send'; message: string; display?: string; notice?: string }
+  | { type: 'prefill'; message: string; notice?: string };
 
 export type ChatActivity = {
   kind: 'status' | 'tool' | 'reasoning';
@@ -180,6 +192,72 @@ export function extractSessionKey(result: unknown): string | null {
   return null;
 }
 
+export function parseSlash(command: string): { name: string; arg: string } {
+  const normalized = command.trim().replace(/^\/+/, '');
+  const match = normalized.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+  return match ? { name: match[1], arg: (match[2] ?? '').trim() } : { name: '', arg: '' };
+}
+
+export function parseCommandDispatch(raw: unknown): GatewayCommandDispatch | null {
+  if (!isRecord(raw) || typeof raw.type !== 'string') return null;
+  const stringValue = (value: unknown): string | undefined =>
+    typeof value === 'string' ? value : undefined;
+
+  if (raw.type === 'exec' || raw.type === 'plugin') {
+    return { type: raw.type, output: stringValue(raw.output), warning: stringValue(raw.warning) };
+  }
+  if (raw.type === 'alias' && typeof raw.target === 'string' && raw.target.trim()) {
+    return { type: 'alias', target: raw.target.trim() };
+  }
+  if (raw.type === 'skill' && typeof raw.name === 'string' && raw.name.trim()) {
+    return {
+      type: 'skill',
+      name: raw.name.trim(),
+      message: stringValue(raw.message),
+      display: stringValue(raw.display),
+      notice: stringValue(raw.notice),
+    };
+  }
+  if (raw.type === 'send' && typeof raw.message === 'string') {
+    return {
+      type: 'send',
+      message: raw.message,
+      display: stringValue(raw.display),
+      notice: stringValue(raw.notice),
+    };
+  }
+  if (raw.type === 'prefill' && typeof raw.message === 'string') {
+    return { type: 'prefill', message: raw.message, notice: stringValue(raw.notice) };
+  }
+  return null;
+}
+
+export function extractSessionModel(result: unknown): ChatModelIdentity | null {
+  if (!isRecord(result)) return null;
+
+  const candidates: Record<string, unknown>[] = [result];
+  if (isRecord(result.info)) candidates.unshift(result.info);
+  for (const candidate of candidates) {
+    if (typeof candidate.model === 'string' && candidate.model.trim()) {
+      const provider = typeof candidate.provider === 'string' && candidate.provider.trim()
+        ? candidate.provider.trim()
+        : undefined;
+      return { model: candidate.model.trim(), ...(provider ? { provider } : {}) };
+    }
+  }
+
+  if (typeof result.output === 'string') {
+    const match = result.output.match(/^Model:\s*(.+?)(?:\s+\(([^)]+)\))?\s*$/m);
+    if (match?.[1]?.trim()) {
+      return {
+        model: match[1].trim(),
+        ...(match[2]?.trim() ? { provider: match[2].trim() } : {}),
+      };
+    }
+  }
+  return null;
+}
+
 export function extractInjectedSessionToken(html: string): string | null {
   const match = html.match(/__HERMES_SESSION_TOKEN__\s*(?:=|:)\s*["']([^"']+)["']/);
   return match?.[1]?.trim() || null;
@@ -205,6 +283,7 @@ export function extractInteractionRequest(event: GatewayEvent): GatewayInteracti
     'clarify.request': 'clarify',
     'secret.request': 'secret',
     'sudo.request': 'sudo',
+    'terminal.read.request': 'terminal_read',
   };
   const kind = kindByEvent[event.type];
   if (!kind) return null;
@@ -224,10 +303,28 @@ export function eventActivity(event: GatewayEvent): ChatActivity | null {
   const payload = event.payload ?? {};
   const detail = eventText(event) || (typeof payload.message === 'string' ? payload.message : '');
   if (event.type === 'reasoning.delta' || event.type === 'thinking.delta') {
-    return { kind: 'reasoning', label: 'Working through the request', state: 'running' };
+    return { kind: 'reasoning', label: 'Working through the request', detail, state: 'running' };
+  }
+  if (event.type === 'reasoning.available') {
+    return { kind: 'reasoning', label: 'Reasoning available', detail, state: 'complete' };
   }
   if (event.type === 'status.update') {
-    return { kind: 'status', label: detail || 'Working', state: 'running' };
+    const status = typeof payload.kind === 'string' ? payload.kind
+      : typeof payload.status === 'string' ? payload.status
+      : typeof payload.phase === 'string' ? payload.phase : '';
+    const labels: Record<string, string> = {
+      compacting: 'Compacting context',
+      process: 'Running process',
+      processing: 'Processing',
+      goal: 'Working toward goal',
+      waiting: 'Waiting',
+      complete: 'Complete',
+    };
+    return { kind: 'status', label: labels[status] || detail || 'Working', detail, state: status === 'complete' ? 'complete' : 'running' };
+  }
+  if (event.type.startsWith('moa.')) {
+    const phase = event.type.slice(4).replace(/[._-]+/g, ' ');
+    return { kind: 'status', label: `MoA ${phase || 'workflow'}`, detail, state: event.type.endsWith('complete') ? 'complete' : 'running' };
   }
   if (event.type === 'tool.start') {
     const name = typeof payload.name === 'string' ? payload.name
@@ -293,10 +390,28 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     const next = [...messages];
     const last = next.at(-1);
     if (last?.role === 'assistant' && last.status === 'streaming') {
-      next[next.length - 1] = { ...last, text };
-      return next;
+      if (!last.text.trim()) {
+        next[next.length - 1] = { ...last, text };
+        return next;
+      }
+      next[next.length - 1] = { ...last, status: 'complete' };
     }
-    return [...messages, { id: `assistant-${now}`, role: 'assistant', text, status: 'streaming', createdAt: now }];
+    return [...next, { id: `assistant-interim-${now}`, role: 'assistant', text, status: 'streaming', createdAt: now }];
+  }
+
+  if (event.type === 'reasoning.available') {
+    const payload = event.payload ?? {};
+    const text = eventText(event)
+      || (typeof payload.reasoning === 'string' ? payload.reasoning : '')
+      || (typeof payload.content === 'string' ? payload.content : '');
+    if (!text.trim()) return messages;
+    return [...messages, {
+      id: `reasoning-${now}`,
+      role: 'tool',
+      text: `**Reasoning**\n\n${text}`,
+      status: 'complete',
+      createdAt: now,
+    }];
   }
 
   if (event.type === 'message.complete') {

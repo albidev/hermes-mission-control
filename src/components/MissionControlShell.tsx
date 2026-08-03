@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bot,
   Brain,
@@ -30,6 +30,7 @@ const navItems: Array<{ to: string; label: string; icon: LucideIcon }> = [
 
 export function MissionControlShell() {
   const location = useLocation();
+  const navigate = useNavigate();
   const {
     authRequired,
     authError,
@@ -46,8 +47,19 @@ export function MissionControlShell() {
   const [sideOpen, setSideOpen] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const chatRecoverySessionId = new URLSearchParams(location.search).get('chatSession');
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const chatButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeChat = useCallback(() => {
+    setChatOpen(false);
+    chatButtonRef.current?.focus();
+    if (!chatRecoverySessionId) return;
+    const params = new URLSearchParams(location.search);
+    params.delete('chatSession');
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+  }, [chatRecoverySessionId, location.pathname, location.search, navigate]);
 
   const activeNav = navItems.find((item) => (item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)));
   const isOverviewRoute = activeNav?.to === '/';
@@ -66,16 +78,19 @@ export function MissionControlShell() {
   }, [sideOpen]);
 
   useEffect(() => {
+    if (chatRecoverySessionId) setChatOpen(true);
+  }, [chatRecoverySessionId]);
+
+  useEffect(() => {
     if (!chatOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setChatOpen(false);
-        chatButtonRef.current?.focus();
+        closeChat();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [chatOpen]);
+  }, [chatOpen, closeChat]);
 
   useEffect(() => {
     if (!authRequired) {
@@ -269,10 +284,8 @@ export function MissionControlShell() {
           <ChatDrawer
             open={chatOpen}
             storedToken={storedToken}
-            onClose={() => {
-              setChatOpen(false);
-              chatButtonRef.current?.focus();
-            }}
+            initialSessionId={chatRecoverySessionId}
+            onClose={closeChat}
           />
         ) : null}
       </div>

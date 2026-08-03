@@ -13,6 +13,7 @@ import {
   Bot,
   Check,
   Circle,
+  Cpu,
   FileText,
   Image as ImageIcon,
   KeyRound,
@@ -26,7 +27,9 @@ import {
   X,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { ChatSlashPopover, type ChatSlashCompletionResponse, type ChatSlashPopoverHandle } from './ChatSlashPopover';
 import {
   applyGatewayEvent,
   attachmentRpcMethod,
@@ -38,9 +41,12 @@ import {
   extractInteractionRequest,
   extractSessionId,
   extractSessionKey,
+  extractSessionModel,
   extractTranscript,
   getRpcErrorMessage,
   isResponseFor,
+  parseCommandDispatch,
+  parseSlash,
   nextReconnectDelay,
   normalizeTranscript,
   parseGatewayFrame,
@@ -50,12 +56,15 @@ import {
   type ChatAttachmentSummary,
   type ChatAttachmentUpload,
   type ChatMessage,
+  type ChatModelIdentity,
+  type GatewayCommandDispatch,
   type GatewayInteractionRequest,
 } from '../lib/chat-protocol';
 
 type ChatDrawerProps = {
   open: boolean;
   storedToken: string;
+  initialSessionId?: string | null;
   onClose: () => void;
 };
 
@@ -64,6 +73,7 @@ type ConnectionState = 'idle' | 'ticket' | 'connecting' | 'connected' | 'reconne
 type PersistedChat = {
   sessionId: string | null;
   sessionKey: string | null;
+  modelIdentity: ChatModelIdentity | null;
   messages: ChatMessage[];
   updatedAt: number;
 };
@@ -91,24 +101,25 @@ const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 function readPersistedChat(): PersistedChat {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { sessionId: null, sessionKey: null, messages: [], updatedAt: 0 };
+    if (!raw) return { sessionId: null, sessionKey: null, modelIdentity: null, messages: [], updatedAt: 0 };
     const parsed = JSON.parse(raw) as Partial<PersistedChat>;
     return {
       sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
       sessionKey: typeof parsed.sessionKey === 'string' ? parsed.sessionKey : null,
+      modelIdentity: extractSessionModel(parsed.modelIdentity),
       messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
     };
   } catch {
-    return { sessionId: null, sessionKey: null, messages: [], updatedAt: 0 };
+    return { sessionId: null, sessionKey: null, modelIdentity: null, messages: [], updatedAt: 0 };
   }
 }
 
-function persistChat(sessionId: string | null, sessionKey: string | null, messages: ChatMessage[]) {
+function persistChat(sessionId: string | null, sessionKey: string | null, modelIdentity: ChatModelIdentity | null, messages: ChatMessage[]) {
   try {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ sessionId, sessionKey, messages: messages.slice(-200), updatedAt: Date.now() }),
+      JSON.stringify({ sessionId, sessionKey, modelIdentity, messages: messages.slice(-200), updatedAt: Date.now() }),
     );
   } catch {
     // Storage is best effort; the live session remains authoritative.
@@ -189,6 +200,14 @@ function resultText(value: unknown): string {
   return '';
 }
 
+function commandOutput(value: unknown): string {
+  if (!isRecord(value)) return '';
+  for (const key of ['output', 'display', 'message', 'notice', 'warning']) {
+    if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim();
+  }
+  return '';
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -208,10 +227,11 @@ function interactionTitle(interaction: GatewayInteractionRequest): string {
   if (interaction.kind === 'approval') return 'Hermes needs permission';
   if (interaction.kind === 'clarify') return 'Hermes needs your answer';
   if (interaction.kind === 'sudo') return 'Hermes needs elevated access';
+  if (interaction.kind === 'terminal_read') return 'Hermes needs terminal output';
   return 'Hermes needs a secret';
 }
 
-function useGatewayChat(storedToken: string, open: boolean) {
+function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: string | null) {
   const initial = useMemo(readPersistedChat, []);
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
   const [sessionId, setSessionId] = useState<string | null>(initial.sessionId);
@@ -223,6 +243,8 @@ function useGatewayChat(storedToken: string, open: boolean) {
   const [running, setRunning] = useState(false);
   const [activity, setActivity] = useState<ChatActivity | null>(null);
   const [interaction, setInteraction] = useState<GatewayInteractionRequest | null>(null);
+  const [modelIdentity, setModelIdentity] = useState<ChatModelIdentity | null>(initial.modelIdentity);
+  const [commandPrefill, setCommandPrefill] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef(new Map<string, PendingRpc>());
   const requestSeqRef = useRef(0);
@@ -234,6 +256,7 @@ function useGatewayChat(storedToken: string, open: boolean) {
   const sessionKeyRef = useRef(sessionKey);
   const interactionRef = useRef(interaction);
   const intentionalCloseRef = useRef(false);
+  const requestedSessionIdRef = useRef<string | null>(initialSessionId ?? null);
   const connectRef = useRef<() => Promise<void>>(async () => {});
   const readyResolveRef = useRef<(() => void) | null>(null);
 
@@ -250,8 +273,22 @@ function useGatewayChat(storedToken: string, open: boolean) {
   }, [interaction]);
 
   useEffect(() => {
-    persistChat(sessionId, sessionKey, messages);
-  }, [messages, sessionId, sessionKey]);
+    const requested = initialSessionId?.trim() || null;
+    requestedSessionIdRef.current = requested;
+    if (!requested) return;
+    setSessionId(requested);
+    sessionIdRef.current = requested;
+    setSessionKey(requested);
+    sessionKeyRef.current = requested;
+    setMessages([]);
+    setModelIdentity(null);
+    setInteraction(null);
+    setActivity(null);
+  }, [initialSessionId]);
+
+  useEffect(() => {
+    persistChat(sessionId, sessionKey, modelIdentity, messages);
+  }, [messages, modelIdentity, sessionId, sessionKey]);
 
   const rejectPending = useCallback((message: string) => {
     for (const pending of pendingRef.current.values()) {
@@ -285,8 +322,22 @@ function useGatewayChat(storedToken: string, open: boolean) {
     });
   }, []);
 
+  const adoptModel = useCallback((result: unknown) => {
+    const next = extractSessionModel(result);
+    if (next) setModelIdentity(next);
+    return next;
+  }, []);
+
+  const refreshModel = useCallback(async (activeSessionId: string) => {
+    try {
+      adoptModel(await request<unknown>('session.status', { session_id: activeSessionId }));
+    } catch {
+      // The create/resume payload already carries the model; status is a best-effort refresh.
+    }
+  }, [adoptModel, request]);
+
   const ensureSession = useCallback(async () => {
-    const existingKey = sessionKeyRef.current || sessionIdRef.current;
+    const existingKey = requestedSessionIdRef.current || sessionKeyRef.current || sessionIdRef.current;
     if (existingKey) {
       try {
         const resumed = await request<unknown>('session.resume', {
@@ -295,6 +346,7 @@ function useGatewayChat(storedToken: string, open: boolean) {
           eager_build: true,
           source: 'mission-control',
         });
+        adoptModel(resumed);
         const resolvedSessionId = extractSessionId(resumed) ?? sessionIdRef.current ?? existingKey;
         const resolvedSessionKey = extractSessionKey(resumed) ?? existingKey;
         setSessionId(resolvedSessionId);
@@ -303,7 +355,7 @@ function useGatewayChat(storedToken: string, open: boolean) {
         sessionKeyRef.current = resolvedSessionKey;
         const transcript = normalizeTranscript(extractTranscript(resumed));
         const inflight = extractInflightAssistant(resumed);
-        if (transcript.length > 0) {
+        if (transcript.length > 0 || inflight) {
           setMessages(
             inflight
               ? [...transcript, { id: `inflight-${Date.now()}`, role: 'assistant', text: inflight, status: 'streaming', createdAt: Date.now() }]
@@ -313,11 +365,15 @@ function useGatewayChat(storedToken: string, open: boolean) {
         setRunning(Boolean(inflight));
         return resolvedSessionId;
       } catch {
+        if (requestedSessionIdRef.current === existingKey) {
+          throw new Error(`Session ${existingKey} could not be recovered from the gateway.`);
+        }
         setStatusText('Stored session could not be resumed; creating a new chat.');
       }
     }
 
     const created = await request<unknown>('session.create', { cols: 80, source: 'mission-control' });
+    adoptModel(created);
     const createdSessionId = extractSessionId(created);
     if (!createdSessionId) throw new Error('Gateway did not return a session id.');
     const createdSessionKey = extractSessionKey(created);
@@ -327,7 +383,14 @@ function useGatewayChat(storedToken: string, open: boolean) {
     sessionKeyRef.current = createdSessionKey;
     setRunning(false);
     return createdSessionId;
-  }, [request]);
+  }, [request, adoptModel]);
+
+  useEffect(() => {
+    if (!open || !initialSessionId || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    void ensureSession().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : 'Failed to recover the selected session.');
+    });
+  }, [ensureSession, initialSessionId, open]);
 
   const scheduleReconnect = useCallback(() => {
     if (intentionalCloseRef.current || reconnectAttemptsRef.current >= MAX_RECONNECTS) {
@@ -411,7 +474,17 @@ function useGatewayChat(storedToken: string, open: boolean) {
           readyResolveRef.current?.();
           return;
         }
-        if (parsed.event.session_id && sessionIdRef.current && parsed.event.session_id !== sessionIdRef.current) return;
+        const eventPayload = parsed.event.payload ?? {};
+        const eventSessionRefs = [
+          parsed.event.session_id,
+          typeof eventPayload.session_id === 'string' ? eventPayload.session_id : undefined,
+          typeof eventPayload.stored_session_id === 'string' ? eventPayload.stored_session_id : undefined,
+        ].filter((value): value is string => Boolean(value));
+        const activeSessionRefs = [sessionIdRef.current, sessionKeyRef.current].filter((value): value is string => Boolean(value));
+        if (activeSessionRefs.length > 0 && eventSessionRefs.length > 0 && !eventSessionRefs.some((value) => activeSessionRefs.includes(value))) return;
+        if (parsed.event.type === 'session.info') {
+          adoptModel(eventPayload);
+        }
 
         const incomingInteraction = extractInteractionRequest(parsed.event);
         if (incomingInteraction) {
@@ -446,7 +519,7 @@ function useGatewayChat(storedToken: string, open: boolean) {
           if (wsRef.current !== ws || intentionalCloseRef.current) return;
           setConnectionState('connected');
           setStatusText('Connected');
-          void ensureSession().catch((err: unknown) => {
+          void ensureSession().then((activeSessionId) => refreshModel(activeSessionId)).catch((err: unknown) => {
             setError(err instanceof Error ? err.message : 'Failed to create or resume chat session.');
           });
         });
@@ -480,7 +553,7 @@ function useGatewayChat(storedToken: string, open: boolean) {
       setStatusText('Connection failed');
       setError(err instanceof Error ? err.message : 'Chat connection failed.');
     }
-  }, [ensureSession, open, rejectPending, scheduleReconnect, storedToken]);
+  }, [adoptModel, ensureSession, open, refreshModel, rejectPending, scheduleReconnect, storedToken]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -512,7 +585,26 @@ function useGatewayChat(storedToken: string, open: boolean) {
     };
   }, [connect, open, rejectPending]);
 
-  const submitPrompt = useCallback(async (text: string, attachments: ChatAttachmentUpload[] = []): Promise<boolean> => {
+  const appendSystemMessage = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setMessages((current) => [
+      ...current,
+      {
+        id: `system-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        role: 'system',
+        text: trimmed,
+        status: 'complete',
+        createdAt: Date.now(),
+      },
+    ]);
+  }, []);
+
+  const submitAgentPrompt = useCallback(async (
+    text: string,
+    attachments: ChatAttachmentUpload[] = [],
+    displayText = text,
+  ): Promise<boolean> => {
     const trimmed = text.trim();
     if ((!trimmed && attachments.length === 0) || submitting) return false;
     setSubmitting(true);
@@ -546,7 +638,7 @@ function useGatewayChat(storedToken: string, open: boolean) {
         {
           id: `user-${Date.now()}`,
           role: 'user',
-          text: trimmed || 'Attached files',
+          text: displayText.trim() || trimmed || 'Attached files',
           attachments: summaries,
           status: 'complete',
           createdAt: Date.now(),
@@ -554,6 +646,7 @@ function useGatewayChat(storedToken: string, open: boolean) {
       ]);
       setRunning(true);
       await request('prompt.submit', { session_id: activeSessionId, text: promptText });
+      void refreshModel(activeSessionId);
       return true;
     } catch (err) {
       setRunning(false);
@@ -562,15 +655,100 @@ function useGatewayChat(storedToken: string, open: boolean) {
     } finally {
       setSubmitting(false);
     }
-  }, [ensureSession, request, submitting]);
+  }, [ensureSession, refreshModel, request, submitting]);
 
-  const respondInteraction = useCallback(async (answer: string, choice?: string) => {
+  const executeSlashCommand = useCallback(async (command: string, depth = 0): Promise<boolean> => {
+    const parsed = parseSlash(command);
+    if (!parsed.name) {
+      appendSystemMessage('Empty slash command. Type / to see available commands.');
+      return false;
+    }
+    if (depth > 5) {
+      appendSystemMessage(`/${parsed.name}: alias chain exceeded the safety limit.`);
+      return false;
+    }
+
+    const handleDispatch = async (dispatch: GatewayCommandDispatch): Promise<boolean> => {
+      if (dispatch.type === 'alias') {
+        return executeSlashCommand(`/${dispatch.target}${parsed.arg ? ` ${parsed.arg}` : ''}`, depth + 1);
+      }
+      if (dispatch.type === 'prefill') {
+        if (dispatch.notice) appendSystemMessage(dispatch.notice);
+        setCommandPrefill(dispatch.message);
+        return true;
+      }
+      if (dispatch.type === 'send' || dispatch.type === 'skill') {
+        if (dispatch.notice) appendSystemMessage(dispatch.notice);
+        if (dispatch.type === 'skill') appendSystemMessage(`⚡ loading skill: ${dispatch.name}`);
+        if (!dispatch.message?.trim()) throw new Error(`/${parsed.name}: command returned an empty prompt.`);
+        return submitAgentPrompt(dispatch.message, [], dispatch.display || command);
+      }
+      const output = [dispatch.warning, dispatch.output]
+        .filter((value): value is string => Boolean(value?.trim()))
+        .join('\n\n');
+      appendSystemMessage(output || `/${parsed.name}: no output`);
+      return true;
+    };
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const activeSessionId = await ensureSession();
+      const normalizedCommand = command.trim().replace(/^\/+/, '');
+      try {
+        const result = await request<unknown>('slash.exec', {
+          command: normalizedCommand,
+          session_id: activeSessionId,
+        });
+        const dispatch = parseCommandDispatch(result);
+        if (dispatch) return handleDispatch(dispatch);
+        const output = commandOutput(result) || `/${parsed.name}: no output`;
+        appendSystemMessage(output);
+        adoptModel(result);
+        await refreshModel(activeSessionId);
+        return true;
+      } catch {
+        // Commands that need client-side behavior use the typed fallback below.
+      }
+
+      const dispatch = parseCommandDispatch(await request<unknown>('command.dispatch', {
+        name: parsed.name,
+        arg: parsed.arg,
+        session_id: activeSessionId,
+      }));
+      if (!dispatch) throw new Error(`/${parsed.name}: invalid command response.`);
+      return handleDispatch(dispatch);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Slash command failed.';
+      appendSystemMessage(`/${parsed.name}: ${message}`);
+      setError(message);
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }, [adoptModel, appendSystemMessage, ensureSession, refreshModel, request, submitAgentPrompt]);
+
+  const submitPrompt = useCallback(async (text: string, attachments: ChatAttachmentUpload[] = []): Promise<boolean> => {
+    if (text.trim().startsWith('/') && attachments.length === 0) {
+      return executeSlashCommand(text.trim());
+    }
+    return submitAgentPrompt(text, attachments);
+  }, [executeSlashCommand, submitAgentPrompt]);
+
+  const completeSlash = useCallback((text: string): Promise<ChatSlashCompletionResponse> => (
+    request<ChatSlashCompletionResponse>('complete.slash', { text })
+  ), [request]);
+
+  const clearCommandPrefill = useCallback(() => setCommandPrefill(null), []);
+
+  const respondInteraction = useCallback(async (answer: string, choice?: string, resolveAll = false) => {
     const pending = interactionRef.current;
     if (!pending) return false;
     try {
       if (pending.kind === 'approval') {
         await request('approval.respond', {
           choice: choice || answer || 'deny',
+          all: resolveAll || choice === 'always',
           session_id: sessionIdRef.current ?? undefined,
         });
       } else if (pending.kind === 'clarify') {
@@ -579,6 +757,9 @@ function useGatewayChat(storedToken: string, open: boolean) {
       } else if (pending.kind === 'sudo') {
         if (!pending.requestId) throw new Error('Sudo request is missing its request id.');
         await request('sudo.respond', { request_id: pending.requestId, password: answer });
+      } else if (pending.kind === 'terminal_read') {
+        if (!pending.requestId) throw new Error('Terminal read request is missing its request id.');
+        await request('terminal.read.respond', { request_id: pending.requestId, text: answer });
       } else {
         if (!pending.requestId) throw new Error('Secret request is missing its request id.');
         await request('secret.respond', { request_id: pending.requestId, value: answer });
@@ -613,7 +794,8 @@ function useGatewayChat(storedToken: string, open: boolean) {
 
   const reset = useCallback(async () => {
     const previousSessionId = sessionIdRef.current;
-    if (previousSessionId) {
+    const recoveredSessionId = requestedSessionIdRef.current;
+    if (previousSessionId && previousSessionId !== recoveredSessionId) {
       try {
         await request('session.close', { session_id: previousSessionId });
       } catch {
@@ -623,11 +805,14 @@ function useGatewayChat(storedToken: string, open: boolean) {
     setMessages([]);
     setSessionId(null);
     setSessionKey(null);
+    requestedSessionIdRef.current = null;
+    setModelIdentity(null);
+    setCommandPrefill(null);
     sessionIdRef.current = null;
     sessionKeyRef.current = null;
     setInteraction(null);
     setActivity(null);
-    persistChat(null, null, []);
+    persistChat(null, null, null, []);
     try {
       await ensureSession();
     } catch (err) {
@@ -644,7 +829,11 @@ function useGatewayChat(storedToken: string, open: boolean) {
     running,
     activity,
     interaction,
+    modelIdentity,
+    commandPrefill,
     connect,
+    completeSlash,
+    clearCommandPrefill,
     submitPrompt,
     respondInteraction,
     interrupt,
@@ -657,7 +846,7 @@ function AttachmentIcon({ kind }: { kind: AttachmentKind }) {
   return <FileText size={15} aria-hidden />;
 }
 
-export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
+export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -667,6 +856,7 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
   const {
     messages,
@@ -677,12 +867,16 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
     running,
     activity,
     interaction,
+    modelIdentity,
+    commandPrefill,
     connect,
+    completeSlash,
+    clearCommandPrefill,
     submitPrompt,
     respondInteraction,
     interrupt,
     reset,
-  } = useGatewayChat(storedToken, open);
+  } = useGatewayChat(storedToken, open, initialSessionId);
 
   useEffect(() => {
     pendingRef.current = pendingAttachments;
@@ -695,6 +889,16 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (commandPrefill === null) return;
+    setDraft(commandPrefill);
+    clearCommandPrefill();
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(commandPrefill.length, commandPrefill.length);
+    });
+  }, [clearCommandPrefill, commandPrefill]);
 
   useEffect(() => {
     if (!open) return;
@@ -805,6 +1009,7 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashPopoverRef.current?.handleKey(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
@@ -836,6 +1041,8 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
     : [];
   const multiSelect = interactionPayload.multi_select === true;
   const interactionQuestion = typeof interactionPayload.question === 'string' ? interactionPayload.question : '';
+  const interactionPrompt = typeof interactionPayload.prompt === 'string' ? interactionPayload.prompt : '';
+  const secretEnvVar = typeof interactionPayload.env_var === 'string' ? interactionPayload.env_var : '';
   const approvalCommand = typeof interactionPayload.command === 'string' ? interactionPayload.command : '';
   const approvalDescription = typeof interactionPayload.description === 'string' ? interactionPayload.description : '';
 
@@ -862,6 +1069,11 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
               <p className="eyebrow">Hermes</p>
               <h2 id="chat-drawer-title">Chat</h2>
             </div>
+          </div>
+          <div className="chat-model-badge" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Resolving active model'}>
+            <Cpu size={13} aria-hidden />
+            <span>{modelIdentity?.model || 'Resolving model'}</span>
+            {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
           </div>
           <div className="chat-head-actions">
             <span className={`chat-status ${statusClass}`} title={statusText}>
@@ -905,7 +1117,7 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
                   </div>
                 ) : null}
                 <div className="chat-message-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text || (message.status === 'streaming' ? '...' : '')}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || (message.status === 'streaming' ? '...' : '')}</ReactMarkdown>
                 </div>
               </article>
             ))
@@ -937,7 +1149,7 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
                 {approvalCommand ? <code className="chat-command-preview">{approvalCommand}</code> : null}
                 <div className="chat-choice-row">
                   {(interactionChoices.length ? interactionChoices : ['once', 'deny']).map((choice) => (
-                    <button key={choice} type="button" className={`chat-choice ${choice === 'deny' ? 'is-danger' : ''}`} onClick={() => void respondInteraction(choice, choice)}>
+                    <button key={choice} type="button" className={`chat-choice ${choice === 'deny' ? 'is-danger' : ''}`} onClick={() => void respondInteraction(choice, choice, choice === 'always')}>
                       {choice === 'deny' ? 'Deny' : choice === 'always' ? 'Always allow' : choice === 'session' ? 'This session' : 'Allow once'}
                     </button>
                   ))}
@@ -971,11 +1183,27 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
                   <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim() && (!multiSelect || selectedChoices.length === 0)} onClick={() => void respondInteraction(interactionDraft.trim() || selectedChoices.join(', '))}>Send</button>
                 </div>
               </>
+            ) : interaction.kind === 'terminal_read' ? (
+              <>
+                <p className="chat-interaction-copy">{interactionPrompt || 'Paste the requested terminal output.'}</p>
+                <div className="chat-interaction-input-row">
+                  <textarea value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder="Paste terminal output" aria-label="Terminal output" rows={3} />
+                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim()} onClick={() => void respondInteraction(interactionDraft.trim())}>Send</button>
+                </div>
+              </>
             ) : (
-              <div className="chat-interaction-input-row">
-                <input type="password" value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={interaction.kind === 'sudo' ? 'Password' : 'Secret value'} aria-label={interaction.kind === 'sudo' ? 'Sudo password' : 'Secret value'} autoComplete="off" />
-                <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => void respondInteraction(interactionDraft)}>Send</button>
-              </div>
+              <>
+                {interaction.kind === 'secret' ? (
+                  <p className="chat-interaction-copy">
+                    {interactionPrompt || 'Hermes needs a secret to continue.'}
+                    {secretEnvVar ? <><br /><code>{secretEnvVar}</code></> : null}
+                  </p>
+                ) : null}
+                <div className="chat-interaction-input-row">
+                  <input type="password" value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={interaction.kind === 'sudo' ? 'Password' : secretEnvVar || 'Secret value'} aria-label={interaction.kind === 'sudo' ? 'Sudo password' : interactionPrompt || 'Secret value'} autoComplete="off" />
+                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => void respondInteraction(interactionDraft)}>Send</button>
+                </div>
+              </>
             )}
           </section>
         ) : null}
@@ -1002,6 +1230,12 @@ export function ChatDrawer({ open, storedToken, onClose }: ChatDrawerProps) {
         ) : null}
         {attachmentNotice ? <p className="chat-attachment-notice" role="status">{attachmentNotice}</p> : null}
 
+        <ChatSlashPopover
+          ref={slashPopoverRef}
+          input={draft}
+          complete={completeSlash}
+          onApply={setDraft}
+        />
         <form className="chat-composer" onSubmit={handleSubmit}>
           <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf,*/*" className="chat-file-input" onChange={handleFileInput} />
           <button className="chat-icon-button chat-attach" type="button" onClick={() => fileInputRef.current?.click()} disabled={submitting || connectionState !== 'connected'} title="Attach image or file" aria-label="Attach image or file">

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Bot, Clock3, Copy, DollarSign, Layers, MessagesSquare, Workflow } from 'lucide-react';
+import { Activity, Bot, Clock3, Copy, DollarSign, Layers, MessageSquare, MessagesSquare, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
@@ -244,8 +244,16 @@ export function SessionsRoute() {
                     <span className="text-border-subtle">·</span>
                     <span className="truncate hidden sm:inline">Started {formatTimestamp(session.startedAt ?? 0)}</span>
                     <Link
+                      to={`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`}
+                      className="ml-auto inline-flex items-center gap-1 text-violet-400 hover:text-violet-300 transition-colors shrink-0"
+                      title="Recover this session in Hermes Chat"
+                    >
+                      <MessageSquare size={12} />
+                      <span>Chat</span>
+                    </Link>
+                    <Link
                       to={`/agents?session=${encodeURIComponent(session.sessionId)}`}
-                      className="ml-auto inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors shrink-0"
+                      className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors shrink-0"
                       title="Open trace in Agents"
                     >
                       <Workflow size={12} />
