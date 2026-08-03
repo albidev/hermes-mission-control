@@ -1406,14 +1406,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._unauthorized()
                 return
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
-            self._json(200, load_agents_sessions_snapshot(limit=limit))
+            offset = _parse_int((params.get("offset") or [None])[0], default=0, minimum=0, maximum=100000)
+            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset))
             return
         if parsed.path == "/api/local/sessions":
             if not _is_authorized(self):
                 self._unauthorized()
                 return
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
-            self._json(200, load_agents_sessions_snapshot(limit=limit))
+            offset = _parse_int((params.get("offset") or [None])[0], default=0, minimum=0, maximum=100000)
+            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset))
             return
         if parsed.path == "/api/local/sessions/usage":
             if not _is_authorized(self):

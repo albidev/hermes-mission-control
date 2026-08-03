@@ -1295,6 +1295,7 @@ type OfficialMissionControlAgentSessionsPayload = {
   schemaVersion?: string;
   available?: boolean;
   items?: Array<Record<string, unknown>>;
+  offset?: number;
   stats?: {
     totalSessions?: number;
     liveSessions?: number;
@@ -1409,8 +1410,8 @@ async function fetchMissionControlAgents(accessToken?: string): Promise<Official
   return await maybeFetchOfficialJson<OfficialMissionControlAgentsPayload>('/mission-control/agents', accessToken);
 }
 
-async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100): Promise<OfficialMissionControlAgentSessionsPayload | null> {
-  const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}`, accessToken);
+async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100, offset = 0): Promise<OfficialMissionControlAgentSessionsPayload | null> {
+  const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}&offset=${offset}`, accessToken);
   return local ?? null;
 }
 
@@ -1838,8 +1839,8 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
   }
 }
 
-export async function loadMissionControlAgentSessions(accessToken?: string, limit = 100): Promise<MissionControlAgentsSessionsSnapshot> {
-  const payload = await fetchMissionControlAgentSessions(accessToken, limit);
+export async function loadMissionControlAgentSessions(accessToken?: string, limit = 100, offset = 0): Promise<MissionControlAgentsSessionsSnapshot> {
+  const payload = await fetchMissionControlAgentSessions(accessToken, limit, offset);
   return normalizeAgentSessionsSnapshot(payload);
 }
 

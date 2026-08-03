@@ -328,35 +328,65 @@ def _build_session_item(
     }
 
 
-def _collect_agent_sessions(live_window_seconds: int = 300) -> list[dict[str, Any]]:
+def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = None, offset: int = 0) -> list[dict[str, Any]]:
     index_map = _read_gateway_sessions_index()
+    # _iter_db_session_ids already returns ids ordered by last_active (recency).
+    # Preserve that order and append any index-only sessions (not in the DB) at
+    # the end, still by their index updated_at. This gives ONE stable ordering,
+    # so offset/limit produce contiguous pages with no holes or duplicates.
     db_ids = _iter_db_session_ids()
-    session_ids = list(dict.fromkeys(db_ids + list(index_map.keys())))
+    db_id_set = set(db_ids)
+    index_only_ids = [
+        sid for sid in index_map.keys()
+        if sid not in db_id_set
+    ]
+    index_only_ids.sort(
+        key=lambda sid: (_parse_timestamp((index_map.get(sid) or {}).get("updated_at")) or 0),
+        reverse=True,
+    )
+    ordered_ids = db_ids + index_only_ids
+    if offset:
+        ordered_ids = ordered_ids[offset:]
+    if limit is not None:
+        ordered_ids = ordered_ids[:limit]
     db = _try_get_session_db()
     try:
         items: list[dict[str, Any]] = []
-        for session_id in session_ids:
+        for session_id in ordered_ids:
             db_row = _get_db_rich_row(db, session_id)
             item = _build_session_item(session_id, index_map.get(session_id), None, db_row, live_window_seconds)
             items.append(item)
-        items.sort(key=lambda item: item.get("lastActiveAt") or 0, reverse=True)
+        # Items already follow the ordered_ids sequence (recency first). Do NOT
+        # re-sort here — the client may also re-sort, but the page boundaries
+        # must stay contiguous, which requires a stable single ordering.
         return items
     finally:
         _close_session_db(db)
 
 
-def load_agents_sessions_snapshot(limit: int = 100, live_window_seconds: int = 300) -> dict[str, Any]:
-    all_items = _collect_agent_sessions(live_window_seconds=live_window_seconds)
+def load_agents_sessions_snapshot(limit: int = 100, live_window_seconds: int = 300, offset: int = 0) -> dict[str, Any]:
     clamped_limit = max(1, min(limit, 500))
-    visible_items = all_items[:clamped_limit]
-    live_sessions = [item for item in all_items if item.get("status") == "live"]
+    # Stats come from lightweight counts (single DB query), NOT from materialising
+    # every session item — otherwise a limit=50 request still pays the full N+1.
+    visible_items = _collect_agent_sessions(live_window_seconds=live_window_seconds, limit=clamped_limit, offset=offset)
+    live_sessions = [item for item in visible_items if item.get("status") == "live"]
+    db = _try_get_session_db()
+    total_sessions = 0
+    try:
+        if db is not None:
+            total_sessions = len(db.list_sessions_rich(limit=2000, compact_rows=True))
+    except Exception:
+        total_sessions = 0
+    finally:
+        _close_session_db(db)
     return {
         "success": True,
         "schemaVersion": _SCHEMA_VERSION,
         "available": True,
         "items": visible_items,
+        "offset": offset,
         "stats": {
-            "totalSessions": len(all_items),
+            "totalSessions": total_sessions,
             "liveSessions": len(live_sessions),
             "activeAgents": len({item["agentId"] for item in live_sessions}),
         },
