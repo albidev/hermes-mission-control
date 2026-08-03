@@ -222,6 +222,41 @@ def _derive_preview(messages: list[dict[str, Any]] | None, fallback: str = "") -
     return _single_line_preview(fallback, limit=180)
 
 
+def _recent_chat_messages(
+    db: Any,
+    session_id: str,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    """Return a small, UI-safe conversation preview for the Sessions list.
+
+    Tool/system rows are intentionally excluded: the row preview is a chat
+    affordance, not a second trace viewer. Keep the payload bounded because
+    this runs once per visible session row.
+    """
+    if limit <= 0:
+        return []
+    messages = _get_db_messages(db, session_id) or _read_session_jsonl(session_id)
+    if not messages:
+        return []
+
+    recent: list[dict[str, Any]] = []
+    for message in messages:
+        role = str(message.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        text = _normalize_text(message.get("content"))
+        if not text.strip():
+            continue
+        recent.append(
+            {
+                "role": role,
+                "text": _single_line_preview(text, limit=240),
+                "timestamp": _parse_timestamp(message.get("timestamp")),
+            }
+        )
+    return recent[-limit:]
+
+
 def _trace_mode_for_artifacts(session_id: str, db_row: dict[str, Any] | None) -> str:
     if db_row:
         return _TRACE_MODE_NATIVE
@@ -266,6 +301,7 @@ def _build_session_item(
     sidecar: dict[str, Any] | None,
     db_row: dict[str, Any] | None,
     live_window_seconds: int,
+    recent_messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     sidecar_messages = sidecar.get("messages") if isinstance(sidecar, dict) and isinstance(sidecar.get("messages"), list) else None
     source = str(
@@ -317,6 +353,7 @@ def _build_session_item(
         "messageCount": message_count,
         "traceMode": trace_mode,
         "preview": preview,
+        "recentMessages": recent_messages or [],
         # Token usage (from SessionDB, fallback to gateway index)
         "inputTokens": _coerce_token_int((db_row or index_entry or {}).get("input_tokens")),
         "outputTokens": _coerce_token_int((db_row or index_entry or {}).get("output_tokens")),
@@ -354,7 +391,15 @@ def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = 
         items: list[dict[str, Any]] = []
         for session_id in ordered_ids:
             db_row = _get_db_rich_row(db, session_id)
-            item = _build_session_item(session_id, index_map.get(session_id), None, db_row, live_window_seconds)
+            recent_messages = _recent_chat_messages(db, session_id)
+            item = _build_session_item(
+                session_id,
+                index_map.get(session_id),
+                None,
+                db_row,
+                live_window_seconds,
+                recent_messages,
+            )
             items.append(item)
         # Items already follow the ordered_ids sequence (recency first). Do NOT
         # re-sort here — the client may also re-sort, but the page boundaries

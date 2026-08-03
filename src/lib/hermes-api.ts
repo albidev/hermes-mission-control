@@ -337,6 +337,12 @@ export type MissionControlCapabilities = {
 export type MissionControlTraceMode = 'native' | 'transcript' | 'unavailable';
 export type MissionControlAgentSessionStatus = 'live' | 'idle' | 'ended';
 
+export type MissionControlSessionPreviewMessage = {
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: number | null;
+};
+
 export type MissionControlAgentRegistryItem = {
   agentId: string;
   source: string;
@@ -381,6 +387,7 @@ export type MissionControlAgentSessionItem = {
   messageCount: number;
   traceMode: MissionControlTraceMode;
   preview: string;
+  recentMessages: MissionControlSessionPreviewMessage[];
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -849,6 +856,18 @@ function normalizeAgentRegistryItem(input: Record<string, unknown> | undefined):
   };
 }
 
+function normalizeSessionPreviewMessages(input: unknown): MissionControlSessionPreviewMessage[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter(isRecord)
+    .map((message) => ({
+      role: message.role === 'user' ? 'user' as const : 'assistant' as const,
+      text: readString(message.text),
+      timestamp: message.timestamp === null || message.timestamp === undefined ? null : readNumber(message.timestamp, 0),
+    }))
+    .filter((message) => message.text.trim().length > 0);
+}
+
 function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): MissionControlAgentSessionItem {
   const source = readString(input?.source, 'unknown');
   const model = readString(input?.model, 'unknown');
@@ -868,6 +887,7 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
     messageCount: readNumber(input?.messageCount, 0),
     traceMode: normalizeTraceMode(input?.traceMode),
     preview: readString(input?.preview),
+    recentMessages: normalizeSessionPreviewMessages(input?.recentMessages),
     inputTokens: readNumber(input?.inputTokens, 0),
     outputTokens: readNumber(input?.outputTokens, 0),
     cacheReadTokens: readNumber(input?.cacheReadTokens, 0),
