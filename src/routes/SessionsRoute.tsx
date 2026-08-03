@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, Bot, Clock3, DollarSign, Layers, MessagesSquare, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
 import { useMissionControl } from '../lib/mission-control-store';
+import { usePullToReload } from '../hooks/usePullToReload';
+import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 import {
   loadMissionControlAgentSessions,
   type MissionControlAgentSessionItem,
@@ -50,6 +52,19 @@ function formatCost(usd: number): string {
 export function SessionsRoute() {
   const { snapshot, storedToken } = useMissionControl();
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentsSessionsSnapshot | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const loadSessions = async () => {
+    const data = await loadMissionControlAgentSessions(storedToken ?? undefined);
+    setAgentSessions(data);
+  };
+
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: async () => {
+      await loadSessions();
+    },
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -78,7 +93,8 @@ export function SessionsRoute() {
   const totalCost = agentSessions?.items.reduce((sum, s) => sum + s.estimatedCostUsd, 0) ?? 0;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+      <PullToReloadIndicator state={pullState} />
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">

@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FilePenLine, Hash, Server, Settings2 } from 'lucide-react';
 import { parse as parseYaml, parseDocument, stringify as stringifyYaml } from 'yaml';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { useMissionControl } from '../lib/mission-control-store';
+import { usePullToReload } from '../hooks/usePullToReload';
+import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
 type PathSegment = string | number;
 type PendingEdit = { path: PathSegment[]; value: unknown };
@@ -109,6 +111,27 @@ export function ConfigRoute() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showChangedOnly, setShowChangedOnly] = useState(false);
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({});
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: async () => {
+      setSaving(true);
+      setStatus(null);
+      try {
+        const updated = await reloadConfig();
+        setDraft(updated.content);
+        setFormState(isPlainObject(updated.config) ? (updated.config as Record<string, unknown>) : {});
+        setComplexDrafts({});
+        setPendingEdits({});
+        setStatus(`Reloaded ${updated.path}.`);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Failed to reload config.');
+      } finally {
+        setSaving(false);
+      }
+    },
+  });
 
   const dirty = useMemo(() => draft !== config.content || Object.keys(pendingEdits).length > 0, [draft, config.content, pendingEdits]);
   const formSections = useMemo(() => Object.entries(formState ?? {}), [formState]);
@@ -444,7 +467,8 @@ export function ConfigRoute() {
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+      <PullToReloadIndicator state={pullState} />
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, ArrowRight, PanelLeftClose, RefreshCw, Rocket } from 'lucide-react';
 import { useMissionControl } from '../../lib/mission-control-store';
@@ -14,6 +15,8 @@ import { UsagePanel } from './UsagePanel';
 import { ProviderUsagePanel } from './ProviderUsagePanel';
 import { DashboardGrid, type DashboardWidget } from './DashboardGrid';
 import { formatRelativeTime } from '../../lib/format';
+import { usePullToReload } from '../../hooks/usePullToReload';
+import { PullToReloadIndicator } from '../PullToReloadIndicator';
 
 function SectionLink({
   to,
@@ -232,8 +235,18 @@ export function OverviewDashboard() {
       : []),
   ].filter((widget): widget is DashboardWidget => Boolean(widget.content));
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const { refreshAll, storedToken } = useMissionControl();
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: async () => {
+      await refreshAll(storedToken || undefined, { silent: false, includeReference: true, includeSnapshot: true });
+    },
+  });
+
   return (
-    <div className="flex flex-col">
+    <div ref={containerRef} className="flex flex-col h-full overflow-y-auto">
+      <PullToReloadIndicator state={pullState} />
       <AgentStatusBar />
       <div className="p-4 sm:p-6">
         <DashboardGrid widgets={widgets} />

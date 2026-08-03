@@ -384,8 +384,88 @@
   min-height: 0;
   padding: 1.5rem;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
+  position: relative;
+}
+
+.pull-to-reload-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.pull-to-reload-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.pull-to-reload-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+/* Pull-to-reload: premium compact indicator */
+.ptr-surface {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  z-index: 20;
+  transform-origin: center top;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.375rem 0.875rem;
+  border-radius: 999px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-surface-raised) 92%, white 8%);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 80%, var(--color-accent) 20%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 8%, transparent),
+    0 6px 24px color-mix(in srgb, var(--color-accent) 8%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.18);
+  transition: opacity 150ms ease, transform 120ms ease-out;
+}
+
+.ptr-ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  transition: color 150ms ease, transform 150ms ease;
+}
+
+.ptr-ring-active {
+  color: var(--color-accent);
+  transform: scale(1.08);
+}
+
+.ptr-label {
+  font-size: 0.75rem;
+  font-weight: 510;
+  letter-spacing: -0.02em;
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
 
 .mobile-nav-backdrop {

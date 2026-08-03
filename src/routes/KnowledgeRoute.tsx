@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, FileText, FolderTree, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -9,6 +9,8 @@ import { Modal } from '../components/Modal';
 import { formatTimestamp } from '../lib/format';
 import { MissionControlAuthError, loadMissionControlKnowledgeFile } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { usePullToReload } from '../hooks/usePullToReload';
+import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
 function MetricCard({
   icon: Icon,
@@ -60,6 +62,17 @@ export function KnowledgeRoute() {
   const [fullContent, setFullContent] = useState<string>('');
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: async () => {
+      if (selectedItem?.sourcePath) {
+        const payload = await loadMissionControlKnowledgeFile(selectedItem.sourcePath, storedToken || undefined);
+        setFullContent(payload.content || 'No file preview available.');
+      }
+    },
+  });
 
   const allItems = useMemo(() => {
     const items = knowledge.sections.flatMap((section) => section.items);
@@ -145,7 +158,8 @@ export function KnowledgeRoute() {
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+      <PullToReloadIndicator state={pullState} />
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">

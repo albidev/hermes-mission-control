@@ -17,6 +17,8 @@ import {
   type MissionControlCapabilities,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { usePullToReload } from '../hooks/usePullToReload';
+import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
 function formatTokenCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -280,9 +282,41 @@ export function AgentsRoute() {
   const [rawPayloadViewer, setRawPayloadViewer] = useState<{ title: string; content: string } | null>(null);
   const hasTraceRef = useRef(false);
   const manualSessionSelectionRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const traceStreamAvailable = capabilities.trace.stream;
   const traceCompactAvailable = capabilities.trace.compact;
   const traceNamedSseEventAvailable = capabilities.trace.namedSseTraceEvent;
+
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: async () => {
+      try {
+        const resolved = await loadMissionControlCapabilities(storedToken);
+        setCapabilities(resolved);
+      } catch {
+        setCapabilities(getFallbackCapabilities());
+      }
+      try {
+        const resolved = await loadMissionControlAgentSessions(storedToken, 200);
+        setAgentSessions(resolved.items);
+      } catch {
+        setAgentSessions([]);
+      }
+      if (selectedSessionId) {
+        try {
+          const payload = await loadMissionControlAgentTrace(
+            selectedSessionId,
+            storedToken || undefined,
+            liveMode ? LIVE_TRACE_LIMIT : 0,
+            liveMode && traceCompactAvailable,
+          );
+          setTrace(payload);
+        } catch {
+          setTrace(null);
+        }
+      }
+    },
+  });
 
   useEffect(() => {
     hasTraceRef.current = Boolean(trace);
@@ -808,7 +842,8 @@ export function AgentsRoute() {
   }, [selectedSessionId, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+      <PullToReloadIndicator state={pullState} />
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">

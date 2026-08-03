@@ -20,7 +20,7 @@ export default defineConfig({
     host: true,
     port: 5174,
     strictPort: true,
-    allowedHosts: ALL_ALLOWED_HOSTS,
+    allowedHosts: ALL_ALLOWED_HOSTS.length ? ALL_ALLOWED_HOSTS : true,
     proxy: {
       '/api/local': {
         target: LOCAL_TELEMETRY_TARGET,
