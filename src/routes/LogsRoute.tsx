@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, FileText, RefreshCw, TerminalSquare } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -9,6 +9,8 @@ import {
   type MissionControlLogsSnapshot,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { usePullToReload } from '../hooks/usePullToReload';
+import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
 function levelVariant(level: 'info' | 'warn' | 'error'): 'default' | 'warning' | 'negative' {
   if (level === 'error') return 'negative';
@@ -29,6 +31,27 @@ export function LogsRoute() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: async () => {
+      try {
+        const payload = await loadMissionControlLogs(storedToken || undefined, {
+          maxFiles: 10,
+          maxLines: 160,
+        });
+        setLogs(payload);
+        setError(null);
+      } catch (err) {
+        if (err instanceof MissionControlAuthError) {
+          setError('Access token required to read log files.');
+        } else {
+          setError(err instanceof Error ? err.message : 'Failed to load logs.');
+        }
+      }
+    },
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -106,7 +129,8 @@ export function LogsRoute() {
   );
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+      <PullToReloadIndicator state={pullState} />
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">

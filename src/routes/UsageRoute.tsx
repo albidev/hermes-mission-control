@@ -1,10 +1,12 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { DollarSign, Layers, Zap, TrendingUp, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { loadSessionsUsage, type MissionControlSessionsUsageSnapshot } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { usePullToReload } from '../hooks/usePullToReload';
+import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
 type ModelEntry = MissionControlSessionsUsageSnapshot['byModel'][number];
 type SortKey = 'model' | 'sessionCount' | 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'reasoningTokens' | 'totalTokens' | 'estimatedCostUsd';
@@ -114,6 +116,7 @@ export function UsageRoute() {
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>('totalTokens');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const fetchUsage = async () => {
     setLoading(true);
@@ -124,6 +127,11 @@ export function UsageRoute() {
       setLoading(false);
     }
   };
+
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: fetchUsage,
+  });
 
   useEffect(() => {
     fetchUsage();
@@ -158,7 +166,8 @@ export function UsageRoute() {
   }, [byModel, sortKey, sortDir]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+      <PullToReloadIndicator state={pullState} />
       {/* Header */}
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">

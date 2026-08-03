@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ElementType } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ElementType } from 'react';
 import { Brain, FolderTree, LibraryBig, Power, RefreshCw, Search, FileText, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,6 +17,8 @@ import {
   type MissionControlSkillFile,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { usePullToReload } from '../hooks/usePullToReload';
+import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
 function MetricCard({
   icon: Icon,
@@ -195,10 +197,19 @@ export function SkillsRoute() {
   const [query, setQuery] = useState('');
   const [togglingSkills, setTogglingSkills] = useState<Set<string>>(new Set());
   const [detailSkill, setDetailSkill] = useState<{ name: string; description: string; enabled?: boolean } | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const enabled = skills.skills.filter((skill) => skill.enabled).length;
   const disabled = skills.skills.length - enabled;
   const installedNames = useMemo(() => new Set(skills.skills.map((skill) => skill.name.toLowerCase())), [skills.skills]);
+
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: async () => {
+      await refreshAll(storedToken || undefined, { silent: true, includeReference: true });
+      await refreshCatalog();
+    },
+  });
 
   const handleToggle = useCallback(async (skillName: string, currentlyEnabled: boolean) => {
     setTogglingSkills((prev) => new Set(prev).add(skillName));
@@ -257,7 +268,8 @@ export function SkillsRoute() {
   const displayedCatalogSkills = filteredCatalogSkills.slice(0, 250);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+      <PullToReloadIndicator state={pullState} />
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-col gap-0.5">
