@@ -36,6 +36,7 @@ export default defineConfig({
         target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',
         changeOrigin: true,
         ws: true,
+        rewriteWsOrigin: true,
       },
     },
   },
