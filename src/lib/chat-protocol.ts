@@ -508,8 +508,13 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
   };
 
   if (event.type === 'message.start') {
-    if (messages.at(-1)?.kind === 'assistant' && messages.at(-1)?.status === 'streaming') return messages;
-    return [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: '', status: 'streaming', createdAt: now }];
+    const next = messages
+      .filter((message) => !(message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()))
+      .map((message) => message.kind === 'assistant' && message.status === 'streaming'
+        ? { ...message, status: message.text.trim() ? 'complete' as const : 'interrupted' as const }
+        : message);
+    if (next.at(-1)?.kind === 'assistant' && next.at(-1)?.status === 'streaming') return next;
+    return [...next, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: '', status: 'streaming', createdAt: now }];
   }
 
   if (event.type === 'message.delta') {

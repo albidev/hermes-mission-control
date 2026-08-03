@@ -197,8 +197,14 @@ const aliasToolMessages = applyGatewayEvent([], {
 assertEqual(aliasToolMessages[0].toolInput, '{"path":"README.md"}');
 assertEqual(aliasToolMessages[0].status, 'streaming');
 
-const unknownApplied = applyGatewayEvent(messages, { type: 'future.event', payload: { text: 'ignored' } }, 2004);
-assertEqual(unknownApplied, messages);
+let turnBoundary = applyGatewayEvent([], { type: 'message.start' }, 2300);
+turnBoundary = applyGatewayEvent(turnBoundary, { type: 'message.delta', payload: { text: 'partial' } }, 2301);
+turnBoundary = applyGatewayEvent(turnBoundary, { type: 'tool.start', payload: { tool_id: 'tool-3', name: 'shell', args_text: 'pwd' } }, 2302);
+turnBoundary = applyGatewayEvent(turnBoundary, { type: 'message.start' }, 2303);
+assertEqual(turnBoundary.filter((message) => message.kind === 'assistant' && message.status === 'streaming').length, 1);
+assertEqual(turnBoundary[0].status, 'complete');
+assertEqual(turnBoundary.some((message) => message.kind === 'assistant' && !message.text.trim() && message.status !== 'streaming'), false);
+
 
 assertEqual(nextReconnectDelay({ attempts: 0 }), 500);
 assertEqual(nextReconnectDelay({ attempts: 4 }), 8000);
