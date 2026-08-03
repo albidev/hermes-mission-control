@@ -1,5 +1,7 @@
 export type ChatRole = 'assistant' | 'system' | 'tool' | 'user';
 
+export type ChatMessageKind = 'assistant' | 'event' | 'reasoning' | 'system' | 'tool' | 'user';
+
 export type AttachmentKind = 'image' | 'pdf' | 'file';
 
 export type ChatAttachmentSummary = {
@@ -17,17 +19,58 @@ export type ChatAttachmentUpload = ChatAttachmentSummary & {
 export type ChatMessage = {
   id: string;
   role: ChatRole;
+  kind?: ChatMessageKind;
   text: string;
   status?: 'streaming' | 'complete' | 'error' | 'interrupted';
   createdAt: number;
   attachments?: ChatAttachmentSummary[];
+  detail?: string;
+  output?: string;
+  toolId?: string;
+  toolName?: string;
+  toolInput?: string;
+  durationS?: number;
 };
 
 export type GatewayTranscriptMessage = {
   role?: unknown;
   text?: unknown;
   content?: unknown;
+  name?: unknown;
+  context?: unknown;
+  tool_name?: unknown;
+  tool_call_id?: unknown;
+  tool_calls?: unknown;
+  args_text?: unknown;
+  result?: unknown;
+  result_text?: unknown;
+  summary?: unknown;
+  inline_diff?: unknown;
+  duration_s?: unknown;
+  reasoning?: unknown;
+  reasoning_content?: unknown;
+  reasoning_details?: unknown;
+  codex_reasoning_items?: unknown;
   display_kind?: unknown;
+  display_metadata?: unknown;
+};
+
+export type ChatModelProviderOption = {
+  slug: string;
+  name: string;
+  models: string[];
+  total_models: number;
+  is_current?: boolean;
+  authenticated?: boolean;
+  warning?: string;
+};
+
+export type ChatModelSwitchResult = {
+  ok: boolean;
+  confirmRequired?: boolean;
+  confirmMessage?: string;
+  warning?: string;
+  error?: string;
 };
 
 export type GatewayEvent = {
@@ -106,10 +149,36 @@ function textFromContent(value: unknown): string {
     return value.map(textFromContent).filter(Boolean).join('\n');
   }
   if (isRecord(value)) {
-    if (typeof value.text === 'string') return value.text;
-    if ('content' in value) return textFromContent(value.content);
+    for (const key of ['text', 'content', 'summary', 'reasoning']) {
+      if (key in value) {
+        const text = textFromContent(value[key]);
+        if (text) return text;
+      }
+    }
   }
   return '';
+}
+
+function reasoningFromMessage(message: GatewayTranscriptMessage): string {
+  for (const key of ['reasoning', 'reasoning_content', 'reasoning_details', 'codex_reasoning_items'] as const) {
+    const text = textFromContent(message[key]);
+    if (text.trim()) return text.trim();
+  }
+  return '';
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function structuredText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 export function parseGatewayFrame(raw: unknown): ParsedGatewayFrame {
@@ -164,18 +233,78 @@ export function isResponseFor(response: JsonRpcResponse, id: string): boolean {
 }
 
 export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = Date.now()): ChatMessage[] {
-  return messages
-    .map((message, index) => {
-      const rawText = textFromContent(message.text) || textFromContent(message.content);
-      return {
-        id: `restored-${now}-${index}`,
-        role: safeRole(message.role),
-        text: rawText,
-        status: 'complete' as const,
-        createdAt: now + index,
+  const normalized: ChatMessage[] = [];
+  messages.forEach((message, index) => {
+    const role = safeRole(message.role);
+    const rawText = textFromContent(message.text) || textFromContent(message.content);
+    const displayKind = stringValue(message.display_kind);
+    if (displayKind === 'hidden') return;
+
+    if (displayKind === 'model_switch' || displayKind === 'auto_continue' || displayKind === 'async_delegation_complete') {
+      const labels: Record<string, string> = {
+        model_switch: 'Model changed',
+        auto_continue: 'Resumed interrupted turn',
+        async_delegation_complete: 'Background agent work finished',
       };
-    })
-    .filter((message) => message.text.trim().length > 0 || message.role === 'assistant' || message.role === 'user');
+      normalized.push({
+        id: `restored-event-${now}-${index}`,
+        role: 'system',
+        kind: 'event',
+        text: labels[displayKind],
+        status: 'complete',
+        createdAt: now + index,
+      });
+      return;
+    }
+
+    if (role === 'tool') {
+      const toolName = stringValue(message.name) || stringValue(message.tool_name) || 'tool';
+      const context = stringValue(message.context) || rawText;
+      const toolInput = stringValue(message.args_text) || context;
+      const output = stringValue(message.result_text)
+        || stringValue(message.summary)
+        || stringValue(message.inline_diff)
+        || structuredText(message.result);
+      const durationS = typeof message.duration_s === 'number' ? message.duration_s : undefined;
+      normalized.push({
+        id: `restored-tool-${now}-${index}`,
+        role: 'tool',
+        kind: 'tool',
+        toolName,
+        toolId: stringValue(message.tool_call_id) || undefined,
+        text: context,
+        toolInput,
+        output: output || undefined,
+        durationS,
+        status: 'complete',
+        createdAt: now + index,
+      });
+      return;
+    }
+
+    const reasoning = role === 'assistant' ? reasoningFromMessage(message) : '';
+    if (reasoning) {
+      normalized.push({
+        id: `restored-reasoning-${now}-${index}`,
+        role: 'tool',
+        kind: 'reasoning',
+        text: reasoning,
+        status: 'complete',
+        createdAt: now + index,
+      });
+    }
+
+    if (!rawText.trim() && role !== 'assistant' && role !== 'user') return;
+    normalized.push({
+      id: `restored-${now}-${index}`,
+      role,
+      kind: role === 'assistant' || role === 'user' || role === 'system' ? role : undefined,
+      text: rawText,
+      status: 'complete',
+      createdAt: now + index,
+    });
+  });
+  return normalized;
 }
 
 export function extractSessionId(result: unknown): string | null {
@@ -365,11 +494,22 @@ export function eventText(event: GatewayEvent): string {
 }
 
 export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, now = Date.now()): ChatMessage[] {
-  if (event.type === 'message.start') {
-    if (messages.at(-1)?.role === 'assistant' && messages.at(-1)?.status === 'streaming') {
-      return messages;
+  const payload = event.payload ?? {};
+  const eventToolId = stringValue(payload.tool_id) || stringValue(payload.tool_call_id);
+  const eventToolName = stringValue(payload.name) || stringValue(payload.tool_name) || stringValue(payload.tool) || 'Tool';
+  const isToolStart = event.type === 'tool.start' || event.type === 'tool.started';
+  const isToolProgress = event.type === 'tool.progress' || event.type === 'tool.delta' || event.type === 'tool.output';
+  const isToolComplete = event.type === 'tool.complete' || event.type === 'tool.completed';
+  const lastIndexOf = (predicate: (message: ChatMessage) => boolean): number => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (predicate(messages[index])) return index;
     }
-    return [...messages, { id: `assistant-${now}`, role: 'assistant', text: '', status: 'streaming', createdAt: now }];
+    return -1;
+  };
+
+  if (event.type === 'message.start') {
+    if (messages.at(-1)?.kind === 'assistant' && messages.at(-1)?.status === 'streaming') return messages;
+    return [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: '', status: 'streaming', createdAt: now }];
   }
 
   if (event.type === 'message.delta') {
@@ -377,11 +517,11 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     if (!delta) return messages;
     const next = [...messages];
     const last = next.at(-1);
-    if (last?.role === 'assistant' && last.status === 'streaming') {
+    if (last?.kind === 'assistant' && last.status === 'streaming') {
       next[next.length - 1] = { ...last, text: `${last.text}${delta}` };
       return next;
     }
-    return [...messages, { id: `assistant-${now}`, role: 'assistant', text: delta, status: 'streaming', createdAt: now }];
+    return [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: delta, status: 'streaming', createdAt: now }];
   }
 
   if (event.type === 'message.interim') {
@@ -389,58 +529,121 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     if (!text) return messages;
     const next = [...messages];
     const last = next.at(-1);
-    if (last?.role === 'assistant' && last.status === 'streaming') {
+    if (last?.kind === 'assistant' && last.status === 'streaming') {
       if (!last.text.trim()) {
         next[next.length - 1] = { ...last, text };
         return next;
       }
       next[next.length - 1] = { ...last, status: 'complete' };
     }
-    return [...next, { id: `assistant-interim-${now}`, role: 'assistant', text, status: 'streaming', createdAt: now }];
+    return [...next, { id: `assistant-interim-${now}`, role: 'assistant', kind: 'assistant', text, status: 'streaming', createdAt: now }];
+  }
+
+  if (event.type === 'reasoning.delta' || event.type === 'thinking.delta') {
+    const delta = eventText(event);
+    if (!delta) return messages;
+    const next = [...messages];
+    const index = lastIndexOf((message) => message.kind === 'reasoning' && message.status === 'streaming');
+    if (index >= 0) {
+      const current = next[index];
+      next[index] = { ...current, text: `${current.text}${delta}` };
+      return next;
+    }
+    return [...messages, { id: `reasoning-${now}`, role: 'tool', kind: 'reasoning', text: delta, status: 'streaming', createdAt: now }];
   }
 
   if (event.type === 'reasoning.available') {
-    const payload = event.payload ?? {};
     const text = eventText(event)
-      || (typeof payload.reasoning === 'string' ? payload.reasoning : '')
-      || (typeof payload.content === 'string' ? payload.content : '');
+      || stringValue(payload.reasoning)
+      || stringValue(payload.content)
+      || textFromContent(payload.reasoning_details);
     if (!text.trim()) return messages;
+    const next = [...messages];
+    const index = lastIndexOf((message) => message.kind === 'reasoning' && message.status === 'streaming');
+    if (index >= 0) {
+      const current = next[index];
+      next[index] = { ...current, text, status: 'complete' };
+      return next;
+    }
+    const duplicate = lastIndexOf((message) => message.kind === 'reasoning' && message.text.trim() === text.trim());
+    if (duplicate >= 0) return messages;
+    return [...messages, { id: `reasoning-${now}`, role: 'tool', kind: 'reasoning', text, status: 'complete', createdAt: now }];
+  }
+
+  if (isToolStart) {
+    const context = stringValue(payload.context);
+    const toolInput = stringValue(payload.args_text) || context;
     return [...messages, {
-      id: `reasoning-${now}`,
+      id: `tool-${eventToolId || now}`,
       role: 'tool',
-      text: `**Reasoning**\n\n${text}`,
-      status: 'complete',
+      kind: 'tool',
+      toolId: eventToolId || undefined,
+      toolName: eventToolName,
+      text: context,
+      toolInput,
+      status: 'streaming',
       createdAt: now,
     }];
+  }
+
+  if (isToolProgress) {
+    const detail = eventText(event) || stringValue(payload.preview) || stringValue(payload.text);
+    if (!detail) return messages;
+    const next = [...messages];
+    const index = lastIndexOf((message) => message.kind === 'tool' && (!eventToolId || message.toolId === eventToolId));
+    if (index < 0) return [...messages, { id: `tool-${eventToolId || now}`, role: 'tool', kind: 'tool', toolId: eventToolId || undefined, toolName: eventToolName, text: '', toolInput: '', detail, status: 'streaming', createdAt: now }];
+    const current = next[index];
+    next[index] = { ...current, detail: `${current.detail ? `${current.detail}\n` : ''}${detail}` };
+    return next;
+  }
+
+  if (isToolComplete) {
+    const output = stringValue(payload.result_text)
+      || stringValue(payload.summary)
+      || stringValue(payload.inline_diff)
+      || structuredText(payload.result);
+    const input = stringValue(payload.args_text) || stringValue(payload.context);
+    const durationS = typeof payload.duration_s === 'number' ? payload.duration_s : undefined;
+    const next = [...messages];
+    const index = lastIndexOf((message) => message.kind === 'tool' && (!eventToolId || message.toolId === eventToolId));
+    if (index < 0) {
+      return [...messages, { id: `tool-${eventToolId || now}`, role: 'tool', kind: 'tool', toolId: eventToolId || undefined, toolName: eventToolName, text: '', toolInput: input, output: output || undefined, durationS, status: 'complete', createdAt: now }];
+    }
+    const current = next[index];
+    next[index] = {
+      ...current,
+      toolName: current.toolName || eventToolName,
+      toolInput: current.toolInput || input,
+      output: output || current.output,
+      durationS,
+      status: 'complete',
+    };
+    return next;
   }
 
   if (event.type === 'message.complete') {
     const finalText = eventText(event);
     const next = [...messages];
-    const last = next.at(-1);
-    if (last?.role === 'assistant') {
-      next[next.length - 1] = {
-        ...last,
-        text: finalText || last.text,
-        status: 'complete',
-      };
+    const index = lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
+    if (index >= 0) {
+      const current = next[index];
+      next[index] = { ...current, text: finalText || current.text, status: 'complete' };
       return next;
     }
-    if (finalText) {
-      return [...messages, { id: `assistant-${now}`, role: 'assistant', text: finalText, status: 'complete', createdAt: now }];
-    }
+    if (finalText) return [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: finalText, status: 'complete', createdAt: now }];
     return messages;
   }
 
   if (event.type === 'error') {
     const message = eventText(event) || 'Gateway reported an error.';
     const next = [...messages];
-    const last = next.at(-1);
-    if (last?.role === 'assistant' && last.status === 'streaming') {
-      next[next.length - 1] = { ...last, text: last.text || message, status: 'error' };
+    const index = lastIndexOf((item) => item.kind === 'assistant' && item.status === 'streaming');
+    if (index >= 0) {
+      const current = next[index];
+      next[index] = { ...current, text: current.text || message, status: 'error' };
       return next;
     }
-    return [...messages, { id: `assistant-error-${now}`, role: 'assistant', text: message, status: 'error', createdAt: now }];
+    return [...messages, { id: `system-error-${now}`, role: 'system', kind: 'system', text: message, status: 'error', createdAt: now }];
   }
 
   return messages;

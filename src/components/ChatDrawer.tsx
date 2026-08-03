@@ -12,7 +12,10 @@ import {
 import {
   Bot,
   Check,
+  CheckCircle2,
+  ChevronDown,
   Circle,
+  Clock3,
   Cpu,
   FileText,
   Image as ImageIcon,
@@ -23,12 +26,16 @@ import {
   Pause,
   Send,
   ShieldCheck,
+  Sparkles,
   Trash2,
+  Wrench,
   X,
+  XCircle,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { ChatModelPicker } from './ChatModelPicker';
 import { ChatSlashPopover, type ChatSlashCompletionResponse, type ChatSlashPopoverHandle } from './ChatSlashPopover';
 import {
   applyGatewayEvent,
@@ -57,6 +64,7 @@ import {
   type ChatAttachmentUpload,
   type ChatMessage,
   type ChatModelIdentity,
+  type ChatModelSwitchResult,
   type GatewayCommandDispatch,
   type GatewayInteractionRequest,
 } from '../lib/chat-protocol';
@@ -244,6 +252,8 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
   const [activity, setActivity] = useState<ChatActivity | null>(null);
   const [interaction, setInteraction] = useState<GatewayInteractionRequest | null>(null);
   const [modelIdentity, setModelIdentity] = useState<ChatModelIdentity | null>(initial.modelIdentity);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelPickerRefresh, setModelPickerRefresh] = useState(false);
   const [commandPrefill, setCommandPrefill] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef(new Map<string, PendingRpc>());
@@ -282,6 +292,8 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
     sessionKeyRef.current = requested;
     setMessages([]);
     setModelIdentity(null);
+    setModelPickerOpen(false);
+    setModelPickerRefresh(false);
     setInteraction(null);
     setActivity(null);
   }, [initialSessionId]);
@@ -657,6 +669,51 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
     }
   }, [ensureSession, refreshModel, request, submitting]);
 
+  const closeModelPicker = useCallback(() => {
+    setModelPickerOpen(false);
+    setModelPickerRefresh(false);
+  }, []);
+
+  const switchModel = useCallback(async (
+    model: string,
+    provider = '',
+    confirmExpensiveModel = false,
+  ): Promise<ChatModelSwitchResult> => {
+    const selectedModel = model.trim();
+    if (!selectedModel) return { ok: false, error: 'Model value required.' };
+    try {
+      const activeSessionId = await ensureSession();
+      const value = provider.trim()
+        ? `${selectedModel} --provider ${provider.trim()} --session`
+        : selectedModel;
+      const raw = await request<Record<string, unknown>>('config.set', {
+        key: 'model',
+        value,
+        session_id: activeSessionId,
+        ...(confirmExpensiveModel ? { confirm_expensive_model: true } : {}),
+      });
+      const result = raw && typeof raw === 'object' ? raw : {};
+      if (result.confirm_required === true) {
+        return {
+          ok: false,
+          confirmRequired: true,
+          confirmMessage: typeof result.confirm_message === 'string' ? result.confirm_message : undefined,
+          warning: typeof result.warning === 'string' ? result.warning : undefined,
+        };
+      }
+      const identity = extractSessionModel(raw) ?? { model: selectedModel, ...(provider.trim() ? { provider: provider.trim() } : {}) };
+      setModelIdentity(identity);
+      const deferred = result.deferred === true;
+      appendSystemMessage(`${deferred ? 'Model queued for next turn' : 'Model switched'}: ${identity.model}${identity.provider ? ` · ${identity.provider}` : ''}`);
+      setModelPickerOpen(false);
+      setModelPickerRefresh(false);
+      await refreshModel(activeSessionId);
+      return { ok: true, warning: typeof result.warning === 'string' ? result.warning : undefined };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Could not switch model.' };
+    }
+  }, [appendSystemMessage, ensureSession, refreshModel, request]);
+
   const executeSlashCommand = useCallback(async (command: string, depth = 0): Promise<boolean> => {
     const parsed = parseSlash(command);
     if (!parsed.name) {
@@ -694,6 +751,16 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
     setError(null);
     try {
       const activeSessionId = await ensureSession();
+      if (parsed.name.toLowerCase() === 'model') {
+        if (!parsed.arg || parsed.arg === '--refresh') {
+          setModelPickerRefresh(parsed.arg === '--refresh');
+          setModelPickerOpen(true);
+          return true;
+        }
+        const switched = await switchModel(parsed.arg);
+        if (!switched.ok) throw new Error(switched.error || 'Could not switch model.');
+        return true;
+      }
       const normalizedCommand = command.trim().replace(/^\/+/, '');
       try {
         const result = await request<unknown>('slash.exec', {
@@ -726,7 +793,7 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
     } finally {
       setSubmitting(false);
     }
-  }, [adoptModel, appendSystemMessage, ensureSession, refreshModel, request, submitAgentPrompt]);
+  }, [adoptModel, appendSystemMessage, ensureSession, refreshModel, request, submitAgentPrompt, switchModel]);
 
   const submitPrompt = useCallback(async (text: string, attachments: ChatAttachmentUpload[] = []): Promise<boolean> => {
     if (text.trim().startsWith('/') && attachments.length === 0) {
@@ -735,9 +802,16 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
     return submitAgentPrompt(text, attachments);
   }, [executeSlashCommand, submitAgentPrompt]);
 
-  const completeSlash = useCallback((text: string): Promise<ChatSlashCompletionResponse> => (
-    request<ChatSlashCompletionResponse>('complete.slash', { text })
-  ), [request]);
+  const completeSlash = useCallback(async (text: string): Promise<ChatSlashCompletionResponse> => {
+    const response = await request<ChatSlashCompletionResponse>('complete.slash', { text });
+    const token = text.trim().slice(1).split(/\s+/)[0]?.toLowerCase() ?? '';
+    const localItems = !text.trim().includes(' ') && 'model'.startsWith(token)
+      ? [{ display: '/model', text: '/model', meta: 'Choose the active model' }]
+      : [];
+    const existing = Array.isArray(response.items) ? response.items : [];
+    const items = [...localItems, ...existing.filter((item) => !localItems.some((local) => local.text === item.text))];
+    return { ...response, items, replace_from: typeof response.replace_from === 'number' ? response.replace_from : 1 };
+  }, [request]);
 
   const clearCommandPrefill = useCallback(() => setCommandPrefill(null), []);
 
@@ -807,6 +881,8 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
     setSessionKey(null);
     requestedSessionIdRef.current = null;
     setModelIdentity(null);
+    setModelPickerOpen(false);
+    setModelPickerRefresh(false);
     setCommandPrefill(null);
     sessionIdRef.current = null;
     sessionKeyRef.current = null;
@@ -822,6 +898,7 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
 
   return {
     messages,
+    sessionId,
     connectionState,
     statusText,
     error,
@@ -830,6 +907,11 @@ function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: s
     activity,
     interaction,
     modelIdentity,
+    modelPickerOpen,
+    modelPickerRefresh,
+    request,
+    switchModel,
+    closeModelPicker,
     commandPrefill,
     connect,
     completeSlash,
@@ -846,6 +928,61 @@ function AttachmentIcon({ kind }: { kind: AttachmentKind }) {
   return <FileText size={15} aria-hidden />;
 }
 
+function formatToolDuration(durationS: number | undefined): string | null {
+  if (typeof durationS !== 'number' || !Number.isFinite(durationS)) return null;
+  if (durationS < 1) return `${Math.round(durationS * 1000)}ms`;
+  return `${durationS.toFixed(durationS < 10 ? 1 : 0)}s`;
+}
+
+function ToolMessage({ message }: { message: ChatMessage }) {
+  const running = message.status === 'streaming';
+  const failed = message.status === 'error';
+  const input = message.toolInput || message.text;
+  const duration = formatToolDuration(message.durationS);
+  const stateLabel = failed ? 'Failed' : running ? 'Running' : 'Completed';
+
+  return (
+    <div className="chat-tool-surface">
+      <div className="chat-tool-header">
+        <span className="chat-tool-avatar" aria-hidden><Wrench size={15} /></span>
+        <div className="chat-tool-heading">
+          <strong>{message.toolName || 'Tool'}</strong>
+          <span>Hermes tool call</span>
+        </div>
+        <span className={`chat-tool-state is-${failed ? 'error' : running ? 'running' : 'complete'}`}>
+          {failed ? <XCircle size={13} /> : running ? <Loader2 size={13} className="chat-spin" /> : <CheckCircle2 size={13} />}
+          {stateLabel}
+        </span>
+      </div>
+
+      {input ? (
+        <div className="chat-tool-section chat-tool-input-section">
+          <div className="chat-tool-section-label"><span>Input</span><span>{message.toolId ? `#${message.toolId.slice(-8)}` : 'request'}</span></div>
+          <pre>{input}</pre>
+        </div>
+      ) : null}
+
+      {message.detail ? (
+        <div className="chat-tool-live">
+          <span><Sparkles size={12} /> Live output</span>
+          <pre>{message.detail}</pre>
+        </div>
+      ) : null}
+
+      {message.output ? (
+        <div className="chat-tool-section chat-tool-output-section">
+          <div className="chat-tool-section-label"><span>Output</span>{duration ? <span><Clock3 size={11} /> {duration}</span> : null}</div>
+          <pre>{message.output}</pre>
+        </div>
+      ) : running ? (
+        <div className="chat-tool-waiting"><Loader2 size={13} className="chat-spin" /> Waiting for tool result…</div>
+      ) : null}
+
+      {!input && !message.output && !message.detail && !running ? <div className="chat-tool-waiting">No payload returned.</div> : null}
+    </div>
+  );
+}
+
 export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -860,6 +997,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const pendingRef = useRef<PendingAttachment[]>([]);
   const {
     messages,
+    sessionId,
     connectionState,
     statusText,
     error,
@@ -868,6 +1006,11 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     activity,
     interaction,
     modelIdentity,
+    modelPickerOpen,
+    modelPickerRefresh,
+    request,
+    switchModel,
+    closeModelPicker,
     commandPrefill,
     connect,
     completeSlash,
@@ -1089,6 +1232,17 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </div>
         </header>
 
+        {modelPickerOpen ? (
+          <ChatModelPicker
+            request={request}
+            sessionId={sessionId}
+            currentModel={modelIdentity ? `${modelIdentity.provider ? `${modelIdentity.provider}/` : ''}${modelIdentity.model}` : undefined}
+            initialRefresh={modelPickerRefresh}
+            onClose={closeModelPicker}
+            onSelect={switchModel}
+          />
+        ) : null}
+
         <div ref={scrollRef} className={`chat-transcript ${isDragging ? 'is-dragging' : ''}`} aria-live="polite">
           {isDragging ? (
             <div className="chat-drop-hint"><Paperclip size={20} /><span>Drop files to attach</span></div>
@@ -1100,33 +1254,65 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
               <span>Ask, inspect, fix, ship.</span>
             </section>
           ) : (
-            messages.map((message) => (
-              <article key={message.id} className={`chat-message chat-message-${message.role} ${message.status ? `is-${message.status}` : ''}`}>
-                <div className="chat-message-meta">
-                  <span>{message.role}</span>
-                  {message.status === 'streaming' ? <Loader2 size={12} className="chat-spin" aria-label="Streaming" /> : null}
-                </div>
-                {message.attachments?.length ? (
-                  <div className="chat-message-attachments">
-                    {message.attachments.map((attachment) => (
-                      <span className="chat-file-chip" key={`${message.id}-${attachment.name}`}>
-                        <AttachmentIcon kind={attachment.kind} />
-                        <span>{attachment.name}</span>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="chat-message-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || (message.status === 'streaming' ? '...' : '')}</ReactMarkdown>
-                </div>
-              </article>
-            ))
+            messages.map((message) => {
+              const visualKind = message.kind ?? message.role;
+              const isTool = visualKind === 'tool';
+              const isReasoning = visualKind === 'reasoning';
+              const label = visualKind === 'assistant'
+                ? 'Hermes'
+                : visualKind === 'user'
+                  ? 'You'
+                  : isReasoning
+                    ? 'Reasoning'
+                    : 'System';
+              return (
+                <article key={message.id} className={`chat-message chat-message-${visualKind} ${message.status ? `is-${message.status}` : ''}`}>
+                  {isTool ? <ToolMessage message={message} /> : (
+                    <>
+                      <div className="chat-message-meta">
+                        <span className="chat-message-kind-icon" aria-hidden>
+                          {visualKind === 'assistant' ? <Bot size={12} /> : isReasoning ? <Cpu size={12} /> : visualKind === 'user' ? <MessageSquare size={12} /> : <FileText size={12} />}
+                        </span>
+                        <span>{label}</span>
+                        {message.status === 'streaming' ? <Loader2 size={12} className="chat-spin" aria-label="Streaming" /> : null}
+                      </div>
+                      {message.attachments?.length ? (
+                        <div className="chat-message-attachments">
+                          {message.attachments.map((attachment) => (
+                            <span className="chat-file-chip" key={`${message.id}-${attachment.name}`}>
+                              <AttachmentIcon kind={attachment.kind} />
+                              <span>{attachment.name}</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {isReasoning ? (
+                        <details className="chat-reasoning-surface" open={message.status === 'streaming'}>
+                          <summary>
+                            <span className="chat-reasoning-summary-icon"><Sparkles size={13} /></span>
+                            <span>{message.status === 'streaming' ? 'Thinking' : 'Reasoning trace'}</span>
+                            <ChevronDown size={14} className="chat-reasoning-chevron" />
+                          </summary>
+                          <div className="chat-reasoning-copy">
+                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || 'Working through the request…'}</ReactMarkdown>
+                          </div>
+                        </details>
+                      ) : (
+                        <div className={`chat-message-body chat-${visualKind}-body`}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || (message.status === 'streaming' ? '...' : '')}</ReactMarkdown>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </article>
+              );
+            })
           )}
         </div>
 
-        {activity ? (
+        {activity && activity.kind !== 'tool' ? (
           <div className={`chat-activity is-${activity.state}`} role="status">
-            {activity.kind === 'tool' ? <ShieldCheck size={15} /> : <Loader2 size={15} className={activity.state === 'running' ? 'chat-spin' : ''} />}
+            {activity.kind === 'reasoning' ? <Sparkles size={15} className={activity.state === 'running' ? 'chat-spin' : ''} /> : <Loader2 size={15} className={activity.state === 'running' ? 'chat-spin' : ''} />}
             <strong>{activity.label}</strong>
             {activity.detail ? <span>{previewText(activity.detail)}</span> : null}
           </div>

@@ -131,6 +131,15 @@ assertEqual(restored.length, 3);
 assertEqual(restored[0].role, 'user');
 assertEqual(restored[1].text, 'Answer');
 assertEqual(restored[2].text, 'Block one\nBlock two');
+const semanticTranscript = normalizeTranscript([
+  { role: 'assistant', text: 'Answer', reasoning: 'Why this answer is safe.' },
+  { role: 'tool', name: 'shell', context: 'pwd' },
+], 1001);
+assertEqual(semanticTranscript.length, 3);
+assertEqual(semanticTranscript[0].kind, 'reasoning');
+assertEqual(semanticTranscript[1].kind, 'assistant');
+assertEqual(semanticTranscript[2].kind, 'tool');
+assertEqual(semanticTranscript[2].toolName, 'shell');
 
 let messages = applyGatewayEvent([], { type: 'message.start' }, 2000);
 messages = applyGatewayEvent(messages, { type: 'message.delta', payload: { text: 'A' } }, 2001);
@@ -156,8 +165,37 @@ assertEqual(interimMessages[0].status, 'complete');
 assertEqual(interimMessages[1].text, 'interim answer');
 assertEqual(interimMessages[1].status, 'streaming');
 interimMessages = applyGatewayEvent(interimMessages, { type: 'reasoning.available', payload: { reasoning: 'A concise rationale.' } }, 2103);
+assertEqual(interimMessages.at(-1)?.kind, 'reasoning');
 assertEqual(interimMessages.at(-1)?.role, 'tool');
-assertEqual(interimMessages.at(-1)?.text, '**Reasoning**\n\nA concise rationale.');
+assertEqual(interimMessages.at(-1)?.text, 'A concise rationale.');
+assertEqual(interimMessages.at(-1)?.status, 'complete');
+
+let toolMessages = applyGatewayEvent([], {
+  type: 'tool.start',
+  payload: { tool_id: 'tool-1', name: 'shell', args_text: 'pwd' },
+}, 2200);
+assertEqual(toolMessages[0].kind, 'tool');
+assertEqual(toolMessages[0].toolName, 'shell');
+assertEqual(toolMessages[0].status, 'streaming');
+toolMessages = applyGatewayEvent(toolMessages, {
+  type: 'tool.complete',
+  payload: { tool_id: 'tool-1', result: '/Users/albi' },
+}, 2201);
+assertEqual(toolMessages[0].toolInput, 'pwd');
+toolMessages = applyGatewayEvent(toolMessages, {
+  type: 'tool.complete',
+  payload: { tool_id: 'tool-1', result_text: '/Users/albi', duration_s: 0.42 },
+}, 2201);
+assertEqual(toolMessages[0].output, '/Users/albi');
+assertEqual(toolMessages[0].durationS, 0.42);
+assertEqual(toolMessages[0].status, 'complete');
+
+const aliasToolMessages = applyGatewayEvent([], {
+  type: 'tool.started',
+  payload: { tool_id: 'tool-2', name: 'read_file', context: 'Reading a file', args_text: '{"path":"README.md"}' },
+}, 2202);
+assertEqual(aliasToolMessages[0].toolInput, '{"path":"README.md"}');
+assertEqual(aliasToolMessages[0].status, 'streaming');
 
 const unknownApplied = applyGatewayEvent(messages, { type: 'future.event', payload: { text: 'ignored' } }, 2004);
 assertEqual(unknownApplied, messages);

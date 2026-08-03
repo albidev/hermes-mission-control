@@ -84,8 +84,16 @@ export const ChatSlashPopover = forwardRef<ChatSlashPopoverHandle, ChatSlashPopo
           return true;
         }
         if (event.key === 'Tab' || event.key === 'Enter') {
+          const item = items[selected];
+          // When the user has already typed the full local command (notably
+          // `/model`), Enter should submit it and open the model picker rather
+          // than applying the same completion forever.
+          if (event.key === 'Enter' && item && input.trim() === item.text.trim() && !input.trim().includes(' ')) {
+            setItems([]);
+            return false;
+          }
           event.preventDefault();
-          apply(items[selected]);
+          apply(item);
           return true;
         }
         if (event.key === 'Escape') {
