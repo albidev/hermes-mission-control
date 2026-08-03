@@ -27,9 +27,15 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path,
       },
+      '/api/gateway-root': {
+        target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',
+        changeOrigin: true,
+        rewrite: () => '/',
+      },
       '/api': {
         target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',
         changeOrigin: true,
+        ws: true,
       },
     },
   },

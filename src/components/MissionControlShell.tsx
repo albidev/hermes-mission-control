@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ThemeSelector } from './ThemeSelector';
 import { useMissionControl } from '../lib/mission-control-store';
+import { ChatDrawer } from './ChatDrawer';
 
 const navItems: Array<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
@@ -44,7 +45,9 @@ export function MissionControlShell() {
 
   const [sideOpen, setSideOpen] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
+  const chatButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const activeNav = navItems.find((item) => (item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)));
   const isOverviewRoute = activeNav?.to === '/';
@@ -61,6 +64,18 @@ export function MissionControlShell() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [sideOpen]);
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setChatOpen(false);
+        chatButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [chatOpen]);
 
   useEffect(() => {
     if (!authRequired) {
@@ -178,6 +193,17 @@ export function MissionControlShell() {
             <div className="workspace-meta">
               <span className="mini-note">theme: {resolvedTheme}</span>
               {lastUpdatedAt ? <span className="mini-note">Last synced {lastUpdatedAt}</span> : null}
+              <button
+                ref={chatButtonRef}
+                className="pill pill-subtle pill-button chat-open-button"
+                type="button"
+                onClick={() => setChatOpen(true)}
+                aria-label="Open Hermes chat"
+                aria-expanded={chatOpen}
+              >
+                <MessageSquare size={16} aria-hidden />
+                <span>Chat</span>
+              </button>
             </div>
           </header>
 
@@ -238,6 +264,17 @@ export function MissionControlShell() {
             </div>
           ) : null}
         </section>
+
+        {!authRequired ? (
+          <ChatDrawer
+            open={chatOpen}
+            storedToken={storedToken}
+            onClose={() => {
+              setChatOpen(false);
+              chatButtonRef.current?.focus();
+            }}
+          />
+        ) : null}
       </div>
     </main>
   );
