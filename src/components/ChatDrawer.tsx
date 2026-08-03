@@ -150,6 +150,14 @@ async function readTicketResponse(response: Response): Promise<{ kind: 'ticket';
 }
 
 async function mintWsCredential(accessToken: string): Promise<{ kind: 'ticket' | 'token'; value: string }> {
+  // Mission Control is served by the same Hermes dashboard host. Prefer the
+  // injected dashboard session token: it works through localhost, Tailscale,
+  // and the HTTPS reverse proxy without a separate cookie-bound ticket flow.
+  const loopbackToken = await readLoopbackSessionToken();
+  if (loopbackToken) return { kind: 'token', value: loopbackToken };
+
+  // Keep the short-lived ticket as a compatibility fallback for deployments
+  // where the dashboard-root proxy is unavailable.
   let response = await requestWsTicket();
   if (response.ok) return readTicketResponse(response);
 
@@ -158,11 +166,6 @@ async function mintWsCredential(accessToken: string): Promise<{ kind: 'ticket' |
     response = await requestWsTicket({ Authorization: `Bearer ${accessToken.trim()}` });
     if (response.ok) return readTicketResponse(response);
     lastStatus = response.status;
-  }
-
-  if (lastStatus === 401 || lastStatus === 404) {
-    const loopbackToken = await readLoopbackSessionToken();
-    if (loopbackToken) return { kind: 'token', value: loopbackToken };
   }
 
   if (lastStatus === 401) {
