@@ -153,42 +153,103 @@ def send_push(title: str, body: str, *, tag: str = "mission-control", data: Opti
 
 
 # --- Gateway watcher (server-side trigger) --------------------------------
+#
+# Trigger model: the app's own WebSocket dies in the background (Safari
+# suspends the page), so a server-side process must fire pushes. The source
+# of truth is state.db (messages table): a new assistant message in a
+# mission-control session is a completed Hermes response → push. This is
+# precise and only fires on final answers, not on intermediate reasoning or
+# tool noise (which are tool/role rows we ignore).
 
-def _gateway_sessions_dir() -> Path:
-    home = Path(os.path.expanduser("~"))
-    return home / ".hermes" / "sessions"
+def _state_db() -> Optional[Any]:
+    """Open Hermes's session store read-only for the watcher.
 
-
-def _watch_gateway_loop(interval: float = 6.0) -> None:
-    """Minimal observer: watch the sessions dir for new assistant completions.
-
-    This is intentionally conservative and decoupled from the gateway
-    internals — it looks for recently-modified session transcript files and
-    pushes once per new completion. The real trigger point lives in the
-    telemetry server's event handling where message.complete is observed.
+    Mirrors mission_control_agents._try_get_session_db (read_only=True) so we
+    never compete with the gateway's writer or run schema init.
     """
-    # Note: the actual completion-driven trigger is wired in the telemetry
-    # server's WebSocket event path. This loop is a safety net that also
-    # covers the case where the app is never opened to attach the WebSocket.
-    last_sizes: Dict[str, int] = {}
+    try:
+        from hermes_state import SessionDB
+        return SessionDB(read_only=True)
+    except Exception:
+        return None
+
+
+def _last_message_id(conn: Any) -> int:
+    try:
+        row = conn.execute("SELECT COALESCE(MAX(id), 0) FROM messages").fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def _new_final_answers(conn: Any, after_id: int) -> List[Dict[str, str]]:
+    """Return assistant responses added to mission-control sessions after
+    after_id: {session, text}. Empty content and hidden/system rows are
+    skipped so we only notify on real final answers.
+    """
+    rows = conn.execute(
+        """
+        SELECT m.id, s.title, m.content
+        FROM messages m
+        JOIN sessions s ON s.id = m.session_id
+        WHERE m.id > ? AND s.source = 'mission-control'
+          AND m.role = 'assistant'
+          AND (m.display_kind IS NULL OR m.display_kind NOT IN ('hidden'))
+          AND m.content IS NOT NULL AND length(trim(m.content)) > 0
+        ORDER BY m.id ASC
+        """,
+        (after_id,),
+    ).fetchall()
+    return [
+        {
+            "id": str(row[0]),
+            "session": row[1] or "Mission Control",
+            "text": str(row[2])[:160],
+        }
+        for row in rows
+    ]
+
+
+def _watch_gateway_loop(interval: float = 5.0) -> None:
+    """Poll state.db for new final answers in mission-control sessions and
+    push each one. Tracks the last-seen message id so each response fires
+    exactly once.
+    """
+    db = _state_db()
+    if db is None:
+        return
+    try:
+        conn = getattr(db, "_conn", None)
+        if conn is None:
+            return
+        last_id = _last_message_id(conn)
+    except Exception:
+        return
+
     while True:
         try:
-            sessions_dir = _gateway_sessions_dir()
-            if sessions_dir.exists():
-                for path in sessions_dir.iterdir():
-                    if path.is_file() and path.suffix in (".json", ".jsonl"):
-                        try:
-                            size = path.stat().st_size
-                        except OSError:
-                            continue
-                        if last_sizes.get(str(path), -1) >= 0 and size > last_sizes[str(path)]:
-                            # A session grew: notify (new content).
-                            send_push(
-                                "Hermes Mission Control",
-                                "A Hermes session has new activity.",
-                                tag=f"session-{path.name}",
-                            )
-                        last_sizes[str(path)] = size
+            conn = getattr(db, "_conn", None)
+            if conn is None:
+                db = _state_db()
+                if db is None:
+                    time.sleep(interval)
+                    continue
+                conn = getattr(db, "_conn", None)
+                if conn is None:
+                    time.sleep(interval)
+                    continue
+                last_id = _last_message_id(conn)
+
+            answers = _new_final_answers(conn, last_id)
+            for answer in answers:
+                send_push(
+                    "Hermes Mission Control",
+                    f"{answer['session']}: {answer['text']}",
+                    tag=f"answer-{answer['id']}",
+                    data={"url": "/"},
+                )
+                if int(answer["id"]) > last_id:
+                    last_id = int(answer["id"])
         except Exception:
             pass
         time.sleep(interval)
