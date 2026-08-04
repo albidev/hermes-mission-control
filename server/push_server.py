@@ -16,10 +16,13 @@ gracefully and every call returns a "disabled" state rather than crashing.
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import os
+import re
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -260,6 +263,121 @@ def start_gateway_watcher(interval: float = 6.0) -> None:
         target=_watch_gateway_loop,
         args=(interval,),
         name="mc-push-watcher",
+        daemon=True,
+    )
+    thread.start()
+    _start_interaction_observer()
+
+
+# --- Interaction observer (real-time, WebSocket) ---------------------------
+#
+# Interaction requests (approval / clarify / secret / sudo / terminal read)
+# are NOT persisted to state.db — they are live WebSocket events. To push on
+# them while the app is in the background we dial the same dashboard gateway
+# WebSocket the client uses, with the injected session token, and push on
+# interaction.request events. Final answers are already covered by the
+# state.db poller above, so we only handle interactions here.
+
+_INTERACTION_EVENTS = {
+    "approval.request",
+    "clarify.request",
+    "secret.request",
+    "sudo.request",
+    "terminal.read.request",
+}
+
+_INTERACTION_LABELS = {
+    "approval.request": "Hermes needs permission",
+    "clarify.request": "Hermes needs your answer",
+    "secret.request": "Hermes needs a secret",
+    "sudo.request": "Hermes needs elevated access",
+    "terminal.read.request": "Hermes needs terminal output",
+}
+
+_WS_BASE = os.environ.get(
+    "MISSION_CONTROL_GATEWAY_WS_URL",
+    "ws://127.0.0.1:5174/api/ws",
+)
+_GATEWAY_ROOT_URL = os.environ.get(
+    "MISSION_CONTROL_GATEWAY_ROOT_URL",
+    "http://127.0.0.1:5174/api/gateway-root",
+)
+_RECONNECT_DELAY = float(os.environ.get("MISSION_CONTROL_WS_RECONNECT_DELAY", "5"))
+
+
+def _fetch_session_token() -> Optional[str]:
+    """Pull the dashboard session token injected into the gateway-root page.
+
+    Mirrors what the browser client reads on startup so the observer can
+    authenticate to the same WebSocket endpoint.
+    """
+    try:
+        req = urllib.request.Request(_GATEWAY_ROOT_URL, headers={"User-Agent": "hermes-mc-push"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+        match = re.search(r'__HERMES_SESSION_TOKEN__\s*=\s*"([^"]+)"', html)
+        return match.group(1) if match else None
+    except Exception:
+        return None
+
+
+def _interaction_body(event_type: str, payload: Dict[str, Any]) -> str:
+    label = _INTERACTION_LABELS.get(event_type, "Hermes needs your input")
+    # Try to surface a human-readable detail for the push body.
+    for key in ("message", "prompt", "description", "question", "text", "command"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            detail = value.strip().replace("\n", " ")[:140]
+            return f"{label}: {detail}"
+    return label
+
+
+async def _interaction_observer_loop() -> None:
+    while True:
+        token = _fetch_session_token()
+        if not token:
+            await asyncio.sleep(_RECONNECT_DELAY)
+            continue
+        url = f"{_WS_BASE}?token={token}"
+        try:
+            import websockets
+            async with websockets.connect(url, open_timeout=10) as ws:
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=120)
+                    try:
+                        frame = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if frame.get("method") != "event":
+                        continue
+                    params = frame.get("params") or {}
+                    etype = params.get("type", "")
+                    if etype in _INTERACTION_EVENTS:
+                        payload = params.get("payload") or {}
+                        send_push(
+                            _INTERACTION_LABELS.get(etype, "Hermes"),
+                            _interaction_body(etype, payload),
+                            tag=f"interaction-{etype}-{int(time.time()*1000)}",
+                            data={"url": "/"},
+                        )
+        except asyncio.TimeoutError:
+            # No event within the heartbeat window — still connected, loop.
+            continue
+        except Exception:
+            pass
+        await asyncio.sleep(_RECONNECT_DELAY)
+
+
+def _start_interaction_observer() -> None:
+    def runner() -> None:
+        try:
+            asyncio.run(_interaction_observer_loop())
+        except Exception:
+            pass
+
+    thread = threading.Thread(
+        target=runner,
+        name="mc-push-interaction-observer",
         daemon=True,
     )
     thread.start()
