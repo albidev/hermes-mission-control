@@ -48,7 +48,16 @@ export function MissionControlShell() {
 
   const [sideOpen, setSideOpen] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  // Safari suspends the tab in the background and cold-reloads it on return,
+  // wiping React state. Persist the chat-open flag so the drawer comes back
+  // open exactly as the user left it after the app reloads.
+  const [chatOpen, setChatOpenState] = useState<boolean>(() => {
+    try { return sessionStorage.getItem('mission-control-chat-open') === '1'; } catch { return false; }
+  });
+  const setChatOpen = useCallback((open: boolean) => {
+    setChatOpenState(open);
+    try { sessionStorage.setItem('mission-control-chat-open', open ? '1' : '0'); } catch { /* ignore */ }
+  }, []);
   const chatRecoverySessionId = new URLSearchParams(location.search).get('chatSession');
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const chatButtonRef = useRef<HTMLButtonElement | null>(null);
