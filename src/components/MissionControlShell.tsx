@@ -15,6 +15,7 @@ import {
 import { ThemeSelector } from './ThemeSelector';
 import { useMissionControl } from '../lib/mission-control-store';
 import { ChatDrawer } from './ChatDrawer';
+import { useLastRoutePersistence } from '../lib/last-route';
 
 const navItems: Array<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
@@ -31,6 +32,7 @@ const navItems: Array<{ to: string; label: string; icon: LucideIcon }> = [
 export function MissionControlShell() {
   const location = useLocation();
   const navigate = useNavigate();
+  useLastRoutePersistence();
   const {
     authRequired,
     authError,
