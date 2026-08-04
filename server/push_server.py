@@ -34,15 +34,17 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
-def load_vapid_private_key() -> Optional[bytes]:
-    """Return the PEM-encoded VAPID private key, or None if unset."""
+def load_vapid_private_key() -> Optional[str]:
+    """Return the VAPID private key in a form pywebpush's Vapid.from_string()
+    accepts, or None if unset.
+
+    from_string() auto-detects RAW (32-byte) vs DER. We store the RAW
+    base64url form (32 bytes) which it parses directly.
+    """
     raw = os.environ.get("MISSION_CONTROL_VAPID_PRIVATE_KEY", "").strip()
     if not raw:
         return None
-    try:
-        return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
-    except Exception:
-        return None
+    return raw or None
 
 
 def load_vapid_public_key() -> Optional[str]:
@@ -134,7 +136,7 @@ def send_push(title: str, body: str, *, tag: str = "mission-control", data: Opti
                 subscription_info=subscription,
                 data=payload,
                 vapid_private_key=private_key,
-                vapid_claims={"sub": contact or "mailto:hermes@localhost"},
+                vapid_claims={"sub": contact or "mailto:albi@mac-mini-01.taild7292a.ts.net"},
                 timeout=10,
             )
             sent += 1
