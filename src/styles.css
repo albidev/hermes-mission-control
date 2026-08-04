@@ -775,6 +775,30 @@
   font-size: 0.75rem;
 }
 
+.chat-scroll-fab {
+  position: absolute;
+  right: 1rem;
+  bottom: 6.5rem;
+  z-index: 12;
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+  color: var(--color-accent);
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  transition: transform 150ms ease, opacity 150ms ease, background 150ms ease;
+  opacity: 0.9;
+}
+.chat-scroll-fab:hover {
+  background: var(--color-accent-subtle);
+  transform: translateY(-1px);
+  opacity: 1;
+}
+
 .chat-error {
   display: flex;
   align-items: center;

@@ -78,6 +78,8 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [nearBottom, setNearBottom] = useState(true);
+  const nearBottomRef = useRef(true);
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
   const {
@@ -171,10 +173,32 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     return () => window.cancelAnimationFrame(raf);
   }, [open]);
 
+  const isNearBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+
+  const handleTranscriptScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const bottom = isNearBottom();
+    nearBottomRef.current = bottom;
+    setNearBottom(bottom);
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior });
+  }, []);
+
   useEffect(() => {
     if (!open) return;
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, interaction, activity, open]);
+    // Only auto-scroll when the user was already near the bottom. If they've
+    // scrolled up to read earlier content while Hermes streams, we leave them
+    // where they are and show the "jump to bottom" FAB instead.
+    if (!nearBottomRef.current) return;
+    scrollToBottom('smooth');
+  }, [messages, interaction, activity, open, scrollToBottom]);
 
   useEffect(() => {
     setInteractionDraft('');
@@ -365,7 +389,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           />
         ) : null}
 
-        <div ref={scrollRef} className={`chat-transcript ${isDragging ? 'is-dragging' : ''}`} aria-live="polite">
+        <div ref={scrollRef} onScroll={handleTranscriptScroll} className={`chat-transcript ${isDragging ? 'is-dragging' : ''}`} aria-live="polite">
           {isDragging ? (
             <div className="chat-drop-hint"><Paperclip size={20} /><span>Drop files to attach</span></div>
           ) : null}
@@ -425,6 +449,18 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           ) : (
             messages.map((message) => <ChatMessageCard key={message.id} message={message} />))}
         </div>
+
+        {!nearBottom ? (
+          <button
+            className="chat-scroll-fab"
+            type="button"
+            onClick={() => scrollToBottom('smooth')}
+            aria-label="Scroll to latest message"
+            title="Scroll to latest message"
+          >
+            <ChevronDown size={18} />
+          </button>
+        ) : null}
 
         {activity && activity.kind !== 'tool' ? (
           <div className={`chat-activity is-${activity.state}`} role="status">
