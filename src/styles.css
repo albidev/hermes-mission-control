@@ -776,11 +776,11 @@
 }
 
 .chat-scroll-fab {
-  position: absolute;
-  right: 1rem;
-  bottom: 6.5rem;
+  position: sticky;
+  bottom: 0.75rem;
   z-index: 12;
   display: inline-grid;
+  align-self: flex-end;
   width: 40px;
   height: 40px;
   place-items: center;
@@ -2306,6 +2306,59 @@
 .chat-tool-empty {
   color: var(--color-text-muted);
   font-size: 0.75rem;
+}
+
+/* Turn grouping: internal work (reasoning + tool calls) folds behind a
+   disclosure once the assistant's answer is complete, so the transcript
+   reads as user → [expandable work] → answer. While live it stays open. */
+.chat-turn-work {
+  width: min(96%, 42rem);
+  max-width: min(96%, 42rem);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-surface-sunken) 70%, var(--color-surface));
+  overflow: hidden;
+}
+.chat-turn-work.is-live {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+.chat-turn-work.is-collapsed > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.5rem 0.7rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chat-turn-work.is-collapsed > summary::-webkit-details-marker { display: none; }
+.chat-turn-work.is-collapsed > summary svg {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+}
+.chat-turn-work.is-collapsed > summary .chat-reasoning-chevron {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  transition: transform 160ms ease;
+}
+.chat-turn-work.is-collapsed[open] > summary .chat-reasoning-chevron { transform: rotate(180deg); }
+.chat-turn-work-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.1rem 0.75rem 0.85rem;
+}
+.chat-turn-work-body .chat-message {
+  max-width: 100%;
+  width: 100%;
 }
 
 /* Discord-style execution cards: tool calls are timeline blocks, not assistant bubbles. */
