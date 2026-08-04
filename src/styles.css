@@ -844,8 +844,6 @@
 .chat-drawer-head {
   min-height: 72px;
   background: color-mix(in srgb, var(--color-surface-sunken) 92%, var(--color-accent) 8%);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
 }
 
 .chat-mark {
