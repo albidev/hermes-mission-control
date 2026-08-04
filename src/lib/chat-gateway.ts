@@ -221,6 +221,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerRefresh, setModelPickerRefresh] = useState(false);
   const [commandPrefill, setCommandPrefill] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<boolean>(Boolean(initialSessionId?.trim()));
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef(new Map<string, PendingRpc>());
   const requestSeqRef = useRef(0);
@@ -233,6 +234,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const interactionRef = useRef(interaction);
   const intentionalCloseRef = useRef(false);
   const requestedSessionIdRef = useRef<string | null>(initialSessionId ?? null);
+  const previewModeRef = useRef<boolean>(Boolean(initialSessionId?.trim()));
   const connectRef = useRef<() => Promise<void>>(async () => {});
   const readyResolveRef = useRef<(() => void) | null>(null);
 
@@ -251,6 +253,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   useEffect(() => {
     const requested = initialSessionId?.trim() || null;
     requestedSessionIdRef.current = requested;
+    previewModeRef.current = Boolean(requested);
+    setPreviewMode(Boolean(requested));
     if (!requested) return;
     setSessionId(requested);
     sessionIdRef.current = requested;
@@ -365,10 +369,26 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
   useEffect(() => {
     if (!open || !initialSessionId || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    // In preview mode the drawer opens showing the session preview; resume is
+    // explicit via the "Resume session" button, not automatic.
+    if (previewModeRef.current) return;
     void ensureSession().catch((err: unknown) => {
       setError(err instanceof Error ? err.message : 'Failed to recover the selected session.');
     });
   }, [ensureSession, initialSessionId, open]);
+
+  const resumeSession = useCallback(async (): Promise<string | null> => {
+    previewModeRef.current = false;
+    setPreviewMode(false);
+    try {
+      const activeSessionId = await ensureSession();
+      if (activeSessionId) void refreshModel(activeSessionId);
+      return activeSessionId ?? null;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resume the selected session.');
+      return null;
+    }
+  }, [ensureSession, refreshModel]);
 
   const scheduleReconnect = useCallback(() => {
     if (intentionalCloseRef.current || reconnectAttemptsRef.current >= MAX_RECONNECTS) {
@@ -497,6 +517,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           if (wsRef.current !== ws || intentionalCloseRef.current) return;
           setConnectionState('connected');
           setStatusText('Connected');
+          // Auto-resume only for the generic chat (no specific session target).
+          // When a session was picked from the list, stay in preview mode until
+          // the user clicks "Resume session".
+          if (previewModeRef.current) return;
           void ensureSession().then((activeSessionId) => refreshModel(activeSessionId)).catch((err: unknown) => {
             setError(err instanceof Error ? err.message : 'Failed to create or resume chat session.');
           });
@@ -872,6 +896,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     running,
     activity,
     interaction,
+    previewMode,
     modelIdentity,
     modelPickerOpen,
     modelPickerRefresh,
@@ -880,6 +905,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     closeModelPicker,
     commandPrefill,
     connect,
+    resumeSession,
     completeSlash,
     clearCommandPrefill,
     submitPrompt,

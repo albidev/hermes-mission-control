@@ -1430,8 +1430,11 @@ async function fetchMissionControlAgents(accessToken?: string): Promise<Official
   return await maybeFetchOfficialJson<OfficialMissionControlAgentsPayload>('/mission-control/agents', accessToken);
 }
 
-async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100, offset = 0): Promise<OfficialMissionControlAgentSessionsPayload | null> {
-  const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(`/mission-control/sessions?limit=${limit}&offset=${offset}`, accessToken);
+async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100, offset = 0, sessionId?: string | null): Promise<OfficialMissionControlAgentSessionsPayload | null> {
+  const query = sessionId
+    ? `/mission-control/sessions?limit=${limit}&offset=${offset}&session_id=${encodeURIComponent(sessionId)}`
+    : `/mission-control/sessions?limit=${limit}&offset=${offset}`;
+  const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(query, accessToken);
   return local ?? null;
 }
 
@@ -1862,6 +1865,14 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
 export async function loadMissionControlAgentSessions(accessToken?: string, limit = 100, offset = 0): Promise<MissionControlAgentsSessionsSnapshot> {
   const payload = await fetchMissionControlAgentSessions(accessToken, limit, offset);
   return normalizeAgentSessionsSnapshot(payload);
+}
+
+export async function loadMissionControlSessionPreview(accessToken?: string, sessionId?: string | null): Promise<MissionControlAgentSessionItem | null> {
+  if (!sessionId) return null;
+  const payload = await fetchMissionControlAgentSessions(accessToken, 1, 0, sessionId);
+  if (!payload?.items?.length) return null;
+  const normalized = normalizeAgentSessionsSnapshot(payload);
+  return normalized.items[0] ?? null;
 }
 
 export async function loadMissionControlSessions(accessToken?: string): Promise<MissionControlSessionsSnapshot> {

@@ -365,7 +365,7 @@ def _build_session_item(
     }
 
 
-def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = None, offset: int = 0) -> list[dict[str, Any]]:
+def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = None, offset: int = 0, session_id: str | None = None) -> list[dict[str, Any]]:
     index_map = _read_gateway_sessions_index()
     # _iter_db_session_ids already returns ids ordered by last_active (recency).
     # Preserve that order and append any index-only sessions (not in the DB) at
@@ -382,6 +382,10 @@ def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = 
         reverse=True,
     )
     ordered_ids = db_ids + index_only_ids
+    if session_id:
+        # Narrow to a single session for the chat drawer preview. Keep the
+        # recency ordering contract; the id either exists or yields nothing.
+        ordered_ids = [sid for sid in ordered_ids if sid == session_id]
     if offset:
         ordered_ids = ordered_ids[offset:]
     if limit is not None:
@@ -409,11 +413,11 @@ def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = 
         _close_session_db(db)
 
 
-def load_agents_sessions_snapshot(limit: int = 100, live_window_seconds: int = 300, offset: int = 0) -> dict[str, Any]:
+def load_agents_sessions_snapshot(limit: int = 100, live_window_seconds: int = 300, offset: int = 0, session_id: str | None = None) -> dict[str, Any]:
     clamped_limit = max(1, min(limit, 500))
     # Stats come from lightweight counts (single DB query), NOT from materialising
     # every session item — otherwise a limit=50 request still pays the full N+1.
-    visible_items = _collect_agent_sessions(live_window_seconds=live_window_seconds, limit=clamped_limit, offset=offset)
+    visible_items = _collect_agent_sessions(live_window_seconds=live_window_seconds, limit=clamped_limit, offset=offset, session_id=session_id)
     live_sessions = [item for item in visible_items if item.get("status") == "live"]
     db = _try_get_session_db()
     total_sessions = 0

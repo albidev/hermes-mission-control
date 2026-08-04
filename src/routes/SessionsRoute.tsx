@@ -51,50 +51,6 @@ function formatCost(usd: number): string {
   return '$0.00';
 }
 
-function SessionChatPreview({ session }: { session: MissionControlAgentSessionItem }) {
-  const messages = session.recentMessages ?? [];
-
-  return (
-    <div className="rounded-xl border border-violet-400/20 bg-violet-500/[0.045] overflow-hidden">
-      <div className="px-3 py-2 flex items-center justify-between gap-3 border-b border-violet-400/10">
-        <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-violet-300">
-          <MessageSquare size={13} aria-hidden />
-          <span>Recent chat</span>
-        </div>
-        <span className="text-[10px] text-text-subtle">
-          {messages.length > 0 ? `${messages.length} latest messages` : 'Preview unavailable'}
-        </span>
-      </div>
-
-      <div className="px-2.5 py-2.5 space-y-2">
-        {messages.length > 0 ? messages.map((message, index) => {
-          const isUser = message.role === 'user';
-          return (
-            <div key={`${message.role}-${message.timestamp ?? 'na'}-${index}`} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[92%] rounded-lg px-2.5 py-2 border ${
-                  isUser
-                    ? 'border-violet-400/20 bg-violet-500/15'
-                    : 'border-border-subtle bg-background/35 border-l-2 border-l-sky-400/60'
-                }`}
-              >
-                <p className={`text-[10px] font-semibold uppercase tracking-[0.08em] ${isUser ? 'text-violet-300' : 'text-sky-300'}`}>
-                  {isUser ? 'You' : 'Hermes'}
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-text-muted line-clamp-3">{message.text}</p>
-              </div>
-            </div>
-          );
-        }) : (
-          <p className="text-xs leading-relaxed text-text-muted line-clamp-3">
-            {session.preview || 'No recent messages available.'}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function SessionsRoute() {
   const { snapshot, storedToken } = useMissionControl();
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentsSessionsSnapshot | null>(null);
@@ -251,9 +207,6 @@ export function SessionsRoute() {
                       <span className="truncate">{session.sessionId}</span>
                     </button>
                   </div>
-
-                  {/* Row 2: compact conversation preview */}
-                  <SessionChatPreview session={session} />
 
                   {/* Row 3: token usage — clean two-column layout */}
                   {hasTokens ? (

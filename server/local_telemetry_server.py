@@ -1400,7 +1400,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
             offset = _parse_int((params.get("offset") or [None])[0], default=0, minimum=0, maximum=100000)
-            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset))
+            session_id = (params.get("session_id") or [None])[0] or None
+            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset, session_id=session_id))
             return
         if parsed.path == "/api/local/sessions":
             if not _is_authorized(self):

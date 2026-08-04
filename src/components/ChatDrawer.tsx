@@ -41,6 +41,11 @@ import {
   type PendingAttachment,
 } from '../lib/chat-gateway';
 import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';
+import {
+  loadMissionControlSessionPreview,
+  type MissionControlAgentSessionItem,
+  type MissionControlSessionPreviewMessage,
+} from '../lib/hermes-api';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -48,6 +53,20 @@ type ChatDrawerProps = {
   initialSessionId?: string | null;
   onClose: () => void;
 };
+
+function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewMessage }) {
+  const isUser = message.role === 'user';
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className={`chat-preview-bubble ${isUser ? 'is-user' : ''}`}>
+        <p className={`chat-preview-bubble-role ${isUser ? 'text-violet-300' : 'text-sky-300'}`}>
+          {isUser ? 'You' : 'Hermes'}
+        </p>
+        <p className="chat-preview-bubble-text">{message.text}</p>
+      </div>
+    </div>
+  );
+}
 
 export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
   const [draft, setDraft] = useState('');
@@ -71,6 +90,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     running,
     activity,
     interaction,
+    previewMode,
     modelIdentity,
     modelPickerOpen,
     modelPickerRefresh,
@@ -79,6 +99,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     closeModelPicker,
     commandPrefill,
     connect,
+    resumeSession,
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
@@ -90,6 +111,41 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   useEffect(() => {
     pendingRef.current = pendingAttachments;
   }, [pendingAttachments]);
+
+  const [preview, setPreview] = useState<MissionControlAgentSessionItem | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  useEffect(() => {
+    if (!previewMode || !initialSessionId) {
+      setPreview(null);
+      setPreviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    // The telemetry token may not be settled in the store yet when the drawer
+    // opens from a deep link. Fall back to the persisted localStorage token.
+    const token = storedToken?.trim() || (typeof window !== 'undefined' ? window.localStorage.getItem('mission-control-token') ?? '' : '');
+    setPreviewLoading(true);
+    // Bounded resolution: never leave the drawer stuck on "Loading" if the
+    // preview request stalls (auth bootstrap, proxy hiccup, etc.).
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) setPreviewLoading(false);
+    }, 6000);
+    loadMissionControlSessionPreview(token, initialSessionId).then((item) => {
+      if (!cancelled) {
+        setPreview(item);
+        setPreviewLoading(false);
+      }
+    }).catch(() => {
+      if (!cancelled) setPreviewLoading(false);
+    }).finally(() => {
+      window.clearTimeout(timeout);
+    });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [previewMode, initialSessionId, storedToken]);
 
   useEffect(() => {
     return () => {
@@ -313,7 +369,54 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           {isDragging ? (
             <div className="chat-drop-hint"><Paperclip size={20} /><span>Drop files to attach</span></div>
           ) : null}
-          {messages.length === 0 ? (
+          {previewMode ? (
+            <section className="chat-preview-surface">
+              {previewLoading ? (
+                <div className="chat-preview-empty">
+                  <Loader2 size={20} className="chat-spin" />
+                  <p>Loading session preview…</p>
+                </div>
+              ) : preview ? (
+                <>
+                  <div className="chat-preview-heading">
+                    <div>
+                      <p className="eyebrow">Session preview</p>
+                      <h3 className="chat-preview-title">{preview.title || 'Untitled session'}</h3>
+                    </div>
+                    <span className="chat-preview-meta">
+                      {preview.model ? <Cpu size={12} aria-hidden /> : null}
+                      {preview.model}
+                    </span>
+                  </div>
+                  <div className="chat-preview-body">
+                    {(preview.recentMessages ?? []).length > 0 ? preview.recentMessages!.map((msg, index) => (
+                      <ChatPreviewBubble key={`${msg.role}-${msg.timestamp ?? 'na'}-${index}`} message={msg} />
+                    )) : (
+                      <p className="chat-preview-fallback">{preview.preview || 'No recent messages available.'}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="chat-resume-button"
+                    onClick={() => void resumeSession()}
+                    disabled={connectionState !== 'connected'}
+                  >
+                    <Bot size={15} aria-hidden />
+                    Resume session
+                  </button>
+                </>
+              ) : (
+                <div className="chat-preview-empty">
+                  <MessageSquare size={20} />
+                  <p>Session preview unavailable.</p>
+                  <button type="button" className="chat-resume-button" onClick={() => void resumeSession()} disabled={connectionState !== 'connected'}>
+                    <Bot size={15} aria-hidden />
+                    Resume session
+                  </button>
+                </div>
+              )}
+            </section>
+          ) : messages.length === 0 ? (
             <section className="chat-empty">
               <MessageSquare size={22} />
               <p>Start a Hermes session from Mission Control.</p>
