@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { ThemeSelector } from './ThemeSelector';
+import { PushToggle } from './PushToggle';
 import { useMissionControl } from '../lib/mission-control-store';
 import { ChatDrawer } from './ChatDrawer';
 import { useLastRoutePersistence } from '../lib/last-route';
@@ -173,6 +174,7 @@ export function MissionControlShell() {
           </nav>
 
           <div className="side-menu-actions">
+            <PushToggle />
             <ThemeSelector />
             <button
               className="pill pill-subtle pill-button side-action-button lock-button"

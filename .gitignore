@@ -7,3 +7,6 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Push device subscriptions (local state, not source)
+server/push_subscriptions.json

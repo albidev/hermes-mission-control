@@ -712,11 +712,11 @@ function apiUrl(path: string) {
   return `${apiBaseUrl().replace(/\/$/, '')}${path}`;
 }
 
-function localApiUrl(path: string) {
+export function localApiUrl(path: string) {
   return apiUrl(path);
 }
 
-function buildHeaders(accessToken?: string): Record<string, string> {
+export function buildHeaders(accessToken?: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };

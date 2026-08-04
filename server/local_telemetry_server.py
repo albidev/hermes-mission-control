@@ -35,6 +35,15 @@ from mission_control_agents import (
     load_sessions_usage,
 )
 
+from push_server import (
+    add_subscription,
+    list_subscriptions,
+    load_vapid_public_key,
+    remove_subscription,
+    send_push,
+    start_gateway_watcher,
+)
+
 
 def gb(value: float) -> float:
     return round(float(value) / (1024**3), 1)
@@ -1523,6 +1532,22 @@ class Handler(BaseHTTPRequestHandler):
                 max_lines = 160
             self._json(200, _collect_logs(max_files=max_files, max_lines=max_lines))
             return
+        if parsed.path == '/api/local/push/vapid-public-key':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            public_key = load_vapid_public_key()
+            if not public_key:
+                self._json(200, {'publicKey': None, 'enabled': False})
+                return
+            self._json(200, {'publicKey': public_key, 'enabled': True})
+            return
+        if parsed.path == '/api/local/push/subscriptions':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, {'subscriptions': list_subscriptions()})
+            return
         self._json(404, {"error": "not_found", "path": self.path})
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -1649,13 +1674,80 @@ class Handler(BaseHTTPRequestHandler):
                 'detail': f"Skill '{skill_name}' {'enabled' if desired_enabled else 'disabled'}.",
             })
             return
+        if parsed.path == '/api/local/push/subscriptions':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                subscription = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            if not isinstance(subscription, dict) or not subscription.get('endpoint'):
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing subscription endpoint.'})
+                return
+            add_subscription(subscription)
+            self._json(200, {'success': True, 'count': len(list_subscriptions())})
+            return
+        if parsed.path == '/api/local/push/send':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            title = data.get('title', 'Hermes Mission Control')
+            text = data.get('body', '')
+            result = send_push(str(title), str(text))
+            if result.get('disabled'):
+                self._json(200, {'success': False, 'disabled': True, 'detail': 'Push not configured (missing VAPID keys).'})
+                return
+            self._json(200, {'success': True, **result})
+            return
+        self._json(404, {'error': 'not_found', 'path': self.path})
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == '/api/local/push/subscriptions':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            endpoint = data.get('endpoint', '')
+            if not endpoint:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing endpoint.'})
+                return
+            remove_subscription(endpoint)
+            self._json(200, {'success': True})
+            return
         self._json(404, {'error': 'not_found', 'path': self.path})
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
         for key, value in self._cors_headers().items():
             self.send_header(key, value)
-        self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-API-Key')
         self.send_header('Access-Control-Allow-Credentials', 'true')
         self.send_header('Access-Control-Max-Age', '0')
@@ -1671,6 +1763,8 @@ def main() -> None:
 
     sampler = threading.Thread(target=_cpu_sampler, name="mc-cpu-sampler", daemon=True)
     sampler.start()
+
+    start_gateway_watcher()
 
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"[mission-control-local-telemetry] listening on http://{host}:{port}", flush=True)
