@@ -24,7 +24,6 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
-  Wrench,
   X,
   XCircle,
 } from 'lucide-react';
@@ -41,7 +40,7 @@ import {
   useGatewayChat,
   type PendingAttachment,
 } from '../lib/chat-gateway';
-import { previewText, type ChatAttachmentUpload, type ChatMessage, type GatewayInteractionRequest } from '../lib/chat-protocol';
+import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';
 import {
   loadMissionControlSessionPreview,
   type MissionControlAgentSessionItem,
@@ -192,11 +191,6 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior });
   }, []);
 
-  // Group the flat message list into "turns" and collapse internal work
-  // (reasoning + tool calls) once the assistant's answer is complete, so the
-  // transcript reads as: user → [expandable work] → final answer. While
-  // streaming, the work stays visible and expanded; on completion it folds
-  // away behind a single disclosure, expandable on demand.
   const renderMessages = () => {
     if (previewMode) {
       if (previewLoading) {
@@ -265,55 +259,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       );
     }
 
-    const nodes: React.ReactNode[] = [];
-    // Current accumulation bucket for internal work of the in-progress turn.
-    let work: ChatMessage[] = [];
-    let workKey = '';
-
-    const flushWork = (keySuffix: number) => {
-      if (work.length === 0) return;
-      const isStreaming = work.some((message) => message.status === 'streaming');
-      if (isStreaming) {
-        // While a turn is live, render reasoning/tool cards inline, expanded.
-        nodes.push(<div className="chat-turn-work is-live" key={`work-${workKey}-${keySuffix}`}>{work.map((message) => <ChatMessageCard key={message.id} message={message} />)}</div>);
-      } else {
-        // Finished turn: fold the internal work behind a single disclosure.
-        const reasoningCount = work.filter((message) => message.kind === 'reasoning').length;
-        const toolCount = work.filter((message) => message.kind === 'tool').length;
-        const label = [
-          reasoningCount ? `${reasoningCount} ${reasoningCount === 1 ? 'reasoning' : 'reasoning'}` : '',
-          toolCount ? `${toolCount} tool${toolCount === 1 ? '' : 's'}` : '',
-        ].filter(Boolean).join(' · ');
-        nodes.push(
-          <details className="chat-turn-work is-collapsed" key={`work-${workKey}-${keySuffix}`}>
-            <summary><Wrench size={13} /><span>{label || 'Turn work'}</span><ChevronDown size={14} className="chat-reasoning-chevron" /></summary>
-            <div className="chat-turn-work-body">{work.map((message) => <ChatMessageCard key={message.id} message={message} />)}</div>
-          </details>,
-        );
-      }
-      work = [];
-    };
-
-    messages.forEach((message, index) => {
-      const isTurnBoundary = message.kind === 'user' || message.kind === 'system' || message.kind === 'event';
-      if (isTurnBoundary) {
-        flushWork(index);
-        nodes.push(<ChatMessageCard key={message.id} message={message} />);
-        return;
-      }
-      if (message.kind === 'reasoning' || message.kind === 'tool') {
-        workKey = message.id;
-        work.push(message);
-        return;
-      }
-      // Assistant (final answer): flush preceding work, then render the answer.
-      flushWork(index);
-      nodes.push(<ChatMessageCard key={message.id} message={message} />);
-    });
-    // Trailing work with no following assistant yet (still streaming).
-    flushWork(messages.length);
-
-    return <>{nodes}</>;
+    return <>{messages.map((message) => <ChatMessageCard key={message.id} message={message} />)}</>;
   };
 
   useEffect(() => {
