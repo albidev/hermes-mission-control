@@ -29,7 +29,7 @@ const navItems: Array<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/skills', label: 'Skills', icon: Brain },
   { to: '/config', label: 'Config', icon: Settings },
   { to: '/logs', label: 'Logs', icon: ScrollText },
-  { to: '/approvals', label: 'Approvazioni', icon: ClipboardCheck },
+  { to: '/approvals', label: 'Approvals', icon: ClipboardCheck },
 ];
 
 export function MissionControlShell() {

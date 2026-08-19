@@ -76,9 +76,10 @@ export function ApprovalsRoute() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Approvazioni</h1>
+          <h1 className="text-2xl font-bold text-foreground">Approvals</h1>
           <p className="text-sm text-foreground/60">
-            Candidati del cervello notturno. Approva per mettere in quarantena (1 giorno), scarta con motivo.
+            Nightly brain candidates. Approve to enter quarantine (1 day), or reject with an
+            optional reason used as model feedback.
           </p>
         </div>
         <Button variant="secondary" onClick={() => void refresh()} disabled={loading}>
@@ -102,12 +103,12 @@ export function ApprovalsRoute() {
         <>
           <section>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-foreground/50">
-              In attesa ({pending.length})
+              Pending ({pending.length})
             </h2>
             {pending.length === 0 ? (
               <Card className="flex items-center gap-3 p-6 text-foreground/50">
                 <Inbox className="h-5 w-5" />
-                Nessun candidato in attesa di approvazione.
+                No candidates awaiting approval.
               </Card>
             ) : (
               <div className="space-y-3">
@@ -129,13 +130,13 @@ export function ApprovalsRoute() {
                       <div className="flex shrink-0 flex-col items-end gap-2">
                         <Button size="sm" onClick={() => void handleApprove(c)}>
                           <CheckCircle2 className="h-4 w-4" />
-                          Approva
+                          Approve
                         </Button>
                         {rejectingId === c.id ? (
                           <div className="flex flex-col items-end gap-1">
                             <input
                               className="w-56 rounded border border-border bg-surface px-2 py-1 text-xs text-foreground"
-                              placeholder="Motivo (opzionale)"
+                              placeholder="Reason (optional)"
                               value={rejectReason[c.id] ?? ''}
                               onChange={(e) =>
                                 setRejectReason((prev) => ({ ...prev, [c.id]: e.target.value }))
@@ -144,17 +145,17 @@ export function ApprovalsRoute() {
                             <div className="flex gap-1">
                               <Button size="sm" variant="danger" onClick={() => void handleReject(c)}>
                                 <XCircle className="h-4 w-4" />
-                                Scarta
+                                Reject
                               </Button>
                               <Button size="sm" variant="ghost" onClick={() => setRejectingId(null)}>
-                                Annulla
+                                Cancel
                               </Button>
                             </div>
                           </div>
                         ) : (
                           <Button size="sm" variant="ghost" onClick={() => setRejectingId(c.id)}>
                             <XCircle className="h-4 w-4" />
-                            Scarta
+                            Reject
                           </Button>
                         )}
                       </div>
@@ -168,7 +169,7 @@ export function ApprovalsRoute() {
           {reviewed.length > 0 && (
             <section>
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-foreground/50">
-                Revisionati ({reviewed.length})
+                Reviewed ({reviewed.length})
               </h2>
               <div className="space-y-2">
                 {reviewed.map((c) => (
@@ -180,12 +181,12 @@ export function ApprovalsRoute() {
                           {statusBadge(c.status)}
                         </div>
                         {c.status === 'rejected' && c.rejection_reason && (
-                          <p className="mt-1 text-xs text-red-400/80">Motivo: {c.rejection_reason}</p>
+                          <p className="mt-1 text-xs text-red-400/80">Reason: {c.rejection_reason}</p>
                         )}
                         {c.status === 'approved' && c.quarantine_until && (
                           <p className="mt-1 flex items-center gap-1 text-xs text-sky-400/80">
                             <ShieldCheck className="h-3 w-3" />
-                            In quarantena fino a {new Date(c.quarantine_until).toLocaleString()}
+                            In quarantine until {new Date(c.quarantine_until).toLocaleString()}
                           </p>
                         )}
                       </div>

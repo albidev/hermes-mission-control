@@ -24,11 +24,11 @@ from typing import Any, Deque, Dict, Optional
 
 import psutil
 
-import candidates as candidates_mod
-
 SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
+
+import candidates as candidates_mod
 
 from mission_control_agents import (
     load_agent_trace_snapshot,
