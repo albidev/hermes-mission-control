@@ -175,7 +175,7 @@ export function ApprovalsRoute() {
                 {reviewed.map((c) => (
                   <Card key={c.id} className="p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="truncate font-medium text-foreground">{c.title}</span>
                           {statusBadge(c.status)}
@@ -188,6 +188,16 @@ export function ApprovalsRoute() {
                             <ShieldCheck className="h-3 w-3" />
                             In quarantine until {new Date(c.quarantine_until).toLocaleString()}
                           </p>
+                        )}
+                        {c.body && (
+                          <details className="group mt-2">
+                            <summary className="cursor-pointer text-xs text-foreground/50 hover:text-foreground/80">
+                              Show full text
+                            </summary>
+                            <pre className="mt-2 max-h-64 overflow-auto rounded bg-surface p-2 text-xs text-foreground/70">
+                              {c.body}
+                            </pre>
+                          </details>
                         )}
                       </div>
                     </div>
