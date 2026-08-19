@@ -2233,3 +2233,64 @@ export function getFallbackConfig(): MissionControlConfigSnapshot {
 export function getFallbackCapabilities(): MissionControlCapabilities {
   return fallbackCapabilities;
 }
+
+// ---------- Nightly brain candidates ----------
+
+export interface MissionControlCandidate {
+  id: string;
+  type: string;
+  title: string;
+  status: string;
+  created: string;
+  approved_at: string | null;
+  rejected_at: string | null;
+  rejection_reason: string;
+  quarantine_until: string | null;
+  body: string;
+  _filename: string;
+}
+
+export interface MissionControlCandidatesSnapshot {
+  candidates: MissionControlCandidate[];
+  count: number;
+}
+
+export async function loadMissionControlCandidates(
+  accessToken?: string,
+  status?: string,
+): Promise<MissionControlCandidatesSnapshot> {
+  const path = status ? `/candidates?status=${encodeURIComponent(status)}` : '/candidates';
+  const { payload } = await maybeFetchLocalJson<MissionControlCandidatesSnapshot>(path, accessToken);
+  return payload ?? { candidates: [], count: 0 };
+}
+
+export async function approveCandidate(
+  accessToken: string | undefined,
+  id: string,
+): Promise<MissionControlCandidate | null> {
+  const response = await fetch(apiUrl('/candidates/approve'), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  if (!response.ok) return null;
+  const data = await response.json();
+  return data?.candidate ?? null;
+}
+
+export async function rejectCandidate(
+  accessToken: string | undefined,
+  id: string,
+  reason: string,
+): Promise<MissionControlCandidate | null> {
+  const response = await fetch(apiUrl('/candidates/reject'), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, reason }),
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  if (!response.ok) return null;
+  const data = await response.json();
+  return data?.candidate ?? null;
+}

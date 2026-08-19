@@ -24,6 +24,8 @@ from typing import Any, Deque, Dict, Optional
 
 import psutil
 
+import candidates as candidates_mod
+
 SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
@@ -1548,6 +1550,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {'subscriptions': list_subscriptions()})
             return
+        if parsed.path == '/api/local/candidates':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            status = (params.get("status") or [None])[0] or None
+            cands = candidates_mod.list_candidates(status=status)
+            self._json(200, {"candidates": cands, "count": len(cands)})
+            return
         self._json(404, {"error": "not_found", "path": self.path})
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -1715,6 +1725,55 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {'success': False, 'disabled': True, 'detail': 'Push not configured (missing VAPID keys).'})
                 return
             self._json(200, {'success': True, **result})
+            return
+        if parsed.path == '/api/local/candidates/approve':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            cid = data.get('id', '')
+            if not cid:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
+                return
+            cand = candidates_mod.approve(cid)
+            if not cand:
+                self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
+                return
+            self._json(200, {'success': True, 'candidate': cand})
+            return
+        if parsed.path == '/api/local/candidates/reject':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            cid = data.get('id', '')
+            reason = data.get('reason', '')
+            if not cid:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
+                return
+            cand = candidates_mod.reject(cid, reason)
+            if not cand:
+                self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
+                return
+            self._json(200, {'success': True, 'candidate': cand})
             return
         self._json(404, {'error': 'not_found', 'path': self.path})
 
