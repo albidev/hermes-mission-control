@@ -13,7 +13,7 @@ const ToolsRoute = lazy(() => import('./routes/ToolsRoute').then((m) => ({ defau
 const SkillsRoute = lazy(() => import('./routes/SkillsRoute').then((m) => ({ default: m.SkillsRoute })));
 const ConfigRoute = lazy(() => import('./routes/ConfigRoute').then((m) => ({ default: m.ConfigRoute })));
 const LogsRoute = lazy(() => import('./routes/LogsRoute').then((m) => ({ default: m.LogsRoute })));
-const ApprovalsRoute = lazy(() => import('./routes/ApprovalsRoute').then((m) => ({ default: m.ApprovalsRoute })));
+const CurateRoute = lazy(() => import('./routes/CurateRoute').then((m) => ({ default: m.CurateRoute })));
 
 function App() {
   return (
@@ -34,7 +34,7 @@ function App() {
               <Route path="skills" element={<SkillsRoute />} />
               <Route path="config" element={<ConfigRoute />} />
               <Route path="logs" element={<LogsRoute />} />
-              <Route path="approvals" element={<ApprovalsRoute />} />
+              <Route path="curate" element={<CurateRoute />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

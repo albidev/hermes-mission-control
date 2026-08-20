@@ -23,7 +23,7 @@ function statusBadge(status: string) {
   return <Badge className={`${cls} border`}>{status}</Badge>;
 }
 
-export function ApprovalsRoute() {
+export function CurateRoute() {
   const { storedToken } = useMissionControl();
   const [candidates, setCandidates] = useState<MissionControlCandidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,7 +76,7 @@ export function ApprovalsRoute() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Approvals</h1>
+          <h1 className="text-2xl font-bold text-foreground">Curate</h1>
           <p className="text-sm text-foreground/60">
             Nightly brain candidates. Approve to enter quarantine (1 day), or reject with an
             optional reason used as model feedback.

@@ -29,7 +29,7 @@ const navItems: Array<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/skills', label: 'Skills', icon: Brain },
   { to: '/config', label: 'Config', icon: Settings },
   { to: '/logs', label: 'Logs', icon: ScrollText },
-  { to: '/approvals', label: 'Approvals', icon: ClipboardCheck },
+  { to: '/curate', label: 'Curate', icon: ClipboardCheck },
 ];
 
 export function MissionControlShell() {
@@ -152,7 +152,7 @@ export function MissionControlShell() {
               </button>
             </div>
             <strong>Operator panel</strong>
-            <span className="mini-note">Gateway, sessions, agents, usage, tools, skills, config, logs, approvals</span>
+            <span className="mini-note">Gateway, sessions, agents, usage, tools, skills, config, logs, curate</span>
           </div>
 
           <nav className="side-nav" aria-label="Mission Control routes">
