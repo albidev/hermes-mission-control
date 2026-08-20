@@ -7,16 +7,20 @@ import {
   ClipboardCheck,
   DollarSign,
   LayoutDashboard,
+  LockKeyhole,
+  Menu,
   MessageSquare,
   ScrollText,
   Settings,
   Wrench,
+  X,
 } from 'lucide-react';
 import { ThemeSelector } from './ThemeSelector';
 import { PushToggle } from './PushToggle';
 import { useMissionControl } from '../lib/mission-control-store';
 import { ChatDrawer } from './ChatDrawer';
 import { useLastRoutePersistence } from '../lib/last-route';
+import { Button } from './ui/Button';
 
 export function MissionControlShell() {
   const location = useLocation();
@@ -148,9 +152,16 @@ export function MissionControlShell() {
           <div className="side-menu-head">
             <div className="side-menu-head-top">
               <p className="eyebrow">Hermes Mission Control</p>
-              <button className="pill pill-subtle pill-button side-close" type="button" onClick={toggleSidebar} aria-label="Close navigation">
-                ✕
-              </button>
+              <Button
+                variant="secondary"
+                size="md"
+                icon={<X size={16} />}
+                iconOnly
+                className="side-close"
+                type="button"
+                onClick={toggleSidebar}
+                aria-label="Close navigation"
+              />
             </div>
             <strong>Operator panel</strong>
             <span className="mini-note">Gateway, sessions, agents, usage, tools, skills, config, logs, curate</span>
@@ -179,19 +190,18 @@ export function MissionControlShell() {
           <div className="side-menu-actions">
             <PushToggle />
             <ThemeSelector />
-            <button
-              className="pill pill-subtle pill-button side-action-button lock-button"
+            <Button
+              variant="secondary"
+              size="md"
+              icon={<LockKeyhole size={16} />}
+              className="side-action-button lock-button"
               type="button"
               onClick={logout}
               aria-label="Lock dashboard"
               title="Lock"
             >
-              <svg viewBox="0 0 24 24" className="lock-icon" aria-hidden>
-                <path d="M7.5 10V8.2A4.5 4.5 0 0 1 12 3.7a4.5 4.5 0 0 1 4.5 4.5V10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                <rect x="5.5" y="10" width="13" height="10" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-              </svg>
               <span className="lock-label">Lock</span>
-            </button>
+            </Button>
           </div>
         </aside>
 
@@ -207,15 +217,17 @@ export function MissionControlShell() {
         <section className="workspace-column">
           <header className={`card workspace-bar ${isOverviewRoute ? 'is-overview' : ''}`}>
             <div className="workspace-title-wrap">
-              <button
-                className="pill pill-subtle pill-button sidebar-toggle"
+              <Button
+                variant="secondary"
+                size="md"
+                icon={<Menu size={17} />}
+                iconOnly
+                className="sidebar-toggle"
                 type="button"
                 aria-label="Toggle navigation menu"
                 aria-expanded={sideOpen}
                 onClick={toggleSidebar}
-              >
-                ☰
-              </button>
+              />
               <div>
                 <p className="eyebrow">Workspace</p>
                 <h1>{activeNav?.label ?? 'Overview'}</h1>
@@ -224,17 +236,19 @@ export function MissionControlShell() {
             <div className="workspace-meta">
               <span className="mini-note">theme: {resolvedTheme}</span>
               {lastUpdatedAt ? <span className="mini-note">Last synced {lastUpdatedAt}</span> : null}
-              <button
+              <Button
                 ref={chatButtonRef}
-                className="pill pill-subtle pill-button chat-open-button"
+                variant="secondary"
+                size="md"
+                icon={<MessageSquare size={16} aria-hidden />}
+                className="chat-open-button"
                 type="button"
                 onClick={() => setChatOpen(true)}
                 aria-label="Open Hermes chat"
                 aria-expanded={chatOpen}
               >
-                <MessageSquare size={16} aria-hidden />
-                <span>Chat</span>
-              </button>
+                Chat
+              </Button>
             </div>
           </header>
 

@@ -29,6 +29,7 @@ assertIncludes(styles, 'padding-bottom: max(0.75rem, env(safe-area-inset-bottom)
 
 assertIncludes(styles, '--control-height: 36px;', 'global desktop control token');
 assertIncludes(styles, '--touch-target: 44px;', 'global touch target token');
+assertIncludes(styles, '--control-radius: 12px;', 'all visible buttons share one radius');
 assertIncludes(styles, 'button:has(> svg:only-child)', 'icon-only buttons use the square-control contract');
 assertIncludes(styles, '@media (pointer: coarse), (max-width: 640px)', 'all mobile controls use touch targets');
 assertIncludes(styles, 'min-height: var(--touch-target) !important;', 'touch targets override component-specific compact heights');
@@ -37,8 +38,17 @@ assertIncludes(buttonComponent, "sm: 'min-h-9", 'shared small buttons keep the d
 assertExcludes(buttonComponent, "sm: 'h-7", 'shared small buttons are not fixed at 28px');
 assertIncludes(
   buttonComponent,
-  "ghost:\n    'bg-transparent border border-border-subtle",
-  'ghost actions remain visibly button-shaped',
+  "secondary:\n    'bg-surface border border-border",
+  'secondary actions use the neutral control surface',
 );
+assertIncludes(buttonComponent, "ghost:\n    'bg-surface border border-border", 'ghost actions use the same neutral surface');
+assertIncludes(buttonComponent, 'iconOnly?: boolean;', 'shared button supports square icon-only controls');
+assertIncludes(buttonComponent, "iconOnly ? 'mc-icon-only", 'icon-only controls expose an explicit geometry hook');
+assertIncludes(styles, '.mc-icon-only {', 'icon-only controls have an explicit square contract');
+assertIncludes(component, 'chat-control chat-attach', 'chat controls remain on the shared geometry contract');
+
+const shell = readFileSync(new URL('../src/components/MissionControlShell.tsx', import.meta.url), 'utf8');
+assertIncludes(shell, '<Button', 'workspace actions use the shared Button component');
+assertIncludes(shell, 'iconOnly', 'workspace icon actions are explicitly square');
 
 console.log('chat UI contract tests passed');

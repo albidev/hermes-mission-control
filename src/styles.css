@@ -45,6 +45,7 @@
     /* Interactive control geometry */
     --control-height: 36px;
     --touch-target: 44px;
+    --control-radius: 12px;
   }
 
   [data-theme='dark'] {
@@ -3223,6 +3224,16 @@
 }
 
 /* Global button geometry — visual variants stay local, dimensions do not. */
+button:not(.mobile-nav-backdrop):not(.chat-backdrop) {
+  border-radius: var(--control-radius) !important;
+}
+
+.mc-icon-only {
+  width: var(--control-height) !important;
+  min-width: var(--control-height) !important;
+  padding-inline: 0 !important;
+}
+
 button {
   min-height: var(--control-height) !important;
   flex-shrink: 0;
@@ -3238,6 +3249,11 @@ button:has(> svg:only-child) {
 @media (pointer: coarse), (max-width: 640px) {
   button {
     min-height: var(--touch-target) !important;
+  }
+
+  .mc-icon-only {
+    width: var(--touch-target) !important;
+    min-width: var(--touch-target) !important;
   }
 
   button:has(> svg:only-child) {
