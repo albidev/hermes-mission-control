@@ -29,6 +29,7 @@ import {
   nextReconnectDelay,
   normalizeTranscript,
   parseGatewayFrame,
+  shouldCloseBackendSessionForNewChat,
   type AttachmentKind,
   type ChatActivity,
   type ChatAttachmentSummary,
@@ -861,7 +862,11 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const reset = useCallback(async () => {
     const previousSessionId = sessionIdRef.current;
     const recoveredSessionId = requestedSessionIdRef.current;
-    if (previousSessionId && previousSessionId !== recoveredSessionId) {
+    if (
+      shouldCloseBackendSessionForNewChat()
+      && previousSessionId
+      && previousSessionId !== recoveredSessionId
+    ) {
       try {
         await request('session.close', { session_id: previousSessionId });
       } catch {

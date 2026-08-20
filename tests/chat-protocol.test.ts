@@ -16,6 +16,7 @@ import {
   parseCommandDispatch,
   parseGatewayFrame,
   parseSlash,
+  shouldCloseBackendSessionForNewChat,
 } from '../src/lib/chat-protocol.ts';
 
 function assertEqual<T>(actual: T, expected: T) {
@@ -59,6 +60,11 @@ assertDeepEqual(createRpcRequest('r1', 'session.create', { cols: 80 }), {
   method: 'session.create',
   params: { cols: 80 },
 });
+
+// Mission Control's New action starts a fresh local chat but preserves the
+// durable backend session. Sending session.close here tears down the embedded
+// gateway agent and can close its shared SessionDB handle for every later chat.
+assertEqual(shouldCloseBackendSessionForNewChat(), false);
 
 assertEqual(extractSessionId({ session_id: 'abc' }), 'abc');
 assertEqual(extractSessionId({ session_id: '' }), null);

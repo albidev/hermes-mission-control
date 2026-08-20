@@ -221,6 +221,18 @@ export function createRpcRequest(id: string, method: string, params: Record<stri
   return { jsonrpc: '2.0', id, method, params };
 }
 
+/**
+ * Mission Control's New action must preserve the durable backend session.
+ *
+ * The dashboard hosts tui_gateway in-process. Closing the previous session
+ * tears down its agent and can invalidate the process-shared SessionDB handle,
+ * making every later prompt fail with session_persistence_failed. New therefore
+ * means "detach local UI state and create another session", not session.close.
+ */
+export function shouldCloseBackendSessionForNewChat(): false {
+  return false;
+}
+
 export function getRpcErrorMessage(error: unknown): string {
   if (isRecord(error) && typeof error.message === 'string' && error.message.trim()) {
     return error.message.trim();
