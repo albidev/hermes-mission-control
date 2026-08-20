@@ -35,5 +35,10 @@ assertIncludes(styles, 'min-height: var(--touch-target) !important;', 'touch tar
 assertIncludes(styles, 'min-width: var(--touch-target) !important;', 'mobile icon buttons cannot be compressed');
 assertIncludes(buttonComponent, "sm: 'min-h-9", 'shared small buttons keep the desktop minimum');
 assertExcludes(buttonComponent, "sm: 'h-7", 'shared small buttons are not fixed at 28px');
+assertIncludes(
+  buttonComponent,
+  "ghost:\n    'bg-transparent border border-border-subtle",
+  'ghost actions remain visibly button-shaped',
+);
 
 console.log('chat UI contract tests passed');
