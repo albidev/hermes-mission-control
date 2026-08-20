@@ -620,6 +620,45 @@
   background: var(--color-negative-subtle);
 }
 
+/* Connection status LED — a compact, always-visible signal in the drawer head.
+   Colors follow the same semantic trio as .chat-status. The dot pulses while
+   connecting/reconnecting so the pending state is unmistakable at a glance. */
+.chat-led {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 9999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.chat-led-dot {
+  display: block;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 9999px;
+  background: var(--color-negative);
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  transition: background 0.2s ease;
+}
+.chat-led.is-online .chat-led-dot {
+  background: var(--color-positive);
+  box-shadow: 0 0 0.5rem color-mix(in srgb, var(--color-positive) 60%, transparent);
+}
+.chat-led.is-pending .chat-led-dot {
+  background: var(--color-warning);
+  animation: chat-led-pulse 1.2s ease-in-out infinite;
+}
+.chat-led.is-offline .chat-led-dot {
+  background: var(--color-negative);
+}
+@keyframes chat-led-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 .chat-icon-button,
 .chat-send {
   display: inline-grid;
