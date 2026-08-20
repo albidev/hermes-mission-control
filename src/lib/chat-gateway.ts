@@ -857,15 +857,14 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   }, [request]);
 
   const reset = useCallback(async () => {
-    const previousSessionId = sessionIdRef.current;
-    const recoveredSessionId = requestedSessionIdRef.current;
-    if (previousSessionId && previousSessionId !== recoveredSessionId) {
-      try {
-        await request('session.close', { session_id: previousSessionId });
-      } catch {
-        // A completed session may already have been finalized by the gateway.
-      }
-    }
+    // Replicate the classic `/new` flow. The gateway's own `/new` resets the
+    // session IN-PLACE (reset_session on the same key) without ever emitting a
+    // `session.close` RPC — a close triggers the full teardown path
+    // (_finalize_session + agent.close()), which is what leaves the shared
+    // state.db handle with `_conn = None` and makes the very next turn crash
+    // with `'NoneType' object has no attribute 'execute'`. So here we do the
+    // same: abandon the old session (the gateway reclaims it on idle-timeout)
+    // and mint a fresh one, instead of closing the old one first.
     setMessages([]);
     setSessionId(null);
     setSessionKey(null);
@@ -884,7 +883,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create a new chat.');
     }
-  }, [ensureSession, request]);
+  }, [ensureSession]);
 
   return {
     messages,
