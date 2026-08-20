@@ -269,7 +269,10 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     // scrolled up to read earlier content while Hermes streams, we leave them
     // where they are and show the "jump to bottom" FAB instead.
     if (!nearBottomRef.current) return;
-    scrollToBottom('smooth');
+    // While a message is streaming, scroll instantly so the view keeps up with
+    // each token. Smooth scrolling queues animations that lag behind the stream.
+    const streaming = messages.some((m) => m.status === 'streaming');
+    scrollToBottom(streaming ? 'auto' : 'smooth');
   }, [messages, interaction, activity, open, scrollToBottom]);
 
   useEffect(() => {
@@ -282,8 +285,6 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     : connectionState === 'reconnecting' || connectionState === 'connecting' || connectionState === 'ticket'
       ? 'is-pending'
       : 'is-offline';
-  const lastPreview = messages.length ? previewText(messages[messages.length - 1].text) : 'No messages yet';
-
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);
     const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);
@@ -360,6 +361,12 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       const sent = await submitPrompt(text, uploads);
       if (!sent) return;
       setDraft('');
+      // Sending a message always snaps back to the bottom, even if the user
+      // had scrolled up to read earlier content. Reset the near-bottom flag so
+      // the messages effect also follows once the new message lands.
+      nearBottomRef.current = true;
+      setNearBottom(true);
+      scrollToBottom('smooth');
       for (const attachment of pendingAttachments) {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       }
@@ -435,11 +442,16 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       >
         <header className="chat-drawer-head">
           <div className="chat-head-main">
-            <div className="chat-title">
+            <div className="chat-head-identity">
               <span className="chat-mark" aria-hidden><Bot size={18} /></span>
-              <div>
+              <div className="chat-head-copy">
                 <p className="eyebrow">Hermes</p>
                 <h2 id="chat-drawer-title">Chat</h2>
+                <div className="chat-model-badge" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Resolving active model'}>
+                  <Cpu size={12} aria-hidden />
+                  <span>{modelIdentity?.model || 'Resolving model'}</span>
+                  {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
+                </div>
               </div>
             </div>
             <div className="chat-head-actions">
@@ -455,16 +467,9 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>New</span>
               </button>
-              <button className="chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
+              <button className="chat-control chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
                 <X size={18} />
               </button>
-            </div>
-          </div>
-          <div className="chat-head-meta">
-            <div className="chat-model-badge" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Resolving active model'}>
-              <Cpu size={13} aria-hidden />
-              <span>{modelIdentity?.model || 'Resolving model'}</span>
-              {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
             </div>
           </div>
         </header>
@@ -587,9 +592,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
             <span>{error}</span>
             <button type="button" onClick={() => void connect()}>Retry</button>
           </div>
-        ) : (
-          <p className="chat-preview">{lastPreview}</p>
-        )}
+        ) : null}
 
         {pendingAttachments.length ? (
           <div className="chat-pending-attachments" aria-label="Pending attachments">
@@ -612,7 +615,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
         />
         <form className="chat-composer" onSubmit={handleSubmit}>
           <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf,*/*" className="chat-file-input" onChange={handleFileInput} />
-          <button className="chat-icon-button chat-attach" type="button" onClick={() => fileInputRef.current?.click()} disabled={submitting || connectionState !== 'connected'} title="Attach image or file" aria-label="Attach image or file">
+          <button className="chat-control chat-attach chat-icon-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={submitting || connectionState !== 'connected'} title="Attach image or file" aria-label="Attach image or file">
             <Paperclip size={17} />
           </button>
           <textarea
@@ -627,11 +630,11 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
             aria-label="Message Hermes"
           />
           {running ? (
-            <button className="chat-icon-button chat-stop" type="button" onClick={() => void interrupt()} aria-label="Interrupt response" title="Interrupt">
+            <button className="chat-control chat-stop chat-icon-button" type="button" onClick={() => void interrupt()} aria-label="Interrupt response" title="Interrupt">
               <Pause size={17} />
             </button>
           ) : null}
-          <button className="chat-send" type="submit" disabled={(!draft.trim() && pendingAttachments.length === 0) || submitting || connectionState !== 'connected'} aria-label="Send message" title="Send">
+          <button className="chat-control chat-send" type="submit" disabled={(!draft.trim() && pendingAttachments.length === 0) || submitting || connectionState !== 'connected'} aria-label="Send message" title="Send">
             {submitting ? <Loader2 size={17} className="chat-spin" /> : <Send size={17} />}
           </button>
         </form>

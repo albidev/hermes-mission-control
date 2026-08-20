@@ -41,6 +41,10 @@
     --radius-md: 10px;
     --radius-lg: 12px;
     --radius-xl: 16px;
+
+    /* Interactive control geometry */
+    --control-height: 36px;
+    --touch-target: 44px;
   }
 
   [data-theme='dark'] {
@@ -684,7 +688,9 @@
   display: inline-grid;
   width: 36px;
   height: 36px;
+  aspect-ratio: 1 / 1;
   flex: 0 0 auto;
+  flex-shrink: 0;
   place-items: center;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -1949,19 +1955,19 @@
   }
 }
 
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 640px) {
   button,
   a,
   select,
   input[type='checkbox'],
   input[type='range'] {
-    min-height: 44px;
+    min-height: var(--touch-target);
   }
 
   .side-nav-link,
   .theme-toggle-option,
   .side-action-button {
-    min-height: 44px;
+    min-height: var(--touch-target);
   }
 }
 
@@ -2959,5 +2965,282 @@
   .chat-message-tool {
     width: 98%;
     max-width: 98%;
+  }
+}
+
+/* Chat layout contract — one owner for drawer geometry and touch targets. */
+.chat-drawer {
+  --chat-control-size: 44px;
+  width: min(540px, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--color-accent) 18%, var(--color-border));
+  background: var(--color-surface-raised);
+}
+
+.chat-drawer-head {
+  flex: 0 0 auto;
+  min-height: 0;
+  gap: 0;
+  padding: 0.8rem 1rem;
+  background: color-mix(in srgb, var(--color-surface-sunken) 96%, var(--color-accent) 4%);
+}
+
+.chat-head-main {
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.chat-head-identity {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0.7rem;
+}
+
+.chat-head-copy {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0.08rem;
+}
+
+.chat-head-copy .eyebrow {
+  margin: 0;
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.chat-head-copy h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.chat-head-copy .chat-model-badge {
+  max-width: 100%;
+  min-width: 0;
+  justify-self: start;
+  gap: 0.3rem;
+  margin-top: 0.12rem;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 0.64rem;
+  font-weight: 600;
+}
+
+.chat-head-copy .chat-model-badge svg {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+}
+
+.chat-head-copy .chat-model-badge span,
+.chat-head-copy .chat-model-badge small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-head-copy .chat-model-badge small {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  color: var(--color-text-subtle);
+}
+
+.chat-head-copy .chat-model-badge small::before {
+  content: "·";
+  margin-right: 0.3rem;
+  color: var(--color-border-strong);
+}
+
+.chat-head-actions {
+  gap: 0.45rem;
+}
+
+.chat-control,
+.chat-new-button {
+  min-height: var(--chat-control-size);
+  height: var(--chat-control-size);
+  flex: 0 0 auto;
+}
+
+.chat-control {
+  width: var(--chat-control-size);
+  min-width: var(--chat-control-size);
+  aspect-ratio: 1 / 1;
+}
+
+.chat-new-button {
+  min-width: 74px;
+  padding-inline: 0.8rem;
+  border-radius: 11px;
+  font-size: 0.74rem;
+}
+
+.chat-icon-button,
+.chat-send {
+  width: var(--chat-control-size);
+  height: var(--chat-control-size);
+  border-radius: 11px;
+}
+
+.chat-led {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-color: transparent;
+  background: transparent;
+}
+
+.chat-led-dot {
+  width: 0.58rem;
+  height: 0.58rem;
+}
+
+.chat-transcript {
+  padding: 1rem;
+  gap: 0.85rem;
+  scroll-padding-bottom: 4rem;
+  background: radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--color-accent) 6%, transparent), transparent 30%);
+}
+
+.chat-empty {
+  min-height: 100%;
+  gap: 0.55rem;
+}
+
+.chat-composer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  border-top-color: var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-surface-sunken) 97%, var(--color-accent) 3%);
+}
+
+.chat-composer textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--chat-control-size);
+  max-height: 8rem;
+  padding: 0.7rem 0.8rem;
+  resize: none;
+  border-radius: 13px;
+  line-height: 1.35;
+}
+
+.chat-composer textarea:focus {
+  border-color: color-mix(in srgb, var(--color-accent) 72%, var(--color-border));
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 24%, transparent);
+  outline-offset: 0;
+}
+
+.chat-attach {
+  color: var(--color-text-muted);
+}
+
+.chat-send:not(:disabled) {
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+.chat-control:focus-visible,
+.chat-new-button:focus-visible,
+.chat-scroll-fab:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .chat-drawer {
+    width: 100vw;
+    border-left: 0;
+  }
+
+  .chat-drawer-head {
+    padding: max(0.7rem, env(safe-area-inset-top)) 0.75rem 0.7rem;
+  }
+
+  .chat-head-main {
+    gap: 0.5rem;
+  }
+
+  .chat-head-identity {
+    gap: 0.55rem;
+  }
+
+  .chat-mark {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+  }
+
+  .chat-head-actions {
+    gap: 0.35rem;
+  }
+
+  .chat-new-button {
+    min-width: 70px;
+    padding-inline: 0.65rem;
+  }
+
+  .chat-transcript {
+    padding: 0.85rem 0.75rem;
+  }
+
+  .chat-message {
+    max-width: 94%;
+  }
+
+  .chat-composer {
+    gap: 0.4rem;
+    padding-inline: 0.75rem;
+  }
+}
+
+@media (max-width: 370px) {
+  .chat-head-copy .chat-model-badge small,
+  .chat-new-button span {
+    display: none;
+  }
+
+  .chat-new-button {
+    width: var(--chat-control-size);
+    min-width: var(--chat-control-size);
+    padding: 0;
+  }
+}
+
+/* Global button geometry — visual variants stay local, dimensions do not. */
+button {
+  min-height: var(--control-height) !important;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+
+button:has(> svg:only-child) {
+  min-width: var(--control-height) !important;
+  aspect-ratio: 1 / 1;
+  padding-inline: 0;
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+  button {
+    min-height: var(--touch-target) !important;
+  }
+
+  button:has(> svg:only-child) {
+    min-width: var(--touch-target) !important;
   }
 }
