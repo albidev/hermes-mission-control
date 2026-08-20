@@ -2260,11 +2260,32 @@ export interface MissionControlCandidatesSnapshot {
   count: number;
 }
 
+export interface MissionControlVaultInfo {
+  id: string;
+  label: string;
+  candidates_dir: string;
+}
+
+export async function loadMissionControlVaults(
+  accessToken?: string,
+): Promise<MissionControlVaultInfo[]> {
+  const { payload } = await maybeFetchLocalJson<{ vaults: MissionControlVaultInfo[] }>(
+    '/candidates/vaults',
+    accessToken,
+  );
+  return payload?.vaults ?? [];
+}
+
 export async function loadMissionControlCandidates(
   accessToken?: string,
   status?: string,
+  vault?: string,
 ): Promise<MissionControlCandidatesSnapshot> {
-  const path = status ? `/candidates?status=${encodeURIComponent(status)}` : '/candidates';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (vault) params.set('vault', vault);
+  const qs = params.toString();
+  const path = qs ? `/candidates?${qs}` : '/candidates';
   const { payload } = await maybeFetchLocalJson<MissionControlCandidatesSnapshot>(path, accessToken);
   return payload ?? { candidates: [], count: 0 };
 }
@@ -2272,11 +2293,12 @@ export async function loadMissionControlCandidates(
 export async function approveCandidate(
   accessToken: string | undefined,
   id: string,
+  vault?: string,
 ): Promise<MissionControlCandidate | null> {
   const response = await fetch(apiUrl('/candidates/approve'), {
     method: 'POST',
     headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id }),
+    body: JSON.stringify(vault ? { id, vault } : { id }),
   });
   if (response.status === 401) throw new MissionControlAuthError();
   if (!response.ok) return null;
@@ -2288,11 +2310,12 @@ export async function rejectCandidate(
   accessToken: string | undefined,
   id: string,
   reason: string,
+  vault?: string,
 ): Promise<MissionControlCandidate | null> {
   const response = await fetch(apiUrl('/candidates/reject'), {
     method: 'POST',
     headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, reason }),
+    body: JSON.stringify(vault ? { id, reason, vault } : { id, reason }),
   });
   if (response.status === 401) throw new MissionControlAuthError();
   if (!response.ok) return null;

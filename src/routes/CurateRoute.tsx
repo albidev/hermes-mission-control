@@ -7,7 +7,9 @@ import {
   loadMissionControlCandidates,
   approveCandidate,
   rejectCandidate,
+  loadMissionControlVaults,
   type MissionControlCandidate,
+  type MissionControlVaultInfo,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 
@@ -26,31 +28,43 @@ function statusBadge(status: string) {
 export function CurateRoute() {
   const { storedToken } = useMissionControl();
   const [candidates, setCandidates] = useState<MissionControlCandidate[]>([]);
+  const [vaults, setVaults] = useState<MissionControlVaultInfo[]>([]);
+  const [vault, setVault] = useState<string>('core');
   const [loading, setLoading] = useState(true);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (targetVault?: string) => {
+    const v = targetVault ?? vault;
     setLoading(true);
     setError(null);
     try {
-      const snap = await loadMissionControlCandidates(storedToken ?? undefined);
+      const [snap, vaultsSnap] = await Promise.all([
+        loadMissionControlCandidates(storedToken ?? undefined, undefined, v),
+        loadMissionControlVaults(storedToken ?? undefined),
+      ]);
       setCandidates(snap.candidates);
+      setVaults(vaultsSnap.length ? vaultsSnap : [{ id: 'core', label: 'Core', candidates_dir: '' }]);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load candidates');
     } finally {
       setLoading(false);
     }
-  }, [storedToken]);
+  }, [storedToken, vault]);
 
   useEffect(() => {
     void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
+
+  const handleVaultChange = (v: string) => {
+    setVault(v);
+  };
 
   const handleApprove = async (c: MissionControlCandidate) => {
     try {
-      await approveCandidate(storedToken ?? undefined, c.id);
+      await approveCandidate(storedToken ?? undefined, c.id, vault);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Approve failed');
@@ -60,7 +74,7 @@ export function CurateRoute() {
   const handleReject = async (c: MissionControlCandidate) => {
     const reason = rejectReason[c.id] ?? '';
     try {
-      await rejectCandidate(storedToken ?? undefined, c.id, reason);
+      await rejectCandidate(storedToken ?? undefined, c.id, reason, vault);
       setRejectReason((prev) => ({ ...prev, [c.id]: '' }));
       setRejectingId(null);
       await refresh();
@@ -82,10 +96,25 @@ export function CurateRoute() {
             optional reason used as model feedback.
           </p>
         </div>
-        <Button variant="secondary" onClick={() => void refresh()} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-3">
+          {vaults.length > 1 && (
+            <select
+              className="rounded border border-border bg-surface px-3 py-2 text-sm text-foreground"
+              value={vault}
+              onChange={(e) => handleVaultChange(e.target.value)}
+            >
+              {vaults.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          )}
+          <Button variant="secondary" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {error && (

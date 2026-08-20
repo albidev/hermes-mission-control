@@ -24,10 +24,43 @@ from typing import Any, Dict, List, Optional
 
 DEFAULT_CANDIDATES_DIR = Path.home() / ".hermes" / "vault-brain" / "candidates"
 DEFAULT_QUARANTINE_DAYS = float(os.environ.get("VB_QUARANTINE_DAYS", "1"))
+VAULTS_FILE = Path.home() / ".hermes" / "vault-brain" / "curate-vaults.yaml"
 
 
-def _candidates_dir() -> Path:
+def _load_vaults() -> Dict[str, Dict[str, str]]:
+    """Load the local per-vault candidate map (gitignored, outside the public
+    MC repo). Returns {vault_id: {label, candidates_dir}}."""
+    if not VAULTS_FILE.exists():
+        return {}
+    try:
+        import yaml
+        data = yaml.safe_load(VAULTS_FILE.read_text(encoding="utf-8")) or {}
+        return {str(k): dict(v) for k, v in (data.get("vaults") or {}).items()}
+    except Exception:
+        return {}
+
+
+def _candidates_dir(vault: Optional[str] = None) -> Path:
+    """Resolve the candidate dir for a vault. With no vault (or 'core'), keeps
+    the classic behaviour: VB_CANDIDATES env or the default dir."""
+    if vault and vault != "core":
+        mapping = _load_vaults().get(vault)
+        if mapping and mapping.get("candidates_dir"):
+            return Path(os.path.expanduser(str(mapping["candidates_dir"])))
     return Path(os.environ.get("VB_CANDIDATES", str(DEFAULT_CANDIDATES_DIR)))
+
+
+def list_vaults() -> List[Dict[str, Any]]:
+    """Return the vaults the Curate page can switch between. Always includes
+    the default 'core' vault; the rest come from the local map."""
+    mapping = _load_vaults()
+    out = [{"id": "core", "label": "Core", "candidates_dir": str(_candidates_dir(None))}]
+    for vid, m in mapping.items():
+        if vid == "core":
+            continue
+        out.append({"id": vid, "label": m.get("label", vid),
+                    "candidates_dir": str(_candidates_dir(vid))})
+    return out
 
 
 def _parse_frontmatter(text: str) -> Dict[str, Any]:
@@ -91,8 +124,8 @@ def _write_candidate(path: Path, meta: Dict[str, Any], body: str) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def list_candidates(status: Optional[str] = None) -> List[Dict[str, Any]]:
-    d = _candidates_dir()
+def list_candidates(status: Optional[str] = None, vault: Optional[str] = None) -> List[Dict[str, Any]]:
+    d = _candidates_dir(vault)
     if not d.exists():
         return []
     out = []
@@ -103,8 +136,8 @@ def list_candidates(status: Optional[str] = None) -> List[Dict[str, Any]]:
     return out
 
 
-def _find_by_id(cid: str) -> Optional[Path]:
-    d = _candidates_dir()
+def _find_by_id(cid: str, vault: Optional[str] = None) -> Optional[Path]:
+    d = _candidates_dir(vault)
     if not d.exists():
         return None
     for p in d.glob("*.md"):
@@ -114,9 +147,9 @@ def _find_by_id(cid: str) -> Optional[Path]:
     return None
 
 
-def approve(cid: str) -> Optional[Dict[str, Any]]:
+def approve(cid: str, vault: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Approve a candidate -> status approved, quarantine_until = now + days."""
-    p = _find_by_id(cid)
+    p = _find_by_id(cid, vault)
     if not p:
         return None
     c = _read_candidate(p)
@@ -131,9 +164,9 @@ def approve(cid: str) -> Optional[Dict[str, Any]]:
     return _read_candidate(p)
 
 
-def reject(cid: str, reason: str = "") -> Optional[Dict[str, Any]]:
+def reject(cid: str, reason: str = "", vault: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Reject a candidate -> status rejected, rejection_reason = human feedback."""
-    p = _find_by_id(cid)
+    p = _find_by_id(cid, vault)
     if not p:
         return None
     c = _read_candidate(p)
@@ -146,47 +179,65 @@ def reject(cid: str, reason: str = "") -> Optional[Dict[str, Any]]:
     return _read_candidate(p)
 
 
+def _all_candidate_dirs() -> List[Path]:
+    """All candidate dirs to scan for promote/rejection-feedback: the default
+    dir plus every per-vault dir from the local map."""
+    dirs = [_candidates_dir(None)]
+    for m in _load_vaults().values():
+        if m.get("candidates_dir"):
+            d = Path(os.path.expanduser(str(m["candidates_dir"])))
+            if d not in dirs:
+                dirs.append(d)
+    return dirs
+
+
 def promote_ready() -> List[Dict[str, Any]]:
     """Promote candidates whose quarantine has elapsed (status approved +
-    quarantine_until <= now) to the vault wiki/concepts. Returns promoted."""
-    d = _candidates_dir()
-    if not d.exists():
-        return []
+    quarantine_until <= now) to the vault wiki/concepts. Scans every candidate
+    dir (default + per-vault). Returns promoted."""
     now = datetime.now(timezone.utc)
     promoted = []
-    for p in d.glob("*.md"):
-        c = _read_candidate(p)
-        if not c or c.get("status") != "approved":
+    for d in _all_candidate_dirs():
+        if not d.exists():
             continue
-        q = c.get("quarantine_until")
-        if not q:
-            continue
-        try:
-            qdt = datetime.fromisoformat(q)
-        except ValueError:
-            continue
-        if qdt <= now:
-            # move to vault wiki/concepts
-            vault = Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
-            concepts_dir = vault / "wiki" / "concepts"
-            concepts_dir.mkdir(parents=True, exist_ok=True)
-            slug = re.sub(r"[^a-z0-9]+", "-", (c.get("title") or "concept").lower()).strip("-")
-            dest = concepts_dir / f"{slug}.md"
-            body = c.get("body", "")
-            # ensure frontmatter has type/tags/confidence from the concept block
-            dest.write_text(body + "\n", encoding="utf-8")
-            # mark promoted
-            c["status"] = "promoted"
-            c["promoted_at"] = now.isoformat()
-            _write_candidate(p, c, body)
-            promoted.append(c)
+        for p in d.glob("*.md"):
+            c = _read_candidate(p)
+            if not c or c.get("status") != "approved":
+                continue
+            q = c.get("quarantine_until")
+            if not q:
+                continue
+            try:
+                qdt = datetime.fromisoformat(q)
+            except ValueError:
+                continue
+            if qdt <= now:
+                # move to vault wiki/concepts
+                vault = Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
+                concepts_dir = vault / "wiki" / "concepts"
+                concepts_dir.mkdir(parents=True, exist_ok=True)
+                slug = re.sub(r"[^a-z0-9]+", "-", (c.get("title") or "concept").lower()).strip("-")
+                dest = concepts_dir / f"{slug}.md"
+                body = c.get("body", "")
+                # ensure frontmatter has type/tags/confidence from the concept block
+                dest.write_text(body + "\n", encoding="utf-8")
+                # mark promoted
+                c["status"] = "promoted"
+                c["promoted_at"] = now.isoformat()
+                _write_candidate(p, c, body)
+                promoted.append(c)
     return promoted
 
 
 def rejection_feedback() -> str:
     """Collect rejection_reason from rejected candidates as human feedback
-    for the model's next run."""
+    for the model's next run. Scans every candidate dir (default + per-vault)."""
     reasons = []
+    for vault in _load_vaults():
+        for c in list_candidates(status="rejected", vault=vault):
+            r = c.get("rejection_reason", "").strip()
+            if r:
+                reasons.append(f"- {c.get('title', c.get('id'))}: {r}")
     for c in list_candidates(status="rejected"):
         r = c.get("rejection_reason", "").strip()
         if r:

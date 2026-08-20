@@ -1568,8 +1568,19 @@ class Handler(BaseHTTPRequestHandler):
                                  'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
                 return
             status = (params.get("status") or [None])[0] or None
-            cands = candidates_mod.list_candidates(status=status)
-            self._json(200, {"candidates": cands, "count": len(cands)})
+            vault = (params.get("vault") or [None])[0] or None
+            cands = candidates_mod.list_candidates(status=status, vault=vault)
+            self._json(200, {"candidates": cands, "count": len(cands), "vault": vault})
+            return
+        if parsed.path == '/api/local/candidates/vaults':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                return
+            self._json(200, {"vaults": candidates_mod.list_vaults()})
             return
         self._json(404, {"error": "not_found", "path": self.path})
 
@@ -1758,10 +1769,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
                 return
             cid = data.get('id', '')
+            vault = data.get('vault') or None
             if not cid:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
                 return
-            cand = candidates_mod.approve(cid)
+            cand = candidates_mod.approve(cid, vault)
             if not cand:
                 self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
                 return
@@ -1787,10 +1799,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             cid = data.get('id', '')
             reason = data.get('reason', '')
+            vault = data.get('vault') or None
             if not cid:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
                 return
-            cand = candidates_mod.reject(cid, reason)
+            cand = candidates_mod.reject(cid, reason, vault)
             if not cand:
                 self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
                 return
