@@ -152,7 +152,7 @@ export function CurateRoute() {
                         <p className="mt-1 text-xs text-foreground/50">
                           {c.type} · {c.created} · {c._filename}
                         </p>
-                        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-surface p-2 text-xs text-foreground/70">
+                        <pre className="mt-2 whitespace-pre-wrap break-words rounded bg-surface p-2 text-xs text-foreground/70">
                           {c.body}
                         </pre>
                       </div>
@@ -223,7 +223,7 @@ export function CurateRoute() {
                             <summary className="cursor-pointer text-xs text-foreground/50 hover:text-foreground/80">
                               Show full text
                             </summary>
-                            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-surface p-2 text-xs text-foreground/70">
+                            <pre className="mt-2 whitespace-pre-wrap break-words rounded bg-surface p-2 text-xs text-foreground/70">
                               {c.body}
                             </pre>
                           </details>
