@@ -629,6 +629,14 @@ def _read_version() -> str:
     return '0.0.0'
 
 
+def _candidates_enabled() -> bool:
+    """Curate (BDH candidate curation) is an OPTIONAL feature. It is compiled into
+    MC but only exposed when MC_ENABLE_BDH_CURATOR is truthy. Default OFF so the
+    public Mission Control repo ships clean without the private nightly-brain
+    dependency. The real logic lives in the bdh-nightly-brain sidecar."""
+    return (os.getenv("MC_ENABLE_BDH_CURATOR") or "").strip().lower() in ("1", "true", "yes")
+
+
 def _collect_status_payload() -> Dict[str, Any]:
     version = _read_version()
     runtime = _read_runtime_status()
@@ -694,6 +702,7 @@ def _collect_status_payload() -> Dict[str, Any]:
         'gateway_exit_reason': gateway_exit_reason,
         'gateway_updated_at': gateway_updated_at,
         'active_sessions': active_sessions,
+        'candidates_enabled': _candidates_enabled(),
     }
 
 
@@ -1554,6 +1563,10 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                return
             status = (params.get("status") or [None])[0] or None
             cands = candidates_mod.list_candidates(status=status)
             self._json(200, {"candidates": cands, "count": len(cands)})
@@ -1730,6 +1743,10 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                return
             length = int(self.headers.get('Content-Length', 0))
             if length == 0:
                 self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
@@ -1753,6 +1770,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/api/local/candidates/reject':
             if not _is_authorized(self):
                 self._unauthorized()
+                return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
                 return
             length = int(self.headers.get('Content-Length', 0))
             if length == 0:

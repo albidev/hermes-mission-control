@@ -310,6 +310,7 @@ export type MissionControlSnapshot = {
   fallbackModel: string;
   gatewayStatus: string;
   activeAgents: number;
+  candidatesEnabled: boolean;
   queuedJobs: number;
   toolCallsToday: number;
   recentSignals: Array<{
@@ -683,6 +684,7 @@ const fallbackSnapshot: MissionControlSnapshot = {
   fallbackModel: 'minimax-m2.7 @ localhost:8787',
   gatewayStatus: 'online',
   activeAgents: 3,
+  candidatesEnabled: false,
   queuedJobs: 1,
   toolCallsToday: 42,
   recentSignals: [
@@ -1235,6 +1237,7 @@ function normalizeSnapshot(input: Partial<MissionControlSnapshot>): MissionContr
     fallbackModel: input.fallbackModel ?? fallbackSnapshot.fallbackModel,
     gatewayStatus: input.gatewayStatus ?? fallbackSnapshot.gatewayStatus,
     activeAgents: input.activeAgents ?? fallbackSnapshot.activeAgents,
+    candidatesEnabled: input.candidatesEnabled ?? fallbackSnapshot.candidatesEnabled,
     queuedJobs: input.queuedJobs ?? fallbackSnapshot.queuedJobs,
     toolCallsToday: input.toolCallsToday ?? fallbackSnapshot.toolCallsToday,
     recentSignals: input.recentSignals ?? fallbackSnapshot.recentSignals,
@@ -1281,6 +1284,7 @@ type OfficialStatusPayload = {
   gateway_running?: boolean;
   gateway_state?: string | null;
   active_sessions?: number;
+  candidates_enabled?: boolean;
   config_path?: string;
   gateway_updated_at?: string | null;
 };
@@ -1796,6 +1800,7 @@ export async function loadMissionControlSnapshot(accessToken?: string): Promise<
       fallbackModel: deriveFallbackModel(configRaw),
       gatewayStatus: deriveGatewayStatus(status),
       activeAgents: sessions.activeAgents,
+      candidatesEnabled: readBoolean(status?.candidates_enabled, false),
       queuedJobs: cron.queuedJobs,
       toolCallsToday: sessions.toolCallsToday,
       recentSignals: deriveRecentSignals(status, modelInfo, sessions, cron, alerts, machine),

@@ -11,26 +11,12 @@ import {
   ScrollText,
   Settings,
   Wrench,
-  type LucideIcon,
 } from 'lucide-react';
 import { ThemeSelector } from './ThemeSelector';
 import { PushToggle } from './PushToggle';
 import { useMissionControl } from '../lib/mission-control-store';
 import { ChatDrawer } from './ChatDrawer';
 import { useLastRoutePersistence } from '../lib/last-route';
-
-const navItems: Array<{ to: string; label: string; icon: LucideIcon }> = [
-  { to: '/', label: 'Overview', icon: LayoutDashboard },
-  { to: '/sessions', label: 'Sessions', icon: MessageSquare },
-  { to: '/agents', label: 'Agents', icon: Bot },
-  { to: '/usage', label: 'Usage', icon: DollarSign },
-  { to: '/knowledge', label: 'Knowledge', icon: BookOpen },
-  { to: '/tools', label: 'Tools', icon: Wrench },
-  { to: '/skills', label: 'Skills', icon: Brain },
-  { to: '/config', label: 'Config', icon: Settings },
-  { to: '/logs', label: 'Logs', icon: ScrollText },
-  { to: '/curate', label: 'Curate', icon: ClipboardCheck },
-];
 
 export function MissionControlShell() {
   const location = useLocation();
@@ -41,6 +27,7 @@ export function MissionControlShell() {
     authError,
     loading,
     storedToken,
+    snapshot,
     tokenDraft,
     setTokenDraft,
     unlock,
@@ -49,6 +36,20 @@ export function MissionControlShell() {
     resolvedTheme,
   } = useMissionControl();
 
+  const navItems = [
+    { to: '/', label: 'Overview', icon: LayoutDashboard },
+    { to: '/sessions', label: 'Sessions', icon: MessageSquare },
+    { to: '/agents', label: 'Agents', icon: Bot },
+    { to: '/usage', label: 'Usage', icon: DollarSign },
+    { to: '/knowledge', label: 'Knowledge', icon: BookOpen },
+    { to: '/tools', label: 'Tools', icon: Wrench },
+    { to: '/skills', label: 'Skills', icon: Brain },
+    { to: '/config', label: 'Config', icon: Settings },
+    { to: '/logs', label: 'Logs', icon: ScrollText },
+    ...(snapshot.candidatesEnabled
+      ? [{ to: '/curate', label: 'Curate', icon: ClipboardCheck }]
+      : []),
+  ];
   const [sideOpen, setSideOpen] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
   // Safari suspends the tab in the background and cold-reloads it on return,
