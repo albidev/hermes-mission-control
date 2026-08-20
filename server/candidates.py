@@ -46,6 +46,20 @@ def _parse_frontmatter(text: str) -> Dict[str, Any]:
     return meta
 
 
+def _clean_body(body: str) -> str:
+    """Strip leftover YAML/markdown separators and per-concept headers from a
+    candidate body so the UI shows only readable content."""
+    body = body.strip()
+    # drop any ``` fence markers
+    body = re.sub(r"^```\s*|```\s*$", "", body)
+    # drop leading "# N. Title" headers
+    lines = [ln for ln in body.splitlines() if not re.match(r"^\s*#\s+\d+\.", ln)]
+    body = "\n".join(lines)
+    # cut at the first separator that precedes another concept (mid or trailing)
+    body = re.split(r"\n---(\n|$)", body)[0]
+    return body.strip()
+
+
 def _read_candidate(path: Path) -> Optional[Dict[str, Any]]:
     try:
         text = path.read_text(encoding="utf-8")
@@ -56,9 +70,9 @@ def _read_candidate(path: Path) -> Optional[Dict[str, Any]]:
         return None
     meta["_path"] = str(path)
     meta["_filename"] = path.name
-    # body = content after frontmatter
+    # body = content after frontmatter, cleaned for display
     parts = text.split("---", 2)
-    meta["body"] = parts[2].strip() if len(parts) > 2 else ""
+    meta["body"] = _clean_body(parts[2]) if len(parts) > 2 else ""
     return meta
 
 
