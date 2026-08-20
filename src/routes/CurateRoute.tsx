@@ -144,7 +144,7 @@ export function CurateRoute() {
                 {pending.map((c) => (
                   <Card key={c.id} className="p-4">
                     <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <h3 className="truncate font-semibold text-foreground">{c.title}</h3>
                           {statusBadge(c.status)}
