@@ -38,10 +38,22 @@ export function useLastRoutePersistence() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist the current route whenever it changes.
+  // Persist the current route whenever it changes. Returning to the root
+  // overview is the reset point: clear the stored route so a later cold launch
+  // lands on the home page instead of resurrecting the page you navigated away
+  // from. Without this, returning to "/" left the stale route in storage and
+  // reopening Mission Control jumped straight back to the previous page.
   useEffect(() => {
     const route = `${location.pathname}${location.search}`;
-    if (route === '/') return; // don't clobber history with the boot root
+    if (route === '/') {
+      try {
+        sessionStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        /* storage unavailable — ignore */
+      }
+      return;
+    }
     try {
       sessionStorage.setItem(STORAGE_KEY, route);
       localStorage.setItem(STORAGE_KEY, route);
