@@ -606,25 +606,6 @@
   color: var(--color-accent);
 }
 
-.chat-status {
-  display: inline-flex;
-  align-items: center;
-  max-width: none;
-  min-width: 0;
-  flex: 1 1 auto;
-  gap: 0.375rem;
-  padding: 0.35rem 0.5rem;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
-  background: var(--color-surface);
-  font-size: 0.6875rem;
-  font-weight: 700;
-  line-height: 1.25;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
 .chat-new-button {
   display: inline-flex;
   align-items: center;
@@ -659,26 +640,8 @@
   flex: 0 1 auto;
 }
 
-.chat-status.is-online {
-  color: var(--color-positive);
-  border-color: color-mix(in srgb, var(--color-positive) 28%, var(--color-border));
-  background: var(--color-positive-subtle);
-}
-
-.chat-status.is-pending {
-  color: var(--color-warning);
-  border-color: color-mix(in srgb, var(--color-warning) 28%, var(--color-border));
-  background: var(--color-warning-subtle);
-}
-
-.chat-status.is-offline {
-  color: var(--color-negative);
-  border-color: color-mix(in srgb, var(--color-negative) 28%, var(--color-border));
-  background: var(--color-negative-subtle);
-}
-
 /* Connection status LED — a compact, always-visible signal in the drawer head.
-   Colors follow the same semantic trio as .chat-status. The dot pulses while
+   Colors follow the same semantic trio as the connection state. The dot pulses while
    connecting/reconnecting so the pending state is unmistakable at a glance. */
 .chat-led {
   display: inline-flex;
@@ -1452,10 +1415,6 @@
   .chat-transcript,
   .chat-composer {
     padding-inline: 0.8rem;
-  }
-
-  .chat-status {
-    max-width: 7.5rem;
   }
 
   .chat-interaction {

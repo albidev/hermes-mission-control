@@ -466,13 +466,6 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
               <span>{modelIdentity?.model || 'Resolving model'}</span>
               {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
             </div>
-            <span
-              className={`chat-status ${statusClass}`}
-              title={statusText}
-              aria-label={`Connection: ${statusText}`}
-            >
-              {statusText}
-            </span>
           </div>
         </header>
 
