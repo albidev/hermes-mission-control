@@ -285,6 +285,7 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
             fallbackModel: dashboard.fallbackModel,
             gatewayStatus: dashboard.gatewayStatus,
             activeAgents: dashboard.activeAgents,
+            candidatesEnabled: dashboard.candidatesEnabled,
             queuedJobs: dashboard.queuedJobs,
             toolCallsToday: dashboard.toolCallsToday,
             recentSignals: dashboard.recentSignals,
