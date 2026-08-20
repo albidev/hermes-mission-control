@@ -20,11 +20,10 @@ import candidates as candidates_mod  # noqa: E402
 def main() -> int:
     promoted = candidates_mod.promote_ready()
     if promoted:
-        print(f"Promoted {len(promoted)} candidate(s):")
+        print(f"Promoted {len(promoted)} candidate(s) to wiki/concepts/:")
         for c in promoted:
-            print(f"  - {c.get('title', c.get('id'))} -> wiki/concepts/")
-    else:
-        print("No candidates ready to promote (none approved with elapsed quarantine).")
+            print(f"  - {c.get('title', c.get('id'))}")
+    # else: silent — nothing to promote, nothing to report (watchdog pattern)
     return 0
 
 
