@@ -205,11 +205,32 @@ def _all_candidate_dirs() -> List[Path]:
 
 def promote_ready() -> List[Dict[str, Any]]:
     """Promote candidates whose quarantine has elapsed (status approved +
-    quarantine_until <= now) to the vault wiki/concepts. Scans every candidate
-    dir (default + per-vault). Returns promoted."""
+    quarantine_until <= now) to their vault's wiki/concepts. Scans every
+    candidate dir (default + per-vault) and writes to the vault_dir for that
+    vault. Returns promoted."""
     now = datetime.now(timezone.utc)
     promoted = []
-    for d in _all_candidate_dirs():
+
+    # vault -> (candidates_dir, vault_dir). Default "core" uses the global
+    # VB_CANDIDATES / VB_VAULT. Per-vault dirs come from the local map.
+    mapping = _load_vaults()
+
+    def vault_target(vault_id: str) -> Path:
+        m = mapping.get(vault_id) or {}
+        if m.get("vault_dir"):
+            return Path(os.path.expanduser(str(m["vault_dir"])))
+        return Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
+
+    # build [(candidates_dir, vault_dir)]
+    targets = [(str(_candidates_dir(None)), vault_target("core"))]
+    for vid, m in mapping.items():
+        if vid == "core":
+            continue
+        if m.get("candidates_dir"):
+            targets.append((m["candidates_dir"], vault_target(vid)))
+
+    for cand_dir, vault in targets:
+        d = Path(os.path.expanduser(str(cand_dir)))
         if not d.exists():
             continue
         for p in d.glob("*.md"):
@@ -224,8 +245,7 @@ def promote_ready() -> List[Dict[str, Any]]:
             except ValueError:
                 continue
             if qdt <= now:
-                # move to vault wiki/concepts
-                vault = Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
+                # move to this vault's wiki/concepts
                 concepts_dir = vault / "wiki" / "concepts"
                 concepts_dir.mkdir(parents=True, exist_ok=True)
                 slug = re.sub(r"[^a-z0-9]+", "-", (c.get("title") or "concept").lower()).strip("-")
