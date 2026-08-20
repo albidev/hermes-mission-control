@@ -203,6 +203,30 @@ def _all_candidate_dirs() -> List[Path]:
     return dirs
 
 
+def _append_source_wikilinks(body: str) -> str:
+    """Append a '## Sources' section of [[wikilinks]] derived from the body's
+    `sources:` YAML entries, so the BDH graph creates edges from the promoted
+    concept to the vault nodes that generated it.
+
+    Only `vault:` sources map to vault notes (external: sources are repo/docs
+    outside the vault and have no vault node to link). The wikilink target is
+    the path after `vault:` with the `.md` stripped, e.g.
+    `vault:wiki/entities/foo.md` -> `[[wiki/entities/foo]]`.
+    """
+    if not body or "[[wiki/" in body:
+        return body  # already has wikilinks
+    sources = re.findall(r"^\s*-\s*[\"']?vault:([^\s\"']+\.md)[\"']?\s*$", body, re.MULTILINE)
+    if not sources:
+        return body
+    links = []
+    for src in sources:
+        target = src[:-3] if src.endswith(".md") else src  # strip .md
+        links.append(f"- [[{target}]]")
+    if not links:
+        return body
+    return body.rstrip() + "\n\n## Sources\n" + "\n".join(links) + "\n"
+
+
 def promote_ready() -> List[Dict[str, Any]]:
     """Promote candidates whose quarantine has elapsed (status approved +
     quarantine_until <= now) to their vault's wiki/concepts. Scans every
@@ -251,6 +275,10 @@ def promote_ready() -> List[Dict[str, Any]]:
                 slug = re.sub(r"[^a-z0-9]+", "-", (c.get("title") or "concept").lower()).strip("-")
                 dest = concepts_dir / f"{slug}.md"
                 body = c.get("body", "")
+                # Convert vault sources into wikilinks so the BDH graph creates
+                # edges from this new concept to the nodes that generated it.
+                # Without [[...]] links the promoted note is an isolated node.
+                body = _append_source_wikilinks(body)
                 # ensure frontmatter has type/tags/confidence from the concept block
                 dest.write_text(body + "\n", encoding="utf-8")
                 # mark promoted
