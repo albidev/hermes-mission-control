@@ -147,16 +147,28 @@ def _find_by_id(cid: str, vault: Optional[str] = None) -> Optional[Path]:
     return None
 
 
+def _quarantine_delta(vault: Optional[str] = None) -> timedelta:
+    """Quarantine window for a vault. Per-vault override (quarantine_hours in
+    the local curate-vaults.yaml) wins; otherwise the global VB_QUARANTINE_DAYS
+    (default 1 day)."""
+    if vault and vault != "core":
+        mapping = _load_vaults().get(vault) or {}
+        qh = mapping.get("quarantine_hours")
+        if qh is not None:
+            return timedelta(hours=float(qh))
+    days = float(os.environ.get("VB_QUARANTINE_DAYS", str(DEFAULT_QUARANTINE_DAYS)))
+    return timedelta(days=days)
+
+
 def approve(cid: str, vault: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Approve a candidate -> status approved, quarantine_until = now + days."""
+    """Approve a candidate -> status approved, quarantine_until = now + delta."""
     p = _find_by_id(cid, vault)
     if not p:
         return None
     c = _read_candidate(p)
     if not c:
         return None
-    days = float(os.environ.get("VB_QUARANTINE_DAYS", str(DEFAULT_QUARANTINE_DAYS)))
-    until = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    until = (datetime.now(timezone.utc) + _quarantine_delta(vault)).isoformat()
     c["status"] = "approved"
     c["approved_at"] = datetime.now(timezone.utc).isoformat()
     c["quarantine_until"] = until
