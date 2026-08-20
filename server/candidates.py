@@ -261,6 +261,37 @@ def promote_ready() -> List[Dict[str, Any]]:
     return promoted
 
 
+def vault_dirs_with_promotions() -> list:
+    """Return the vault_dir of every vault whose candidate dir currently holds
+    at least one promoted candidate. Used by the promote cron to know which
+    vault repos need a commit+push."""
+    promoted_dirs = set()
+    mapping = _load_vaults()
+    for vid, m in mapping.items():
+        cand_dir = m.get("candidates_dir")
+        if not cand_dir:
+            continue
+        d = Path(os.path.expanduser(str(cand_dir)))
+        if not d.exists():
+            continue
+        has_promoted = any(
+            (_read_candidate(p) or {}).get("status") == "promoted"
+            for p in d.glob("*.md")
+        )
+        if has_promoted:
+            promoted_dirs.add(vault_dir_for(vid))
+    return sorted(promoted_dirs)
+
+
+def vault_dir_for(vault_id: str) -> Path:
+    """Resolve the vault_dir for a vault id (default core -> VB_VAULT)."""
+    mapping = _load_vaults()
+    m = mapping.get(vault_id) or {}
+    if m.get("vault_dir"):
+        return Path(os.path.expanduser(str(m["vault_dir"])))
+    return Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
+
+
 def rejection_feedback() -> str:
     """Collect rejection_reason from rejected candidates as human feedback
     for the model's next run. Scans every candidate dir (default + per-vault)."""

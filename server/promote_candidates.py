@@ -23,8 +23,36 @@ def main() -> int:
         print(f"Promoted {len(promoted)} candidate(s) to wiki/concepts/:")
         for c in promoted:
             print(f"  - {c.get('title', c.get('id'))}")
+        # Push each affected vault_dir if it is a git repo with a remote.
+        # Only Crossnection (private albidev/crossnection-vault) is a git repo.
+        for vault_dir in candidates_mod.vault_dirs_with_promotions():
+            _git_commit_and_push(vault_dir, promoted)
     # else: silent — nothing to promote, nothing to report (watchdog pattern)
     return 0
+
+
+def _git_commit_and_push(vault_dir: Path, promoted: list) -> None:
+    """Commit and push vault_dir to its git remote if present and dirty."""
+    import subprocess
+    git_dir = vault_dir / ".git"
+    if not git_dir.exists():
+        print(f"  [skip] {vault_dir}: not a git repo")
+        return
+    try:
+        subprocess.run(["git", "-C", str(vault_dir), "add", "-A"],
+                       check=True, capture_output=True, timeout=60)
+        subprocess.run(["git", "-C", str(vault_dir), "commit", "-m",
+                        f"nightly-brain: promote {len(promoted)} candidate(s)"],
+                       check=True, capture_output=True, timeout=60)
+    except subprocess.CalledProcessError:
+        # nothing to commit (no changes) — fine, idempotent
+        return
+    try:
+        subprocess.run(["git", "-C", str(vault_dir), "push", "origin", "main"],
+                       check=True, capture_output=True, timeout=120)
+        print(f"  [push] {vault_dir} -> origin/main")
+    except subprocess.CalledProcessError as exc:
+        print(f"  [push FAILED] {vault_dir}: {exc.stderr.decode().strip()}")
 
 
 if __name__ == "__main__":
