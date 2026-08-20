@@ -350,11 +350,9 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         if (requestedSessionIdRef.current === existingKey) {
           throw new Error(`Session ${existingKey} could not be recovered from the gateway.`);
         }
-        // Surface the actual RPC error so the status pill is diagnostic instead
-        // of a generic "could not be resumed" that hides the real cause (e.g.
-        // the gateway crashing on a closed state.db connection).
-        const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
-        setStatusText(`Stored session could not be resumed${detail} — creating a new chat.`);
+        // A stale/deleted stored session is a normal recovery path: silently
+        // fall back to a fresh chat instead of turning the header into an error
+        // banner. Transport failures still surface through the actual RPC error.
       }
     }
 

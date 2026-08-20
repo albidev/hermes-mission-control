@@ -23,7 +23,7 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
-  Trash2,
+  SquarePen,
   X,
   XCircle,
 } from 'lucide-react';
@@ -75,6 +75,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const [isDragging, setIsDragging] = useState(false);
   const [interactionDraft, setInteractionDraft] = useState('');
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
+  const [newChatLoading, setNewChatLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -395,6 +396,16 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     }
   };
 
+  const handleNewChat = async () => {
+    if (newChatLoading) return;
+    setNewChatLoading(true);
+    try {
+      await reset();
+    } finally {
+      setNewChatLoading(false);
+    }
+  };
+
   const interactionPayload = interaction?.payload ?? {};
   const interactionChoices = Array.isArray(interactionPayload.choices)
     ? interactionPayload.choices.filter((choice): choice is string => typeof choice === 'string' && choice.trim().length > 0)
@@ -423,19 +434,38 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
         onDrop={handleDrop}
       >
         <header className="chat-drawer-head">
-          <div className="chat-title">
-            <span className="chat-mark" aria-hidden><Bot size={18} /></span>
-            <div>
-              <p className="eyebrow">Hermes</p>
-              <h2 id="chat-drawer-title">Chat</h2>
+          <div className="chat-head-main">
+            <div className="chat-title">
+              <span className="chat-mark" aria-hidden><Bot size={18} /></span>
+              <div>
+                <p className="eyebrow">Hermes</p>
+                <h2 id="chat-drawer-title">Chat</h2>
+              </div>
+            </div>
+            <div className="chat-head-actions">
+              {submitting || running ? <Loader2 size={16} className="chat-header-loader chat-spin" aria-label="Hermes is working" /> : null}
+              <span
+                className={`chat-led ${statusClass}`}
+                title={`Gateway connection: ${statusText}`}
+                aria-label={`Gateway connection: ${statusText}`}
+              >
+                <span className="chat-led-dot" />
+              </span>
+              <button className="chat-new-button" type="button" onClick={() => void handleNewChat()} disabled={newChatLoading} title="Start a new chat" aria-label="Start a new chat">
+                {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
+                <span>New</span>
+              </button>
+              <button className="chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
+                <X size={18} />
+              </button>
             </div>
           </div>
-          <div className="chat-model-badge" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Resolving active model'}>
-            <Cpu size={13} aria-hidden />
-            <span>{modelIdentity?.model || 'Resolving model'}</span>
-            {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
-          </div>
-          <div className="chat-head-actions">
+          <div className="chat-head-meta">
+            <div className="chat-model-badge" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Resolving active model'}>
+              <Cpu size={13} aria-hidden />
+              <span>{modelIdentity?.model || 'Resolving model'}</span>
+              {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
+            </div>
             <span
               className={`chat-status ${statusClass}`}
               title={statusText}
@@ -443,19 +473,6 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
             >
               {statusText}
             </span>
-            <span
-              className={`chat-led ${statusClass}`}
-              title={`Gateway connection: ${statusText}`}
-              aria-label={`Gateway connection: ${statusText}`}
-            >
-              <span className="chat-led-dot" />
-            </span>
-            <button className="chat-icon-button" type="button" onClick={() => void reset()} title="New chat" aria-label="New chat">
-              <Trash2 size={16} />
-            </button>
-            <button className="chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
-              <X size={18} />
-            </button>
           </div>
         </header>
 
