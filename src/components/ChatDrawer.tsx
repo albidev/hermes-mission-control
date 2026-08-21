@@ -1219,9 +1219,8 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
             {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
           </div>
           <div className="chat-head-actions">
-            <span className={`chat-status ${statusClass}`} title={statusText}>
+            <span className={`chat-status ${statusClass}`} title={statusText} aria-label={statusText}>
               <Circle size={8} fill="currentColor" />
-              {statusText}
             </span>
             <button className="chat-icon-button" type="button" onClick={() => void reset()} title="New chat" aria-label="New chat">
               <Trash2 size={16} />
