@@ -30,8 +30,8 @@ fi
 # sessions.json index and shows ~11 sessions instead of the real count).
 export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$HOME/.hermes/hermes-agent"
 
-# Curate (BDH candidate curation) — local install has it ON. The public repo
-# default stays OFF (MC_ENABLE_BDH_CURATOR unset → disabled).
-export MC_ENABLE_BDH_CURATOR=1
+# Curate (BDH candidate curation) — opt-in via .env (gitignored). The public
+# repo default stays OFF (MC_ENABLE_BDH_CURATOR unset → disabled).
+[ -n "${MC_ENABLE_BDH_CURATOR:-}" ] && export MC_ENABLE_BDH_CURATOR
 
 exec "$PYTHON_BIN" "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/server/local_telemetry_server.py"
