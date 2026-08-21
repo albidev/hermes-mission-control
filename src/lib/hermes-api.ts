@@ -25,6 +25,14 @@ export type MissionControlMachineStatus = {
     totalGb: number;
   };
   processMemoryMb: number | null;
+  thermal: {
+    fanRpm: number | null;
+    fanCount: number | null;
+    thermalPressure: number | null;
+    thermalLevel: string | null;
+    source: string | null;
+    error: string | null;
+  };
   summary: string;
 };
 
@@ -446,6 +454,14 @@ const fallbackMachine: MissionControlMachineStatus = {
     totalGb: 0,
   },
   processMemoryMb: null,
+  thermal: {
+    fanRpm: null,
+    fanCount: null,
+    thermalPressure: null,
+    thermalLevel: null,
+    source: null,
+    error: null,
+  },
   summary: 'System metrics unavailable',
 };
 
@@ -765,6 +781,14 @@ function normalizeMachineStatus(input: Partial<MissionControlMachineStatus> | un
       totalGb: input.diskUsage?.totalGb ?? fallbackMachine.diskUsage.totalGb,
     },
     processMemoryMb: input.processMemoryMb ?? fallbackMachine.processMemoryMb,
+    thermal: {
+      fanRpm: input.thermal?.fanRpm ?? fallbackMachine.thermal.fanRpm,
+      fanCount: input.thermal?.fanCount ?? fallbackMachine.thermal.fanCount,
+      thermalPressure: input.thermal?.thermalPressure ?? fallbackMachine.thermal.thermalPressure,
+      thermalLevel: input.thermal?.thermalLevel ?? fallbackMachine.thermal.thermalLevel,
+      source: input.thermal?.source ?? fallbackMachine.thermal.source,
+      error: input.thermal?.error ?? fallbackMachine.thermal.error,
+    },
     summary: input.summary ?? fallbackMachine.summary,
   };
 }

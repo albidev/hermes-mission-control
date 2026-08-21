@@ -1,4 +1,4 @@
-import { Cpu, Disc, HardDrive, Server } from 'lucide-react';
+import { Cpu, Disc, Fan, HardDrive, Server, Thermometer } from 'lucide-react';
 import type { MissionControlMachineStatus } from '../../lib/hermes-api';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
@@ -170,6 +170,34 @@ export function SystemHealthPanel({
           barVariant={
             (machine.diskUsage.usedPercent ?? 0) > 90 ? 'negative' :
             (machine.diskUsage.usedPercent ?? 0) > 75 ? 'warning' :
+            'positive'
+          }
+        />
+
+        {/* Fan — only rendered when powermetrics exposes fan RPM (Intel/older macOS) */}
+        {machine.thermal.fanRpm !== null && (
+          <HealthMetric
+            icon={Fan}
+            label={machine.thermal.fanCount ? `Fan ×${machine.thermal.fanCount}` : 'Fan'}
+            value={`${machine.thermal.fanRpm.toFixed(0)} rpm`}
+          />
+        )}
+
+        {/* Thermal */}
+        <HealthMetric
+          icon={Thermometer}
+          label="Thermal"
+          value={
+            machine.thermal.thermalLevel
+              ? machine.thermal.thermalLevel
+              : machine.thermal.thermalPressure !== null
+              ? `${machine.thermal.thermalPressure.toFixed(0)}`
+              : '—'
+          }
+          bar={machine.thermal.thermalPressure}
+          barVariant={
+            (machine.thermal.thermalPressure ?? 0) > 80 ? 'negative' :
+            (machine.thermal.thermalPressure ?? 0) > 50 ? 'warning' :
             'positive'
           }
         />

@@ -105,12 +105,21 @@ def collect_system_snapshot() -> Dict[str, Any]:
 
     process_memory_mb = round(float(psutil.Process().memory_info().rss) / (1024**2), 1)
 
+    thermal = collect_thermal_snapshot()
+
     if disk.percent >= 92 or (load_per_core is not None and load_per_core >= 2.0):
         health = "degraded"
     else:
         health = "healthy"
 
-    summary = f"Load {load_per_core:.2f}/core, CPU {cpu_percent:.1f}%, RAM {vm.percent:.1f}%, Disk {disk.percent:.1f}%, RSS {process_memory_mb:.1f} MB" if load_per_core is not None else f"CPU {cpu_percent:.1f}%, RAM {vm.percent:.1f}%, Disk {disk.percent:.1f}%, RSS {process_memory_mb:.1f} MB"
+    summary_parts = [f"Load {load_per_core:.2f}/core" if load_per_core is not None else "",
+                     f"CPU {cpu_percent:.1f}%", f"RAM {vm.percent:.1f}%", f"Disk {disk.percent:.1f}%"]
+    if thermal.get("fanRpm") is not None:
+        summary_parts.append(f"Fan {thermal['fanRpm']:.0f} rpm")
+    if thermal.get("thermalLevel") is not None:
+        summary_parts.append(f"Thermal {thermal['thermalLevel'].capitalize()}")
+    summary_parts.append(f"RSS {process_memory_mb:.1f} MB")
+    summary = ", ".join(p for p in summary_parts)
 
     return {
         "source": "local-psutil",
@@ -140,8 +149,76 @@ def collect_system_snapshot() -> Dict[str, Any]:
             "totalGb": gb(disk.total),
         },
         "processMemoryMb": process_memory_mb,
+        "thermal": thermal,
         "summary": summary,
     }
+
+
+def collect_thermal_snapshot() -> Dict[str, Any]:
+    """Read thermal pressure via powermetrics (needs sudo NOPASSWD).
+
+    On macOS 26 (Apple Silicon) powermetrics no longer exposes the `smc`/`fan`
+    samplers, and ioreg/AppleSMC does not publish fan RPM on M-series. The only
+    readable surface is thermal pressure as a textual level:
+
+        **** Thermal pressure ****
+        Current pressure level: Nominal
+
+    Levels map to a normalised 0-100 index so the UI can render a bar:
+    Nominal=0, Low=25, Moderate=50, Heavy=75, Extreme=100. Returns nulls when
+    powermetrics/sudo is unavailable so the UI degrades to "—".
+    """
+    thermal_pressure: Optional[float] = None
+    thermal_level: Optional[str] = None
+    fan_rpm: Optional[float] = None
+    fan_count: Optional[int] = None
+    error: Optional[str] = None
+
+    _LEVEL_INDEX = {
+        "nominal": 0.0,
+        "low": 25.0,
+        "moderate": 50.0,
+        "heavy": 75.0,
+        "extreme": 100.0,
+    }
+
+    try:
+        proc = subprocess.run(
+            ["sudo", "-n", "/usr/bin/powermetrics", "--samplers", "thermal", "-n", "1", "-i", "1000", "-f", "text"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip()
+            error = stderr or f"powermetrics exited {proc.returncode}"
+        else:
+            text = proc.stdout or ""
+            # e.g. "Current pressure level: Nominal"
+            m = re.search(r"Current\s+pressure\s+level:\s*([A-Za-z]+)", text, re.IGNORECASE)
+            if m:
+                level = m.group(1).strip().lower()
+                thermal_level = level
+                if level in _LEVEL_INDEX:
+                    thermal_pressure = _LEVEL_INDEX[level]
+                else:
+                    error = f"unknown thermal level: {level}"
+    except subprocess.TimeoutExpired:
+        error = "powermetrics timed out"
+    except FileNotFoundError:
+        error = "powermetrics not found"
+    except Exception as exc:  # noqa: BLE001 - telemetry must never crash on a bad read
+        error = str(exc)
+
+    result: Dict[str, Any] = {
+        "fanRpm": fan_rpm,
+        "fanCount": fan_count,
+        "thermalPressure": thermal_pressure,
+        "thermalLevel": thermal_level,
+        "source": "powermetrics" if (thermal_pressure is not None or fan_rpm is not None) else None,
+        "error": error,
+    }
+    return result
 
 
 _USAGE_PROVIDERS = ("codex", "ollama", "openrouter")
