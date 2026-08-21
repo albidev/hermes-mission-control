@@ -10,6 +10,8 @@ import {
   LockKeyhole,
   Menu,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   ScrollText,
   Settings,
   Wrench,
@@ -124,7 +126,7 @@ export function MissionControlShell() {
   }, [authRequired]);
 
   const toggleSidebar = useCallback(() => {
-    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 980px)').matches) {
+    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 981px)').matches) {
       setSideCollapsed((value) => !value);
       return;
     }
@@ -152,6 +154,18 @@ export function MissionControlShell() {
           <div className="side-menu-head">
             <div className="side-menu-head-top">
               <p className="eyebrow">Hermes Mission Control</p>
+              <Button
+                variant="ghost"
+                size="md"
+                icon={sideCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+                iconOnly
+                className="desktop-sidebar-toggle"
+                type="button"
+                aria-label={sideCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                aria-expanded={!sideCollapsed}
+                title={sideCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                onClick={toggleSidebar}
+              />
               <Button
                 variant="secondary"
                 size="md"
@@ -222,9 +236,9 @@ export function MissionControlShell() {
                 size="md"
                 icon={<Menu size={17} />}
                 iconOnly
-                className="sidebar-toggle"
+                className="sidebar-toggle mobile-sidebar-toggle"
                 type="button"
-                aria-label="Toggle navigation menu"
+                aria-label="Open navigation menu"
                 aria-expanded={sideOpen}
                 onClick={toggleSidebar}
               />

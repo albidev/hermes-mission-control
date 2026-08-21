@@ -25,14 +25,14 @@ const variantClasses: Record<ButtonVariant, string> = {
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
-  sm: 'min-h-9 px-2.5 text-xs gap-1.5',
-  md: 'min-h-9 px-3.5 text-sm gap-2',
+  sm: 'min-h-11 px-2.5 text-xs gap-1.5',
+  md: 'min-h-11 px-3.5 text-sm gap-2',
   lg: 'min-h-11 px-5 text-base gap-2.5',
 };
 
 const iconOnlyClasses: Record<ButtonSize, string> = {
-  sm: 'w-9 min-w-9 px-0',
-  md: 'w-9 min-w-9 px-0',
+  sm: 'w-11 min-w-11 px-0',
+  md: 'w-11 min-w-11 px-0',
   lg: 'w-11 min-w-11 px-0',
 };
 

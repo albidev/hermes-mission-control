@@ -43,7 +43,7 @@
     --radius-xl: 16px;
 
     /* Interactive control geometry */
-    --control-height: 36px;
+    --control-height: 44px;
     --touch-target: 44px;
     --control-radius: 12px;
   }
@@ -122,7 +122,7 @@
   }
 
   .pill-button {
-    @apply cursor-pointer transition-colors duration-150;
+    @apply min-h-11 min-w-11 cursor-pointer transition-colors duration-150;
   }
 
   .eyebrow {
@@ -1823,6 +1823,10 @@
     display: flex;
   }
 
+  .mobile-sidebar-toggle {
+    display: inline-flex;
+  }
+
   .auth-overlay {
     padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
     align-items: flex-end;
@@ -1973,6 +1977,14 @@
 }
 
 @media (min-width: 981px) {
+  .desktop-sidebar-toggle {
+    display: inline-flex;
+  }
+
+  .mobile-sidebar-toggle {
+    display: none;
+  }
+
   .side-menu {
     transform: none !important;
   }
@@ -1983,8 +1995,37 @@
     align-items: center;
   }
 
+  .side-menu-head-top {
+    min-height: 44px;
+  }
+
+  .side-menu-head-top .desktop-sidebar-toggle {
+    margin-left: auto;
+  }
+
   .layout-frame.is-collapsed .side-menu-head {
+    display: flex;
+    width: 100%;
+    padding: 0 0 0.75rem;
+  }
+
+  .layout-frame.is-collapsed .side-menu-head-top {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .layout-frame.is-collapsed .side-menu-head-top > p,
+  .layout-frame.is-collapsed .side-menu-head > strong,
+  .layout-frame.is-collapsed .side-menu-head > .mini-note {
     display: none;
+  }
+
+  .layout-frame.is-collapsed .side-menu-head-top .side-close {
+    display: none;
+  }
+
+  .layout-frame.is-collapsed .side-menu-head-top .desktop-sidebar-toggle {
+    margin-left: 0;
   }
 
   .layout-frame.is-collapsed .side-nav {
@@ -3228,6 +3269,10 @@ button:not(.mobile-nav-backdrop):not(.chat-backdrop) {
   border-radius: var(--control-radius) !important;
 }
 
+.pill-button {
+  border-radius: var(--control-radius) !important;
+}
+
 .mc-icon-only {
   width: var(--control-height) !important;
   min-width: var(--control-height) !important;
@@ -3236,14 +3281,9 @@ button:not(.mobile-nav-backdrop):not(.chat-backdrop) {
 
 button {
   min-height: var(--control-height) !important;
+  min-width: var(--touch-target) !important;
   flex-shrink: 0;
   touch-action: manipulation;
-}
-
-button:has(> svg:only-child) {
-  min-width: var(--control-height) !important;
-  aspect-ratio: 1 / 1;
-  padding-inline: 0;
 }
 
 @media (pointer: coarse), (max-width: 640px) {
@@ -3256,7 +3296,4 @@ button:has(> svg:only-child) {
     min-width: var(--touch-target) !important;
   }
 
-  button:has(> svg:only-child) {
-    min-width: var(--touch-target) !important;
-  }
 }

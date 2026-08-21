@@ -27,14 +27,16 @@ assertIncludes(styles, 'height: 100dvh;', 'mobile viewport contract');
 assertIncludes(styles, 'min-width: var(--chat-control-size);', 'controls keep a usable minimum width');
 assertIncludes(styles, 'padding-bottom: max(0.75rem, env(safe-area-inset-bottom));', 'composer respects iPhone safe area');
 
-assertIncludes(styles, '--control-height: 36px;', 'global desktop control token');
+assertIncludes(styles, '--control-height: 44px;', 'global button control token');
 assertIncludes(styles, '--touch-target: 44px;', 'global touch target token');
 assertIncludes(styles, '--control-radius: 12px;', 'all visible buttons share one radius');
-assertIncludes(styles, 'button:has(> svg:only-child)', 'icon-only buttons use the square-control contract');
+assertExcludes(styles, 'button:has(> svg:only-child)', 'labelled buttons are not misclassified as icon-only');
 assertIncludes(styles, '@media (pointer: coarse), (max-width: 640px)', 'all mobile controls use touch targets');
-assertIncludes(styles, 'min-height: var(--touch-target) !important;', 'touch targets override component-specific compact heights');
-assertIncludes(styles, 'min-width: var(--touch-target) !important;', 'mobile icon buttons cannot be compressed');
-assertIncludes(buttonComponent, "sm: 'min-h-9", 'shared small buttons keep the desktop minimum');
+assertIncludes(styles, 'min-height: var(--control-height) !important;', 'buttons use the shared minimum height');
+assertIncludes(styles, 'min-width: var(--touch-target) !important;', 'buttons use the shared minimum width');
+assertIncludes(styles, '.pill-button {\n    @apply min-h-11 min-w-11', 'button-like links use the shared minimum geometry');
+assertIncludes(styles, '.pill-button {\n  border-radius: var(--control-radius) !important;', 'button-like links use the shared radius');
+assertIncludes(buttonComponent, "sm: 'min-h-11", 'shared small buttons keep the 44px minimum');
 assertExcludes(buttonComponent, "sm: 'h-7", 'shared small buttons are not fixed at 28px');
 assertIncludes(
   buttonComponent,
@@ -50,5 +52,8 @@ assertIncludes(component, 'chat-control chat-attach', 'chat controls remain on t
 const shell = readFileSync(new URL('../src/components/MissionControlShell.tsx', import.meta.url), 'utf8');
 assertIncludes(shell, '<Button', 'workspace actions use the shared Button component');
 assertIncludes(shell, 'iconOnly', 'workspace icon actions are explicitly square');
+assertIncludes(shell, 'desktop-sidebar-toggle', 'desktop collapse control lives in the sidebar');
+assertIncludes(shell, 'mobile-sidebar-toggle', 'mobile menu control stays in the primary header');
+assertIncludes(shell, 'aria-expanded={!sideCollapsed}', 'desktop collapse control exposes its actual state');
 
 console.log('chat UI contract tests passed');

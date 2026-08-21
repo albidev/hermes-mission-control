@@ -240,7 +240,7 @@ export function SessionsRoute() {
                     <span className="truncate hidden sm:inline">Started {formatTimestamp(session.startedAt ?? 0)}</span>
                     <Link
                       to={`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`}
-                      className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-500/10 px-2.5 py-1.5 text-violet-200 hover:border-violet-300/50 hover:bg-violet-500/20 transition-colors shrink-0"
+                      className="ml-auto pill-button inline-flex items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-500/10 px-2.5 py-1.5 text-violet-200 hover:border-violet-300/50 hover:bg-violet-500/20 transition-colors shrink-0"
                       title="Resume this session in Hermes Chat"
                       aria-label={`Resume chat for ${session.title}`}
                     >
