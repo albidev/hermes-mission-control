@@ -35,6 +35,32 @@ function MiniBar({
   );
 }
 
+/**
+ * Discrete 5-notch level meter for thermal pressure. Thermal is a coarse
+ * text level (Nominal/Low/Moderate/Heavy/Extreme), so a continuous bar would
+ * imply false precision. Each filled notch = one level step.
+ */
+const LEVEL_ORDER = ['nominal', 'low', 'moderate', 'heavy', 'extreme'];
+
+function LevelMeter({ level }: { level: string | null }) {
+  const active = level ? LEVEL_ORDER.indexOf(level.toLowerCase()) + 1 : 0;
+  const colorClass =
+    active >= 5 ? 'bg-negative' :
+    active >= 3 ? 'bg-warning' :
+    'bg-positive';
+
+  return (
+    <div className="flex w-full gap-1">
+      {Array.from({ length: 5 }, (_, i) => (
+        <div
+          key={i}
+          className={`h-1.5 flex-1 rounded-full ${i < active ? colorClass : 'bg-surface-sunken'} transition-colors duration-500`}
+        />
+      ))}
+    </div>
+  );
+}
+
 function HealthMetric({
   icon: Icon,
   label,
@@ -42,6 +68,7 @@ function HealthMetric({
   unit,
   bar,
   barVariant = 'default',
+  level,
 }: {
   icon: React.ElementType;
   label: string;
@@ -49,6 +76,7 @@ function HealthMetric({
   unit?: string;
   bar?: number | null;
   barVariant?: 'default' | 'positive' | 'warning' | 'negative';
+  level?: string | null;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -61,9 +89,11 @@ function HealthMetric({
           {value ?? '—'}{unit ?? ''}
         </span>
       </div>
-      {bar !== undefined && (
+      {level !== undefined ? (
+        <LevelMeter level={level} />
+      ) : bar !== undefined ? (
         <MiniBar value={bar} variant={barVariant} />
-      )}
+      ) : null}
     </div>
   );
 }
@@ -183,23 +213,12 @@ export function SystemHealthPanel({
           />
         )}
 
-        {/* Thermal */}
+        {/* Thermal — discrete level meter */}
         <HealthMetric
           icon={Thermometer}
           label="Thermal"
-          value={
-            machine.thermal.thermalLevel
-              ? machine.thermal.thermalLevel
-              : machine.thermal.thermalPressure !== null
-              ? `${machine.thermal.thermalPressure.toFixed(0)}`
-              : '—'
-          }
-          bar={machine.thermal.thermalPressure}
-          barVariant={
-            (machine.thermal.thermalPressure ?? 0) > 80 ? 'negative' :
-            (machine.thermal.thermalPressure ?? 0) > 50 ? 'warning' :
-            'positive'
-          }
+          value={machine.thermal.thermalLevel ?? '—'}
+          level={machine.thermal.thermalLevel ?? null}
         />
       </div>
     </Card>
