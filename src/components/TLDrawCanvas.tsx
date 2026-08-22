@@ -230,7 +230,9 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
             editor.selectAll();
             editor.deleteShapes(editor.getSelectedShapeIds());
           }
-          applied.push(command.id);
+          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow'].includes(command.type)) {
+            applied.push(command.id);
+          }
         }
         if (applied.length) {
           editor.zoomToFit({ animation: { duration: 250 } });
