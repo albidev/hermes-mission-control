@@ -99,7 +99,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
       try {
         const response = await fetch(`/api/local/chat/whiteboard?sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
-        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{ id: string; type: string; text?: string; x?: number; y?: number; color?: string }> };
+        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{ id: string; type: string; text?: string; x?: number; y?: number; w?: number; h?: number; color?: string }> };
         if (!window.localStorage.getItem(key) && remote.snapshot) loadSnapshot(editor.store, remote.snapshot);
         const commands = remote.commands || [];
         const applied: string[] = [];
@@ -117,6 +117,23 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
                 font: 'sans',
                 textAlign: 'start',
                 autoSize: true,
+              },
+            });
+          }
+          if (command.type === 'create_line') {
+            editor.createShape({
+              id: createShapeId('agent-line'),
+              type: 'geo',
+              x: command.x ?? 180,
+              y: command.y ?? 360,
+              props: {
+                geo: 'rectangle',
+                w: command.w ?? 180,
+                h: command.h ?? 4,
+                color: command.color === 'violet' ? 'violet' : 'black',
+                fill: 'none',
+                dash: 'solid',
+                size: 'm',
               },
             });
           }
