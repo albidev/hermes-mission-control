@@ -634,6 +634,35 @@
     z-index: 65;
     width: 100vw;
     min-width: 0;
+    inset: 0;
+    border-left: 0;
+  }
+
+  .tldraw-canvas-head {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    padding-top: max(0.875rem, env(safe-area-inset-top));
+    gap: 0.5rem;
+  }
+
+  .tldraw-canvas-linked-session {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .tldraw-canvas-actions .chat-icon-button:last-child {
+    background: var(--color-accent);
+    color: #fff;
+    border-color: var(--color-accent);
   }
 }
 
