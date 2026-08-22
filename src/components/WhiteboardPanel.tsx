@@ -6,6 +6,7 @@ import 'tldraw/tldraw.css';
 type WhiteboardPanelProps = {
   sessionId: string | null;
   sessionTitle: string;
+  storedToken: string;
   onClose: () => void;
   expanded: boolean;
 };
@@ -14,7 +15,7 @@ function storageKey(sessionId: string | null) {
   return `mission-control:whiteboard:v2:${sessionId || 'new'}`;
 }
 
-export function WhiteboardPanel({ sessionId, sessionTitle, onClose, expanded }: WhiteboardPanelProps) {
+export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onClose, expanded }: WhiteboardPanelProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const key = useMemo(() => storageKey(sessionId), [sessionId]);
 
@@ -69,14 +70,78 @@ export function WhiteboardPanel({ sessionId, sessionTitle, onClose, expanded }: 
   useEffect(() => {
     if (!editor) return;
     const dispose = editor.store.listen(() => {
+      const snapshot = getSnapshot(editor.store);
       try {
-        window.localStorage.setItem(key, JSON.stringify(getSnapshot(editor.store)));
+        window.localStorage.setItem(key, JSON.stringify(snapshot));
       } catch {
         // Persistence is best-effort; the board remains usable if storage is full.
       }
+      if (sessionId) {
+        void fetch('/api/local/chat/whiteboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
+          body: JSON.stringify({ sessionId, snapshot }),
+        }).catch(() => {});
+      }
     }, { scope: 'document', source: 'user' });
     return dispose;
-  }, [editor, key]);
+  }, [editor, key, sessionId, storedToken]);
+
+  useEffect(() => {
+    if (!editor || !sessionId) return;
+    let cancelled = false;
+    const headers = storedToken ? { Authorization: `Bearer ${storedToken}` } : undefined;
+
+    const applyRemoteState = async () => {
+      try {
+        const response = await fetch(`/api/local/chat/whiteboard?sessionId=${encodeURIComponent(sessionId)}`, { headers });
+        if (!response.ok || cancelled) return;
+        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{ id: string; type: string; text?: string; x?: number; y?: number; color?: string }> };
+        if (!window.localStorage.getItem(key) && remote.snapshot) loadSnapshot(editor.store, remote.snapshot);
+        const commands = remote.commands || [];
+        const applied: string[] = [];
+        for (const command of commands) {
+          if (command.type === 'create_text' && command.text) {
+            editor.createShape({
+              id: createShapeId('agent-text'),
+              type: 'text',
+              x: command.x ?? 160,
+              y: command.y ?? 140,
+              props: {
+                richText: toRichText(command.text),
+                color: command.color === 'black' ? 'black' : 'violet',
+                size: 'l',
+                font: 'sans',
+                textAlign: 'start',
+                autoSize: true,
+              },
+            });
+          }
+          if (command.type === 'clear') {
+            editor.selectAll();
+            editor.deleteShapes(editor.getSelectedShapeIds());
+          }
+          applied.push(command.id);
+        }
+        if (applied.length) {
+          await fetch('/api/local/chat/whiteboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
+            body: JSON.stringify({ sessionId, action: 'ack', commandIds: applied }),
+          });
+        }
+      } catch {
+        // The local bridge is optional; local editor persistence remains primary.
+      }
+    };
+
+    void applyRemoteState();
+    const timer = window.setInterval(() => void applyRemoteState(), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [editor, key, sessionId, storedToken]);
 
   const clearBoard = () => {
     if (!editor) return;
