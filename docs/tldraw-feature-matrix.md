@@ -70,10 +70,11 @@ Legend:
 | Snapping / alignment / distribution | yes | `align_shapes`, `distribute_shapes`, `pack_shapes` | Implemented |
 | Lock / hide / crop / rotate / resize | yes | `toggle_lock`, `flip_shapes`, `rotate_shapes`, `resize_shape` | Partially implemented |
 | Style / opacity | yes | `set_style`, `set_opacity` | Implemented |
-| Session isolation | n/a | session ID | Implemented + verified |
+| Session isolation | n/a | session ID + stable session key | Implemented + verified |
 | Local snapshot | n/a | localStorage | Implemented + verified |
 | Server snapshot | n/a | authenticated bridge | Implemented + verified |
 | HMR-safe hydration | n/a | remote-before-empty-sync | Implemented |
+| Resume migration | n/a | stable-key fallback from legacy session ID | Implemented + verified |
 | Geometry recovery | n/a | snapshot sanitizer | Implemented |
 | Command version/feature gating | n/a | pending protocol version | In progress |
 
