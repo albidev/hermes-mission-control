@@ -141,6 +141,12 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
           fromId?: string;
           toId?: string;
           bindingProps?: Record<string, unknown>;
+          pageId?: string;
+          direction?: string;
+          padding?: number;
+          angle?: number;
+          style?: unknown;
+          value?: unknown;
         }> };
         if (remote.snapshot && editor.getCurrentPageShapes().length === 0) loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
         const commands = remote.commands || [];
@@ -288,11 +294,26 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
               props: command.bindingProps || {},
             } as never);
           }
+          if (command.type === 'create_page') editor.createPage({ name: command.text || 'New page' });
+          if (command.type === 'set_current_page' && command.pageId) editor.setCurrentPage(command.pageId as never);
+          if (command.type === 'rename_page' && command.pageId && command.text) editor.renamePage(command.pageId as never, command.text);
+          if (command.type === 'delete_page' && command.pageId) editor.deletePage(command.pageId as never);
+          if (command.type === 'move_shapes_to_page' && command.shapeIds?.length && command.pageId) editor.moveShapesToPage(command.shapeIds as never, command.pageId as never);
+          if (command.type === 'align_shapes' && command.shapeIds?.length && command.direction) editor.alignShapes(command.shapeIds as never, command.direction as never);
+          if (command.type === 'distribute_shapes' && command.shapeIds?.length && command.direction) editor.distributeShapes(command.shapeIds as never, command.direction as never);
+          if (command.type === 'pack_shapes' && command.shapeIds?.length) editor.packShapes(command.shapeIds as never, command.padding ?? 8);
+          if (command.type === 'flip_shapes' && command.shapeIds?.length && command.direction) editor.flipShapes(command.shapeIds as never, command.direction as never);
+          if (command.type === 'rotate_shapes' && command.shapeIds?.length) editor.rotateShapesBy(command.shapeIds as never, command.angle ?? 0);
+          if (command.type === 'resize_shape' && command.shapeId && command.props) editor.resizeShape(command.shapeId as never, { x: Number(command.props.x ?? 1), y: Number(command.props.y ?? 1) } as never);
+          if (command.type === 'toggle_lock' && command.shapeIds?.length) editor.toggleLock(command.shapeIds as never);
+          if (command.type === 'set_style' && command.style && command.value) editor.setStyleForSelectedShapes(command.style as never, command.value as never);
+          if (command.type === 'set_opacity' && typeof command.value === 'number') editor.setOpacityForSelectedShapes(command.value);
+
           if (command.type === 'clear') {
             editor.selectAll();
             editor.deleteShapes(editor.getSelectedShapeIds());
           }
-          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding'].includes(command.type)) {
+          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding', 'create_page', 'set_current_page', 'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes', 'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity'].includes(command.type)) {
             applied.push(command.id);
           }
         }
