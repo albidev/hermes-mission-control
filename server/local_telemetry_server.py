@@ -47,7 +47,7 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
-from whiteboard_store import acknowledge_commands, enqueue_command, get_whiteboard, save_snapshot
+from whiteboard_store import acknowledge_commands, enqueue_command, get_whiteboard, load_state, save_snapshot, save_state, get_agent_mode
 
 
 def gb(value: float) -> float:
@@ -1794,7 +1794,22 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(command, dict) or not str(command.get('type') or '').strip():
                     self._json(400, {'error': 'bad_request', 'detail': 'Missing command.'})
                     return
+                mode = str(data.get('mode') or '').strip()
+                if mode:
+                    command = {**command, 'mode': mode}
                 self._json(202, {'command': enqueue_command(session_id, command)})
+                return
+            if data.get('action') == 'mode':
+                # Record the active agent mode so the canvas can adapt behavior.
+                mode = str(data.get('mode') or '').strip()
+                if mode not in ('draw', 'review', 'arrange', 'explain', ''):
+                    self._json(400, {'error': 'bad_request', 'detail': f'Unknown mode {mode}.'})
+                    return
+                state = load_state()
+                state.setdefault(session_id, {})['agentMode'] = mode
+                state[session_id]['updatedAt'] = int(time.time() * 1000)
+                save_state(state)
+                self._json(200, {'success': True, 'mode': mode})
                 return
             if data.get('action') == 'ack':
                 ids = data.get('commandIds')

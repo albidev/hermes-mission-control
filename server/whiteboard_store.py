@@ -84,6 +84,7 @@ def get_whiteboard(session_id: str, fallback_session_id: str | None = None) -> d
         "protocolVersion": WHITEBOARD_PROTOCOL_VERSION,
         "features": sorted(WHITEBOARD_FEATURES),
         "snapshot": state.get("snapshot"),
+        "agentMode": str(state.get("agentMode") or ""),
         "updatedAt": state.get("updatedAt", 0),
         "commands": state.get("commands", []),
     }
@@ -136,3 +137,18 @@ def acknowledge_commands(session_id: str, command_ids: list[str]) -> None:
             return
         state["commands"] = [item for item in state.get("commands", []) if item.get("id") not in command_ids]
         _save(data)
+
+
+def save_state(state: dict[str, Any]) -> None:
+    with _LOCK:
+        _save(state)
+
+
+def load_state() -> dict[str, Any]:
+    with _LOCK:
+        return _load()
+
+
+def get_agent_mode(session_id: str) -> str:
+    state = load_state().get(session_id) or {}
+    return str(state.get("agentMode") or "")

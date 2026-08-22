@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Camera, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import { collectBoardContext } from '../lib/tldraw-visual-context';
+import { AGENT_MODES, modePromptFragment, type AgentMode } from '../lib/tldraw-agent-modes';
 import 'tldraw/tldraw.css';
 
 export type CanvasScreenshotAttachment = {
@@ -89,8 +90,22 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
 
 export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
+  const [agentMode, setAgentMode] = useState<AgentMode>('');
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
   const remoteHydratedRef = useRef(false);
+
+  const changeAgentMode = useCallback(async (mode: AgentMode) => {
+    setAgentMode(mode);
+    try {
+      await fetch('/api/local/chat/whiteboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
+        body: JSON.stringify({ sessionId, sessionKey, action: 'mode', mode }),
+      });
+    } catch {
+      // Mode persistence is best-effort; local UI state is already updated.
+    }
+  }, [sessionId, sessionKey, storedToken]);
 
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
@@ -411,13 +426,16 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
   const sendSelection = async (withScreenshot = false) => {
     if (!editor) return;
     const context = await collectBoardContext(editor, sessionKey, sessionId, { includeScreenshot: withScreenshot });
-    const lines: string[] = [
+    const lines: string[] = [];
+    const fragment = modePromptFragment(agentMode);
+    if (fragment) lines.push(fragment);
+    lines.push(
       `Whiteboard context from session ${sessionId || 'pending'} (sessionKey ${sessionKey || 'pending'}):`,
       `viewport: x=${context.viewport.x} y=${context.viewport.y} w=${context.viewport.w} h=${context.viewport.h} zoom=${context.viewport.zoom}`,
       `shapes on screen: ${context.visibleShapes.length}, offscreen: ${context.offscreenCount}`,
       `counts: ${JSON.stringify(context.shapeCounts)}`,
       `bindings: ${context.bindings.length}`,
-    ];
+    );
     if (context.selectedShapeIds.length) {
       lines.push(`selected: ${context.selectedShapeIds.join(', ')}`);
     } else {
@@ -461,6 +479,18 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           </div>
         </div>
         <div className="tldraw-canvas-actions">
+          <select
+            className="tldraw-canvas-mode"
+            value={agentMode}
+            onChange={(event) => void changeAgentMode(event.target.value as AgentMode)}
+            title="Agent mode: shapes how Hermes behaves on this board"
+            aria-label="Agent mode"
+          >
+            <option value="">Mode: free</option>
+            {AGENT_MODES.map((mode) => (
+              <option key={mode.id} value={mode.id}>{`Mode: ${mode.label}`}</option>
+            ))}
+          </select>
           <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title="Screenshot board and send to chat" aria-label="Screenshot board and send to chat">
             <Camera size={15} />
           </button>
