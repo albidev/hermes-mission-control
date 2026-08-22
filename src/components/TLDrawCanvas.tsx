@@ -3,6 +3,7 @@ import { ArrowLeft, Camera, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import { collectBoardContext } from '../lib/tldraw-visual-context';
 import { AGENT_MODES, modePromptFragment, type AgentMode } from '../lib/tldraw-agent-modes';
+import { formatLints, lintBoard, type BoardLint } from '../lib/tldraw-lints';
 import 'tldraw/tldraw.css';
 
 export type CanvasScreenshotAttachment = {
@@ -92,6 +93,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
 export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>('');
+  const [lints, setLints] = useState<BoardLint[]>([]);
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
   const remoteHydratedRef = useRef(false);
 
@@ -410,6 +412,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
             .map((c) => `${c.type}${c.text ? ` "${String(c.text).slice(0, 40)}"` : ''}`)
             .join(', ');
           onActionApplied?.(`Canvas actions applied: ${summary}`);
+          setLints(lintBoard(editor));
           await fetch('/api/local/chat/whiteboard', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
@@ -450,6 +453,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
     for (const shape of context.visibleShapes.slice(0, 40)) {
       lines.push(JSON.stringify(shape));
     }
+    lines.push(formatLints(lintBoard(editor)));
     const attachments: Array<{ kind: 'image'; name: string; mimeType: string; dataUrl: string }> = [];
     if (context.screenshot?.dataUrl) {
       attachments.push({
@@ -481,6 +485,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
             <h3>TLDrawCanvas</h3>
             <span className="tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
               Linked chat: {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
+              {lints.length > 0 ? ` · ⚠ ${lints.length} lint${lints.length === 1 ? '' : 's'}` : ''}
             </span>
           </div>
         </div>
