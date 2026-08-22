@@ -16,6 +16,22 @@ function storageKey(sessionId: string | null) {
   return `mission-control:whiteboard:v2:${sessionId || 'new'}`;
 }
 
+function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
+  const cleaned = JSON.parse(JSON.stringify(snapshot)) as TLStoreSnapshot;
+  const store = ((cleaned as unknown as { document: { store: Record<string, { type?: string; x?: number; props?: Record<string, unknown> }> } }).document.store);
+  for (const shape of Object.values(store)) {
+    if (shape?.type !== 'geo' || !shape.props) continue;
+    const width = typeof shape.props.w === 'number' ? shape.props.w : 1;
+    const height = typeof shape.props.h === 'number' ? shape.props.h : 1;
+    if (width <= 0) {
+      shape.x = (shape.x ?? 0) + width;
+      shape.props.w = Math.max(1, Math.abs(width));
+    }
+    if (height <= 0) shape.props.h = Math.max(1, Math.abs(height));
+  }
+  return cleaned;
+}
+
 export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSelection, onClose, expanded }: WhiteboardPanelProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const key = useMemo(() => storageKey(sessionId), [sessionId]);
@@ -41,7 +57,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
       return;
     }
     try {
-      loadSnapshot(nextEditor.store, JSON.parse(raw) as TLStoreSnapshot);
+      loadSnapshot(nextEditor.store, sanitizeSnapshot(JSON.parse(raw) as TLStoreSnapshot));
     } catch {
       window.localStorage.removeItem(key);
     }
@@ -100,7 +116,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
         const response = await fetch(`/api/local/chat/whiteboard?sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
         const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{ id: string; type: string; text?: string; x?: number; y?: number; w?: number; h?: number; color?: string }> };
-        if (!window.localStorage.getItem(key) && remote.snapshot) loadSnapshot(editor.store, remote.snapshot);
+        if (!window.localStorage.getItem(key) && remote.snapshot) loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
         const commands = remote.commands || [];
         const applied: string[] = [];
         for (const command of commands) {
