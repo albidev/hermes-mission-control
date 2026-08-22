@@ -22,7 +22,6 @@ import {
   Pause,
   Send,
   ShieldCheck,
-  Sparkles,
   SquarePen,
   X,
   XCircle,
@@ -53,6 +52,36 @@ type ChatDrawerProps = {
   initialSessionId?: string | null;
   onClose: () => void;
 };
+
+function formatTokens(tokens: number): string {
+  if (tokens < 1000) return `${tokens}`;
+  if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(tokens < 10_000 ? 1 : 0)}k`;
+  return `${(tokens / 1_000_000).toFixed(1)}M`;
+}
+
+// Best-effort context-window estimate for the progress bar. The gateway does
+// not stream context usage mid-turn, so we derive a percentage from the model
+// name against known windows, falling back to a conservative default. This is
+// display-only and never affects the actual context budget.
+const CONTEXT_WINDOWS: Array<[RegExp, number]> = [
+  [/gemma4|gemma-4/i, 128_000],
+  [/qwen3\.5|qwen3-?5/i, 128_000],
+  [/deepseek/i, 128_000],
+  [/gpt-4o|gpt-4\.1/i, 128_000],
+  [/claude/i, 200_000],
+  [/llama-?3/i, 128_000],
+  [/mistral/i, 128_000],
+];
+
+const DEFAULT_CONTEXT_WINDOW = 128_000;
+
+function estimateContextWindow(model: string | null | undefined): number {
+  if (!model) return DEFAULT_CONTEXT_WINDOW;
+  for (const [pattern, window] of CONTEXT_WINDOWS) {
+    if (pattern.test(model)) return window;
+  }
+  return DEFAULT_CONTEXT_WINDOW;
+}
 
 function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewMessage }) {
   const isUser = message.role === 'user';
@@ -95,6 +124,8 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     interaction,
     previewMode,
     modelIdentity,
+    contextTokens,
+    sessionTitle,
     modelPickerOpen,
     modelPickerRefresh,
     request,
@@ -285,6 +316,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     : connectionState === 'reconnecting' || connectionState === 'connecting' || connectionState === 'ticket'
       ? 'is-pending'
       : 'is-offline';
+  const headerSessionTitle = sessionTitle || preview?.title || 'Untitled session';
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);
     const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);
@@ -452,6 +484,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
                   <span>{modelIdentity?.model || 'Resolving model'}</span>
                   {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
                 </div>
+                <span className="chat-session-title" title={headerSessionTitle}>{headerSessionTitle}</span>
               </div>
             </div>
             <div className="chat-head-actions">
@@ -502,14 +535,6 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
             </button>
           ) : null}
         </div>
-
-        {activity && activity.kind !== 'tool' ? (
-          <div className={`chat-activity is-${activity.state}`} role="status">
-            {activity.kind === 'reasoning' ? <Sparkles size={15} className={activity.state === 'running' ? 'chat-spin' : ''} /> : <Loader2 size={15} className={activity.state === 'running' ? 'chat-spin' : ''} />}
-            <strong>{activity.label}</strong>
-            {activity.detail ? <span>{previewText(activity.detail)}</span> : null}
-          </div>
-        ) : null}
 
         {interaction ? (
           <section className={`chat-interaction chat-interaction-${interaction.kind}`} aria-label={interactionTitle(interaction)}>
@@ -613,6 +638,29 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           complete={completeSlash}
           onApply={setDraft}
         />
+        <div className="chat-status-line" role="status">
+          <span className={`chat-status-line-verb ${running ? 'is-busy' : ''}`}>
+            {activity ? activity.label : running ? 'Working' : statusText}
+          </span>
+          <span className="chat-status-line-right">
+            {contextTokens != null ? (
+              <span className="chat-status-line-ctx" title={`${contextTokens.toLocaleString()} context tokens`}>
+                {formatTokens(contextTokens)} ctx
+              </span>
+            ) : null}
+            {contextTokens != null ? (
+              <span
+                className="chat-status-line-bar"
+                title={`${Math.round((contextTokens / estimateContextWindow(modelIdentity?.model)) * 100)}% of context window`}
+              >
+                <span
+                  className="chat-status-line-bar-fill"
+                  style={{ width: `${Math.min(100, (contextTokens / estimateContextWindow(modelIdentity?.model)) * 100)}%` }}
+                />
+              </span>
+            ) : null}
+          </span>
+        </div>
         <form className="chat-composer" onSubmit={handleSubmit}>
           <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf,*/*" className="chat-file-input" onChange={handleFileInput} />
           <button className="chat-control chat-attach chat-icon-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={submitting || connectionState !== 'connected'} title="Attach image or file" aria-label="Attach image or file">

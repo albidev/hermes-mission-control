@@ -219,6 +219,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [activity, setActivity] = useState<ChatActivity | null>(null);
   const [interaction, setInteraction] = useState<GatewayInteractionRequest | null>(null);
   const [modelIdentity, setModelIdentity] = useState<ChatModelIdentity | null>(initial.modelIdentity);
+  const [contextTokens, setContextTokens] = useState<number | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerRefresh, setModelPickerRefresh] = useState(false);
   const [commandPrefill, setCommandPrefill] = useState<string | null>(null);
@@ -308,6 +310,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const adoptModel = useCallback((result: unknown) => {
     const next = extractSessionModel(result);
     if (next) setModelIdentity(next);
+    if (isRecord(result)) {
+      const title = typeof result.title === 'string' && result.title.trim() ? result.title.trim() : null;
+      if (title) setSessionTitle(title);
+    }
     return next;
   }, []);
 
@@ -485,6 +491,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         if (activeSessionRefs.length > 0 && eventSessionRefs.length > 0 && !eventSessionRefs.some((value) => activeSessionRefs.includes(value))) return;
         if (parsed.event.type === 'session.info') {
           adoptModel(eventPayload);
+          if (isRecord(eventPayload)) {
+            const title = typeof eventPayload.title === 'string' && eventPayload.title.trim() ? eventPayload.title.trim() : null;
+            if (title) setSessionTitle(title);
+          }
         }
 
         const incomingInteraction = extractInteractionRequest(parsed.event);
@@ -509,6 +519,14 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         if (parsed.event.type === 'message.complete' || parsed.event.type === 'error') {
           setRunning(false);
           if (parsed.event.type === 'message.complete') setActivity(null);
+        }
+        if (parsed.event.type === 'run.completed') {
+          const payload = parsed.event.payload ?? {};
+          const usage = isRecord(payload.usage) ? payload.usage : null;
+          const inputTokens = usage && typeof usage.input_tokens === 'number' ? usage.input_tokens : null;
+          if (inputTokens != null) setContextTokens(inputTokens);
+          const title = typeof payload.title === 'string' && payload.title.trim() ? payload.title.trim() : null;
+          if (title) setSessionTitle(title);
         }
         setMessages((current) => applyGatewayEvent(current, parsed.event));
       });
@@ -905,6 +923,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     interaction,
     previewMode,
     modelIdentity,
+    contextTokens,
+    sessionTitle,
     modelPickerOpen,
     modelPickerRefresh,
     request,
