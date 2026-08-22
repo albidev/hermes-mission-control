@@ -46,6 +46,27 @@ export function WhiteboardPanel({ sessionId, sessionTitle, onClose, expanded }: 
   }, [key]);
 
   useEffect(() => {
+    if (!editor || window.localStorage.getItem(key)) return;
+    if (editor.getCurrentPageShapes().length > 0) return;
+    const noteId = createShapeId('session-note');
+    if (editor.getShape(noteId)) return;
+    editor.createShape({
+      id: noteId,
+      type: 'text',
+      x: 160,
+      y: 140,
+      props: {
+        richText: toRichText('Questa whiteboard è associata alla Chat corrente.'),
+        color: 'black',
+        size: 'l',
+        font: 'sans',
+        textAlign: 'start',
+        autoSize: true,
+      },
+    });
+  }, [editor, key]);
+
+  useEffect(() => {
     if (!editor) return;
     const dispose = editor.store.listen(() => {
       try {
