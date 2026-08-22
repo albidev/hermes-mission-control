@@ -142,6 +142,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           fromId?: string;
           toId?: string;
           bindingProps?: Record<string, unknown>;
+          bindingIds?: string[];
           pageId?: string;
           direction?: string;
           padding?: number;
@@ -288,6 +289,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           if (command.type === 'zoom_to_fit') {
             editor.zoomToFit({ animation: { duration: 250 } });
           }
+          if (command.type === 'delete_bindings' && command.bindingIds?.length) editor.deleteBindings(command.bindingIds as never);
           if (command.type === 'create_binding' && command.fromId && command.toId) {
             editor.createBinding({
               id: createBindingId(),
@@ -347,7 +349,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
             editor.selectAll();
             editor.deleteShapes(editor.getSelectedShapeIds());
           }
-          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding', 'create_page', 'set_current_page', 'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes', 'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity', 'export_json', 'export_svg', 'export_png'].includes(command.type)) {
+          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding', 'delete_bindings', 'create_page', 'set_current_page', 'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes', 'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity', 'export_json', 'export_svg', 'export_png'].includes(command.type)) {
             applied.push(command.id);
           }
         }
