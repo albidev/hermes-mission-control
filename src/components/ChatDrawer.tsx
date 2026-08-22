@@ -83,6 +83,24 @@ function estimateContextWindow(model: string | null | undefined): number {
   return DEFAULT_CONTEXT_WINDOW;
 }
 
+const TUI_VERBS = [
+  'pondering',
+  'contemplating',
+  'musing',
+  'cogitating',
+  'ruminating',
+  'deliberating',
+  'mulling',
+  'reflecting',
+  'processing',
+  'reasoning',
+  'analyzing',
+  'computing',
+  'synthesizing',
+  'formulating',
+  'brainstorming',
+];
+
 function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewMessage }) {
   const isUser = message.role === 'user';
   return (
@@ -112,6 +130,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const nearBottomRef = useRef(true);
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
+  const [verbTick, setVerbTick] = useState(0);
   const {
     messages,
     sessionId,
@@ -141,6 +160,15 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     interrupt,
     reset,
   } = useGatewayChat(storedToken, open, initialSessionId);
+
+  useEffect(() => {
+    if (!running) {
+      setVerbTick(0);
+      return;
+    }
+    const timer = window.setInterval(() => setVerbTick((tick) => tick + 1), 2400);
+    return () => window.clearInterval(timer);
+  }, [running]);
 
   useEffect(() => {
     pendingRef.current = pendingAttachments;
@@ -317,10 +345,11 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       ? 'is-pending'
       : 'is-offline';
   const headerSessionTitle = sessionTitle || preview?.title || 'Untitled session';
+  const streamingVerb = TUI_VERBS[verbTick % TUI_VERBS.length] || 'processing';
   const statusLineLabel = interaction
     ? 'Waiting for input'
     : running
-      ? 'Working'
+      ? streamingVerb
       : connectionState === 'connected'
         ? 'Ready'
         : statusText;
