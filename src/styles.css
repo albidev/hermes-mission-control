@@ -570,12 +570,26 @@
 
 .tldraw-canvas-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem 0.75rem;
   min-height: 68px;
-  padding: 0.875rem 1rem;
+  padding: 0.625rem 1rem;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-sunken);
+}
+
+.tldraw-canvas-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tldraw-canvas-title > div {
+  min-width: 0;
 }
 
 .tldraw-canvas-head h3 {
@@ -599,10 +613,13 @@
   display: flex;
   gap: 0.35rem;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .tldraw-canvas-mode {
   height: 32px;
+  max-width: 130px;
   border: 1px solid var(--color-border, #333);
   border-radius: 8px;
   background: transparent;
@@ -653,8 +670,20 @@
     position: sticky;
     top: 0;
     z-index: 10;
-    padding-top: max(0.875rem, env(safe-area-inset-top));
+    padding-top: max(0.625rem, env(safe-area-inset-top));
     gap: 0.5rem;
+  }
+
+  /* On narrow screens the controls wrap to their own row under the title. */
+  .tldraw-canvas-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
+  .tldraw-canvas-mode {
+    height: 36px;
+    max-width: none;
+    flex: 1 1 auto;
   }
 
   .tldraw-canvas-linked-session {
