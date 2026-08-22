@@ -3197,13 +3197,21 @@
   white-space: nowrap;
 }
 
-.chat-status-line-verb.is-busy::before {
+.chat-status-line-verb.is-ready {
+  color: var(--color-positive);
+}
+
+.chat-status-line-verb.is-streaming {
+  color: var(--color-text-muted);
+}
+
+.chat-status-line-verb.is-streaming::before {
   content: '';
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
-  background: var(--color-positive);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-positive) 20%, transparent);
+  background: var(--color-text-muted);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-muted) 20%, transparent);
   flex: 0 0 auto;
   animation: chat-status-pulse 1.6s ease-in-out infinite;
 }

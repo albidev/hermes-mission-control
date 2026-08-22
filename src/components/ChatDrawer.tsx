@@ -322,7 +322,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     : running
       ? 'Working'
       : connectionState === 'connected'
-        ? 'Idle'
+        ? 'Ready'
         : statusText;
   const contextWindow = contextMax || estimateContextWindow(modelIdentity?.model);
   const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
@@ -643,7 +643,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           onApply={setDraft}
         />
         <div className="chat-status-line" role="status">
-          <span className={`chat-status-line-verb ${running ? 'is-busy' : ''}`}>
+          <span className={`chat-status-line-verb ${running ? 'is-streaming' : statusLineLabel === 'Ready' ? 'is-ready' : ''}`}>
             {statusLineLabel}
           </span>
           <span className="chat-status-line-separator">|</span>
