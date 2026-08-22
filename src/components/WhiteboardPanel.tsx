@@ -86,7 +86,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
       }
     };
     publishSnapshot();
-    const dispose = editor.store.listen(publishSnapshot, { scope: 'document', source: 'user' });
+    const dispose = editor.store.listen(publishSnapshot, { scope: 'document' });
     return dispose;
   }, [editor, key, sessionId, storedToken]);
 
