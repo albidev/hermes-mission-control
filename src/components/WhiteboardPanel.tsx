@@ -121,14 +121,16 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
             });
           }
           if (command.type === 'create_line') {
+            const width = command.w ?? 180;
+            const lineWidth = Math.abs(width);
             editor.createShape({
               id: createShapeId(`agent-line-${command.id}`),
               type: 'geo',
-              x: command.x ?? 180,
+              x: width < 0 ? (command.x ?? 180) - lineWidth : command.x ?? 180,
               y: command.y ?? 360,
               props: {
                 geo: 'rectangle',
-                w: command.w ?? 180,
+                w: lineWidth,
                 h: command.h ?? 4,
                 color: command.color === 'violet' ? 'violet' : 'black',
                 fill: 'none',
