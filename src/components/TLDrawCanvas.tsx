@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Minimize2, RotateCcw, Send, X } from 'lucide-react';
-import { Tldraw, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
+import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 type TLDrawCanvasProps = {
@@ -290,6 +290,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           }
           if (command.type === 'create_binding' && command.fromId && command.toId) {
             editor.createBinding({
+              id: createBindingId(),
               type: 'arrow',
               fromId: command.fromId as never,
               toId: command.toId as never,
