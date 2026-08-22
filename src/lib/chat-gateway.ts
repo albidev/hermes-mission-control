@@ -101,6 +101,39 @@ function persistChat(sessionId: string | null, sessionKey: string | null, modelI
   }
 }
 
+// Cross-device "current chat" (Discord-style): the last active session is
+// mirrored to the local telemetry server so every device lands on the SAME
+// chat. Fire-and-forget — localStorage stays the fallback when the server is
+// unreachable.
+function syncLastChatToServer(sessionId: string | null, sessionKey: string | null, modelIdentity: ChatModelIdentity | null, storedToken: string) {
+  if (!sessionId || !sessionId.trim()) return;
+  try {
+    void fetch('/api/local/chat/last', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
+      },
+      body: JSON.stringify({ sessionId, sessionKey, modelIdentity, updatedAt: Date.now() }),
+    }).catch(() => {});
+  } catch { /* best effort */ }
+}
+
+type ServerLastChat = { sessionId: string; sessionKey?: string | null; updatedAt?: number };
+
+async function fetchServerLastChat(storedToken: string): Promise<ServerLastChat | null> {
+  try {
+    const res = await fetch('/api/local/chat/last', {
+      headers: storedToken ? { Authorization: `Bearer ${storedToken}` } : {},
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { lastChat?: ServerLastChat | null };
+    return data.lastChat ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function getWebSocketUrl(ticketOrToken: { kind: 'ticket' | 'token'; value: string }) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = new URL('/api/ws', `${protocol}//${window.location.host}`);
@@ -274,7 +307,36 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
   useEffect(() => {
     persistChat(sessionId, sessionKey, modelIdentity, messages);
+    syncLastChatToServer(sessionId, sessionKey, modelIdentity, storedToken);
   }, [messages, modelIdentity, sessionId, sessionKey]);
+
+  // Discord-style cross-device landing: when this device has no current chat
+  // (fresh browser) or its local copy is older than the server's last active
+  // session, adopt the server's pointer so desktop and mobile open the SAME
+  // conversation. The transcript itself is rehydrated by the resume flow.
+  useEffect(() => {
+    if (!open || !storedToken) return;
+    let cancelled = false;
+    void fetchServerLastChat(storedToken).then((serverChat) => {
+      if (cancelled || !serverChat?.sessionId) return;
+      if (sessionIdRef.current) {
+        // A live/known local session wins unless the server moved on later.
+        const local = readPersistedChat();
+        const localUpdatedAt = Number.isFinite(local.updatedAt) ? local.updatedAt : 0;
+        const serverUpdatedAt = typeof serverChat.updatedAt === 'number' ? serverChat.updatedAt : 0;
+        if (localUpdatedAt >= serverUpdatedAt && local.sessionId === sessionIdRef.current) return;
+        if (local.sessionId === serverChat.sessionId) return;
+      }
+      setSessionId(serverChat.sessionId);
+      sessionIdRef.current = serverChat.sessionId;
+      if (serverChat.sessionKey) {
+        setSessionKey(serverChat.sessionKey);
+        sessionKeyRef.current = serverChat.sessionKey;
+      }
+      requestedSessionIdRef.current = serverChat.sessionId;
+    });
+    return () => { cancelled = true; };
+  }, [open, storedToken]);
 
   const rejectPending = useCallback((message: string) => {
     for (const pending of pendingRef.current.values()) {
@@ -934,6 +996,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   return {
     messages,
     sessionId,
+    sessionKey,
     connectionState,
     statusText,
     error,
