@@ -736,7 +736,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded ? <WhiteboardPanel key={sessionId || 'new'} sessionId={sessionId} sessionTitle={headerSessionTitle} storedToken={storedToken} expanded={isExpanded} onClose={() => setIsExpanded(false)} /> : null}
+      {open && isExpanded ? <WhiteboardPanel key={sessionId || 'new'} sessionId={sessionId} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={submitPrompt} expanded={isExpanded} onClose={() => setIsExpanded(false)} /> : null}
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Maximize2, Minimize2, RotateCcw, X } from 'lucide-react';
+import { Maximize2, Minimize2, RotateCcw, Send, X } from 'lucide-react';
 import { Tldraw, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 
@@ -7,6 +7,7 @@ type WhiteboardPanelProps = {
   sessionId: string | null;
   sessionTitle: string;
   storedToken: string;
+  onSendSelection: (text: string) => Promise<boolean>;
   onClose: () => void;
   expanded: boolean;
 };
@@ -15,7 +16,7 @@ function storageKey(sessionId: string | null) {
   return `mission-control:whiteboard:v2:${sessionId || 'new'}`;
 }
 
-export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onClose, expanded }: WhiteboardPanelProps) {
+export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSelection, onClose, expanded }: WhiteboardPanelProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const key = useMemo(() => storageKey(sessionId), [sessionId]);
 
@@ -143,6 +144,15 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onClose,
     };
   }, [editor, key, sessionId, storedToken]);
 
+  const sendSelection = async () => {
+    if (!editor) return;
+    const selected = editor.getSelectedShapes();
+    const summary = selected.length
+      ? selected.map((shape) => JSON.stringify({ id: shape.id, type: shape.type, x: shape.x, y: shape.y, props: shape.props })).join('\n')
+      : 'No shapes are selected. Describe the current whiteboard and suggest the next step.';
+    await onSendSelection(`Whiteboard selection from session ${sessionId || 'pending'}:\n${summary}`);
+  };
+
   const clearBoard = () => {
     if (!editor) return;
     editor.selectAll();
@@ -161,6 +171,9 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onClose,
           </span>
         </div>
         <div className="whiteboard-actions">
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection()} title="Send selected shapes to chat" aria-label="Send selected shapes to chat">
+            <Send size={15} />
+          </button>
           <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear whiteboard" aria-label="Clear whiteboard">
             <RotateCcw size={15} />
           </button>
