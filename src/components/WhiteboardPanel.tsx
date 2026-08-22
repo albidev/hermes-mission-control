@@ -13,7 +13,7 @@ type WhiteboardPanelProps = {
 };
 
 function storageKey(sessionId: string | null) {
-  return `mission-control:whiteboard:v2:${sessionId || 'new'}`;
+  return `mission-control:whiteboard:v3:${sessionId || 'new'}`;
 }
 
 function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
@@ -40,20 +40,22 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
     setEditor(nextEditor);
     const raw = window.localStorage.getItem(key);
     if (!raw) {
-      nextEditor.createShape({
-        id: createShapeId('session-note'),
-        type: 'text',
-        x: 160,
-        y: 140,
-        props: {
-          richText: toRichText('Questa whiteboard è associata alla Chat corrente.'),
-          color: 'black',
-          size: 'l',
-          font: 'sans',
-          textAlign: 'start',
-          autoSize: true,
-        },
-      });
+      if (!sessionId) {
+        nextEditor.createShape({
+          id: createShapeId('session-note'),
+          type: 'text',
+          x: 160,
+          y: 140,
+          props: {
+            richText: toRichText('Questa whiteboard è associata alla Chat corrente.'),
+            color: 'black',
+            size: 'l',
+            font: 'sans',
+            textAlign: 'start',
+            autoSize: true,
+          },
+        });
+      }
       return;
     }
     try {
@@ -152,6 +154,27 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
                 fill: 'none',
                 dash: 'solid',
                 size: 'm',
+              },
+            });
+          }
+          if (command.type === 'create_box' && command.text) {
+            editor.createShape({
+              id: createShapeId(`agent-box-${command.id}`),
+              type: 'geo',
+              x: command.x ?? 160,
+              y: command.y ?? 160,
+              props: {
+                geo: 'rectangle',
+                w: Math.max(120, command.w ?? 220),
+                h: Math.max(70, command.h ?? 90),
+                richText: toRichText(command.text),
+                color: command.color === 'violet' ? 'violet' : command.color === 'green' ? 'green' : 'blue',
+                fill: 'semi',
+                dash: 'solid',
+                size: 'm',
+                align: 'middle',
+                verticalAlign: 'middle',
+                font: 'sans',
               },
             });
           }
