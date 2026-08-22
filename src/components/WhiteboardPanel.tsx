@@ -106,7 +106,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
         for (const command of commands) {
           if (command.type === 'create_text' && command.text) {
             editor.createShape({
-              id: createShapeId('agent-text'),
+              id: createShapeId(`agent-text-${command.id}`),
               type: 'text',
               x: command.x ?? 160,
               y: command.y ?? 140,
@@ -122,7 +122,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
           }
           if (command.type === 'create_line') {
             editor.createShape({
-              id: createShapeId('agent-line'),
+              id: createShapeId(`agent-line-${command.id}`),
               type: 'geo',
               x: command.x ?? 180,
               y: command.y ?? 360,
