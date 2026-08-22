@@ -90,6 +90,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
     if (!editor) return;
     const publishSnapshot = () => {
       const snapshot = getSnapshot(editor.store);
+      if (sessionId && !window.localStorage.getItem(key) && editor.getCurrentPageShapes().length === 0) return;
       try {
         window.localStorage.setItem(key, JSON.stringify(snapshot));
       } catch {
@@ -118,7 +119,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
         const response = await fetch(`/api/local/chat/whiteboard?sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
         const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{ id: string; type: string; text?: string; x?: number; y?: number; w?: number; h?: number; color?: string }> };
-        if (!window.localStorage.getItem(key) && remote.snapshot) loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
+        if (remote.snapshot && editor.getCurrentPageShapes().length === 0) loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
         const commands = remote.commands || [];
         const applied: string[] = [];
         for (const command of commands) {
