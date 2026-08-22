@@ -186,6 +186,46 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
               },
             });
           }
+          if (command.type === 'create_frame') {
+            editor.createShape({
+              id: createShapeId(`agent-frame-${command.id}`),
+              type: 'frame',
+              x: command.x ?? 40,
+              y: command.y ?? 40,
+              props: {
+                w: Math.max(300, command.w ?? 760),
+                h: Math.max(180, command.h ?? 240),
+                name: command.text || 'Layer',
+                color: command.color === 'violet' ? 'violet' : command.color === 'green' ? 'green' : 'blue',
+              },
+            });
+          }
+          if (command.type === 'create_arrow') {
+            editor.createShape({
+              id: createShapeId(`agent-arrow-${command.id}`),
+              type: 'arrow',
+              x: command.x ?? 0,
+              y: command.y ?? 0,
+              props: {
+                kind: 'arc',
+                start: { x: 0, y: 0 },
+                end: { x: command.w ?? 160, y: command.h ?? 0 },
+                bend: 0,
+                color: command.color === 'violet' ? 'violet' : 'black',
+                fill: 'none',
+                dash: 'solid',
+                size: 'm',
+                arrowheadStart: 'none',
+                arrowheadEnd: 'arrow',
+                font: 'draw',
+                richText: toRichText(''),
+                labelPosition: 0.5,
+                labelColor: 'black',
+                scale: 1,
+                elbowMidPoint: 0.5,
+              },
+            });
+          }
           if (command.type === 'clear') {
             editor.selectAll();
             editor.deleteShapes(editor.getSelectedShapeIds());
