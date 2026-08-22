@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Maximize2, Minimize2, RotateCcw, X } from 'lucide-react';
-import { Tldraw, getSnapshot, loadSnapshot, type Editor, type TLStoreSnapshot } from 'tldraw';
+import { Tldraw, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 type WhiteboardPanelProps = {
@@ -21,7 +21,23 @@ export function WhiteboardPanel({ sessionId, sessionTitle, onClose, expanded }: 
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
     const raw = window.localStorage.getItem(key);
-    if (!raw) return;
+    if (!raw) {
+      nextEditor.createShape({
+        id: createShapeId('session-note'),
+        type: 'text',
+        x: 160,
+        y: 140,
+        props: {
+          richText: toRichText('Questa whiteboard è associata alla Chat corrente.'),
+          color: 'black',
+          size: 'l',
+          font: 'sans',
+          textAlign: 'start',
+          autoSize: true,
+        },
+      });
+      return;
+    }
     try {
       loadSnapshot(nextEditor.store, JSON.parse(raw) as TLStoreSnapshot);
     } catch {
