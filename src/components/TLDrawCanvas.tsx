@@ -142,6 +142,8 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
       return;
     }
     try {
+      // loadSnapshot restores BOTH document and session sections of a full
+      // editor snapshot (camera per page, current page, selection) on its own.
       loadSnapshot(nextEditor.store, sanitizeSnapshot(JSON.parse(raw) as TLStoreSnapshot));
     } catch {
       window.localStorage.removeItem(key);
@@ -201,6 +203,8 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
     if (!editor) return;
     const publishSnapshot = () => {
       if (sessionId && !remoteHydratedRef.current) return;
+      // Full editor snapshot: document + session (current page, per-page
+      // cameras, selection). This is what makes save/resume pixel-identical.
       const snapshot = getSnapshot(editor.store);
       if (sessionId && !window.localStorage.getItem(key) && editor.getCurrentPageShapes().length === 0) return;
       try {
@@ -217,8 +221,15 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
       }
     };
     publishSnapshot();
-    const dispose = editor.store.listen(publishSnapshot, { scope: 'document' });
-    return dispose;
+    // Listen to BOTH scopes: 'document' covers shape changes, 'session'
+    // covers page switches, camera moves, and selection so the whole
+    // workspace state survives a reload.
+    const disposeDocument = editor.store.listen(publishSnapshot, { scope: 'document' });
+    const disposeSession = editor.store.listen(publishSnapshot, { scope: 'session' });
+    return () => {
+      disposeDocument();
+      disposeSession();
+    };
   }, [editor, key, sessionId, sessionKey, storedToken]);
 
   useEffect(() => {
@@ -230,11 +241,15 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
       try {
         const response = await fetch(`/api/local/chat/whiteboard?sessionKey=${encodeURIComponent(sessionKey || '')}&sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
-        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: BridgeCommand[] };
+        const remote = await response.json() as { snapshot?: TLStoreSnapshot & { session?: unknown }; commands?: BridgeCommand[] };
         if (remote.snapshot && !remoteHydratedRef.current) {
           remoteHydratedRef.current = true;
           loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
-          editor.zoomToFit({ animation: { duration: 250 } });
+          // Only fit when the snapshot carries no session state (legacy boards).
+          // Full snapshots already restore the saved per-page cameras.
+          if (!remote.snapshot.session) {
+            editor.zoomToFit({ animation: { duration: 250 } });
+          }
         }
         const commands = remote.commands || [];
         const applied: string[] = [];
