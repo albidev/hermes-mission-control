@@ -16,7 +16,7 @@ type TLDrawCanvasProps = {
 };
 
 function storageKey(sessionId: string | null, sessionKey: string | null) {
-  return `mission-control:whiteboard:v4:${sessionKey || sessionId || 'new'}`;
+  return `mission-control:whiteboard:v5:${sessionKey || sessionId || 'new'}`;
 }
 
 function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
