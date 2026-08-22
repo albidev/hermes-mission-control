@@ -46,6 +46,9 @@ from push_server import (
     start_gateway_watcher,
 )
 
+from last_chat_store import get_last_chat, set_last_chat
+from whiteboard_store import acknowledge_commands, enqueue_command, get_whiteboard, save_snapshot
+
 
 def gb(value: float) -> float:
     return round(float(value) / (1024**3), 1)
@@ -105,6 +108,11 @@ def collect_system_snapshot() -> Dict[str, Any]:
 
     process_memory_mb = round(float(psutil.Process().memory_info().rss) / (1024**2), 1)
 
+    ram_used_percent = round((float(vm.used) / float(vm.total)) * 100.0, 1) if vm.total else 0.0
+    disk_used_percent = (
+        round(((float(disk.total) - float(disk.free)) / float(disk.total)) * 100.0, 1)
+        if disk.total else 0.0
+    )
     thermal = collect_thermal_snapshot()
 
     if disk.percent >= 92 or (load_per_core is not None and load_per_core >= 2.0):
@@ -113,7 +121,7 @@ def collect_system_snapshot() -> Dict[str, Any]:
         health = "healthy"
 
     summary_parts = [f"Load {load_per_core:.2f}/core" if load_per_core is not None else "",
-                     f"CPU {cpu_percent:.1f}%", f"RAM {vm.percent:.1f}%", f"Disk {disk.percent:.1f}%"]
+                     f"CPU {cpu_percent:.1f}%", f"RAM {ram_used_percent:.1f}%", f"Disk {disk_used_percent:.1f}%"]
     if thermal.get("fanRpm") is not None:
         summary_parts.append(f"Fan {thermal['fanRpm']:.0f} rpm")
     if thermal.get("thermalLevel") is not None:
@@ -131,7 +139,7 @@ def collect_system_snapshot() -> Dict[str, Any]:
         "cpuCores": cpu_cores,
         "cpuUsagePercent": cpu_percent,
         "ramUsage": {
-            "usedPercent": round(float(vm.percent), 1),
+            "usedPercent": ram_used_percent,
             "usedGb": gb(vm.used),
             "availableGb": gb(vm.available),
             "totalGb": gb(vm.total),
@@ -144,7 +152,7 @@ def collect_system_snapshot() -> Dict[str, Any]:
         },
         "diskUsage": {
             "path": "~",
-            "usedPercent": round(float(disk.percent), 1),
+            "usedPercent": disk_used_percent,
             "freeGb": gb(disk.free),
             "totalGb": gb(disk.total),
         },
@@ -1636,6 +1644,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {'subscriptions': list_subscriptions()})
             return
+        if parsed.path == '/api/local/chat/last':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, {'lastChat': get_last_chat()})
+            return
+        if parsed.path == '/api/local/chat/whiteboard':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            session_id = (params.get('sessionId') or [''])[0].strip()
+            if not session_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
+                return
+            self._json(200, get_whiteboard(session_id))
+            return
         if parsed.path == '/api/local/candidates':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -1729,6 +1753,57 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {'success': False, 'detail': str(exc), 'manual': True})
                 return
             self._json(202, {'success': True, 'detail': 'Gateway restart initiated.'})
+            return
+        if parsed.path == '/api/local/chat/last':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            if not str(data.get('sessionId', '')).strip():
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
+                return
+            saved = set_last_chat(data)
+            self._json(200, {'success': True, 'lastChat': saved})
+            return
+        if parsed.path == '/api/local/chat/whiteboard':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            try:
+                data = json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            session_id = str(data.get('sessionId') or '').strip()
+            if not session_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
+                return
+            if data.get('action') == 'enqueue':
+                command = data.get('command')
+                if not isinstance(command, dict) or not str(command.get('type') or '').strip():
+                    self._json(400, {'error': 'bad_request', 'detail': 'Missing command.'})
+                    return
+                self._json(202, {'command': enqueue_command(session_id, command)})
+                return
+            if data.get('action') == 'ack':
+                ids = data.get('commandIds')
+                if not isinstance(ids, list):
+                    self._json(400, {'error': 'bad_request', 'detail': 'Missing commandIds.'})
+                    return
+                acknowledge_commands(session_id, [str(item) for item in ids])
+                self._json(200, {'success': True})
+                return
+            self._json(200, save_snapshot(session_id, data.get('snapshot')))
             return
         if parsed.path == '/api/local/skills/toggle':
             if not _is_authorized(self):
