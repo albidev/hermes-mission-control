@@ -265,6 +265,10 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
               props: shapeProps as never,
             } as never);
           }
+          if (command.type === 'move_shape' && command.shapeId && (command.x !== undefined || command.y !== undefined)) {
+            const shape = editor.getShape(command.shapeId as never);
+            if (shape) editor.updateShape({ id: shape.id, type: shape.type, x: command.x ?? shape.x, y: command.y ?? shape.y } as never);
+          }
           if (command.type === 'update_shape' && command.shapeId && command.props) {
             editor.updateShape({
               id: command.shapeId as never,
@@ -353,7 +357,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
             editor.selectAll();
             editor.deleteShapes(editor.getSelectedShapeIds());
           }
-          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding', 'delete_bindings', 'create_page', 'set_current_page', 'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes', 'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity', 'export_json', 'export_svg', 'export_png'].includes(command.type)) {
+          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'move_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding', 'delete_bindings', 'create_page', 'set_current_page', 'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes', 'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity', 'export_json', 'export_svg', 'export_png'].includes(command.type)) {
             applied.push(command.id);
           }
         }
