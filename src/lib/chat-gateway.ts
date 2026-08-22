@@ -1020,6 +1020,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    appendSystemMessage,
     respondInteraction,
     interrupt,
     reset,

@@ -58,6 +58,7 @@ type TLDrawCanvasProps = {
   sessionTitle: string;
   storedToken: string;
   onSendSelection: (text: string, attachments?: CanvasScreenshotAttachment[]) => Promise<boolean>;
+  onActionApplied?: (summary: string) => void;
   onReady: () => void;
   loading: boolean;
   onClose: () => void;
@@ -88,7 +89,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
   return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
 }
 
-export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
+export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>('');
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
@@ -404,6 +405,11 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
         }
         if (applied.length) {
           editor.zoomToFit({ animation: { duration: 250 } });
+          const appliedCommands = commands.filter((c) => applied.includes(c.id));
+          const summary = appliedCommands
+            .map((c) => `${c.type}${c.text ? ` "${String(c.text).slice(0, 40)}"` : ''}`)
+            .join(', ');
+          onActionApplied?.(`Canvas actions applied: ${summary}`);
           await fetch('/api/local/chat/whiteboard', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
@@ -421,7 +427,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [editor, key, sessionId, sessionKey, storedToken]);
+  }, [editor, key, sessionId, sessionKey, storedToken, onActionApplied]);
 
   const sendSelection = async (withScreenshot = false) => {
     if (!editor) return;
