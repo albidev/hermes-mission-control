@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Minimize2, RotateCcw, Send, X } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
@@ -42,6 +42,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
 export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
+  const remoteHydratedRef = useRef(false);
 
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
@@ -151,7 +152,10 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           value?: unknown;
           format?: 'json' | 'svg' | 'png';
         }> };
-        if (remote.snapshot && editor.getCurrentPageShapes().length === 0) loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
+        if (remote.snapshot && !remoteHydratedRef.current) {
+          loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
+          remoteHydratedRef.current = true;
+        }
         const commands = remote.commands || [];
         const applied: string[] = [];
         for (const command of commands) {
