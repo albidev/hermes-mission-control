@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Loader2, RotateCcw, Send } from 'lucide-react';
+import { ArrowLeft, Camera, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
+import { collectBoardContext } from '../lib/tldraw-visual-context';
 import 'tldraw/tldraw.css';
+
+export type CanvasScreenshotAttachment = {
+  kind: 'image';
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+};
 
 type BridgeCommand = {
   id: string;
@@ -48,7 +56,7 @@ type TLDrawCanvasProps = {
   sessionKey: string | null;
   sessionTitle: string;
   storedToken: string;
-  onSendSelection: (text: string) => Promise<boolean>;
+  onSendSelection: (text: string, attachments?: CanvasScreenshotAttachment[]) => Promise<boolean>;
   onReady: () => void;
   loading: boolean;
   onClose: () => void;
@@ -400,13 +408,34 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
     };
   }, [editor, key, sessionId, sessionKey, storedToken]);
 
-  const sendSelection = async () => {
+  const sendSelection = async (withScreenshot = false) => {
     if (!editor) return;
-    const selected = editor.getSelectedShapes();
-    const summary = selected.length
-      ? selected.map((shape) => JSON.stringify({ id: shape.id, type: shape.type, x: shape.x, y: shape.y, props: shape.props })).join('\n')
-      : 'No shapes are selected. Describe the current whiteboard and suggest the next step.';
-    await onSendSelection(`Whiteboard selection from session ${sessionId || 'pending'}:\n${summary}`);
+    const context = await collectBoardContext(editor, sessionKey, sessionId, { includeScreenshot: withScreenshot });
+    const lines: string[] = [
+      `Whiteboard context from session ${sessionId || 'pending'} (sessionKey ${sessionKey || 'pending'}):`,
+      `viewport: x=${context.viewport.x} y=${context.viewport.y} w=${context.viewport.w} h=${context.viewport.h} zoom=${context.viewport.zoom}`,
+      `shapes on screen: ${context.visibleShapes.length}, offscreen: ${context.offscreenCount}`,
+      `counts: ${JSON.stringify(context.shapeCounts)}`,
+      `bindings: ${context.bindings.length}`,
+    ];
+    if (context.selectedShapeIds.length) {
+      lines.push(`selected: ${context.selectedShapeIds.join(', ')}`);
+    } else {
+      lines.push('No shapes are selected. Describe the current whiteboard and suggest the next step.');
+    }
+    for (const shape of context.visibleShapes.slice(0, 40)) {
+      lines.push(JSON.stringify(shape));
+    }
+    const attachments: Array<{ kind: 'image'; name: string; mimeType: string; dataUrl: string }> = [];
+    if (context.screenshot?.dataUrl) {
+      attachments.push({
+        kind: 'image',
+        name: `tldraw-board-${Date.now()}.png`,
+        mimeType: 'image/png',
+        dataUrl: context.screenshot.dataUrl,
+      });
+    }
+    await onSendSelection(lines.join('\n'), attachments);
   };
 
   const clearBoard = () => {
@@ -432,7 +461,10 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           </div>
         </div>
         <div className="tldraw-canvas-actions">
-          <button type="button" className="chat-icon-button" onClick={() => void sendSelection()} title="Send selected shapes to chat" aria-label="Send selected shapes to chat">
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title="Screenshot board and send to chat" aria-label="Screenshot board and send to chat">
+            <Camera size={15} />
+          </button>
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title="Send selected shapes to chat" aria-label="Send selected shapes to chat">
             <Send size={15} />
           </button>
           <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear whiteboard" aria-label="Clear whiteboard">

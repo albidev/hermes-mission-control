@@ -740,7 +740,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded ? <TLDrawCanvas key={`${sessionKey || sessionId || 'new'}:${sessionId || 'pending'}`} sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={submitPrompt} onReady={() => setIsCanvasLoading(false)} loading={isCanvasLoading} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
+      {open && isExpanded ? <TLDrawCanvas key={`${sessionKey || sessionId || 'new'}:${sessionId || 'pending'}`} sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={(text, canvasAttachments) => submitPrompt(text, (canvasAttachments ?? []).map((a) => ({ id: a.name, kind: a.kind, name: a.name, size: Math.round(a.dataUrl.length * 0.75), mimeType: a.mimeType, dataUrl: a.dataUrl })))} onReady={() => setIsCanvasLoading(false)} loading={isCanvasLoading} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
     </>
   );
 }
