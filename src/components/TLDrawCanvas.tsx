@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Minimize2, RotateCcw, Send, X } from 'lucide-react';
+import { Loader2, Minimize2, RotateCcw, Send, X } from 'lucide-react';
 import { Tldraw, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 
@@ -9,6 +9,7 @@ type TLDrawCanvasProps = {
   storedToken: string;
   onSendSelection: (text: string) => Promise<boolean>;
   onReady: () => void;
+  loading: boolean;
   onClose: () => void;
   expanded: boolean;
 };
@@ -37,7 +38,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
   return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
 }
 
-export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelection, onReady, onClose, expanded }: TLDrawCanvasProps) {
+export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelection, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const key = useMemo(() => storageKey(sessionId), [sessionId]);
 
@@ -252,6 +253,12 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
       </header>
       <div className="tldraw-canvas-canvas">
         <Tldraw onMount={handleMount} />
+        {loading ? (
+          <div className="tldraw-canvas-loading" role="status">
+            <Loader2 size={24} className="chat-spin" />
+            <span>Loading TLDrawCanvas…</span>
+          </div>
+        ) : null}
       </div>
     </section>
   );

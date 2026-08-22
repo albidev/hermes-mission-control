@@ -611,6 +611,19 @@
   inset: 0;
 }
 
+.tldraw-canvas-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.65rem;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
+  font-size: 0.8rem;
+}
+
 @media (max-width: 800px) {
   .chat-drawer.is-expanded {
     width: 100vw;

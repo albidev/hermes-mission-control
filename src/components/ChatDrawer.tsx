@@ -739,7 +739,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded ? <TLDrawCanvas key={sessionId || 'new'} sessionId={sessionId} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={submitPrompt} onReady={() => setIsCanvasLoading(false)} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
+      {open && isExpanded ? <TLDrawCanvas key={sessionId || 'new'} sessionId={sessionId} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={submitPrompt} onReady={() => setIsCanvasLoading(false)} loading={isCanvasLoading} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
     </>
   );
 }
