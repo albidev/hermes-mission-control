@@ -56,7 +56,7 @@ type ChatDrawerProps = {
 function formatTokens(tokens: number): string {
   if (tokens < 1000) return `${tokens}`;
   if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(tokens < 10_000 ? 1 : 0)}k`;
-  return `${(tokens / 1_000_000).toFixed(1)}M`;
+  return `${(tokens / 1_000_000).toFixed(tokens < 10_000_000 ? 1 : 0).replace(/\.0$/, '')}M`;
 }
 
 // Best-effort context-window estimate for the progress bar. The gateway does
@@ -652,8 +652,8 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
             {statusLineLabel}
           </span>
           <span className="chat-status-line-right">
-            <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} context tokens`}>
-              {contextTokens == null ? '—' : formatTokens(contextTokens)} ctx
+            <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} context tokens`}>
+              {contextTokens == null ? `—/${formatTokens(contextWindow)}` : `${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`}
             </span>
             <span
               className="chat-status-line-bar"
