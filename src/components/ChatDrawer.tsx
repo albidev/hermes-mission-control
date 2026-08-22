@@ -124,6 +124,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     previewMode,
     modelIdentity,
     contextTokens,
+    contextMax,
     sessionTitle,
     modelPickerOpen,
     modelPickerRefresh,
@@ -323,7 +324,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       : connectionState === 'connected'
         ? 'Idle'
         : statusText;
-  const contextWindow = estimateContextWindow(modelIdentity?.model);
+  const contextWindow = contextMax || estimateContextWindow(modelIdentity?.model);
   const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);

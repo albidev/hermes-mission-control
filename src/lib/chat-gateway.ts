@@ -220,6 +220,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [interaction, setInteraction] = useState<GatewayInteractionRequest | null>(null);
   const [modelIdentity, setModelIdentity] = useState<ChatModelIdentity | null>(initial.modelIdentity);
   const [contextTokens, setContextTokens] = useState<number | null>(null);
+  const [contextMax, setContextMax] = useState<number | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerRefresh, setModelPickerRefresh] = useState(false);
@@ -325,6 +326,17 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     }
   }, [adoptModel, request]);
 
+  const refreshContext = useCallback(async (activeSessionId: string) => {
+    try {
+      const result = await request<unknown>('session.context_breakdown', { session_id: activeSessionId });
+      if (!isRecord(result)) return;
+      if (typeof result.context_used === 'number') setContextTokens(result.context_used);
+      if (typeof result.context_max === 'number' && result.context_max > 0) setContextMax(result.context_max);
+    } catch {
+      // Context metrics are best-effort; the status line remains usable without them.
+    }
+  }, [request]);
+
   const ensureSession = useCallback(async () => {
     const existingKey = requestedSessionIdRef.current || sessionKeyRef.current || sessionIdRef.current;
     if (existingKey) {
@@ -391,13 +403,16 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     setPreviewMode(false);
     try {
       const activeSessionId = await ensureSession();
-      if (activeSessionId) void refreshModel(activeSessionId);
+      if (activeSessionId) {
+        void refreshModel(activeSessionId);
+        void refreshContext(activeSessionId);
+      }
       return activeSessionId ?? null;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to resume the selected session.');
       return null;
     }
-  }, [ensureSession, refreshModel]);
+  }, [ensureSession, refreshContext, refreshModel]);
 
   const scheduleReconnect = useCallback(() => {
     if (intentionalCloseRef.current || reconnectAttemptsRef.current >= MAX_RECONNECTS) {
@@ -527,6 +542,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           if (inputTokens != null) setContextTokens(inputTokens);
           const title = typeof payload.title === 'string' && payload.title.trim() ? payload.title.trim() : null;
           if (title) setSessionTitle(title);
+          const activeSessionId = sessionIdRef.current;
+          if (activeSessionId) void refreshContext(activeSessionId);
         }
         setMessages((current) => applyGatewayEvent(current, parsed.event));
       });
@@ -542,7 +559,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           // When a session was picked from the list, stay in preview mode until
           // the user clicks "Resume session".
           if (previewModeRef.current) return;
-          void ensureSession().then((activeSessionId) => refreshModel(activeSessionId)).catch((err: unknown) => {
+          void ensureSession().then((activeSessionId) => {
+            void refreshModel(activeSessionId);
+            void refreshContext(activeSessionId);
+          }).catch((err: unknown) => {
             setError(err instanceof Error ? err.message : 'Failed to create or resume chat session.');
           });
         });
@@ -576,7 +596,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       setStatusText('Connection failed');
       setError(err instanceof Error ? err.message : 'Chat connection failed.');
     }
-  }, [adoptModel, ensureSession, open, refreshModel, rejectPending, scheduleReconnect, storedToken]);
+  }, [adoptModel, ensureSession, open, refreshContext, refreshModel, rejectPending, scheduleReconnect, storedToken]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -924,6 +944,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     previewMode,
     modelIdentity,
     contextTokens,
+    contextMax,
     sessionTitle,
     modelPickerOpen,
     modelPickerRefresh,
