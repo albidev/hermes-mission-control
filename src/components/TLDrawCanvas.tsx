@@ -140,6 +140,34 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
     }
   }, [key, onReady, sessionId]);
 
+  // Migrate a board drawn before the chat had an identity (storage key 'new')
+  // to the stable sessionKey as soon as one becomes available.
+  useEffect(() => {
+    if (!sessionKey) return;
+    const newKey = `mission-control:whiteboard:v5:new`;
+    const target = storageKey(null, sessionKey);
+    const orphan = window.localStorage.getItem(newKey);
+    if (orphan && !window.localStorage.getItem(target)) {
+      try {
+        window.localStorage.setItem(target, orphan);
+        window.localStorage.removeItem(newKey);
+      } catch {
+        // Best-effort migration; server snapshot remains authoritative anyway.
+      }
+      // Also push the migrated snapshot to the server so resume picks it up
+      // even on another device or after localStorage eviction.
+      try {
+        void fetch('/api/local/chat/whiteboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
+          body: JSON.stringify({ sessionId, sessionKey, snapshot: JSON.parse(orphan) }),
+        }).catch(() => {});
+      } catch {
+        // Ignore network errors here; polling will re-sync.
+      }
+    }
+  }, [sessionKey, sessionId, storedToken]);
+
   useEffect(() => {
     if (!editor || window.localStorage.getItem(key)) return;
     if (editor.getCurrentPageShapes().length > 0) return;
