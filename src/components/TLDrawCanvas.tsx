@@ -3,6 +3,46 @@ import { ArrowLeft, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 
+type BridgeCommand = {
+  id: string;
+  type: string;
+  text?: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  color?: string;
+  shapeType?: string;
+  props?: Record<string, unknown>;
+  shapeId?: string;
+  shapeIds?: string[];
+  fromId?: string;
+  toId?: string;
+  bindingProps?: Record<string, unknown>;
+  bindingIds?: string[];
+  pageId?: string;
+  direction?: string;
+  padding?: number;
+  angle?: number;
+  style?: unknown;
+  value?: unknown;
+  format?: 'json' | 'svg' | 'png';
+};
+
+/** Commands this client build knows how to apply. Must stay in sync with applyBridgeCommand. */
+const SUPPORTED_COMMANDS = new Set([
+  'clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape',
+  'move_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front',
+  'send_to_back', 'zoom_to_fit', 'create_binding', 'delete_bindings', 'create_page', 'set_current_page',
+  'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes',
+  'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity',
+  'export_json', 'export_svg', 'export_png',
+]);
+
+function isSupportedCommand(command: BridgeCommand): boolean {
+  return SUPPORTED_COMMANDS.has(command.type);
+}
+
 type TLDrawCanvasProps = {
   sessionId: string | null;
   sessionKey: string | null;
@@ -128,31 +168,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
       try {
         const response = await fetch(`/api/local/chat/whiteboard?sessionKey=${encodeURIComponent(sessionKey || '')}&sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
-        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{
-          id: string;
-          type: string;
-          text?: string;
-          x?: number;
-          y?: number;
-          w?: number;
-          h?: number;
-          color?: string;
-          shapeType?: string;
-          props?: Record<string, unknown>;
-          shapeId?: string;
-          shapeIds?: string[];
-          fromId?: string;
-          toId?: string;
-          bindingProps?: Record<string, unknown>;
-          bindingIds?: string[];
-          pageId?: string;
-          direction?: string;
-          padding?: number;
-          angle?: number;
-          style?: unknown;
-          value?: unknown;
-          format?: 'json' | 'svg' | 'png';
-        }> };
+        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: BridgeCommand[] };
         if (remote.snapshot && !remoteHydratedRef.current) {
           remoteHydratedRef.current = true;
           loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
@@ -359,7 +375,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
             editor.selectAll();
             editor.deleteShapes(editor.getSelectedShapeIds());
           }
-          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'move_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding', 'delete_bindings', 'create_page', 'set_current_page', 'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes', 'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity', 'export_json', 'export_svg', 'export_png'].includes(command.type)) {
+          if (isSupportedCommand(command)) {
             applied.push(command.id);
           }
         }
