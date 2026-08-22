@@ -86,6 +86,14 @@ function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
   return cleaned;
 }
 
+function triggerDownload(href: string, filename: string) {
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(href);
+}
+
 export function TldrawMark({ size = 16 }: { size?: number }) {
   return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
 }
@@ -501,6 +509,23 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
     window.localStorage.removeItem(key);
   };
 
+  const exportBoard = async (format: 'png' | 'svg' | 'json') => {
+    if (!editor) return;
+    const filename = `tldraw-${sessionId || sessionKey || 'board'}-${Date.now()}`;
+    if (format === 'json') {
+      const blob = new Blob([JSON.stringify(getSnapshot(editor.store), null, 2)], { type: 'application/json' });
+      triggerDownload(URL.createObjectURL(blob), `${filename}.json`);
+      return;
+    }
+    if (format === 'svg') {
+      const result = await editor.getSvgString(editor.getCurrentPageShapes(), { background: true });
+      if (result) triggerDownload(URL.createObjectURL(new Blob([result.svg], { type: 'image/svg+xml' })), `${filename}.svg`);
+      return;
+    }
+    const image = await editor.toImage(editor.getCurrentPageShapes(), { format: 'png', pixelRatio: 2, background: true });
+    triggerDownload(URL.createObjectURL(image.blob), `${filename}.png`);
+  };
+
   return (
     <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
       <header className="tldraw-canvas-head">
@@ -529,6 +554,22 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
             {AGENT_MODES.map((mode) => (
               <option key={mode.id} value={mode.id}>{`Mode: ${mode.label}`}</option>
             ))}
+          </select>
+          <select
+            className="tldraw-canvas-mode"
+            value=""
+            onChange={(event) => {
+              const format = event.target.value as 'png' | 'svg' | 'json' | '';
+              if (format) void exportBoard(format);
+              event.target.value = '';
+            }}
+            title="Export board"
+            aria-label="Export board"
+          >
+            <option value="">Export…</option>
+            <option value="png">PNG</option>
+            <option value="svg">SVG</option>
+            <option value="json">JSON snapshot</option>
           </select>
           <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title="Screenshot board and send to chat" aria-label="Screenshot board and send to chat">
             <Camera size={15} />
