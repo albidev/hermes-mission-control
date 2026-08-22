@@ -48,6 +48,12 @@ def save_snapshot(session_id: str, snapshot: Any) -> dict[str, Any]:
 
 
 def enqueue_command(session_id: str, command: dict[str, Any]) -> dict[str, Any]:
+    command = dict(command)
+    if command.get("type") == "create_line" and isinstance(command.get("w"), (int, float)):
+        width = float(command["w"])
+        if width < 0:
+            command["x"] = float(command.get("x") or 180) + width
+            command["w"] = abs(width)
     item = {"id": uuid.uuid4().hex, "createdAt": int(time.time() * 1000), **command}
     with _LOCK:
         data = _load()
