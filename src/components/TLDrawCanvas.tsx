@@ -98,6 +98,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
   useEffect(() => {
     if (!editor) return;
     const publishSnapshot = () => {
+      if (sessionId && !remoteHydratedRef.current) return;
       const snapshot = getSnapshot(editor.store);
       if (sessionId && !window.localStorage.getItem(key) && editor.getCurrentPageShapes().length === 0) return;
       try {
@@ -153,8 +154,8 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           format?: 'json' | 'svg' | 'png';
         }> };
         if (remote.snapshot && !remoteHydratedRef.current) {
-          loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
           remoteHydratedRef.current = true;
+          loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
         }
         const commands = remote.commands || [];
         const applied: string[] = [];
