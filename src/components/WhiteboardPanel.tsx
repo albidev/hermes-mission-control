@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Maximize2, Minimize2, RotateCcw, X } from 'lucide-react';
-import { Tldraw, getSnapshot, loadSnapshot, type Editor, type TLStoreSnapshot } from 'tldraw';
+import { Tldraw, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 type WhiteboardPanelProps = {
@@ -20,7 +20,24 @@ export function WhiteboardPanel({ sessionId, onClose, expanded }: WhiteboardPane
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
     const raw = window.localStorage.getItem(key);
-    if (!raw) return;
+    if (!raw) {
+      nextEditor.createShape({
+        id: createShapeId('welcome'),
+        type: 'text',
+        x: 160,
+        y: 140,
+        props: {
+          richText: toRichText('Mission Control × Hermes\nChat → Whiteboard'),
+          color: 'violet',
+          size: 'xl',
+          font: 'sans',
+          textAlign: 'middle',
+          autoSize: false,
+          w: 360,
+        },
+      });
+      return;
+    }
     try {
       loadSnapshot(nextEditor.store, JSON.parse(raw) as TLStoreSnapshot);
     } catch {
