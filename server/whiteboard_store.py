@@ -53,6 +53,7 @@ WHITEBOARD_FEATURES: dict[str, int] = {
     "export_json": 2,
     "export_svg": 2,
     "export_png": 2,
+    "import_mermaid": 3,
 }
 
 _STATE_FILE = Path(__file__).resolve().parent / "whiteboard_state.json"

@@ -12,6 +12,7 @@ import {
   type Editor,
   type TLShapeId,
 } from 'tldraw';
+import { mermaidToCommands } from './tldraw-mermaid';
 
 export interface BridgeCommand {
   id: string;
@@ -261,6 +262,26 @@ function applyValidated(editor: Editor, command: BridgeCommand): TLShapeId[] {
 export function applyBridgeCommands(editor: Editor, commands: BridgeCommand[]): ActionOutcome {
   const appliedIds: string[] = [];
   const failed: ActionOutcome['failed'] = [];
+
+  // Expand import_mermaid into its sub-commands before validation so the
+  // whole diagram is validated and applied as one unit.
+  const expanded: BridgeCommand[] = [];
+  for (const command of commands) {
+    if (command.type === 'import_mermaid' && command.text) {
+      const generated = mermaidToCommands(command.text).map((cmd, index) => ({
+        ...cmd,
+        id: `${command.id}-m${index}`,
+      })) as BridgeCommand[];
+      if (generated.length === 0) {
+        failed.push({ id: command.id, reason: 'import_mermaid: could not parse flowchart' });
+      } else {
+        expanded.push(...generated);
+      }
+    } else {
+      expanded.push(command);
+    }
+  }
+  commands = expanded;
 
   for (const command of commands) {
     const error = validateCommand(editor, command);

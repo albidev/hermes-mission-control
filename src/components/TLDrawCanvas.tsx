@@ -46,7 +46,7 @@ const SUPPORTED_COMMANDS = new Set([
   'send_to_back', 'zoom_to_fit', 'create_binding', 'delete_bindings', 'create_page', 'set_current_page',
   'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes',
   'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity',
-  'export_json', 'export_svg', 'export_png',
+  'export_json', 'export_svg', 'export_png', 'import_mermaid',
 ]);
 
 function isSupportedCommand(command: BridgeCommand): boolean {
