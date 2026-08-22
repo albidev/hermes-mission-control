@@ -488,11 +488,6 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
               <div className="chat-head-copy">
                 <p className="eyebrow">Hermes</p>
                 <h2 id="chat-drawer-title">Chat</h2>
-                <div className="chat-model-badge" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Resolving active model'}>
-                  <Cpu size={12} aria-hidden />
-                  <span>{modelIdentity?.model || 'Resolving model'}</span>
-                  {modelIdentity?.provider ? <small>{modelIdentity.provider}</small> : null}
-                </div>
                 <span className="chat-session-title" title={headerSessionTitle}>{headerSessionTitle}</span>
               </div>
             </div>
@@ -651,23 +646,31 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           <span className={`chat-status-line-verb ${running ? 'is-busy' : ''}`}>
             {statusLineLabel}
           </span>
-          <span className="chat-status-line-right">
-            <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} context tokens`}>
-              {contextTokens == null ? `—/${formatTokens(contextWindow)}` : `${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`}
-            </span>
-            <span
-              className="chat-status-line-bar"
-              role="progressbar"
-              aria-label="Context window usage"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(contextPercent)}
-              title={contextTokens == null ? 'Context usage not available yet' : `${Math.round(contextPercent)}% of context window`}
-            >
-              <span className="chat-status-line-bar-fill" style={{ width: `${contextPercent}%` }} />
-            </span>
-            <span className="chat-status-line-percent">{contextTokens == null ? '—' : `${Math.round(contextPercent)}%`}</span>
+          <span className="chat-status-line-separator">|</span>
+          <span className="chat-status-line-model" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Model not available'}>
+            {modelIdentity?.model || 'Model unavailable'}
           </span>
+          <span className="chat-status-line-separator">|</span>
+          <span className="chat-status-line-reasoning">
+            reasoning: {modelIdentity?.reasoningEffort || '—'}
+          </span>
+          <span className="chat-status-line-separator">|</span>
+          <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} context tokens`}>
+            {contextTokens == null ? `—/${formatTokens(contextWindow)}` : `${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`}
+          </span>
+          <span className="chat-status-line-separator">|</span>
+          <span
+            className="chat-status-line-bar"
+            role="progressbar"
+            aria-label="Context window usage"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(contextPercent)}
+            title={contextTokens == null ? 'Context usage not available yet' : `${Math.round(contextPercent)}% of context window`}
+          >
+            <span className="chat-status-line-bar-fill" style={{ width: `${contextPercent}%` }} />
+          </span>
+          <span className="chat-status-line-percent">{contextTokens == null ? '—' : `${Math.round(contextPercent)}%`}</span>
         </div>
         <form className="chat-composer" onSubmit={handleSubmit}>
           <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf,*/*" className="chat-file-input" onChange={handleFileInput} />

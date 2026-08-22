@@ -3177,8 +3177,8 @@
 .chat-status-line {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
   min-height: 1.5rem;
   padding: 0.5rem 1rem;
   border-top: 1px solid var(--color-border-subtle);
@@ -3218,6 +3218,28 @@
   align-items: center;
   gap: 0.5rem;
   flex: 0 0 auto;
+}
+
+.chat-status-line-separator {
+  color: var(--color-border);
+  user-select: none;
+}
+
+.chat-status-line-model,
+.chat-status-line-reasoning {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-status-line-model {
+  color: var(--color-accent);
+  font-weight: 650;
+}
+
+.chat-status-line-reasoning {
+  color: var(--color-text-muted);
 }
 
 .chat-status-line-ctx {

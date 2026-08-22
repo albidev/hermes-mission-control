@@ -91,6 +91,7 @@ export type GatewayInteractionRequest = {
 export type ChatModelIdentity = {
   model: string;
   provider?: string;
+  reasoningEffort?: string;
 };
 
 export type GatewayCommandDispatch =
@@ -383,7 +384,16 @@ export function extractSessionModel(result: unknown): ChatModelIdentity | null {
       const provider = typeof candidate.provider === 'string' && candidate.provider.trim()
         ? candidate.provider.trim()
         : undefined;
-      return { model: candidate.model.trim(), ...(provider ? { provider } : {}) };
+      const reasoningEffort = typeof candidate.reasoning_effort === 'string' && candidate.reasoning_effort.trim()
+        ? candidate.reasoning_effort.trim()
+        : typeof candidate.reasoningEffort === 'string' && candidate.reasoningEffort.trim()
+          ? candidate.reasoningEffort.trim()
+          : undefined;
+      return {
+        model: candidate.model.trim(),
+        ...(provider ? { provider } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      };
     }
   }
 
