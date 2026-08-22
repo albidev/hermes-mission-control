@@ -26,9 +26,12 @@ def _save(data: dict[str, Any]) -> None:
     tmp.replace(_STATE_FILE)
 
 
-def get_whiteboard(session_id: str) -> dict[str, Any]:
+def get_whiteboard(session_id: str, fallback_session_id: str | None = None) -> dict[str, Any]:
     with _LOCK:
-        state = _load().get(session_id) or {}
+        data = _load()
+        state = data.get(session_id) or {}
+        if not state and fallback_session_id and fallback_session_id != session_id:
+            state = data.get(fallback_session_id) or {}
     return {
         "sessionId": session_id,
         "snapshot": state.get("snapshot"),

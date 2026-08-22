@@ -137,6 +137,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const {
     messages,
     sessionId,
+    sessionKey,
     connectionState,
     statusText,
     error,
@@ -739,7 +740,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded ? <TLDrawCanvas key={sessionId || 'new'} sessionId={sessionId} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={submitPrompt} onReady={() => setIsCanvasLoading(false)} loading={isCanvasLoading} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
+      {open && isExpanded ? <TLDrawCanvas key={`${sessionKey || sessionId || 'new'}:${sessionId || 'pending'}`} sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={submitPrompt} onReady={() => setIsCanvasLoading(false)} loading={isCanvasLoading} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
     </>
   );
 }

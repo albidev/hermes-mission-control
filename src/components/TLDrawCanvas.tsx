@@ -5,6 +5,7 @@ import 'tldraw/tldraw.css';
 
 type TLDrawCanvasProps = {
   sessionId: string | null;
+  sessionKey: string | null;
   sessionTitle: string;
   storedToken: string;
   onSendSelection: (text: string) => Promise<boolean>;
@@ -14,8 +15,8 @@ type TLDrawCanvasProps = {
   expanded: boolean;
 };
 
-function storageKey(sessionId: string | null) {
-  return `mission-control:whiteboard:v3:${sessionId || 'new'}`;
+function storageKey(sessionId: string | null, sessionKey: string | null) {
+  return `mission-control:whiteboard:v4:${sessionKey || sessionId || 'new'}`;
 }
 
 function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
@@ -38,9 +39,9 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
   return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
 }
 
-export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelection, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
+export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
-  const key = useMemo(() => storageKey(sessionId), [sessionId]);
+  const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
 
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
@@ -107,14 +108,14 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
         void fetch('/api/local/chat/whiteboard', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
-          body: JSON.stringify({ sessionId, snapshot }),
+          body: JSON.stringify({ sessionId, sessionKey, snapshot }),
         }).catch(() => {});
       }
     };
     publishSnapshot();
     const dispose = editor.store.listen(publishSnapshot, { scope: 'document' });
     return dispose;
-  }, [editor, key, sessionId, storedToken]);
+  }, [editor, key, sessionId, sessionKey, storedToken]);
 
   useEffect(() => {
     if (!editor || !sessionId) return;
@@ -123,7 +124,7 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
 
     const applyRemoteState = async () => {
       try {
-        const response = await fetch(`/api/local/chat/whiteboard?sessionId=${encodeURIComponent(sessionId)}`, { headers });
+        const response = await fetch(`/api/local/chat/whiteboard?sessionKey=${encodeURIComponent(sessionKey || '')}&sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
         const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{
           id: string;
@@ -354,7 +355,7 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
           await fetch('/api/local/chat/whiteboard', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
-            body: JSON.stringify({ sessionId, action: 'ack', commandIds: applied }),
+            body: JSON.stringify({ sessionId, sessionKey, action: 'ack', commandIds: applied }),
           });
         }
       } catch {
@@ -368,7 +369,7 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [editor, key, sessionId, storedToken]);
+  }, [editor, key, sessionId, sessionKey, storedToken]);
 
   const sendSelection = async () => {
     if (!editor) return;
