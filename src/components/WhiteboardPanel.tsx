@@ -70,7 +70,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
 
   useEffect(() => {
     if (!editor) return;
-    const dispose = editor.store.listen(() => {
+    const publishSnapshot = () => {
       const snapshot = getSnapshot(editor.store);
       try {
         window.localStorage.setItem(key, JSON.stringify(snapshot));
@@ -84,7 +84,9 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
           body: JSON.stringify({ sessionId, snapshot }),
         }).catch(() => {});
       }
-    }, { scope: 'document', source: 'user' });
+    };
+    publishSnapshot();
+    const dispose = editor.store.listen(publishSnapshot, { scope: 'document', source: 'user' });
     return dispose;
   }, [editor, key, sessionId, storedToken]);
 
