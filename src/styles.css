@@ -3244,6 +3244,14 @@
   transition: width 0.4s ease;
 }
 
+.chat-status-line-percent {
+  min-width: 2.2rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  opacity: 0.8;
+}
+
 .chat-composer {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;

@@ -120,7 +120,6 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     error,
     submitting,
     running,
-    activity,
     interaction,
     previewMode,
     modelIdentity,
@@ -304,7 +303,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     // each token. Smooth scrolling queues animations that lag behind the stream.
     const streaming = messages.some((m) => m.status === 'streaming');
     scrollToBottom(streaming ? 'auto' : 'smooth');
-  }, [messages, interaction, activity, open, scrollToBottom]);
+  }, [messages, interaction, open, scrollToBottom]);
 
   useEffect(() => {
     setInteractionDraft('');
@@ -317,6 +316,15 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       ? 'is-pending'
       : 'is-offline';
   const headerSessionTitle = sessionTitle || preview?.title || 'Untitled session';
+  const statusLineLabel = interaction
+    ? 'Waiting for input'
+    : running
+      ? 'Working'
+      : connectionState === 'connected'
+        ? 'Idle'
+        : statusText;
+  const contextWindow = estimateContextWindow(modelIdentity?.model);
+  const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);
     const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);
@@ -640,25 +648,24 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
         />
         <div className="chat-status-line" role="status">
           <span className={`chat-status-line-verb ${running ? 'is-busy' : ''}`}>
-            {activity ? activity.label : running ? 'Working' : statusText}
+            {statusLineLabel}
           </span>
           <span className="chat-status-line-right">
-            {contextTokens != null ? (
-              <span className="chat-status-line-ctx" title={`${contextTokens.toLocaleString()} context tokens`}>
-                {formatTokens(contextTokens)} ctx
-              </span>
-            ) : null}
-            {contextTokens != null ? (
-              <span
-                className="chat-status-line-bar"
-                title={`${Math.round((contextTokens / estimateContextWindow(modelIdentity?.model)) * 100)}% of context window`}
-              >
-                <span
-                  className="chat-status-line-bar-fill"
-                  style={{ width: `${Math.min(100, (contextTokens / estimateContextWindow(modelIdentity?.model)) * 100)}%` }}
-                />
-              </span>
-            ) : null}
+            <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} context tokens`}>
+              {contextTokens == null ? '—' : formatTokens(contextTokens)} ctx
+            </span>
+            <span
+              className="chat-status-line-bar"
+              role="progressbar"
+              aria-label="Context window usage"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(contextPercent)}
+              title={contextTokens == null ? 'Context usage not available yet' : `${Math.round(contextPercent)}% of context window`}
+            >
+              <span className="chat-status-line-bar-fill" style={{ width: `${contextPercent}%` }} />
+            </span>
+            <span className="chat-status-line-percent">{contextTokens == null ? '—' : `${Math.round(contextPercent)}%`}</span>
           </span>
         </div>
         <form className="chat-composer" onSubmit={handleSubmit}>
