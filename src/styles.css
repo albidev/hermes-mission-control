@@ -552,7 +552,7 @@
   border-right: 1px solid var(--color-border);
 }
 
-.whiteboard-panel {
+.tldraw-canvas-panel {
   position: fixed;
   top: 0;
   right: 0;
@@ -568,7 +568,7 @@
   box-shadow: 18px 0 42px rgba(0, 0, 0, 0.18);
 }
 
-.whiteboard-head {
+.tldraw-canvas-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -578,13 +578,13 @@
   background: var(--color-surface-sunken);
 }
 
-.whiteboard-head h3 {
+.tldraw-canvas-head h3 {
   margin: 0.15rem 0 0;
   color: var(--color-text);
   font-size: 1rem;
 }
 
-.whiteboard-linked-session {
+.tldraw-canvas-linked-session {
   display: block;
   max-width: 32rem;
   overflow: hidden;
@@ -595,18 +595,18 @@
   font-size: 0.65rem;
 }
 
-.whiteboard-actions {
+.tldraw-canvas-actions {
   display: flex;
   gap: 0.35rem;
 }
 
-.whiteboard-canvas {
+.tldraw-canvas-canvas {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
 }
 
-.whiteboard-canvas .tl-container {
+.tldraw-canvas-canvas .tl-container {
   position: absolute;
   inset: 0;
 }
@@ -617,7 +617,7 @@
     right: 0;
   }
 
-  .whiteboard-panel {
+  .tldraw-canvas-panel {
     z-index: 65;
     width: 100vw;
     min-width: 0;

@@ -1,0 +1,258 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Minimize2, RotateCcw, Send, X } from 'lucide-react';
+import { Tldraw, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
+import 'tldraw/tldraw.css';
+
+type TLDrawCanvasProps = {
+  sessionId: string | null;
+  sessionTitle: string;
+  storedToken: string;
+  onSendSelection: (text: string) => Promise<boolean>;
+  onReady: () => void;
+  onClose: () => void;
+  expanded: boolean;
+};
+
+function storageKey(sessionId: string | null) {
+  return `mission-control:whiteboard:v3:${sessionId || 'new'}`;
+}
+
+function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
+  const cleaned = JSON.parse(JSON.stringify(snapshot)) as TLStoreSnapshot;
+  const store = ((cleaned as unknown as { document: { store: Record<string, { type?: string; x?: number; props?: Record<string, unknown> }> } }).document.store);
+  for (const shape of Object.values(store)) {
+    if (shape?.type !== 'geo' || !shape.props) continue;
+    const width = typeof shape.props.w === 'number' ? shape.props.w : 1;
+    const height = typeof shape.props.h === 'number' ? shape.props.h : 1;
+    if (width <= 0) {
+      shape.x = (shape.x ?? 0) + width;
+      shape.props.w = Math.max(1, Math.abs(width));
+    }
+    if (height <= 0) shape.props.h = Math.max(1, Math.abs(height));
+  }
+  return cleaned;
+}
+
+export function TldrawMark({ size = 16 }: { size?: number }) {
+  return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
+}
+
+export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelection, onReady, onClose, expanded }: TLDrawCanvasProps) {
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const key = useMemo(() => storageKey(sessionId), [sessionId]);
+
+  const handleMount = useCallback((nextEditor: Editor) => {
+    setEditor(nextEditor);
+    onReady();
+    const raw = window.localStorage.getItem(key);
+    if (!raw) {
+      if (!sessionId) {
+        nextEditor.createShape({
+          id: createShapeId('session-note'),
+          type: 'text',
+          x: 160,
+          y: 140,
+          props: {
+            richText: toRichText('Questa whiteboard è associata alla Chat corrente.'),
+            color: 'black',
+            size: 'l',
+            font: 'sans',
+            textAlign: 'start',
+            autoSize: true,
+          },
+        });
+      }
+      return;
+    }
+    try {
+      loadSnapshot(nextEditor.store, sanitizeSnapshot(JSON.parse(raw) as TLStoreSnapshot));
+    } catch {
+      window.localStorage.removeItem(key);
+    }
+  }, [key, onReady, sessionId]);
+
+  useEffect(() => {
+    if (!editor || window.localStorage.getItem(key)) return;
+    if (editor.getCurrentPageShapes().length > 0) return;
+    const noteId = createShapeId('session-note');
+    if (editor.getShape(noteId)) return;
+    editor.createShape({
+      id: noteId,
+      type: 'text',
+      x: 160,
+      y: 140,
+      props: {
+        richText: toRichText('Questa whiteboard è associata alla Chat corrente.'),
+        color: 'black',
+        size: 'l',
+        font: 'sans',
+        textAlign: 'start',
+        autoSize: true,
+      },
+    });
+  }, [editor, key]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const publishSnapshot = () => {
+      const snapshot = getSnapshot(editor.store);
+      if (sessionId && !window.localStorage.getItem(key) && editor.getCurrentPageShapes().length === 0) return;
+      try {
+        window.localStorage.setItem(key, JSON.stringify(snapshot));
+      } catch {
+        // Persistence is best-effort; the board remains usable if storage is full.
+      }
+      if (sessionId) {
+        void fetch('/api/local/chat/whiteboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
+          body: JSON.stringify({ sessionId, snapshot }),
+        }).catch(() => {});
+      }
+    };
+    publishSnapshot();
+    const dispose = editor.store.listen(publishSnapshot, { scope: 'document' });
+    return dispose;
+  }, [editor, key, sessionId, storedToken]);
+
+  useEffect(() => {
+    if (!editor || !sessionId) return;
+    let cancelled = false;
+    const headers = storedToken ? { Authorization: `Bearer ${storedToken}` } : undefined;
+
+    const applyRemoteState = async () => {
+      try {
+        const response = await fetch(`/api/local/chat/whiteboard?sessionId=${encodeURIComponent(sessionId)}`, { headers });
+        if (!response.ok || cancelled) return;
+        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{ id: string; type: string; text?: string; x?: number; y?: number; w?: number; h?: number; color?: string }> };
+        if (remote.snapshot && editor.getCurrentPageShapes().length === 0) loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
+        const commands = remote.commands || [];
+        const applied: string[] = [];
+        for (const command of commands) {
+          if (command.type === 'create_text' && command.text) {
+            editor.createShape({
+              id: createShapeId(`agent-text-${command.id}`),
+              type: 'text',
+              x: command.x ?? 160,
+              y: command.y ?? 140,
+              props: {
+                richText: toRichText(command.text),
+                color: command.color === 'black' ? 'black' : 'violet',
+                size: 'l',
+                font: 'sans',
+                textAlign: 'start',
+                autoSize: true,
+              },
+            });
+          }
+          if (command.type === 'create_line') {
+            const width = command.w ?? 180;
+            const lineWidth = Math.abs(width);
+            editor.createShape({
+              id: createShapeId(`agent-line-${command.id}`),
+              type: 'geo',
+              x: width < 0 ? (command.x ?? 180) - lineWidth : command.x ?? 180,
+              y: command.y ?? 360,
+              props: {
+                geo: 'rectangle',
+                w: lineWidth,
+                h: command.h ?? 4,
+                color: command.color === 'violet' ? 'violet' : 'black',
+                fill: 'none',
+                dash: 'solid',
+                size: 'm',
+              },
+            });
+          }
+          if (command.type === 'create_box' && command.text) {
+            editor.createShape({
+              id: createShapeId(`agent-box-${command.id}`),
+              type: 'geo',
+              x: command.x ?? 160,
+              y: command.y ?? 160,
+              props: {
+                geo: 'rectangle',
+                w: Math.max(120, command.w ?? 220),
+                h: Math.max(70, command.h ?? 90),
+                richText: toRichText(command.text),
+                color: command.color === 'violet' ? 'violet' : command.color === 'green' ? 'green' : 'blue',
+                fill: 'semi',
+                dash: 'solid',
+                size: 'm',
+                align: 'middle',
+                verticalAlign: 'middle',
+                font: 'sans',
+              },
+            });
+          }
+          if (command.type === 'clear') {
+            editor.selectAll();
+            editor.deleteShapes(editor.getSelectedShapeIds());
+          }
+          applied.push(command.id);
+        }
+        if (applied.length) {
+          editor.zoomToFit({ animation: { duration: 250 } });
+          await fetch('/api/local/chat/whiteboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
+            body: JSON.stringify({ sessionId, action: 'ack', commandIds: applied }),
+          });
+        }
+      } catch {
+        // The local bridge is optional; local editor persistence remains primary.
+      }
+    };
+
+    void applyRemoteState();
+    const timer = window.setInterval(() => void applyRemoteState(), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [editor, key, sessionId, storedToken]);
+
+  const sendSelection = async () => {
+    if (!editor) return;
+    const selected = editor.getSelectedShapes();
+    const summary = selected.length
+      ? selected.map((shape) => JSON.stringify({ id: shape.id, type: shape.type, x: shape.x, y: shape.y, props: shape.props })).join('\n')
+      : 'No shapes are selected. Describe the current whiteboard and suggest the next step.';
+    await onSendSelection(`Whiteboard selection from session ${sessionId || 'pending'}:\n${summary}`);
+  };
+
+  const clearBoard = () => {
+    if (!editor) return;
+    editor.selectAll();
+    editor.deleteShapes(editor.getSelectedShapeIds());
+    window.localStorage.removeItem(key);
+  };
+
+  return (
+    <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
+      <header className="tldraw-canvas-head">
+        <div>
+          <span className="eyebrow">Session canvas</span>
+          <h3>TLDrawCanvas</h3>
+          <span className="tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
+            Linked chat: {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
+          </span>
+        </div>
+        <div className="tldraw-canvas-actions">
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection()} title="Send selected shapes to chat" aria-label="Send selected shapes to chat">
+            <Send size={15} />
+          </button>
+          <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear whiteboard" aria-label="Clear whiteboard">
+            <RotateCcw size={15} />
+          </button>
+          <button type="button" className="chat-icon-button" onClick={onClose} title="Close whiteboard" aria-label="Close whiteboard">
+            {expanded ? <Minimize2 size={16} /> : <X size={17} />}
+          </button>
+        </div>
+      </header>
+      <div className="tldraw-canvas-canvas">
+        <Tldraw onMount={handleMount} />
+      </div>
+    </section>
+  );
+}
