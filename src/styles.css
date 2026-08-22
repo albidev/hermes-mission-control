@@ -570,10 +570,9 @@
 
 .tldraw-canvas-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem 0.75rem;
+  gap: 0.75rem;
   min-height: 68px;
   padding: 0.625rem 1rem;
   border-bottom: 1px solid var(--color-border);
@@ -588,8 +587,39 @@
   min-width: 0;
 }
 
-.tldraw-canvas-title > div {
+.tldraw-canvas-heading {
   min-width: 0;
+}
+
+/* Single-row toolbar; scrolls horizontally on narrow screens instead of wrapping. */
+.tldraw-canvas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tldraw-canvas-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.tldraw-canvas-select {
+  height: 36px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.78rem;
+  padding: 0 0.55rem;
+}
+
+.tldraw-canvas-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--color-border, #333);
+  margin: 0 0.15rem;
 }
 
 .tldraw-canvas-head h3 {
@@ -671,19 +701,20 @@
     top: 0;
     z-index: 10;
     padding-top: max(0.625rem, env(safe-area-inset-top));
-    gap: 0.5rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
+  }
+
+  .tldraw-canvas-toolbar {
+    justify-content: space-between;
+    overflow-x: auto;
   }
 
   /* On narrow screens the controls wrap to their own row under the title. */
   .tldraw-canvas-actions {
     flex-basis: 100%;
     justify-content: flex-start;
-  }
-
-  .tldraw-canvas-mode {
-    height: 36px;
-    max-width: none;
-    flex: 1 1 auto;
   }
 
   .tldraw-canvas-linked-session {

@@ -533,30 +533,30 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
             <ArrowLeft size={18} />
           </button>
-          <div>
+          <div className="tldraw-canvas-heading">
             <span className="eyebrow">Session canvas</span>
             <h3>TLDrawCanvas</h3>
             <span className="tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
-              Linked chat: {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
-              {lints.length > 0 ? ` · ⚠ ${lints.length} lint${lints.length === 1 ? '' : 's'}` : ''}
+              {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
+              {lints.length > 0 ? ` · ⚠ ${lints.length}` : ''}
             </span>
           </div>
         </div>
-        <div className="tldraw-canvas-actions">
+        <div className="tldraw-canvas-toolbar">
           <select
-            className="tldraw-canvas-mode"
+            className="tldraw-canvas-select"
             value={agentMode}
             onChange={(event) => void changeAgentMode(event.target.value as AgentMode)}
-            title="Agent mode: shapes how Hermes behaves on this board"
+            title="Agent mode"
             aria-label="Agent mode"
           >
-            <option value="">Mode: free</option>
+            <option value="">Free</option>
             {AGENT_MODES.map((mode) => (
-              <option key={mode.id} value={mode.id}>{`Mode: ${mode.label}`}</option>
+              <option key={mode.id} value={mode.id}>{mode.label}</option>
             ))}
           </select>
           <select
-            className="tldraw-canvas-mode"
+            className="tldraw-canvas-select"
             value=""
             onChange={(event) => {
               const format = event.target.value as 'png' | 'svg' | 'json' | '';
@@ -566,19 +566,20 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
             title="Export board"
             aria-label="Export board"
           >
-            <option value="">Export…</option>
+            <option value="">Export</option>
             <option value="png">PNG</option>
             <option value="svg">SVG</option>
-            <option value="json">JSON snapshot</option>
+            <option value="json">JSON</option>
           </select>
-          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title="Screenshot board and send to chat" aria-label="Screenshot board and send to chat">
-            <Camera size={15} />
+          <span className="tldraw-canvas-sep" />
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title="Screenshot to chat" aria-label="Screenshot to chat">
+            <Camera size={16} />
           </button>
-          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title="Send selected shapes to chat" aria-label="Send selected shapes to chat">
-            <Send size={15} />
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title="Send selection to chat" aria-label="Send selection to chat">
+            <Send size={16} />
           </button>
-          <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear whiteboard" aria-label="Clear whiteboard">
-            <RotateCcw size={15} />
+          <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear board" aria-label="Clear board">
+            <RotateCcw size={16} />
           </button>
         </div>
       </header>
