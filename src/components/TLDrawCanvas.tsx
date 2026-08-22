@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Minimize2, RotateCcw, Send, X } from 'lucide-react';
+import { ArrowLeft, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 
@@ -403,12 +403,17 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
   return (
     <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
       <header className="tldraw-canvas-head">
-        <div>
-          <span className="eyebrow">Session canvas</span>
-          <h3>TLDrawCanvas</h3>
-          <span className="tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
-            Linked chat: {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
-          </span>
+        <div className="tldraw-canvas-title">
+          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
+            <ArrowLeft size={18} />
+          </button>
+          <div>
+            <span className="eyebrow">Session canvas</span>
+            <h3>TLDrawCanvas</h3>
+            <span className="tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
+              Linked chat: {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
+            </span>
+          </div>
         </div>
         <div className="tldraw-canvas-actions">
           <button type="button" className="chat-icon-button" onClick={() => void sendSelection()} title="Send selected shapes to chat" aria-label="Send selected shapes to chat">
@@ -416,9 +421,6 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           </button>
           <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear whiteboard" aria-label="Clear whiteboard">
             <RotateCcw size={15} />
-          </button>
-          <button type="button" className="chat-icon-button" onClick={onClose} title="Close whiteboard" aria-label="Close whiteboard">
-            {expanded ? <Minimize2 size={16} /> : <X size={17} />}
           </button>
         </div>
       </header>

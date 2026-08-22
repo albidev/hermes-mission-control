@@ -659,10 +659,24 @@
     justify-content: center;
   }
 
-  .tldraw-canvas-actions .chat-icon-button:last-child {
+  .tldraw-canvas-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+
+  .tldraw-canvas-back {
+    flex: 0 0 auto;
     background: var(--color-accent);
     color: #fff;
     border-color: var(--color-accent);
+  }
+
+  .tldraw-canvas-actions .chat-icon-button:last-child {
+    background: transparent;
+    color: inherit;
+    border-color: var(--color-border);
   }
 }
 
