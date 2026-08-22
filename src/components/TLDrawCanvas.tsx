@@ -147,6 +147,7 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
           angle?: number;
           style?: unknown;
           value?: unknown;
+          format?: 'json' | 'svg' | 'png';
         }> };
         if (remote.snapshot && editor.getCurrentPageShapes().length === 0) loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
         const commands = remote.commands || [];
@@ -308,12 +309,43 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
           if (command.type === 'toggle_lock' && command.shapeIds?.length) editor.toggleLock(command.shapeIds as never);
           if (command.type === 'set_style' && command.style && command.value) editor.setStyleForSelectedShapes(command.style as never, command.value as never);
           if (command.type === 'set_opacity' && typeof command.value === 'number') editor.setOpacityForSelectedShapes(command.value);
+          if (command.type === 'export_json' || command.type === 'export_svg' || command.type === 'export_png') {
+            const filename = `tldraw-${sessionId}-${Date.now()}`;
+            if (command.type === 'export_json') {
+              const blob = new Blob([JSON.stringify(getSnapshot(editor.store), null, 2)], { type: 'application/json' });
+              const href = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = href;
+              link.download = `${filename}.json`;
+              link.click();
+              URL.revokeObjectURL(href);
+            } else if (command.type === 'export_svg') {
+              const result = await editor.getSvgString(editor.getCurrentPageShapes(), { background: true });
+              if (result) {
+                const blob = new Blob([result.svg], { type: 'image/svg+xml' });
+                const href = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = href;
+                link.download = `${filename}.svg`;
+                link.click();
+                URL.revokeObjectURL(href);
+              }
+            } else {
+              const result = await editor.toImage(editor.getCurrentPageShapes(), { format: 'png', pixelRatio: 2, background: true });
+              const href = URL.createObjectURL(result.blob);
+              const link = document.createElement('a');
+              link.href = href;
+              link.download = `${filename}.png`;
+              link.click();
+              URL.revokeObjectURL(href);
+            }
+          }
 
           if (command.type === 'clear') {
             editor.selectAll();
             editor.deleteShapes(editor.getSelectedShapeIds());
           }
-          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding', 'create_page', 'set_current_page', 'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes', 'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity'].includes(command.type)) {
+          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding', 'create_page', 'set_current_page', 'rename_page', 'delete_page', 'move_shapes_to_page', 'align_shapes', 'distribute_shapes', 'pack_shapes', 'flip_shapes', 'rotate_shapes', 'resize_shape', 'toggle_lock', 'set_style', 'set_opacity', 'export_json', 'export_svg', 'export_png'].includes(command.type)) {
             applied.push(command.id);
           }
         }

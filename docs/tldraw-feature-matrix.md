@@ -65,10 +65,11 @@ Legend:
 
 | Feature | Built-in | Bridge | Status |
 |---|---:|---:|---|
-| Pages | yes | pending explicit commands | Built-in |
+| Pages | yes | `create_page`, `set_current_page`, `rename_page`, `delete_page`, `move_shapes_to_page` | Implemented |
 | Frames / layers | yes | `create_frame` | Implemented |
-| Snapping / alignment / distribution | yes | pending explicit commands | Built-in |
-| Lock / hide / crop / rotate / resize | yes | pending explicit commands | Built-in |
+| Snapping / alignment / distribution | yes | `align_shapes`, `distribute_shapes`, `pack_shapes` | Implemented |
+| Lock / hide / crop / rotate / resize | yes | `toggle_lock`, `flip_shapes`, `rotate_shapes`, `resize_shape` | Partially implemented |
+| Style / opacity | yes | `set_style`, `set_opacity` | Implemented |
 | Session isolation | n/a | session ID | Implemented + verified |
 | Local snapshot | n/a | localStorage | Implemented + verified |
 | Server snapshot | n/a | authenticated bridge | Implemented + verified |
