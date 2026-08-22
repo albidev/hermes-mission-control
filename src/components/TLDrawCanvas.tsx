@@ -125,7 +125,23 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
       try {
         const response = await fetch(`/api/local/chat/whiteboard?sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
-        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{ id: string; type: string; text?: string; x?: number; y?: number; w?: number; h?: number; color?: string }> };
+        const remote = await response.json() as { snapshot?: TLStoreSnapshot; commands?: Array<{
+          id: string;
+          type: string;
+          text?: string;
+          x?: number;
+          y?: number;
+          w?: number;
+          h?: number;
+          color?: string;
+          shapeType?: string;
+          props?: Record<string, unknown>;
+          shapeId?: string;
+          shapeIds?: string[];
+          fromId?: string;
+          toId?: string;
+          bindingProps?: Record<string, unknown>;
+        }> };
         if (remote.snapshot && editor.getCurrentPageShapes().length === 0) loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
         const commands = remote.commands || [];
         const applied: string[] = [];
@@ -226,11 +242,57 @@ export function TLDrawCanvas({ sessionId, sessionTitle, storedToken, onSendSelec
               },
             });
           }
+          if (command.type === 'create_shape' && command.shapeType) {
+            const shapeProps = command.props || {};
+            editor.createShape({
+              id: createShapeId(`agent-shape-${command.id}`),
+              type: command.shapeType as never,
+              x: command.x ?? 160,
+              y: command.y ?? 160,
+              props: shapeProps as never,
+            } as never);
+          }
+          if (command.type === 'update_shape' && command.shapeId && command.props) {
+            editor.updateShape({
+              id: command.shapeId as never,
+              type: command.shapeType as never,
+              props: command.props as never,
+            } as never);
+          }
+          if (command.type === 'delete_shapes' && command.shapeIds?.length) {
+            editor.deleteShapes(command.shapeIds as never);
+          }
+          if (command.type === 'duplicate' && command.shapeIds?.length) {
+            editor.duplicateShapes(command.shapeIds as never);
+          }
+          if (command.type === 'group' && command.shapeIds?.length) {
+            editor.groupShapes(command.shapeIds as never);
+          }
+          if (command.type === 'ungroup' && command.shapeIds?.length) {
+            editor.ungroupShapes(command.shapeIds as never);
+          }
+          if (command.type === 'bring_to_front' && command.shapeIds?.length) {
+            editor.bringToFront(command.shapeIds as never);
+          }
+          if (command.type === 'send_to_back' && command.shapeIds?.length) {
+            editor.sendToBack(command.shapeIds as never);
+          }
+          if (command.type === 'zoom_to_fit') {
+            editor.zoomToFit({ animation: { duration: 250 } });
+          }
+          if (command.type === 'create_binding' && command.fromId && command.toId) {
+            editor.createBinding({
+              type: 'arrow',
+              fromId: command.fromId as never,
+              toId: command.toId as never,
+              props: command.bindingProps || {},
+            } as never);
+          }
           if (command.type === 'clear') {
             editor.selectAll();
             editor.deleteShapes(editor.getSelectedShapeIds());
           }
-          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow'].includes(command.type)) {
+          if (['clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front', 'send_to_back', 'zoom_to_fit', 'create_binding'].includes(command.type)) {
             applied.push(command.id);
           }
         }
