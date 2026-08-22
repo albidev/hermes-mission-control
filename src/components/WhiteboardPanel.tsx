@@ -185,6 +185,7 @@ export function WhiteboardPanel({ sessionId, sessionTitle, storedToken, onSendSe
           applied.push(command.id);
         }
         if (applied.length) {
+          editor.zoomToFit({ animation: { duration: 250 } });
           await fetch('/api/local/chat/whiteboard', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
