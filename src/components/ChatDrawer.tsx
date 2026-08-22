@@ -17,6 +17,7 @@ import {
   FileText,
   KeyRound,
   Loader2,
+  Maximize2,
   MessageSquare,
   Paperclip,
   Pause,
@@ -28,6 +29,7 @@ import {
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatSlashPopover, type ChatSlashPopoverHandle } from './ChatSlashPopover';
+import { WhiteboardPanel } from './WhiteboardPanel';
 import { AttachmentIcon, ChatMessageCard } from './chat-messages';
 import {
   MAX_ATTACHMENTS,
@@ -131,6 +133,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
+  const [isExpanded, setIsExpanded] = useState(false);
   const {
     messages,
     sessionId,
@@ -452,7 +455,10 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
     }
-    if (event.key === 'Escape') onClose();
+    if (event.key === 'Escape') {
+      if (isExpanded) setIsExpanded(false);
+      else onClose();
+    }
   };
 
   const handleDrawerKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -498,7 +504,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     <>
       {open ? <button className="chat-backdrop is-open" type="button" aria-label="Close chat" onClick={onClose} /> : null}
       <aside
-        className={`chat-drawer ${open ? 'is-open' : ''}`}
+        className={`chat-drawer ${open ? 'is-open' : ''} ${isExpanded ? 'is-expanded' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label="Hermes chat"
@@ -532,6 +538,9 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
               <button className="chat-new-button" type="button" onClick={() => void handleNewChat()} disabled={newChatLoading} title="Start a new chat" aria-label="Start a new chat">
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>New</span>
+              </button>
+              <button className="chat-control chat-icon-button" type="button" onClick={() => setIsExpanded((expanded) => !expanded)} title={isExpanded ? 'Close whiteboard' : 'Expand chat with whiteboard'} aria-label={isExpanded ? 'Close whiteboard' : 'Expand chat with whiteboard'}>
+                <Maximize2 size={16} />
               </button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
                 <X size={18} />
@@ -727,6 +736,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
+      {open && isExpanded ? <WhiteboardPanel key={sessionId || 'new'} sessionId={sessionId} expanded={isExpanded} onClose={() => setIsExpanded(false)} /> : null}
     </>
   );
 }
