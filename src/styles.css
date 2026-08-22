@@ -584,6 +584,17 @@
   font-size: 1rem;
 }
 
+.whiteboard-linked-session {
+  display: block;
+  max-width: 32rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 0.18rem;
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+}
+
 .whiteboard-actions {
   display: flex;
   gap: 0.35rem;

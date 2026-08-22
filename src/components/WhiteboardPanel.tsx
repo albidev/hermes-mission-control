@@ -1,43 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Maximize2, Minimize2, RotateCcw, X } from 'lucide-react';
-import { Tldraw, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
+import { Tldraw, getSnapshot, loadSnapshot, type Editor, type TLStoreSnapshot } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 type WhiteboardPanelProps = {
   sessionId: string | null;
+  sessionTitle: string;
   onClose: () => void;
   expanded: boolean;
 };
 
 function storageKey(sessionId: string | null) {
-  return `mission-control:whiteboard:${sessionId || 'new'}`;
+  return `mission-control:whiteboard:v2:${sessionId || 'new'}`;
 }
 
-export function WhiteboardPanel({ sessionId, onClose, expanded }: WhiteboardPanelProps) {
+export function WhiteboardPanel({ sessionId, sessionTitle, onClose, expanded }: WhiteboardPanelProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const key = useMemo(() => storageKey(sessionId), [sessionId]);
 
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
     const raw = window.localStorage.getItem(key);
-    if (!raw) {
-      nextEditor.createShape({
-        id: createShapeId('welcome'),
-        type: 'text',
-        x: 160,
-        y: 140,
-        props: {
-          richText: toRichText('Mission Control × Hermes\nChat → Whiteboard'),
-          color: 'violet',
-          size: 'xl',
-          font: 'sans',
-          textAlign: 'middle',
-          autoSize: false,
-          w: 360,
-        },
-      });
-      return;
-    }
+    if (!raw) return;
     try {
       loadSnapshot(nextEditor.store, JSON.parse(raw) as TLStoreSnapshot);
     } catch {
@@ -70,6 +54,9 @@ export function WhiteboardPanel({ sessionId, onClose, expanded }: WhiteboardPane
         <div>
           <span className="eyebrow">Session canvas</span>
           <h3>Whiteboard</h3>
+          <span className="whiteboard-linked-session" title={sessionId || 'Session is still being created'}>
+            Linked chat: {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
+          </span>
         </div>
         <div className="whiteboard-actions">
           <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear whiteboard" aria-label="Clear whiteboard">
