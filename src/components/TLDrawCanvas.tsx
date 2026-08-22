@@ -156,6 +156,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
         if (remote.snapshot && !remoteHydratedRef.current) {
           remoteHydratedRef.current = true;
           loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
+          editor.zoomToFit({ animation: { duration: 250 } });
         }
         const commands = remote.commands || [];
         const applied: string[] = [];
