@@ -101,17 +101,46 @@ export async function captureScreenshot(
   maxWidthPx = 1280,
   container?: HTMLElement | null,
 ): Promise<BoardContext['screenshot'] | undefined> {
-  // Preferred path: snapshot the real DOM of the canvas container so the
-  // agent sees exactly what the user sees, including selection UI.
+  // Preferred path: composite the real <canvas> elements inside the container.
+  // html-to-image cannot copy canvas pixel data during DOM serialization, so we
+  // draw each canvas onto an offscreen canvas ourselves — this is a true
+  // screenshot of what the user sees (shapes + camera + overlays).
   if (container) {
     try {
       const width = container.clientWidth;
       const height = container.clientHeight;
       if (width > 0 && height > 0) {
         const scale = Math.min(1, maxWidthPx / width);
-        const { default: htmlToImage } = await import('html-to-image');
-        const dataUrl = await htmlToImage.toPng(container, { width, height, pixelRatio: scale });
-        return { dataUrl, width: Math.round(width * scale), height: Math.round(height * scale) };
+        const out = document.createElement('canvas');
+        out.width = Math.round(width * scale);
+        out.height = Math.round(height * scale);
+        const ctx = out.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, out.width, out.height);
+          let drew = false;
+          for (const canvas of Array.from(container.querySelectorAll('canvas'))) {
+            const rect = canvas.getBoundingClientRect();
+            const box = container.getBoundingClientRect();
+            // Skip canvases that are not actually visible in layout flow.
+            if (rect.width < 2 || rect.height < 2) continue;
+            try {
+              ctx.drawImage(
+                canvas,
+                (rect.left - box.left) * scale,
+                (rect.top - box.top) * scale,
+                rect.width * scale,
+                rect.height * scale,
+              );
+              drew = true;
+            } catch {
+              // Tainted canvas — skip this layer.
+            }
+          }
+          if (drew) {
+            return { dataUrl: out.toDataURL('image/png'), width: out.width, height: out.height };
+          }
+        }
       }
     } catch {
       // Fall through to the tldraw-native renderer.
