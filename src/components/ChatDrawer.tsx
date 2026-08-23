@@ -135,10 +135,6 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const [verbTick, setVerbTick] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
-  // Keep the TLDrawCanvas mounted after the first open so its editor state
-  // (shapes + camera) survives open/close without a full re-hydration.
-  const canvasEverOpenedRef = useRef(false);
-  if (isExpanded) canvasEverOpenedRef.current = true;
   const {
     messages,
     sessionId,
@@ -564,7 +560,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>New</span>
               </button>
-              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onClick={() => { if (!canvasEverOpenedRef.current) setIsCanvasLoading(true); setIsExpanded(true); }} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
+              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onClick={() => { setIsCanvasLoading(true); setIsExpanded(true); }} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
                 {isCanvasLoading ? <Loader2 size={16} className="chat-spin" /> : <TldrawMark size={17} />}
               </button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
@@ -761,7 +757,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded || canvasEverOpenedRef.current ? <TLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} /> : null}
+      {open && isExpanded ? <TLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} /> : null}
     </>
   );
 }
