@@ -95,11 +95,29 @@ export function collectBindings(editor: Editor): Array<{ id: string; fromId: str
   return bindings;
 }
 
-/** Capture viewport PNG at a bounded pixel ratio to control payload size. */
+/** Capture the visible canvas as rendered in the DOM, via SVG foreignObject. */
 export async function captureScreenshot(
   editor: Editor,
   maxWidthPx = 1280,
+  container?: HTMLElement | null,
 ): Promise<BoardContext['screenshot'] | undefined> {
+  // Preferred path: snapshot the real DOM of the canvas container so the
+  // agent sees exactly what the user sees, including selection UI.
+  if (container) {
+    try {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      if (width > 0 && height > 0) {
+        const scale = Math.min(1, maxWidthPx / width);
+        const { default: htmlToImage } = await import('html-to-image');
+        const dataUrl = await htmlToImage.toPng(container, { width, height, pixelRatio: scale });
+        return { dataUrl, width: Math.round(width * scale), height: Math.round(height * scale) };
+      }
+    } catch {
+      // Fall through to the tldraw-native renderer.
+    }
+  }
+  // Fallback: render page shapes with tldraw's own exporter.
   try {
     const bounds = editor.getViewportScreenBounds();
     const scale = Math.min(1, maxWidthPx / Math.max(bounds.w, 1));
@@ -110,7 +128,6 @@ export async function captureScreenshot(
       scale,
     } as never);
     if (!result) return undefined;
-    // toImage returns a blob in v5 API variants; normalize to data URL.
     if (result instanceof Blob) {
       const dataUrl = await new Promise<string>((resolve) => {
         const reader = new FileReader();
@@ -134,7 +151,7 @@ export async function collectBoardContext(
   editor: Editor,
   sessionKey: string | null,
   sessionId: string | null,
-  options: { includeScreenshot?: boolean } = {},
+  options: { includeScreenshot?: boolean; container?: HTMLElement | null } = {},
 ): Promise<BoardContext> {
   const vp = editor.getViewportPageBounds();
   const camera = editor.getCamera();
@@ -143,7 +160,7 @@ export async function collectBoardContext(
 
   let screenshot: BoardContext['screenshot'];
   if (options.includeScreenshot !== false) {
-    screenshot = await captureScreenshot(editor);
+    screenshot = await captureScreenshot(editor, 1280, options.container);
   }
 
   return {

@@ -102,6 +102,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
   const [editor, setEditor] = useState<Editor | null>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>('');
   const [lints, setLints] = useState<BoardLint[]>([]);
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
   const remoteHydratedRef = useRef(false);
 
@@ -485,7 +486,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
 
   const sendSelection = async (withScreenshot = false) => {
     if (!editor) return;
-    const context = await collectBoardContext(editor, sessionKey, sessionId, { includeScreenshot: withScreenshot });
+    const context = await collectBoardContext(editor, sessionKey, sessionId, { includeScreenshot: withScreenshot, container: canvasContainerRef.current });
     const lines: string[] = [];
     const fragment = modePromptFragment(agentMode);
     if (fragment) lines.push(fragment);
@@ -598,7 +599,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
           </button>
         </div>
       </header>
-      <div className="tldraw-canvas-canvas">
+      <div className="tldraw-canvas-canvas" ref={canvasContainerRef}>
         <Tldraw onMount={handleMount} />
         {loading ? (
           <div className="tldraw-canvas-loading" role="status">

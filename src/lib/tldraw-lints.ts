@@ -61,8 +61,9 @@ export function lintBoard(editor: Editor): BoardLint[] {
     }
   }
 
-  // Rule 2: overlapping non-connector shapes.
-  const nodes = shapes.filter((s) => s.type !== 'arrow' && s.type !== 'line');
+  // Rule 2: overlapping non-connector shapes. Freehand draw strokes overlap
+  // naturally (that's how drawing works), so they are exempt.
+  const nodes = shapes.filter((s) => s.type !== 'arrow' && s.type !== 'line' && s.type !== 'draw' && s.type !== 'highlight');
   for (let i = 0; i < nodes.length; i += 1) {
     for (let j = i + 1; j < nodes.length; j += 1) {
       const a = boundsById.get(String(nodes[i].id));
@@ -88,7 +89,7 @@ export function lintBoard(editor: Editor): BoardLint[] {
   for (const shape of shapes) {
     const bounds = boundsById.get(String(shape.id));
     if (!bounds) continue;
-    if (shape.type === 'arrow' || shape.type === 'line') continue; // connectors may legitimately be thin
+    if (shape.type === 'arrow' || shape.type === 'line' || shape.type === 'draw' || shape.type === 'highlight') continue; // connectors and freehand strokes may legitimately be thin
     if (bounds.w < MIN_SHAPE_SIZE || bounds.h < MIN_SHAPE_SIZE) {
       lints.push({
         id: `tiny-${shape.id}`,
