@@ -987,6 +987,20 @@
   text-transform: uppercase;
 }
 
+.chat-message-time {
+  margin-left: auto;
+  font-weight: 500;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-message-user .chat-message-time {
+  margin-left: 0.375rem;
+}
+
 .chat-message-user .chat-message-meta {
   justify-content: flex-end;
 }

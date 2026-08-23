@@ -98,7 +98,13 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
               {visualKind === 'assistant' ? <Bot size={12} /> : isReasoning ? <Cpu size={12} /> : visualKind === 'user' ? <MessageSquare size={12} /> : <FileText size={12} />}
             </span>
             <span>{label}</span>
-            {message.status === 'streaming' ? <Loader2 size={12} className="chat-spin" aria-label="Streaming" /> : null}
+            {message.status === 'streaming'
+              ? <Loader2 size={12} className="chat-spin" aria-label="Streaming" />
+              : message.createdAt ? (
+                <time className="chat-message-time" dateTime={new Date(message.createdAt).toISOString()}>
+                  {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </time>
+              ) : null}
           </div>
           {message.attachments?.length ? (
             <div className="chat-message-attachments">
