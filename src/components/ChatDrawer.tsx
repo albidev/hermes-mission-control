@@ -3,7 +3,9 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -29,7 +31,7 @@ import {
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatSlashPopover, type ChatSlashPopoverHandle } from './ChatSlashPopover';
-import { TLDrawCanvas, TldrawMark, type CanvasScreenshotAttachment } from './TLDrawCanvas';
+import type { CanvasScreenshotAttachment } from './TLDrawCanvas';
 import { AttachmentIcon, ChatMessageCard } from './chat-messages';
 import {
   MAX_ATTACHMENTS,
@@ -85,6 +87,8 @@ function estimateContextWindow(model: string | null | undefined): number {
   return DEFAULT_CONTEXT_WINDOW;
 }
 
+const LazyTLDrawCanvas = lazy(() => import('./TLDrawCanvas').then(({ TLDrawCanvas }) => ({ default: TLDrawCanvas })));
+
 const TUI_VERBS = [
   'pondering',
   'contemplating',
@@ -102,6 +106,10 @@ const TUI_VERBS = [
   'formulating',
   'brainstorming',
 ];
+
+function TldrawMark({ size = 16 }: { size?: number }) {
+  return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
+}
 
 function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewMessage }) {
   const isUser = message.role === 'user';
@@ -130,6 +138,8 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
   const nearBottomRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
+  const scrollFrameRef = useRef<number | null>(null);
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
@@ -259,12 +269,45 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     const el = scrollRef.current;
     if (!el) return;
     const bottom = isNearBottom();
+    if (programmaticScrollRef.current) {
+      // Safari emits intermediate scroll events while a programmatic scroll is
+      // settling. Do not let those transient positions resurrect the FAB.
+      if (bottom) programmaticScrollRef.current = false;
+      else return;
+    }
     nearBottomRef.current = bottom;
     setNearBottom(bottom);
   }, []);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior });
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    programmaticScrollRef.current = true;
+    if (scrollFrameRef.current !== null) window.cancelAnimationFrame(scrollFrameRef.current);
+    const el = scrollRef.current;
+    if (!el) { programmaticScrollRef.current = false; return; }
+    if (behavior === 'auto') {
+      // Sync scroll for immediate responses (FAB, programmatic jumps).
+      // No RAF delay — critical on iOS where every frame counts.
+      scrollFrameRef.current = null;
+      el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
+      programmaticScrollRef.current = false;
+      return;
+    }
+    // 'smooth' is queued via RAF to stay responsive during token streaming.
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const e = scrollRef.current;
+      if (!e) { programmaticScrollRef.current = false; return; }
+      e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' });
+      programmaticScrollRef.current = false;
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+    programmaticScrollRef.current = false;
   }, []);
 
   const renderMessages = () => {
@@ -344,10 +387,9 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     // scrolled up to read earlier content while Hermes streams, we leave them
     // where they are and show the "jump to bottom" FAB instead.
     if (!nearBottomRef.current) return;
-    // While a message is streaming, scroll instantly so the view keeps up with
-    // each token. Smooth scrolling queues animations that lag behind the stream.
-    const streaming = messages.some((m) => m.status === 'streaming');
-    scrollToBottom(streaming ? 'auto' : 'smooth');
+    // Never queue smooth animations while messages are changing. One scroll per
+    // animation frame keeps Safari/iOS responsive during token streaming.
+    scrollToBottom('auto');
   }, [messages, interaction, open, scrollToBottom]);
 
   useEffect(() => {
@@ -452,7 +494,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       // the messages effect also follows once the new message lands.
       nearBottomRef.current = true;
       setNearBottom(true);
-      scrollToBottom('smooth');
+      scrollToBottom('auto');
       for (const attachment of pendingAttachments) {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       }
@@ -601,7 +643,11 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
             <button
               className="chat-scroll-fab"
               type="button"
-              onClick={() => scrollToBottom('smooth')}
+              onClick={() => {
+                nearBottomRef.current = true;
+                setNearBottom(true);
+                scrollToBottom('auto');
+              }}
               aria-label="Scroll to latest message"
               title="Scroll to latest message"
             >
@@ -768,7 +814,11 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded ? (canvasMountReady ? <TLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} /> : (
+      {open && isExpanded ? (canvasMountReady ? (
+        <Suspense fallback={<section className="tldraw-canvas-panel is-expanded" aria-label="TLDrawCanvas loading"><div className="tldraw-canvas-loading" role="status"><Loader2 size={24} className="chat-spin" /><span>Loading TLDrawCanvas…</span></div></section>}>
+          <LazyTLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} />
+        </Suspense>
+      ) : (
         <section className="tldraw-canvas-panel is-expanded" aria-label="TLDrawCanvas loading">
           <div className="tldraw-canvas-loading" role="status">
             <Loader2 size={24} className="chat-spin" />

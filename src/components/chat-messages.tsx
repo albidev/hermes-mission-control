@@ -124,12 +124,20 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
                 <ChevronDown size={14} className="chat-reasoning-chevron" />
               </summary>
               <div className="chat-reasoning-copy">
-                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || 'Working through the request…'}</ReactMarkdown>
+                {message.status === 'streaming' ? (
+                  <div className="chat-streaming-copy">{message.text || 'Working through the request…'}</div>
+                ) : (
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || ''}</ReactMarkdown>
+                )}
               </div>
             </details>
           ) : (
             <div className={`chat-message-body chat-${visualKind}-body`}>
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || (message.status === 'streaming' ? '...' : '')}</ReactMarkdown>
+              {message.status === 'streaming' ? (
+                <div className="chat-streaming-copy">{message.text || '...'}</div>
+              ) : (
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || ''}</ReactMarkdown>
+              )}
             </div>
           )}
         </>

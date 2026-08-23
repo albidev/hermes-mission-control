@@ -946,6 +946,7 @@
   flex-direction: column;
   gap: 0.875rem;
   overscroll-behavior-y: contain;
+  overflow-anchor: none;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1022,12 +1023,16 @@
   overflow-wrap: anywhere;
 }
 
+.chat-streaming-copy {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .chat-message-user .chat-message-body {
   color: white;
   border-color: var(--color-accent);
   background: var(--color-accent);
 }
-
 .chat-message.is-error .chat-message-body {
   color: var(--color-negative);
   border-color: color-mix(in srgb, var(--color-negative) 32%, var(--color-border));
