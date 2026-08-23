@@ -135,6 +135,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const [verbTick, setVerbTick] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
+  const [canvasMountReady, setCanvasMountReady] = useState(false);
   const {
     messages,
     sessionId,
@@ -179,6 +180,15 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   useEffect(() => {
     pendingRef.current = pendingAttachments;
   }, [pendingAttachments]);
+
+  useEffect(() => {
+    if (!isExpanded) {
+      setCanvasMountReady(false);
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => setCanvasMountReady(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [isExpanded]);
 
   const [preview, setPreview] = useState<MissionControlAgentSessionItem | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -517,6 +527,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   }, [submitPrompt]);
   const canvasReady = useCallback(() => setIsCanvasLoading(false), []);
   const canvasClose = useCallback(() => {
+    setCanvasMountReady(false);
     setIsExpanded(false);
     setIsCanvasLoading(false);
   }, []);
@@ -560,7 +571,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>New</span>
               </button>
-              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onClick={() => { setIsCanvasLoading(true); setIsExpanded(true); }} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
+              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onClick={() => { setCanvasMountReady(false); setIsCanvasLoading(true); setIsExpanded(true); }} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
                 {isCanvasLoading ? <Loader2 size={16} className="chat-spin" /> : <TldrawMark size={17} />}
               </button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
@@ -757,7 +768,14 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded ? <TLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} /> : null}
+      {open && isExpanded ? (canvasMountReady ? <TLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} /> : (
+        <section className="tldraw-canvas-panel is-expanded" aria-label="TLDrawCanvas loading">
+          <div className="tldraw-canvas-loading" role="status">
+            <Loader2 size={24} className="chat-spin" />
+            <span>Opening TLDrawCanvas…</span>
+          </div>
+        </section>
+      )) : null}
     </>
   );
 }
