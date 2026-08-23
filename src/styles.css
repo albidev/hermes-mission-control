@@ -2831,6 +2831,9 @@
 }
 
 .chat-tool-section-label span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
   margin-left: auto;
   color: var(--color-text-subtle);
   font-size: 0.58rem;
