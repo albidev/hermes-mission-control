@@ -1,5 +1,7 @@
 # TLDrawCanvas feature matrix
 
+**Tags:** `tldraw` · `whiteboard` · `agentic-ui` · `mission-control` · `chat-bridge`
+
 Scope: Mission Control's session-bound `TLDrawCanvas`.
 
 Legend:

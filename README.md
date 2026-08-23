@@ -8,7 +8,7 @@ Standalone operational dashboard for [Hermes](https://hermes-agent.nousresearch.
 
 Mission Control is a local-first operator dashboard for Hermes. It combines a React/Vite frontend with a small Python telemetry sidecar, so the dashboard can run independently without coupling the open-source UI to Hermes core internals.
 
-**Tags:** `hermes` · `mission-control` · `operations-dashboard` · `telemetry` · `react` · `typescript` · `vite` · `tailwindcss` · `python` · `local-first` · `self-hosted`
+**Tags:** `hermes` · `mission-control` · `tldraw` · `whiteboard` · `agentic-ui` · `operations-dashboard` · `telemetry` · `react` · `typescript` · `vite` · `tailwindcss` · `python` · `local-first` · `self-hosted`
 
 > **Satellite by design.** Mission Control has zero runtime dependency on the Hermes core backend. It talks to a small local telemetry sidecar (Python stdlib + psutil) on port `8765`.
 
@@ -20,6 +20,20 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 - Cron/job visibility and quick actions
 - Responsive layout: side rail on desktop, drawer on mobile
 - Draggable dashboard widgets with persisted layout
+- **Expanded Chat + tldraw Agent Mode**: session-bound whiteboard, authenticated bridge, screenshot-to-chat, agent actions, Mermaid import, board lints, exports, and mobile-safe persistence
+
+## tldraw Agent Mode
+
+Mission Control links the expanded Chat to a tldraw whiteboard using the current stable `sessionKey`. Hermes can read structured board context, receive a PNG screenshot in Chat, and apply validated actions back to the editable canvas through the authenticated local telemetry bridge.
+
+- Session-bound persistence for shapes, pages, camera, and selection
+- Agent modes: `draw`, `review`, `arrange`, `explain`
+- Bridge protocol v2 with feature negotiation and transactional actions
+- Action history surfaced in Chat
+- PNG/SVG/JSON export and Mermaid flowchart import
+- Mobile-safe open feedback and explicit close/unmount to keep iOS input responsive
+
+See the [tldraw feature matrix](docs/tldraw-feature-matrix.md) and the [Mission Control tldraw Agent Mode vault note](https://github.com/albidev/hermes-vault/blob/main/wiki/concepts/mission-control-tldraw-agent-mode.md).
 
 ## Architecture
 
