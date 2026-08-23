@@ -134,6 +134,10 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const [verbTick, setVerbTick] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
+  // Keep the TLDrawCanvas mounted after the first open so its editor state
+  // (shapes + camera) survives open/close without a full re-hydration.
+  const canvasEverOpenedRef = useRef(false);
+  if (isExpanded) canvasEverOpenedRef.current = true;
   const {
     messages,
     sessionId,
@@ -741,7 +745,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded ? <TLDrawCanvas key={`${sessionKey || sessionId || 'new'}:${sessionId || 'pending'}`} sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={(text, canvasAttachments) => submitPrompt(text, (canvasAttachments ?? []).map((a) => ({ id: a.name, kind: a.kind, name: a.name, size: Math.round(a.dataUrl.length * 0.75), mimeType: a.mimeType, dataUrl: a.dataUrl })))} onActionApplied={appendSystemMessage} onReady={() => setIsCanvasLoading(false)} loading={isCanvasLoading} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
+      {open && isExpanded || canvasEverOpenedRef.current ? <TLDrawCanvas key={`${sessionKey || sessionId || 'new'}:${sessionId || 'pending'}`} sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={(text, canvasAttachments) => submitPrompt(text, (canvasAttachments ?? []).map((a) => ({ id: a.name, kind: a.kind, name: a.name, size: Math.round(a.dataUrl.length * 0.75), mimeType: a.mimeType, dataUrl: a.dataUrl })))} onActionApplied={appendSystemMessage} onReady={() => setIsCanvasLoading(false)} loading={isCanvasLoading} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
     </>
   );
 }

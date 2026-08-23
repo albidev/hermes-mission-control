@@ -568,6 +568,14 @@
   box-shadow: 18px 0 42px rgba(0, 0, 0, 0.18);
 }
 
+/* Hidden-but-mounted: keep the editor alive across open/close so the board
+   never resets to a stale snapshot. Visibility + pointer-events keep tldraw
+   from receiving input while closed. */
+.tldraw-canvas-panel:not(.is-expanded) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .tldraw-canvas-head {
   display: flex;
   align-items: center;
