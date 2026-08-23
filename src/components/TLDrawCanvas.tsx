@@ -105,6 +105,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
   const remoteHydratedRef = useRef(false);
+  const publishTimerRef = useRef<number | null>(null);
 
   const changeAgentMode = useCallback(async (mode: AgentMode) => {
     setAgentMode(mode);
@@ -204,22 +205,26 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
     if (!editor) return;
     const publishSnapshot = () => {
       if (sessionId && !remoteHydratedRef.current) return;
-      // Full editor snapshot: document + session (current page, per-page
-      // cameras, selection). This is what makes save/resume pixel-identical.
-      const snapshot = getSnapshot(editor.store);
-      if (sessionId && !window.localStorage.getItem(key) && editor.getCurrentPageShapes().length === 0) return;
-      try {
-        window.localStorage.setItem(key, JSON.stringify(snapshot));
-      } catch {
-        // Persistence is best-effort; the board remains usable if storage is full.
-      }
-      if (sessionId) {
-        void fetch('/api/local/chat/whiteboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
-          body: JSON.stringify({ sessionId, sessionKey, snapshot }),
-        }).catch(() => {});
-      }
+      if (publishTimerRef.current !== null) window.clearTimeout(publishTimerRef.current);
+      publishTimerRef.current = window.setTimeout(() => {
+        publishTimerRef.current = null;
+        // Full editor snapshot: document + session (current page, per-page
+        // cameras, selection). This is what makes save/resume pixel-identical.
+        const snapshot = getSnapshot(editor.store);
+        if (sessionId && !window.localStorage.getItem(key) && editor.getCurrentPageShapes().length === 0) return;
+        try {
+          window.localStorage.setItem(key, JSON.stringify(snapshot));
+        } catch {
+          // Persistence is best-effort; the board remains usable if storage is full.
+        }
+        if (sessionId) {
+          void fetch('/api/local/chat/whiteboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
+            body: JSON.stringify({ sessionId, sessionKey, snapshot }),
+          }).catch(() => {});
+        }
+      }, 300);
     };
     publishSnapshot();
     // Listen to BOTH scopes: 'document' covers shape changes, 'session'
@@ -239,6 +244,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
     const headers = storedToken ? { Authorization: `Bearer ${storedToken}` } : undefined;
 
     const applyRemoteState = async () => {
+      if (!expanded) return;
       try {
         const response = await fetch(`/api/local/chat/whiteboard?sessionKey=${encodeURIComponent(sessionKey || '')}&sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
@@ -482,7 +488,7 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [editor, key, sessionId, sessionKey, storedToken, onActionApplied]);
+  }, [editor, expanded, key, sessionId, sessionKey, storedToken, onActionApplied]);
 
   const sendSelection = async (withScreenshot = false) => {
     if (!editor) return;
