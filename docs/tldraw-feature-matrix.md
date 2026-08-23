@@ -76,17 +76,18 @@ Legend:
 | HMR-safe hydration | n/a | remote-before-empty-sync | Implemented |
 | Resume migration | n/a | stable-key fallback from legacy session ID | Implemented + verified |
 | Geometry recovery | n/a | snapshot sanitizer | Implemented |
-| Command version/feature gating | n/a | pending protocol version | In progress |
+| Command version/feature gating | n/a | protocol v2 + feature map | Implemented + verified |
 
 ## Export and collaboration
 
 | Feature | Built-in | Bridge | Status |
 |---|---:|---:|---|
-| PNG / SVG / JSON export | yes | pending endpoint | Built-in |
-| Clipboard image/text | yes | n/a | Built-in |
-| Send selection to Chat | custom | current session | Implemented |
-| Chat proposal → canvas | custom | command queue | Implemented |
-| Multi-user sync | optional | not enabled | Future integration |
+| PNG / SVG / JSON export | yes | client export menu | Implemented + verified |
+| Screenshot to Chat | custom | authenticated image attachment | Implemented + verified |
+| Send selection to Chat | custom | current session | Implemented + verified |
+| Chat proposal → canvas | custom | command queue | Implemented + verified |
+| Agent modes | custom | persisted `draw` / `review` / `arrange` / `explain` | Implemented + verified |
+| Board lints | custom | context + header badge | Implemented + verified |
 
 ## Verification policy
 
