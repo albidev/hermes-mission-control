@@ -95,81 +95,41 @@ export function collectBindings(editor: Editor): Array<{ id: string; fromId: str
   return bindings;
 }
 
-/** Capture the visible canvas as rendered in the DOM, via SVG foreignObject. */
+/** Screenshot via tldraw's SVG export rendered to a canvas PNG. */
 export async function captureScreenshot(
   editor: Editor,
   maxWidthPx = 1280,
   container?: HTMLElement | null,
 ): Promise<BoardContext['screenshot'] | undefined> {
-  // Preferred path: composite the real <canvas> elements inside the container.
-  // html-to-image cannot copy canvas pixel data during DOM serialization, so we
-  // draw each canvas onto an offscreen canvas ourselves — this is a true
-  // screenshot of what the user sees (shapes + camera + overlays).
-  if (container) {
-    try {
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-      if (width > 0 && height > 0) {
-        const scale = Math.min(1, maxWidthPx / width);
-        const out = document.createElement('canvas');
-        out.width = Math.round(width * scale);
-        out.height = Math.round(height * scale);
-        const ctx = out.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, out.width, out.height);
-          let drew = false;
-          for (const canvas of Array.from(container.querySelectorAll('canvas'))) {
-            const rect = canvas.getBoundingClientRect();
-            const box = container.getBoundingClientRect();
-            // Skip canvases that are not actually visible in layout flow.
-            if (rect.width < 2 || rect.height < 2) continue;
-            try {
-              ctx.drawImage(
-                canvas,
-                (rect.left - box.left) * scale,
-                (rect.top - box.top) * scale,
-                rect.width * scale,
-                rect.height * scale,
-              );
-              drew = true;
-            } catch {
-              // Tainted canvas — skip this layer.
-            }
-          }
-          if (drew) {
-            return { dataUrl: out.toDataURL('image/png'), width: out.width, height: out.height };
-          }
-        }
-      }
-    } catch {
-      // Fall through to the tldraw-native renderer.
-    }
-  }
-  // Fallback: render page shapes with tldraw's own exporter.
+  // Use tldraw's native SVG exporter. Unlike copying the WebGL canvas, this
+  // preserves the actual shapes and camera-independent geometry reliably.
   try {
-    const bounds = editor.getViewportScreenBounds();
-    const scale = Math.min(1, maxWidthPx / Math.max(bounds.w, 1));
-    const result = await editor.toImage([...editor.getCurrentPageShapeIds()], {
-      format: 'png',
-      background: true,
-      padding: 0,
-      scale,
-    } as never);
-    if (!result) return undefined;
-    if (result instanceof Blob) {
-      const dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.readAsDataURL(result);
+    const shapes = editor.getCurrentPageShapes();
+    const result = await editor.getSvgString(shapes, { background: true });
+    if (!result?.svg) return undefined;
+    const svg = result.svg;
+    const width = Number(result.width) || editor.getViewportScreenBounds().w;
+    const height = Number(result.height) || editor.getViewportScreenBounds().h;
+    const scale = Math.min(1, maxWidthPx / Math.max(width, 1));
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('tldraw SVG could not be rasterized'));
+        img.src = url;
       });
-      return { dataUrl, width: Math.round(bounds.w * scale), height: Math.round(bounds.h * scale) };
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height };
+    } finally {
+      URL.revokeObjectURL(url);
     }
-    const src = (result as unknown as { src?: string }).src;
-    if (typeof src === 'string') {
-      return { dataUrl: src, width: Math.round(bounds.w * scale), height: Math.round(bounds.h * scale) };
-    }
-    return undefined;
   } catch {
     return undefined;
   }
