@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { ArrowLeft, Camera, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import { collectBoardContext } from '../lib/tldraw-visual-context';
@@ -98,7 +98,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
   return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
 }
 
-export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
+export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>('');
   const [lints, setLints] = useState<BoardLint[]>([]);
@@ -233,6 +233,19 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
     const disposeDocument = editor.store.listen(publishSnapshot, { scope: 'document' });
     const disposeSession = editor.store.listen(publishSnapshot, { scope: 'session' });
     return () => {
+      if (publishTimerRef.current !== null) {
+        window.clearTimeout(publishTimerRef.current);
+        publishTimerRef.current = null;
+      }
+      // Flush the latest editor state synchronously before the drawer/canvas
+      // is unmounted, so a fast close cannot lose the drawing.
+      if (!sessionId || remoteHydratedRef.current) {
+        try {
+          window.localStorage.setItem(key, JSON.stringify(getSnapshot(editor.store)));
+        } catch {
+          // Best effort; the remote snapshot remains the secondary store.
+        }
+      }
       disposeDocument();
       disposeSession();
     };
@@ -249,6 +262,9 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
         const response = await fetch(`/api/local/chat/whiteboard?sessionKey=${encodeURIComponent(sessionKey || '')}&sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
         const remote = await response.json() as { snapshot?: TLStoreSnapshot & { session?: unknown }; commands?: BridgeCommand[] };
+        // A successful response without a snapshot is a valid empty board. Do
+        // not keep blocking local persistence forever for a new session.
+        if (!remote.snapshot) remoteHydratedRef.current = true;
         if (remote.snapshot && !remoteHydratedRef.current) {
           remoteHydratedRef.current = true;
           loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
@@ -616,4 +632,4 @@ export function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken,
       </div>
     </section>
   );
-}
+});

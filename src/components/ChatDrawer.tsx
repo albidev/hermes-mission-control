@@ -3,6 +3,7 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  memo,
   useCallback,
   useEffect,
   useRef,
@@ -28,7 +29,7 @@ import {
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatSlashPopover, type ChatSlashPopoverHandle } from './ChatSlashPopover';
-import { TLDrawCanvas, TldrawMark } from './TLDrawCanvas';
+import { TLDrawCanvas, TldrawMark, type CanvasScreenshotAttachment } from './TLDrawCanvas';
 import { AttachmentIcon, ChatMessageCard } from './chat-messages';
 import {
   MAX_ATTACHMENTS,
@@ -508,6 +509,21 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
   const secretEnvVar = typeof interactionPayload.env_var === 'string' ? interactionPayload.env_var : '';
   const approvalCommand = typeof interactionPayload.command === 'string' ? interactionPayload.command : '';
   const approvalDescription = typeof interactionPayload.description === 'string' ? interactionPayload.description : '';
+  const canvasSendSelection = useCallback(async (text: string, canvasAttachments: CanvasScreenshotAttachment[] = []) => {
+    return submitPrompt(text, canvasAttachments.map((a) => ({
+      id: a.name,
+      kind: a.kind,
+      name: a.name,
+      size: Math.round(a.dataUrl.length * 0.75),
+      mimeType: a.mimeType,
+      dataUrl: a.dataUrl,
+    })));
+  }, [submitPrompt]);
+  const canvasReady = useCallback(() => setIsCanvasLoading(false), []);
+  const canvasClose = useCallback(() => {
+    setIsExpanded(false);
+    setIsCanvasLoading(false);
+  }, []);
 
   return (
     <>
@@ -745,7 +761,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
           </button>
         </form>
       </aside>
-      {open && isExpanded || canvasEverOpenedRef.current ? <TLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={(text, canvasAttachments) => submitPrompt(text, (canvasAttachments ?? []).map((a) => ({ id: a.name, kind: a.kind, name: a.name, size: Math.round(a.dataUrl.length * 0.75), mimeType: a.mimeType, dataUrl: a.dataUrl })))} onActionApplied={appendSystemMessage} onReady={() => setIsCanvasLoading(false)} loading={isCanvasLoading} expanded={isExpanded} onClose={() => { setIsExpanded(false); setIsCanvasLoading(false); }} /> : null}
+      {open && isExpanded || canvasEverOpenedRef.current ? <TLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} /> : null}
     </>
   );
 }
