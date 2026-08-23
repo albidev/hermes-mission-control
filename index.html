@@ -21,6 +21,8 @@
           root.setAttribute('data-theme', resolved);
           root.style.backgroundColor = bg;
           root.style.colorScheme = resolved;
+          document.body?.style.setProperty('background-color', bg);
+          document.getElementById('root')?.style.setProperty('background-color', bg);
 
           const themeMeta = document.querySelector('meta[name="theme-color"]');
           if (themeMeta) {
@@ -76,13 +78,19 @@
       @keyframes boot-spin { to { transform: rotate(360deg); } }
     </style>
   </head>
-  <body style="background:inherit;">
-    <div id="root">
+  <body style="background:#0f1117;">
+    <div id="root" style="background:#0f1117;">
       <div id="boot-splash">
         <div class="boot-spinner"></div>
         <div class="boot-word">Hermes Mission Control</div>
       </div>
     </div>
+    <script>
+      const bootTheme = document.documentElement.dataset.theme === 'light' ? '#ffffff' : '#0f1117';
+      document.body.style.backgroundColor = bootTheme;
+      document.getElementById('root').style.backgroundColor = bootTheme;
+      document.getElementById('boot-splash').style.backgroundColor = bootTheme;
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

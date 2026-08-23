@@ -49,9 +49,13 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const target = event.notification.data?.url || '/';
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
       for (const client of clients) {
-        if ('focus' in client) return client.navigate(target).then(() => client.focus());
+        if ('focus' in client) {
+          await client.focus();
+          client.postMessage({ type: 'mission-control:notification-click', url: target });
+          return;
+        }
       }
       return self.clients.openWindow(target);
     }),

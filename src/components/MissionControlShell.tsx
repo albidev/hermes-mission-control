@@ -21,6 +21,7 @@ import { ThemeSelector } from './ThemeSelector';
 import { PushToggle } from './PushToggle';
 import { useMissionControl } from '../lib/mission-control-store';
 import { ChatDrawer } from './ChatDrawer';
+import { markChatPresenceRead, useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
 import { Button } from './ui/Button';
 
@@ -28,6 +29,12 @@ export function MissionControlShell() {
   const location = useLocation();
   const navigate = useNavigate();
   useLastRoutePersistence();
+  const presence = useChatPresence();
+  const chatButtonLabel = presence.phase === 'running'
+    ? `Hermes · ${presence.verb || 'working'}`
+    : presence.phase === 'waiting'
+      ? 'Hermes needs you'
+      : 'Chat';
   const {
     authRequired,
     authError,
@@ -88,6 +95,18 @@ export function MissionControlShell() {
   useEffect(() => {
     setSideOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    const handleNotificationClick = (event: Event) => {
+      const url = (event as CustomEvent<{ url?: string }>).detail?.url;
+      if (typeof url !== 'string') return;
+      const target = new URL(url, window.location.origin);
+      navigate(`${target.pathname}${target.search}${target.hash}`);
+    };
+    window.addEventListener('mission-control:notification-click', handleNotificationClick);
+    return () => window.removeEventListener('mission-control:notification-click', handleNotificationClick);
+  }, [navigate]);
+
 
   useEffect(() => {
     if (!sideOpen) return;
@@ -254,14 +273,16 @@ export function MissionControlShell() {
                 ref={chatButtonRef}
                 variant="secondary"
                 size="md"
-                icon={<MessageSquare size={16} aria-hidden />}
-                className="chat-open-button"
+                icon={<span className={`chat-presence-dot is-${presence.phase}`} aria-hidden><MessageSquare size={16} /></span>}
+                className={`chat-open-button chat-presence-button is-${presence.phase}`}
                 type="button"
-                onClick={() => setChatOpen(true)}
-                aria-label="Open Hermes chat"
+                onClick={() => { markChatPresenceRead(); setChatOpen(true); }}
+                aria-label={presence.preview ? `${chatButtonLabel}: ${presence.preview}` : chatButtonLabel}
                 aria-expanded={chatOpen}
+                title={presence.preview || chatButtonLabel}
               >
-                Chat
+                <span>{chatButtonLabel}</span>
+                {presence.unreadCount > 0 ? <span className="chat-unread-badge">{presence.unreadCount > 9 ? '9+' : presence.unreadCount}</span> : null}
               </Button>
             </div>
           </header>

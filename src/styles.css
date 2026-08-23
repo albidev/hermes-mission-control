@@ -2,6 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Runtime recovery surface for iOS foreground-resume failures. */
+.app-error-screen {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.app-error-card {
+  display: grid;
+  gap: 0.75rem;
+  width: min(28rem, 100%);
+  padding: 1.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+}
+
+.app-error-card span {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.app-error-card button {
+  justify-self: start;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: white;
+  font-weight: 700;
+}
+
 /* ============================================
    Theme Tokens — CSS Variables
    ============================================ */
@@ -501,6 +538,58 @@
   font-size: 0.875rem;
 }
 
+.chat-presence-button {
+  gap: 0.45rem;
+}
+
+.chat-presence-button.is-running {
+  border-color: color-mix(in srgb, var(--color-accent) 65%, var(--color-border));
+  color: var(--color-accent);
+}
+
+.chat-presence-button.is-waiting,
+.chat-presence-button.is-unread {
+  border-color: color-mix(in srgb, var(--color-warning) 65%, var(--color-border));
+  color: var(--color-warning);
+}
+
+.chat-presence-dot {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+
+.chat-presence-dot.is-running::before {
+  content: '';
+  position: absolute;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin: -0.7rem 0 0 0.7rem;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 0.15rem color-mix(in srgb, var(--color-accent) 20%, transparent);
+  animation: chat-presence-pulse 1.4s ease-out infinite;
+}
+
+.chat-unread-badge {
+  display: inline-grid;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  place-items: center;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--color-warning);
+  color: #111;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+@keyframes chat-presence-pulse {
+  0% { transform: scale(0.8); opacity: 0.9; }
+  70%, 100% { transform: scale(1.7); opacity: 0; }
+}
+
 .chat-open-button {
   min-height: 36px;
   border-radius: var(--radius-md);
@@ -535,7 +624,9 @@
   border-left: 1px solid var(--color-border);
   background: var(--color-surface-raised);
   box-shadow: -18px 0 42px rgba(0, 0, 0, 0.24);
-  transform: translateX(105%);
+  contain: paint;
+  will-change: transform;
+  transform: translate3d(105%, 0, 0);
   visibility: hidden;
   transition: transform 220ms ease;
 }
@@ -564,6 +655,8 @@
   flex-direction: column;
   overflow: hidden;
   border-left: 1px solid var(--color-border);
+  isolation: isolate;
+  contain: paint;
   background: var(--color-surface-raised);
   box-shadow: 18px 0 42px rgba(0, 0, 0, 0.18);
 }
@@ -689,6 +782,14 @@
 }
 
 @media (max-width: 800px) {
+  .chat-drawer {
+    transition: none;
+  }
+
+  .chat-backdrop {
+    transition: none;
+  }
+
   .chat-drawer.is-expanded {
     width: 100vw;
     right: 0;

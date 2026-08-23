@@ -1,8 +1,11 @@
 import {
+  Component,
   type ClipboardEvent,
   type DragEvent,
   type FormEvent,
+  type ErrorInfo,
   type KeyboardEvent,
+  type ReactNode,
   lazy,
   memo,
   Suspense,
@@ -12,6 +15,7 @@ import {
   useState,
 } from 'react';
 import {
+  ArrowLeft,
   Bot,
   Check,
   ChevronDown,
@@ -43,6 +47,7 @@ import {
   useGatewayChat,
   type PendingAttachment,
 } from '../lib/chat-gateway';
+import { markChatPresenceRead } from '../lib/chat-presence';
 import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';
 import {
   loadMissionControlSessionPreview,
@@ -89,6 +94,52 @@ function estimateContextWindow(model: string | null | undefined): number {
 
 const LazyTLDrawCanvas = lazy(() => import('./TLDrawCanvas').then(({ TLDrawCanvas }) => ({ default: TLDrawCanvas })));
 
+function TLDrawLoadingShell({ onClose, error, onRetry }: { onClose: () => void; error?: boolean; onRetry?: () => void }) {
+  return (
+    <section className="tldraw-canvas-panel is-expanded" aria-label={error ? 'TLDrawCanvas unavailable' : 'TLDrawCanvas loading'}>
+      <header className="tldraw-canvas-head">
+        <div className="tldraw-canvas-title">
+          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
+            <ArrowLeft size={18} />
+          </button>
+          <div>
+            <span className="eyebrow">Session canvas</span>
+            <h3>TLDrawCanvas</h3>
+            <span className="tldraw-canvas-linked-session">{error ? 'Canvas unavailable' : 'Preparing workspace…'}</span>
+          </div>
+        </div>
+      </header>
+      <div className="tldraw-canvas-loading" role={error ? 'alert' : 'status'}>
+        {error ? <XCircle size={24} aria-hidden /> : <Loader2 size={24} className="chat-spin" />}
+        <strong>{error ? 'Unable to load TLDrawCanvas' : 'Opening TLDrawCanvas…'}</strong>
+        <span>{error ? 'Check the connection and try again.' : 'Preparing the editable workspace.'}</span>
+        {error && onRetry ? <button type="button" className="chat-control" onClick={onRetry}>Retry</button> : null}
+      </div>
+    </section>
+  );
+}
+
+class TLDrawErrorBoundary extends Component<{
+  children: ReactNode;
+  onClose: () => void;
+  onRetry: () => void;
+}, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    console.error('[TLDrawCanvas] failed to load:', error);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return <TLDrawLoadingShell onClose={this.props.onClose} error onRetry={this.props.onRetry} />;
+  }
+}
+
 const TUI_VERBS = [
   'pondering',
   'contemplating',
@@ -125,7 +176,7 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
   );
 }
 
-export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
+export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -275,9 +326,14 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
       if (bottom) programmaticScrollRef.current = false;
       else return;
     }
+    if (bottom && open) {
+      const assistantCount = messages.filter((message) => message.role === 'assistant' && message.status !== 'streaming').length;
+      markChatPresenceRead(sessionKey, assistantCount);
+      // Reaching the bottom is the read acknowledgement.
+    }
     nearBottomRef.current = bottom;
     setNearBottom(bottom);
-  }, []);
+  }, [messages, open, sessionKey]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     programmaticScrollRef.current = true;
@@ -568,6 +624,13 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
     })));
   }, [submitPrompt]);
   const canvasReady = useCallback(() => setIsCanvasLoading(false), []);
+  const canvasRetry = useCallback(() => window.location.reload(), []);
+  const openCanvas = useCallback(() => {
+    setCanvasMountReady(false);
+    setIsCanvasLoading(true);
+    setIsExpanded(true);
+  }, []);
+
   const canvasClose = useCallback(() => {
     setCanvasMountReady(false);
     setIsExpanded(false);
@@ -613,7 +676,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>New</span>
               </button>
-              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onClick={() => { setCanvasMountReady(false); setIsCanvasLoading(true); setIsExpanded(true); }} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
+              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onPointerDown={openCanvas} onClick={openCanvas} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
                 {isCanvasLoading ? <Loader2 size={16} className="chat-spin" /> : <TldrawMark size={17} />}
               </button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
@@ -815,17 +878,12 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
         </form>
       </aside>
       {open && isExpanded ? (canvasMountReady ? (
-        <Suspense fallback={<section className="tldraw-canvas-panel is-expanded" aria-label="TLDrawCanvas loading"><div className="tldraw-canvas-loading" role="status"><Loader2 size={24} className="chat-spin" /><span>Loading TLDrawCanvas…</span></div></section>}>
-          <LazyTLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} />
-        </Suspense>
-      ) : (
-        <section className="tldraw-canvas-panel is-expanded" aria-label="TLDrawCanvas loading">
-          <div className="tldraw-canvas-loading" role="status">
-            <Loader2 size={24} className="chat-spin" />
-            <span>Opening TLDrawCanvas…</span>
-          </div>
-        </section>
-      )) : null}
+        <TLDrawErrorBoundary onClose={canvasClose} onRetry={canvasRetry}>
+          <Suspense fallback={<TLDrawLoadingShell onClose={canvasClose} />}>
+            <LazyTLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} />
+          </Suspense>
+        </TLDrawErrorBoundary>
+      ) : <TLDrawLoadingShell onClose={canvasClose} />) : null}
     </>
   );
-}
+});

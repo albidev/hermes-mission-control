@@ -41,6 +41,7 @@ import {
   type GatewayInteractionRequest,
 } from './chat-protocol';
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
+import { getChatReadState, markChatPresenceRead, publishChatPresence } from './chat-presence';
 
 type ConnectionState = 'idle' | 'ticket' | 'connecting' | 'connected' | 'reconnecting' | 'error';
 
@@ -266,6 +267,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const reconnectTimerRef = useRef<number | null>(null);
   const activityTimerRef = useRef<number | null>(null);
   const readyTimerRef = useRef<number | null>(null);
+  const presenceTimerRef = useRef<number | null>(null);
   const sessionIdRef = useRef(sessionId);
   const sessionKeyRef = useRef(sessionKey);
   const interactionRef = useRef(interaction);
@@ -310,7 +312,33 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     syncLastChatToServer(sessionId, sessionKey, modelIdentity, storedToken);
   }, [messages, modelIdentity, sessionId, sessionKey]);
 
-  // Discord-style cross-device landing: when this device has no current chat
+  useEffect(() => {
+    if (open) {
+      markChatPresenceRead(sessionKey);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (presenceTimerRef.current !== null) window.clearTimeout(presenceTimerRef.current);
+    presenceTimerRef.current = window.setTimeout(() => {
+      const readState = getChatReadState();
+      const assistantCount = messages.filter((message) => message.role === 'assistant' && message.status !== 'streaming').length;
+      const unreadCount = open || readState.sessionKey !== sessionKey
+        ? (open ? 0 : assistantCount)
+        : Math.max(0, assistantCount - readState.assistantCount);
+      const preview = [...messages].reverse().find((message) => message.role === 'assistant' && message.text)?.text?.replace(/\s+/g, ' ').slice(0, 120) || null;
+      const phase = interaction ? 'waiting' : running ? 'running' : !open && unreadCount > 0 ? 'unread' : 'idle';
+      publishChatPresence({ sessionKey, sessionTitle, phase, verb: activity?.label || null, preview, unreadCount });
+      presenceTimerRef.current = null;
+    }, 120);
+    return () => {
+      if (presenceTimerRef.current !== null) {
+        window.clearTimeout(presenceTimerRef.current);
+        presenceTimerRef.current = null;
+      }
+    };
+  }, [activity, interaction, messages, open, running, sessionKey, sessionTitle]);
+
   // (fresh browser) or its local copy is older than the server's last active
   // session, adopt the server's pointer so desktop and mobile open the SAME
   // conversation. The transcript itself is rehydrated by the resume flow.
