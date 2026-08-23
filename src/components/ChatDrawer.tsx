@@ -548,7 +548,7 @@ export function ChatDrawer({ open, storedToken, initialSessionId, onClose }: Cha
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>New</span>
               </button>
-              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onClick={() => { setIsCanvasLoading(true); setIsExpanded(true); }} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
+              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onClick={() => { if (!canvasEverOpenedRef.current) setIsCanvasLoading(true); setIsExpanded(true); }} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
                 {isCanvasLoading ? <Loader2 size={16} className="chat-spin" /> : <TldrawMark size={17} />}
               </button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
