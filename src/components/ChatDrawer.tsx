@@ -879,7 +879,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           </span>
           <span className="chat-status-line-separator">|</span>
           <span className="chat-status-line-reasoning">
-            reasoning: {modelIdentity?.reasoningEffort || '—'}
+            {modelIdentity?.reasoningEffort || '—'}
           </span>
           <span className="chat-status-line-separator">|</span>
           <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} context tokens`}>
