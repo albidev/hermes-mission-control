@@ -569,6 +569,8 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
 
   const exportBoard = async (format: 'png' | 'svg' | 'json') => {
     if (!editor) return;
+    const label = format.toUpperCase();
+    if (!window.confirm(`Export board as ${label}? The file will be downloaded immediately.`)) return;
     const filename = `tldraw-${sessionId || sessionKey || 'board'}-${Date.now()}`;
     if (format === 'json') {
       const blob = new Blob([JSON.stringify(getSnapshot(editor.store), null, 2)], { type: 'application/json' });
