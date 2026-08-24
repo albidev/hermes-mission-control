@@ -368,9 +368,10 @@ def _build_session_item(
 def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = None, offset: int = 0, session_id: str | None = None) -> list[dict[str, Any]]:
     index_map = _read_gateway_sessions_index()
     # _iter_db_session_ids already returns ids ordered by last_active (recency).
-    # Preserve that order and append any index-only sessions (not in the DB) at
-    # the end, still by their index updated_at. This gives ONE stable ordering,
-    # so offset/limit produce contiguous pages with no holes or duplicates.
+    # Preserve that order, but put index-only sessions first. Those entries are
+    # normally live gateway sessions that have not reached SessionDB yet; if we
+    # append them after a large DB history, a small first page hides the active
+    # session entirely.
     db_ids = _iter_db_session_ids()
     db_id_set = set(db_ids)
     index_only_ids = [
@@ -381,7 +382,7 @@ def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = 
         key=lambda sid: (_parse_timestamp((index_map.get(sid) or {}).get("updated_at")) or 0),
         reverse=True,
     )
-    ordered_ids = db_ids + index_only_ids
+    ordered_ids = index_only_ids + db_ids
     if session_id:
         # Narrow to a single session for the chat drawer preview. Keep the
         # recency ordering contract; the id either exists or yields nothing.
