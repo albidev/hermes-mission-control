@@ -245,11 +245,25 @@ export function isResponseFor(response: JsonRpcResponse, id: string): boolean {
   return String(response.id ?? '') === id;
 }
 
+const SYSTEM_NOTIFICATION_PREFIXES = [
+  '[IMPORTANT:',
+  '[SYSTEM:',
+  '[System note:',
+  '[ASYNC DELEGATION',
+  '[BACKGROUND PROCESS',
+] as const;
+
+export function isSystemNotification(text: string): boolean {
+  const trimmed = text.trim();
+  return SYSTEM_NOTIFICATION_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
 export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = Date.now()): ChatMessage[] {
   const normalized: ChatMessage[] = [];
   messages.forEach((message, index) => {
-    const role = safeRole(message.role);
+    const sourceRole = safeRole(message.role);
     const rawText = textFromContent(message.text) || textFromContent(message.content);
+    const role = sourceRole === 'user' && isSystemNotification(rawText) ? 'system' : sourceRole;
     const displayKind = stringValue(message.display_kind);
     if (displayKind === 'hidden') return;
 

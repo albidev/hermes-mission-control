@@ -11,6 +11,7 @@ import {
   extractSessionModel,
   eventActivity,
   isResponseFor,
+  isSystemNotification,
   nextReconnectDelay,
   normalizeTranscript,
   parseCommandDispatch,
@@ -128,15 +129,19 @@ assertDeepEqual(extractInteractionRequest({
 assertEqual(extractInteractionRequest({ type: 'message.delta', payload: {} }), null);
 assertDeepEqual(extractTranscript({ messages: [{ role: 'user', text: 'hi' }, null] }), [{ role: 'user', text: 'hi' }]);
 
+assertEqual(isSystemNotification('[IMPORTANT: Background process proc_123 matched watch pattern "ready in"].'), true);
+assertEqual(isSystemNotification('A normal user message'), false);
 const restored = normalizeTranscript([
+  { role: 'user', text: '[IMPORTANT: Background process proc_123 matched watch pattern "ready in"].' },
   { role: 'user', text: 'Question' },
   { role: 'assistant', text: 'Answer' },
   { role: 'assistant', content: [{ type: 'text', text: 'Block one' }, { type: 'text', text: 'Block two' }] },
 ], 1000);
-assertEqual(restored.length, 3);
-assertEqual(restored[0].role, 'user');
-assertEqual(restored[1].text, 'Answer');
-assertEqual(restored[2].text, 'Block one\nBlock two');
+assertEqual(restored.length, 4);
+assertEqual(restored[0].role, 'system');
+assertEqual(restored[1].role, 'user');
+assertEqual(restored[2].text, 'Answer');
+assertEqual(restored[3].text, 'Block one\nBlock two');
 const semanticTranscript = normalizeTranscript([
   { role: 'assistant', text: 'Answer', reasoning: 'Why this answer is safe.' },
   { role: 'tool', name: 'shell', context: 'pwd' },
