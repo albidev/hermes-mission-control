@@ -40,6 +40,8 @@ type BridgeCommand = {
 };
 
 /** Commands this client build knows how to apply. Must stay in sync with applyBridgeCommand. */
+const PNG_EXPORT_PADDING = 32;
+
 const SUPPORTED_COMMANDS = new Set([
   'clear', 'create_text', 'create_line', 'create_box', 'create_frame', 'create_arrow', 'create_shape',
   'move_shape', 'update_shape', 'delete_shapes', 'duplicate', 'group', 'ungroup', 'bring_to_front',
@@ -461,7 +463,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
                 URL.revokeObjectURL(href);
               }
             } else {
-              const result = await editor.toImage(editor.getCurrentPageShapes(), { format: 'png', pixelRatio: 2, background: true });
+              const result = await editor.toImage(editor.getCurrentPageShapes(), { format: 'png', pixelRatio: 2, padding: PNG_EXPORT_PADDING, background: true });
               const href = URL.createObjectURL(result.blob);
               const link = document.createElement('a');
               link.href = href;
@@ -560,7 +562,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
       if (result) triggerDownload(URL.createObjectURL(new Blob([result.svg], { type: 'image/svg+xml' })), `${filename}.svg`);
       return;
     }
-    const image = await editor.toImage(editor.getCurrentPageShapes(), { format: 'png', pixelRatio: 2, background: true });
+    const image = await editor.toImage(editor.getCurrentPageShapes(), { format: 'png', pixelRatio: 2, padding: PNG_EXPORT_PADDING, background: true });
     triggerDownload(URL.createObjectURL(image.blob), `${filename}.png`);
   };
 
