@@ -166,7 +166,7 @@ const TUI_KAOMOJI = [
 ];
 
 function TldrawMark({ size = 16 }: { size?: number }) {
-  return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
+  return <span className="tldraw-brand-icon" aria-hidden="true" style={{ width: size, height: size }} />;
 }
 
 function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewMessage }) {
@@ -741,7 +741,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                 <span>New</span>
               </button>
               <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onPointerDown={openCanvas} onClick={openCanvas} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
-                {isCanvasLoading ? <Loader2 size={16} className="chat-spin" /> : <TldrawMark size={17} />}
+                {isCanvasLoading ? <Loader2 size={16} className="chat-spin" /> : <TldrawMark size={34} />}
               </button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
                 <X size={18} />
