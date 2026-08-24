@@ -515,6 +515,36 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     if (accepted.length) setPendingAttachments((current) => [...current, ...accepted]);
   }, []);
 
+  const addScreenshotAttachment = useCallback(async (attachment: CanvasScreenshotAttachment): Promise<boolean> => {
+    if (running) {
+      setAttachmentNotice('Attachments are available after the current response finishes.');
+      return false;
+    }
+    if (pendingRef.current.length >= MAX_ATTACHMENTS) {
+      setAttachmentNotice(`You can attach up to ${MAX_ATTACHMENTS} files per message.`);
+      return false;
+    }
+    try {
+      const response = await fetch(attachment.dataUrl);
+      const blob = await response.blob();
+      const file = new File([blob], attachment.name, { type: attachment.mimeType });
+      const pending: PendingAttachment = {
+        id: `${attachment.name}-${Date.now()}`,
+        kind: attachment.kind,
+        name: attachment.name,
+        size: file.size,
+        mimeType: attachment.mimeType,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      };
+      setPendingAttachments((current) => [...current, pending]);
+      setAttachmentNotice('Screenshot added to the message.');
+      return true;
+    } catch {
+      setAttachmentNotice('Could not add the board screenshot.');
+      return false;
+    }
+  }, [running]);
   const removeAttachment = useCallback((id: string) => {
     setPendingAttachments((current) => {
       const target = current.find((attachment) => attachment.id === id);
@@ -667,15 +697,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const approvalCommand = typeof interactionPayload.command === 'string' ? interactionPayload.command : '';
   const approvalDescription = typeof interactionPayload.description === 'string' ? interactionPayload.description : '';
   const canvasSendSelection = useCallback(async (text: string, canvasAttachments: CanvasScreenshotAttachment[] = []) => {
-    return submitPrompt(text, canvasAttachments.map((a) => ({
-      id: a.name,
-      kind: a.kind,
-      name: a.name,
-      size: Math.round(a.dataUrl.length * 0.75),
-      mimeType: a.mimeType,
-      dataUrl: a.dataUrl,
-    })));
-  }, [submitPrompt]);
+    if (canvasAttachments.length > 0) {
+      return addScreenshotAttachment(canvasAttachments[0]);
+    }
+    return submitPrompt(text);
+  }, [addScreenshotAttachment, submitPrompt]);
   const canvasReady = useCallback(() => setIsCanvasLoading(false), []);
   const canvasRetry = useCallback(() => window.location.reload(), []);
   const openCanvas = useCallback(() => {

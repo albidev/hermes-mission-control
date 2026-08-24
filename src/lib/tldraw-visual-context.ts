@@ -95,43 +95,83 @@ export function collectBindings(editor: Editor): Array<{ id: string; fromId: str
   return bindings;
 }
 
-/** Screenshot via tldraw's SVG export rendered to a canvas PNG. */
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('PNG data URL conversion failed'));
+    reader.onerror = () => reject(reader.error ?? new Error('PNG data URL conversion failed'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Screenshot using tldraw's native PNG exporter, with SVG rasterization as fallback. */
 export async function captureScreenshot(
   editor: Editor,
   maxWidthPx = 1280,
   container?: HTMLElement | null,
 ): Promise<BoardContext['screenshot'] | undefined> {
-  // Use tldraw's native SVG exporter. Unlike copying the WebGL canvas, this
-  // preserves the actual shapes and camera-independent geometry reliably.
   try {
     const shapes = editor.getCurrentPageShapes();
-    const result = await editor.getSvgString(shapes, { background: true });
-    if (!result?.svg) return undefined;
-    const svg = result.svg;
-    const width = Number(result.width) || editor.getViewportScreenBounds().w;
-    const height = Number(result.height) || editor.getViewportScreenBounds().h;
-    const scale = Math.min(1, maxWidthPx / Math.max(width, 1));
-    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
+    if (!shapes.length) return undefined;
+
+    const native = await editor.toImage(shapes, {
+      format: 'png',
+      pixelRatio: 2,
+      padding: 32,
+      background: true,
+    });
+    const scale = Math.min(1, maxWidthPx / Math.max(native.width, 1));
+    if (scale === 1) {
+      return { dataUrl: await blobToDataUrl(native.blob), width: native.width, height: native.height };
+    }
+
+    const url = URL.createObjectURL(native.blob);
     try {
       const image = await new Promise<HTMLImageElement>((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('tldraw SVG could not be rasterized'));
+        img.onerror = () => reject(new Error('Native PNG could not be resized'));
         img.src = url;
       });
       const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(width * scale));
-      canvas.height = Math.max(1, Math.round(height * scale));
+      canvas.width = Math.max(1, Math.round(native.width * scale));
+      canvas.height = Math.max(1, Math.round(native.height * scale));
       const ctx = canvas.getContext('2d');
-      if (!ctx) return undefined;
+      if (!ctx) throw new Error('Screenshot canvas is unavailable');
       ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
       return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height };
     } finally {
       URL.revokeObjectURL(url);
     }
-  } catch {
-    return undefined;
+  } catch (nativeError) {
+    // Keep a browser-compatible fallback for older tldraw/browser combinations.
+    try {
+      const result = await editor.getSvgString(editor.getCurrentPageShapes(), { background: true, padding: 32 });
+      if (!result?.svg) return undefined;
+      const url = URL.createObjectURL(new Blob([result.svg], { type: 'image/svg+xml;charset=utf-8' }));
+      try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(nativeError);
+          img.src = url;
+        });
+        const width = Number(result.width) || editor.getViewportScreenBounds().w;
+        const height = Number(result.height) || editor.getViewportScreenBounds().h;
+        const scale = Math.min(1, maxWidthPx / Math.max(width, 1));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return undefined;
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height };
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      return undefined;
+    }
   }
 }
 

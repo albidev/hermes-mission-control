@@ -104,10 +104,17 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   const [editor, setEditor] = useState<Editor | null>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>('');
   const [lints, setLints] = useState<BoardLint[]>([]);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
   const remoteHydratedRef = useRef(false);
   const publishTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = window.setTimeout(() => setToastMessage(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [toastMessage]);
 
   const changeAgentMode = useCallback(async (mode: AgentMode) => {
     setAgentMode(mode);
@@ -125,6 +132,9 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
     onReady();
+    // For an identified session, the remote snapshot is authoritative. Do not
+    // hydrate stale localStorage before the remote state arrives.
+    if (sessionId) return;
     const raw = window.localStorage.getItem(key);
     if (!raw) {
       if (!sessionId) {
@@ -264,9 +274,19 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
         const response = await fetch(`/api/local/chat/whiteboard?sessionKey=${encodeURIComponent(sessionKey || '')}&sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
         const remote = await response.json() as { snapshot?: TLStoreSnapshot & { session?: unknown }; commands?: BridgeCommand[] };
-        // A successful response without a snapshot is a valid empty board. Do
-        // not keep blocking local persistence forever for a new session.
-        if (!remote.snapshot) remoteHydratedRef.current = true;
+        if (!remote.snapshot) {
+          // Server snapshot wins for identified sessions. localStorage is only
+          // a fallback when the server has no board yet.
+          const raw = window.localStorage.getItem(key);
+          if (raw && !remoteHydratedRef.current) {
+            try {
+              loadSnapshot(editor.store, sanitizeSnapshot(JSON.parse(raw) as TLStoreSnapshot));
+            } catch {
+              window.localStorage.removeItem(key);
+            }
+          }
+          remoteHydratedRef.current = true;
+        }
         if (remote.snapshot && !remoteHydratedRef.current) {
           remoteHydratedRef.current = true;
           loadSnapshot(editor.store, sanitizeSnapshot(remote.snapshot));
@@ -509,12 +529,20 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   }, [editor, expanded, key, sessionId, sessionKey, storedToken, onActionApplied]);
 
   const sendSelection = async (withScreenshot = false) => {
-    if (!editor) return;
-    const context = await collectBoardContext(editor, sessionKey, sessionId, { includeScreenshot: withScreenshot, container: canvasContainerRef.current });
-    const lines: string[] = [];
-    const fragment = modePromptFragment(agentMode);
-    if (fragment) lines.push(fragment);
-    lines.push(
+    if (!editor) {
+      setToastMessage('Board is still loading.');
+      return;
+    }
+    setToastMessage(withScreenshot ? 'Capturing board…' : 'Sending board context…');
+    try {
+      const context = await collectBoardContext(editor, sessionKey, sessionId, { includeScreenshot: withScreenshot, container: canvasContainerRef.current });
+      if (withScreenshot && !context.screenshot?.dataUrl) {
+        throw new Error('Screenshot capture returned no image.');
+      }
+      const lines: string[] = [];
+      const fragment = modePromptFragment(agentMode);
+      if (fragment) lines.push(fragment);
+      lines.push(
       `Whiteboard context from session ${sessionId || 'pending'} (sessionKey ${sessionKey || 'pending'}):`,
       `viewport: x=${context.viewport.x} y=${context.viewport.y} w=${context.viewport.w} h=${context.viewport.h} zoom=${context.viewport.zoom}`,
       `shapes on screen: ${context.visibleShapes.length}, offscreen: ${context.offscreenCount}`,
@@ -540,6 +568,10 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
       });
     }
     await onSendSelection(lines.join('\n'), attachments);
+      setToastMessage(withScreenshot ? 'Screenshot added to chat.' : 'Board context sent.');
+    } catch (error) {
+      setToastMessage(error instanceof Error ? 'Could not capture the board.' : 'Board action failed.');
+    }
   };
 
   const clearBoard = () => {
@@ -618,6 +650,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
           <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title="Send selection to chat" aria-label="Send selection to chat">
             <Send size={16} />
           </button>
+          {toastMessage ? <div className="tldraw-canvas-toast" role="status">{toastMessage}</div> : null}
           <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear board" aria-label="Clear board">
             <RotateCcw size={16} />
           </button>
