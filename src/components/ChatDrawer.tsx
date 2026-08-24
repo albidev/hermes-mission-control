@@ -222,6 +222,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   });
   const resizingRef = useRef(false);
   const canvasResizingRef = useRef(false);
+  const canvasResizeFrameRef = useRef<number | null>(null);
+  const pendingCanvasWidthRef = useRef<number | null>(null);
   const {
     messages,
     sessionId,
@@ -701,10 +703,22 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     const onMove = (moveEvent: MouseEvent) => {
       if (!canvasResizingRef.current) return;
       const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 420), Math.min(1000, window.innerWidth - 376));
-      setCanvasWidth(width);
+      pendingCanvasWidthRef.current = width;
+      if (canvasResizeFrameRef.current === null) {
+        canvasResizeFrameRef.current = window.requestAnimationFrame(() => {
+          canvasResizeFrameRef.current = null;
+          const nextWidth = pendingCanvasWidthRef.current;
+          if (nextWidth != null) setCanvasWidth(nextWidth);
+        });
+      }
     };
     const onUp = () => {
       canvasResizingRef.current = false;
+      if (canvasResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(canvasResizeFrameRef.current);
+        canvasResizeFrameRef.current = null;
+      }
+      if (pendingCanvasWidthRef.current != null) setCanvasWidth(pendingCanvasWidthRef.current);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
