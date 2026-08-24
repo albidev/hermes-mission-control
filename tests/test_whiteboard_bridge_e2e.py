@@ -94,12 +94,12 @@ class WhiteboardBridgeE2E(unittest.TestCase):
         with self.assertRaises(Exception):
             self.post({"sessionId": "e2e-mode", "action": "mode", "mode": "party"})
 
-    def test_snapshot_save_and_resume_via_session_key(self) -> None:
+    def test_snapshot_save_and_resume_via_stable_session_id(self) -> None:
         snapshot = {"document": {"store": {"shape:a1": {"type": "geo", "x": 0, "props": {"w": 100, "h": 50}}}}}
-        self.post({"sessionKey": "stable-key-e2e", "sessionId": "runtime-a", "snapshot": snapshot})
-        by_key = self.get("sessionKey=stable-key-e2e&sessionId=runtime-b")
-        self.assertIsNotNone(by_key["snapshot"])
-        self.assertEqual(by_key["snapshot"]["document"]["store"]["shape:a1"]["props"]["w"], 100)
+        self.post({"sessionKey": "runtime-key-1", "sessionId": "runtime-a", "snapshot": snapshot})
+        by_new_key = self.get("sessionKey=runtime-key-2&sessionId=runtime-a")
+        self.assertIsNotNone(by_new_key["snapshot"])
+        self.assertEqual(by_new_key["snapshot"]["document"]["store"]["shape:a1"]["props"]["w"], 100)
 
 
 if __name__ == "__main__":

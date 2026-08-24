@@ -69,7 +69,7 @@ type TLDrawCanvasProps = {
 };
 
 function storageKey(sessionId: string | null, sessionKey: string | null) {
-  return `mission-control:whiteboard:v5:${sessionKey || sessionId || 'new'}`;
+  return `mission-control:whiteboard:v5:${sessionId || sessionKey || 'new'}`;
 }
 
 function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
@@ -107,6 +107,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
+  const boardIdentity = useMemo(() => sessionId || sessionKey || '', [sessionId, sessionKey]);
   const remoteHydratedRef = useRef(false);
   const publishTimerRef = useRef<number | null>(null);
 
@@ -116,6 +117,13 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
 
+  useEffect(() => {
+    remoteHydratedRef.current = false;
+    if (publishTimerRef.current !== null) {
+      window.clearTimeout(publishTimerRef.current);
+      publishTimerRef.current = null;
+    }
+  }, [boardIdentity]);
   const changeAgentMode = useCallback(async (mode: AgentMode) => {
     setAgentMode(mode);
     try {
@@ -178,17 +186,9 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
       } catch {
         // Best-effort migration; server snapshot remains authoritative anyway.
       }
-      // Also push the migrated snapshot to the server so resume picks it up
-      // even on another device or after localStorage eviction.
-      try {
-        void fetch('/api/local/chat/whiteboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
-          body: JSON.stringify({ sessionId, sessionKey, snapshot: JSON.parse(orphan) }),
-        }).catch(() => {});
-      } catch {
-        // Ignore network errors here; polling will re-sync.
-      }
+      // The hydrated remote snapshot remains authoritative. If the server has
+      // no snapshot, the normal hydration path will use this migrated local
+      // fallback and publish it only after hydration completes.
     }
   }, [sessionKey, sessionId, storedToken]);
 
