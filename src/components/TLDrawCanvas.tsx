@@ -4,6 +4,7 @@ import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRi
 import { collectBoardContext } from '../lib/tldraw-visual-context';
 import { AGENT_MODES, modePromptFragment, type AgentMode } from '../lib/tldraw-agent-modes';
 import { formatLints, lintBoard, type BoardLint } from '../lib/tldraw-lints';
+import { useMissionControl } from '../lib/mission-control-store';
 import 'tldraw/tldraw.css';
 
 export type CanvasScreenshotAttachment = {
@@ -101,6 +102,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
 }
 
 export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
+  const { resolvedTheme } = useMissionControl();
   const [editor, setEditor] = useState<Editor | null>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>('');
   const [lints, setLints] = useState<BoardLint[]>([]);
@@ -657,7 +659,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
         </div>
       </header>
       <div className="tldraw-canvas-canvas" ref={canvasContainerRef}>
-        <Tldraw onMount={handleMount} />
+        <Tldraw colorScheme={resolvedTheme} onMount={handleMount} />
         {loading ? (
           <div className="tldraw-canvas-loading" role="status">
             <Loader2 size={24} className="chat-spin" />

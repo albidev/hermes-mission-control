@@ -34,6 +34,7 @@ assertExcludes(styles, '.chat-reasoning-body', 'legacy reasoning body styles are
 assertExcludes(styles, '.chat-status-line-right', 'legacy status right rail is removed');
 assertExcludes(styles, '.chat-attach {', 'legacy attachment selector is removed');
 
+assertIncludes(tldraw, '<Tldraw colorScheme={resolvedTheme}', 'tldraw follows Mission Control theme');
 assertIncludes(tldraw, 'remoteHydratedRef.current = false;', 'board identity changes reset remote hydration gate');
 assertIncludes(tldraw, 'Server snapshot wins for identified sessions.', 'remote snapshot is authoritative');
 assertExcludes(tldraw, 'snapshot: JSON.parse(orphan)', 'legacy local board migration cannot overwrite the server snapshot');
