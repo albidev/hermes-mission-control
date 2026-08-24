@@ -871,21 +871,12 @@
   background: var(--color-surface-sunken);
 }
 
-.chat-head-main,
-.chat-head-meta {
+.chat-head-main {
   display: flex;
   align-items: center;
   min-width: 0;
   gap: 0.75rem;
-}
-
-.chat-head-main {
   justify-content: space-between;
-}
-
-.chat-head-meta {
-  justify-content: space-between;
-  gap: 0.5rem;
 }
 
 .chat-title {
@@ -1488,33 +1479,6 @@
   white-space: nowrap;
 }
 
-.chat-activity {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1rem;
-  border-top: 1px solid var(--color-border-subtle);
-  color: var(--color-text-muted);
-  background: color-mix(in srgb, var(--color-surface) 88%, var(--color-accent) 12%);
-  font-size: 0.75rem;
-}
-
-.chat-activity strong {
-  color: var(--color-text);
-  font-size: 0.75rem;
-}
-
-.chat-activity span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-activity.is-error {
-  color: var(--color-negative);
-}
-
 .chat-interaction {
   display: flex;
   flex-direction: column;
@@ -1740,10 +1704,6 @@
 
 .chat-file-input {
   display: none;
-}
-
-.chat-attach {
-  color: var(--color-accent);
 }
 
 @media (max-width: 480px) {
@@ -2682,11 +2642,6 @@
   background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
 }
 
-.chat-reasoning-body {
-  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--color-border));
-  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-warning) 70%, transparent), 0 8px 22px rgba(0, 0, 0, 0.07);
-}
 
 .chat-message-tool {
   width: min(96%, 42rem);
@@ -3598,13 +3553,6 @@
   50% { opacity: 0.45; }
 }
 
-.chat-status-line-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex: 0 0 auto;
-}
-
 .chat-status-line-separator {
   color: var(--color-border);
   user-select: none;
@@ -3779,10 +3727,6 @@
 
 .chat-composer-action.chat-stop {
   color: var(--color-warning);
-}
-
-.chat-attach {
-  color: var(--color-text-muted);
 }
 
 .chat-send:not(:disabled) {

@@ -27,6 +27,11 @@ assertIncludes(styles, '--chat-control-size: 44px;', 'chat control token');
 assertIncludes(styles, 'height: 100dvh;', 'mobile viewport contract');
 assertIncludes(styles, 'min-width: var(--chat-control-size);', 'controls keep a usable minimum width');
 assertIncludes(styles, 'padding-bottom: max(0.65rem, env(safe-area-inset-bottom));', 'composer respects iPhone safe area');
+assertExcludes(styles, '.chat-activity {', 'legacy activity strip is removed');
+assertExcludes(styles, '.chat-head-meta', 'legacy metadata row styles are removed');
+assertExcludes(styles, '.chat-reasoning-body', 'legacy reasoning body styles are removed');
+assertExcludes(styles, '.chat-status-line-right', 'legacy status right rail is removed');
+assertExcludes(styles, '.chat-attach {', 'legacy attachment selector is removed');
 
 assertIncludes(styles, '--control-height: 44px;', 'global button control token');
 assertIncludes(styles, '--touch-target: 44px;', 'global touch target token');
