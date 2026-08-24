@@ -381,6 +381,16 @@ def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool =
     return hmac.compare_digest(candidate, expected)
 
 
+def _read_only_mode() -> bool:
+    """Disable every mutating HTTP method for contained deployments."""
+    return (os.getenv("MISSION_CONTROL_READ_ONLY") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 _KNOWLEDGE_CORE_FILES = {"SOUL.md", "USER.md", "AGENTS.md"}
 _KNOWLEDGE_EXCLUDED_FILENAMES = {"IDENTITY.md"}
 _KNOWLEDGE_SKIPPED_DIRS = {".git", ".obsidian", ".agents", "node_modules", "dist", "build", ".trash", "__pycache__"}
@@ -1438,6 +1448,18 @@ class Handler(BaseHTTPRequestHandler):
             extra_headers={"WWW-Authenticate": 'Bearer realm="Mission Control"'},
         )
 
+    def _reject_mutation_in_read_only_mode(self) -> bool:
+        if not _read_only_mode():
+            return False
+        self._json(
+            403,
+            {
+                "error": "read_only_mode",
+                "detail": "Mission Control mutations are disabled for this deployment.",
+            },
+        )
+        return True
+
     def _stream_trace(self, session_id: str | None, limit: int, compact: bool, interval: float) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -1687,6 +1709,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not_found", "path": self.path})
 
     def do_PUT(self) -> None:  # noqa: N802
+        if self._reject_mutation_in_read_only_mode():
+            return
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == '/api/local/config':
             if not _is_authorized(self):
@@ -1734,6 +1758,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {'error': 'not_found', 'path': self.path})
 
     def do_POST(self) -> None:  # noqa: N802
+        if self._reject_mutation_in_read_only_mode():
+            return
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == '/api/local/gateway/restart':
             if not _is_authorized(self):
@@ -1980,6 +2006,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {'error': 'not_found', 'path': self.path})
 
     def do_DELETE(self) -> None:  # noqa: N802
+        if self._reject_mutation_in_read_only_mode():
+            return
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == '/api/local/push/subscriptions':
             if not _is_authorized(self):
