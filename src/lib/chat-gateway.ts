@@ -1,8 +1,4 @@
 import {
-  type ClipboardEvent,
-  type DragEvent,
-  type FormEvent,
-  type KeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -12,7 +8,6 @@ import {
 import {
   applyGatewayEvent,
   attachmentRpcMethod,
-  classifyAttachment,
   createRpcRequest,
   eventActivity,
   extractInflightAssistant,
@@ -30,7 +25,6 @@ import {
   normalizeTranscript,
   parseGatewayFrame,
   shouldCloseBackendSessionForNewChat,
-  type AttachmentKind,
   type ChatActivity,
   type ChatAttachmentSummary,
   type ChatAttachmentUpload,

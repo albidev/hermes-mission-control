@@ -19,9 +19,7 @@ import {
   Bot,
   Check,
   ChevronDown,
-  Circle,
   Cpu,
-  FileText,
   KeyRound,
   Loader2,
   MessageSquare,
@@ -40,14 +38,13 @@ import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
   classifyAttachment,
-  formatBytes,
   interactionTitle,
   readFileAsDataUrl,
   useGatewayChat,
   type PendingAttachment,
 } from '../lib/chat-gateway';
 import { markChatPresenceRead } from '../lib/chat-presence';
-import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';
+import { type ChatAttachmentUpload } from '../lib/chat-protocol';
 import {
   loadMissionControlSessionPreview,
   type MissionControlAgentSessionItem,
