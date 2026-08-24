@@ -35,9 +35,11 @@ class LocalTelemetryAuthTests(unittest.TestCase):
         self._env_backup = {
             "MISSION_CONTROL_TOKEN": os.environ.get("MISSION_CONTROL_TOKEN"),
             "API_SERVER_KEY": os.environ.get("API_SERVER_KEY"),
+            "MISSION_CONTROL_READ_ONLY": os.environ.get("MISSION_CONTROL_READ_ONLY"),
         }
         os.environ["MISSION_CONTROL_TOKEN"] = "phase1-secret"
         os.environ.pop("API_SERVER_KEY", None)
+        os.environ.pop("MISSION_CONTROL_READ_ONLY", None)
 
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
             sock.bind(("127.0.0.1", 0))
@@ -58,8 +60,8 @@ class LocalTelemetryAuthTests(unittest.TestCase):
             else:
                 os.environ[key] = value
 
-    def _request(self, path: str, token: Optional[str] = None):
-        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+    def _request(self, path: str, token: Optional[str] = None, method: str = "GET"):
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method=method)
         if token:
             request.add_header("Authorization", f"Bearer {token}")
         return urllib.request.urlopen(request, timeout=5)
@@ -99,6 +101,19 @@ class LocalTelemetryAuthTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as exc:
             self._request(f"/api/local/system?access_token={encoded}")
         self.assertEqual(exc.exception.code, 401)
+
+    def test_read_only_mode_rejects_all_mutating_methods(self):
+        os.environ["MISSION_CONTROL_READ_ONLY"] = "1"
+        for method, path in (
+            ("PUT", "/api/local/config"),
+            ("POST", "/api/local/gateway/restart"),
+            ("DELETE", "/api/local/push/subscriptions"),
+        ):
+            with self.subTest(method=method), self.assertRaises(urllib.error.HTTPError) as exc:
+                self._request(path, token="phase1-secret", method=method)
+            self.assertEqual(exc.exception.code, 403)
+            payload = json.loads(exc.exception.read().decode("utf-8"))
+            self.assertEqual(payload["error"], "read_only_mode")
 
     def test_mission_control_agent_endpoints_are_served_from_db_and_gateway(self):
         """Verify MC discovers sessions from gateway index + SessionDB, not sidecar files."""
