@@ -39,6 +39,9 @@ import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, 
 import { commandOutput, resultText } from './chat-commands';
 import { interactionTitle } from './chat-interactions';
 
+// Backward-compatible re-export for ChatDrawer consumers during the gateway split.
+export { interactionTitle };
+
 type ConnectionState = 'idle' | 'ticket' | 'connecting' | 'connected' | 'reconnecting' | 'error';
 
 type PendingRpc = {
