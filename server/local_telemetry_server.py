@@ -1654,8 +1654,8 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            session_id = (params.get('sessionKey') or params.get('sessionId') or [''])[0].strip()
-            fallback_session_id = (params.get('sessionId') or [''])[0].strip()
+            session_id = (params.get('sessionId') or params.get('sessionKey') or [''])[0].strip()
+            fallback_session_id = (params.get('sessionKey') or [''])[0].strip()
             if not session_id:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
                 return
@@ -1785,7 +1785,8 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
                 return
-            session_id = str(data.get('sessionKey') or data.get('sessionId') or '').strip()
+            session_id = str(data.get('sessionId') or data.get('sessionKey') or '').strip()
+            fallback_session_id = str(data.get('sessionKey') or '').strip()
             if not session_id:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
                 return
