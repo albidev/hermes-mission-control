@@ -585,7 +585,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   };
 
   return (
-    <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} style={width ? { width } : undefined} aria-label="TLDrawCanvas">
+    <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
       <header className="tldraw-canvas-head">
         <div className="tldraw-canvas-title">
           <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
