@@ -66,6 +66,7 @@ type TLDrawCanvasProps = {
   loading: boolean;
   onClose: () => void;
   expanded: boolean;
+  width?: number | null;
 };
 
 function storageKey(sessionId: string | null, sessionKey: string | null) {
@@ -100,7 +101,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
   return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
 }
 
-export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
+export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded, width }: TLDrawCanvasProps) {
   const { resolvedTheme } = useMissionControl();
   const [editor, setEditor] = useState<Editor | null>(null);
   const [lints, setLints] = useState<BoardLint[]>([]);
@@ -584,7 +585,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   };
 
   return (
-    <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
+    <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} style={width ? { width } : undefined} aria-label="TLDrawCanvas">
       <header className="tldraw-canvas-head">
         <div className="tldraw-canvas-title">
           <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
