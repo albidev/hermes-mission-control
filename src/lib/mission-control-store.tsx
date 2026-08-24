@@ -346,6 +346,7 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
 
     let ticks = 0;
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       ticks += 1;
       const includeReference = ticks % 4 === 0 || !tools.available || !skills.available || !knowledge.available;
       const includeSnapshot = ticks % 4 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
