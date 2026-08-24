@@ -26,17 +26,16 @@ import {
   Loader2,
   MessageSquare,
   Paperclip,
-  Pause,
-  Send,
   ShieldCheck,
   SquarePen,
   X,
   XCircle,
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
-import { ChatSlashPopover, type ChatSlashPopoverHandle } from './ChatSlashPopover';
+import { ChatComposer } from './ChatComposer';
+import type { ChatSlashPopoverHandle } from './ChatSlashPopover';
 import type { CanvasScreenshotAttachment } from './TLDrawCanvas';
-import { AttachmentIcon, ChatMessageCard } from './chat-messages';
+import { ChatMessageCard } from './chat-messages';
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -158,6 +157,14 @@ const TUI_VERBS = [
   'brainstorming',
 ];
 
+// Hermes thinking kaomoji — same set as hermes-avatar-esp (simulator/gen_sprites.py THINKING).
+// Cycled in lockstep with TUI_VERBS so the face and verb stay in sync.
+const TUI_KAOMOJI = [
+  '(._.)', '(◔_◔)', '(¬_¬)', '(•_•)', '(⌐■_■)', '(~_~)',
+  '◉_◉', '(°_°)', '(˘_˘)♡', '(>_>)', '(o‿o)', '(◉_◉)',
+  '(¬_¬)', '(ಠ_ಠ)', 'ಠ_ಠ',
+];
+
 function TldrawMark({ size = 16 }: { size?: number }) {
   return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
 }
@@ -185,7 +192,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
   const [newChatLoading, setNewChatLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
   const nearBottomRef = useRef(true);
@@ -197,6 +203,17 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const [isExpanded, setIsExpanded] = useState(false);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
   const [canvasMountReady, setCanvasMountReady] = useState(false);
+  // Desktop drawer width, adjustable via the left-edge resize handle.
+  // Default matches the CSS `min(540px, 100vw)`; clamped to a sane range.
+  // Persisted to localStorage so the width survives reloads.
+  const [drawerWidth, setDrawerWidth] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const stored = window.localStorage.getItem('mission-control-chat-width');
+    if (!stored) return null;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) && parsed >= 360 && parsed <= 900 ? parsed : null;
+  });
+  const resizingRef = useRef(false);
   const {
     messages,
     sessionId,
@@ -460,6 +477,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       : 'is-offline';
   const headerSessionTitle = sessionTitle || preview?.title || 'Untitled session';
   const streamingVerb = TUI_VERBS[verbTick % TUI_VERBS.length] || 'processing';
+  const streamingKaomoji = TUI_KAOMOJI[verbTick % TUI_KAOMOJI.length] || '(._.)';
   const statusLineLabel = interaction
     ? 'Waiting for input'
     : running
@@ -528,6 +546,10 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     event.preventDefault();
     const text = draft;
     if (!text.trim() && pendingAttachments.length === 0) return;
+    if (running && pendingAttachments.length > 0) {
+      setAttachmentNotice('Attachments are available after the current response finishes. Send steer text only.');
+      return;
+    }
     setAttachmentNotice(null);
     try {
       const uploads: ChatAttachmentUpload[] = [];
@@ -542,7 +564,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           dataUrl,
         });
       }
-      const sent = await submitPrompt(text, uploads);
+      const sent = await submitPrompt(running && !uploads.length ? `/steer ${text}` : text, uploads);
       if (!sent) return;
       setDraft('');
       // Sending a message always snaps back to the bottom, even if the user
@@ -603,6 +625,37 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     }
   };
 
+  // Desktop resize: drag the left-edge handle to change the drawer width.
+  // The drawer is anchored right, so width = viewport width - cursor x.
+  const startResize = (event: React.MouseEvent) => {
+    if (isExpanded) return; // expanded mode owns its own geometry
+    event.preventDefault();
+    resizingRef.current = true;
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 360), Math.min(900, window.innerWidth - 16));
+      setDrawerWidth(width);
+    };
+    const onUp = () => {
+      resizingRef.current = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      // Persist the final width so it survives reloads.
+      setDrawerWidth((current) => {
+        if (current != null) {
+          try { window.localStorage.setItem('mission-control-chat-width', String(current)); } catch { /* storage unavailable */ }
+        }
+        return current;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
   const interactionPayload = interaction?.payload ?? {};
   const interactionChoices = Array.isArray(interactionPayload.choices)
     ? interactionPayload.choices.filter((choice): choice is string => typeof choice === 'string' && choice.trim().length > 0)
@@ -642,6 +695,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       {open ? <button className="chat-backdrop is-open" type="button" aria-label="Close chat" onClick={onClose} /> : null}
       <aside
         className={`chat-drawer ${open ? 'is-open' : ''} ${isExpanded ? 'is-expanded' : ''}`}
+        style={drawerWidth && !isExpanded ? { width: drawerWidth } : undefined}
         role="dialog"
         aria-modal="true"
         aria-label="Hermes chat"
@@ -653,6 +707,16 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
       >
+        {!isExpanded ? (
+          <div
+            className="chat-drawer-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize chat width"
+            title="Drag to resize"
+            onMouseDown={startResize}
+          />
+        ) : null}
         <header className="chat-drawer-head">
           <div className="chat-head-main">
             <div className="chat-head-identity">
@@ -802,27 +866,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           </div>
         ) : null}
 
-        {pendingAttachments.length ? (
-          <div className="chat-pending-attachments" aria-label="Pending attachments">
-            {pendingAttachments.map((attachment) => (
-              <div className="chat-pending-attachment" key={attachment.id}>
-                {attachment.previewUrl ? <img src={attachment.previewUrl} alt="" /> : <AttachmentIcon kind={attachment.kind} />}
-                <div className="chat-pending-attachment-copy"><strong>{attachment.name}</strong><span>{formatBytes(attachment.size ?? 0)}</span></div>
-                <button type="button" onClick={() => removeAttachment(attachment.id)} aria-label={`Remove ${attachment.name}`}><X size={14} /></button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {attachmentNotice ? <p className="chat-attachment-notice" role="status">{attachmentNotice}</p> : null}
-
-        <ChatSlashPopover
-          ref={slashPopoverRef}
-          input={draft}
-          complete={completeSlash}
-          onApply={setDraft}
-        />
         <div className="chat-status-line" role="status">
           <span className={`chat-status-line-verb ${running ? 'is-streaming' : statusLineLabel === 'Ready' ? 'is-ready' : ''}`}>
+            {running ? (
+              <span className="chat-status-line-kaomoji" aria-hidden>{streamingKaomoji}</span>
+            ) : null}
             {statusLineLabel}
           </span>
           <span className="chat-status-line-separator">|</span>
@@ -851,31 +899,24 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           </span>
           <span className="chat-status-line-percent">{contextTokens == null ? '—' : `${Math.round(contextPercent)}%`}</span>
         </div>
-        <form className="chat-composer" onSubmit={handleSubmit}>
-          <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf,*/*" className="chat-file-input" onChange={handleFileInput} />
-          <button className="chat-control chat-attach chat-icon-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={submitting || connectionState !== 'connected'} title="Attach image or file" aria-label="Attach image or file">
-            <Paperclip size={17} />
-          </button>
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onPaste={handlePaste}
-            onKeyDown={handleComposerKeyDown}
-            placeholder="Message Hermes"
-            rows={1}
-            disabled={connectionState !== 'connected'}
-            aria-label="Message Hermes"
-          />
-          {running ? (
-            <button className="chat-control chat-stop chat-icon-button" type="button" onClick={() => void interrupt()} aria-label="Interrupt response" title="Interrupt">
-              <Pause size={17} />
-            </button>
-          ) : null}
-          <button className="chat-control chat-send" type="submit" disabled={(!draft.trim() && pendingAttachments.length === 0) || submitting || connectionState !== 'connected'} aria-label="Send message" title="Send">
-            {submitting ? <Loader2 size={17} className="chat-spin" /> : <Send size={17} />}
-          </button>
-        </form>
+        <ChatComposer
+          draft={draft}
+          onDraftChange={setDraft}
+          pendingAttachments={pendingAttachments}
+          attachmentNotice={attachmentNotice}
+          onRemoveAttachment={removeAttachment}
+          onFileInput={handleFileInput}
+          onPaste={handlePaste}
+          onKeyDown={handleComposerKeyDown}
+          onSubmit={handleSubmit}
+          onStop={() => void interrupt()}
+          completeSlash={completeSlash}
+          textareaRef={textareaRef}
+          slashPopoverRef={slashPopoverRef}
+          running={running}
+          submitting={submitting}
+          disabled={connectionState !== 'connected'}
+        />
       </aside>
       {open && isExpanded ? (canvasMountReady ? (
         <TLDrawErrorBoundary onClose={canvasClose} onRetry={canvasRetry}>
