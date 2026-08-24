@@ -1,8 +1,4 @@
 import {
-  type ClipboardEvent,
-  type DragEvent,
-  type FormEvent,
-  type KeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -12,11 +8,9 @@ import {
 import {
   applyGatewayEvent,
   attachmentRpcMethod,
-  classifyAttachment,
   createRpcRequest,
   eventActivity,
   extractInflightAssistant,
-  extractInjectedSessionToken,
   extractInteractionRequest,
   extractSessionId,
   extractSessionKey,
@@ -26,11 +20,9 @@ import {
   isResponseFor,
   parseCommandDispatch,
   parseSlash,
-  nextReconnectDelay,
   normalizeTranscript,
   parseGatewayFrame,
   shouldCloseBackendSessionForNewChat,
-  type AttachmentKind,
   type ChatActivity,
   type ChatAttachmentSummary,
   type ChatAttachmentUpload,
@@ -42,16 +34,12 @@ import {
 } from './chat-protocol';
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
 import { getChatReadState, markChatPresenceRead, publishChatPresence } from './chat-presence';
+import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
+import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
+import { commandOutput, resultText } from './chat-commands';
+import { interactionTitle } from './chat-interactions';
 
 type ConnectionState = 'idle' | 'ticket' | 'connecting' | 'connected' | 'reconnecting' | 'error';
-
-type PersistedChat = {
-  sessionId: string | null;
-  sessionKey: string | null;
-  modelIdentity: ChatModelIdentity | null;
-  messages: ChatMessage[];
-  updatedAt: number;
-};
 
 type PendingRpc = {
   id: string;
@@ -67,160 +55,12 @@ export type PendingAttachment = Omit<ChatAttachmentSummary, 'id'> & {
   previewUrl: string | null;
 };
 
-const STORAGE_KEY = 'mission-control-chat-drawer-v1';
-const RPC_TIMEOUT_MS = 120000;
-const MAX_RECONNECTS = 6;
 export const MAX_ATTACHMENTS = 5;
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 export { classifyAttachment } from './chat-protocol';
 
-function readPersistedChat(): PersistedChat {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { sessionId: null, sessionKey: null, modelIdentity: null, messages: [], updatedAt: 0 };
-    const parsed = JSON.parse(raw) as Partial<PersistedChat>;
-    return {
-      sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
-      sessionKey: typeof parsed.sessionKey === 'string' ? parsed.sessionKey : null,
-      modelIdentity: extractSessionModel(parsed.modelIdentity),
-      messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
-      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
-    };
-  } catch {
-    return { sessionId: null, sessionKey: null, modelIdentity: null, messages: [], updatedAt: 0 };
-  }
-}
-
-function persistChat(sessionId: string | null, sessionKey: string | null, modelIdentity: ChatModelIdentity | null, messages: ChatMessage[]) {
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ sessionId, sessionKey, modelIdentity, messages: messages.slice(-200), updatedAt: Date.now() }),
-    );
-  } catch {
-    // Storage is best effort; the live session remains authoritative.
-  }
-}
-
-// Cross-device "current chat" (Discord-style): the last active session is
-// mirrored to the local telemetry server so every device lands on the SAME
-// chat. Fire-and-forget — localStorage stays the fallback when the server is
-// unreachable.
-function syncLastChatToServer(sessionId: string | null, sessionKey: string | null, modelIdentity: ChatModelIdentity | null, storedToken: string) {
-  if (!sessionId || !sessionId.trim()) return;
-  try {
-    void fetch('/api/local/chat/last', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
-      },
-      body: JSON.stringify({ sessionId, sessionKey, modelIdentity, updatedAt: Date.now() }),
-    }).catch(() => {});
-  } catch { /* best effort */ }
-}
-
-type ServerLastChat = { sessionId: string; sessionKey?: string | null; updatedAt?: number };
-
-async function fetchServerLastChat(storedToken: string): Promise<ServerLastChat | null> {
-  try {
-    const res = await fetch('/api/local/chat/last', {
-      headers: storedToken ? { Authorization: `Bearer ${storedToken}` } : {},
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { lastChat?: ServerLastChat | null };
-    return data.lastChat ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function getWebSocketUrl(ticketOrToken: { kind: 'ticket' | 'token'; value: string }) {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = new URL('/api/ws', `${protocol}//${window.location.host}`);
-  url.searchParams.set(ticketOrToken.kind, ticketOrToken.value);
-  return url.toString();
-}
-
-async function readLoopbackSessionToken(): Promise<string | null> {
-  try {
-    const response = await fetch('/api/gateway-root', { credentials: 'include', cache: 'no-store' });
-    if (!response.ok) return null;
-    return extractInjectedSessionToken(await response.text());
-  } catch {
-    return null;
-  }
-}
-
-async function requestWsTicket(headers: Record<string, string> = {}): Promise<Response> {
-  return fetch('/api/auth/ws-ticket', {
-    method: 'POST',
-    headers: { Accept: 'application/json', ...headers },
-    credentials: 'include',
-    cache: 'no-store',
-  });
-}
-
-async function readTicketResponse(response: Response): Promise<{ kind: 'ticket'; value: string }> {
-  const payload = (await response.json()) as { ticket?: unknown };
-  if (typeof payload.ticket === 'string' && payload.ticket) {
-    return { kind: 'ticket', value: payload.ticket };
-  }
-  throw new Error('The gateway returned an invalid WebSocket ticket.');
-}
-
-async function mintWsCredential(accessToken: string): Promise<{ kind: 'ticket' | 'token'; value: string }> {
-  // Mission Control is served by the same Hermes dashboard host. Prefer the
-  // injected dashboard session token: it works through localhost, Tailscale,
-  // and the HTTPS reverse proxy without a separate cookie-bound ticket flow.
-  const loopbackToken = await readLoopbackSessionToken();
-  if (loopbackToken) return { kind: 'token', value: loopbackToken };
-
-  // Keep the short-lived ticket as a compatibility fallback for deployments
-  // where the dashboard-root proxy is unavailable.
-  let response = await requestWsTicket();
-  if (response.ok) return readTicketResponse(response);
-
-  let lastStatus = response.status;
-  if (accessToken.trim()) {
-    response = await requestWsTicket({ Authorization: `Bearer ${accessToken.trim()}` });
-    if (response.ok) return readTicketResponse(response);
-    lastStatus = response.status;
-  }
-
-  if (lastStatus === 401) {
-    throw new Error('Chat WebSocket authentication failed. Authenticate the Hermes gateway or unlock Mission Control first.');
-  }
-  if (lastStatus === 403 || lastStatus === 404) {
-    throw new Error('Chat WebSocket is not available on this gateway.');
-  }
-  throw new Error(`Chat WebSocket ticket request failed with HTTP ${lastStatus}.`);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function resultText(value: unknown): string {
-  if (!isRecord(value)) return '';
-  for (const key of ['ref_text', 'text', 'message']) {
-    if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim();
-  }
-  return '';
-}
-
-function commandOutput(value: unknown): string {
-  if (!isRecord(value)) return '';
-  for (const key of ['output', 'display', 'message', 'notice', 'warning']) {
-    if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim();
-  }
-  return '';
-}
-
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(bytes > 10 * 1024 * 1024 ? 0 : 1)} MB`;
 }
 
 export function readFileAsDataUrl(file: File): Promise<string> {
@@ -230,14 +70,6 @@ export function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error(`Could not read ${file.name}.`));
     reader.readAsDataURL(file);
   });
-}
-
-export function interactionTitle(interaction: GatewayInteractionRequest): string {
-  if (interaction.kind === 'approval') return 'Hermes needs permission';
-  if (interaction.kind === 'clarify') return 'Hermes needs your answer';
-  if (interaction.kind === 'sudo') return 'Hermes needs elevated access';
-  if (interaction.kind === 'terminal_read') return 'Hermes needs terminal output';
-  return 'Hermes needs a secret';
 }
 
 export function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: string | null) {

@@ -1,11 +1,6 @@
 import {
-  Component,
-  type ClipboardEvent,
-  type DragEvent,
   type FormEvent,
-  type ErrorInfo,
   type KeyboardEvent,
-  type ReactNode,
   lazy,
   memo,
   Suspense,
@@ -15,39 +10,31 @@ import {
   useState,
 } from 'react';
 import {
-  ArrowLeft,
   Bot,
-  Check,
   ChevronDown,
-  Circle,
   Cpu,
-  FileText,
-  KeyRound,
   Loader2,
   MessageSquare,
   Paperclip,
-  ShieldCheck,
   SquarePen,
   X,
-  XCircle,
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatComposer } from './ChatComposer';
+import { ChatStatusLine } from './chat/ChatStatusLine';
+import { ChatInteractionPanel } from './chat/ChatInteractionPanel';
+import { ChatCanvasErrorBoundary, ChatCanvasLoadingShell } from './chat/ChatCanvasBoundary';
+import { useChatAttachments } from '../hooks/useChatAttachments';
+import { useChatDrawerResize } from '../hooks/useChatDrawerResize';
+import { useChatTranscriptScroll } from '../hooks/useChatTranscriptScroll';
 import type { ChatSlashPopoverHandle } from './ChatSlashPopover';
 import type { CanvasScreenshotAttachment } from './TLDrawCanvas';
 import { ChatMessageCard } from './chat-messages';
 import {
-  MAX_ATTACHMENTS,
-  MAX_ATTACHMENT_BYTES,
-  classifyAttachment,
-  formatBytes,
-  interactionTitle,
   readFileAsDataUrl,
   useGatewayChat,
-  type PendingAttachment,
 } from '../lib/chat-gateway';
-import { markChatPresenceRead } from '../lib/chat-presence';
-import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';
+import { type ChatAttachmentUpload } from '../lib/chat-protocol';
 import {
   loadMissionControlSessionPreview,
   type MissionControlAgentSessionItem,
@@ -60,12 +47,6 @@ type ChatDrawerProps = {
   initialSessionId?: string | null;
   onClose: () => void;
 };
-
-function formatTokens(tokens: number): string {
-  if (tokens < 1000) return `${tokens}`;
-  if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(tokens < 10_000 ? 1 : 0)}k`;
-  return `${(tokens / 1_000_000).toFixed(tokens < 10_000_000 ? 1 : 0).replace(/\.0$/, '')}M`;
-}
 
 // Best-effort context-window estimate for the progress bar. The gateway does
 // not stream context usage mid-turn, so we derive a percentage from the model
@@ -92,52 +73,6 @@ function estimateContextWindow(model: string | null | undefined): number {
 }
 
 const LazyTLDrawCanvas = lazy(() => import('./TLDrawCanvas').then(({ TLDrawCanvas }) => ({ default: TLDrawCanvas })));
-
-function TLDrawLoadingShell({ onClose, error, onRetry }: { onClose: () => void; error?: boolean; onRetry?: () => void }) {
-  return (
-    <section className="tldraw-canvas-panel is-expanded" aria-label={error ? 'TLDrawCanvas unavailable' : 'TLDrawCanvas loading'}>
-      <header className="tldraw-canvas-head">
-        <div className="tldraw-canvas-title">
-          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
-            <ArrowLeft size={18} />
-          </button>
-          <div>
-            <span className="eyebrow">Session canvas</span>
-            <h3>TLDrawCanvas</h3>
-            <span className="tldraw-canvas-linked-session">{error ? 'Canvas unavailable' : 'Preparing workspace…'}</span>
-          </div>
-        </div>
-      </header>
-      <div className="tldraw-canvas-loading" role={error ? 'alert' : 'status'}>
-        {error ? <XCircle size={24} aria-hidden /> : <Loader2 size={24} className="chat-spin" />}
-        <strong>{error ? 'Unable to load TLDrawCanvas' : 'Opening TLDrawCanvas…'}</strong>
-        <span>{error ? 'Check the connection and try again.' : 'Preparing the editable workspace.'}</span>
-        {error && onRetry ? <button type="button" className="chat-control" onClick={onRetry}>Retry</button> : null}
-      </div>
-    </section>
-  );
-}
-
-class TLDrawErrorBoundary extends Component<{
-  children: ReactNode;
-  onClose: () => void;
-  onRetry: () => void;
-}, { hasError: boolean }> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, _info: ErrorInfo) {
-    console.error('[TLDrawCanvas] failed to load:', error);
-  }
-
-  render() {
-    if (!this.state.hasError) return this.props.children;
-    return <TLDrawLoadingShell onClose={this.props.onClose} error onRetry={this.props.onRetry} />;
-  }
-}
 
 const TUI_VERBS = [
   'pondering',
@@ -185,35 +120,18 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
 
 export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
   const [draft, setDraft] = useState('');
-  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
-  const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const [interactionDraft, setInteractionDraft] = useState('');
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
   const [newChatLoading, setNewChatLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [nearBottom, setNearBottom] = useState(true);
-  const nearBottomRef = useRef(true);
-  const programmaticScrollRef = useRef(false);
-  const scrollFrameRef = useRef<number | null>(null);
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
-  const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
   const [canvasMountReady, setCanvasMountReady] = useState(false);
-  // Desktop drawer width, adjustable via the left-edge resize handle.
-  // Default matches the CSS `min(540px, 100vw)`; clamped to a sane range.
-  // Persisted to localStorage so the width survives reloads.
-  const [drawerWidth, setDrawerWidth] = useState<number | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const stored = window.localStorage.getItem('mission-control-chat-width');
-    if (!stored) return null;
-    const parsed = Number(stored);
-    return Number.isFinite(parsed) && parsed >= 360 && parsed <= 900 ? parsed : null;
-  });
-  const resizingRef = useRef(false);
+  const { pendingAttachments, attachmentNotice, isDragging, removeAttachment, handleFileInput, handleDrop, handlePaste, setIsDragging, setAttachmentNotice, clearAttachments } = useChatAttachments();
+  const { drawerWidth, startResize } = useChatDrawerResize(isExpanded);
+
   const {
     messages,
     sessionId,
@@ -246,6 +164,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     reset,
   } = useGatewayChat(storedToken, open, initialSessionId);
 
+  const { scrollRef, nearBottom, nearBottomRef, setNearBottom, handleTranscriptScroll, scrollToBottom } = useChatTranscriptScroll({ messages, open, sessionKey });
+
   useEffect(() => {
     if (!running) {
       setVerbTick(0);
@@ -254,10 +174,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     const timer = window.setInterval(() => setVerbTick((tick) => tick + 1), 2400);
     return () => window.clearInterval(timer);
   }, [running]);
-
-  useEffect(() => {
-    pendingRef.current = pendingAttachments;
-  }, [pendingAttachments]);
 
   useEffect(() => {
     if (!isExpanded) {
@@ -304,14 +220,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   }, [previewMode, initialSessionId, storedToken]);
 
   useEffect(() => {
-    return () => {
-      for (const attachment of pendingRef.current) {
-        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     if (commandPrefill === null) return;
     setDraft(commandPrefill);
     clearCommandPrefill();
@@ -326,62 +234,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     const raf = window.requestAnimationFrame(() => textareaRef.current?.focus());
     return () => window.cancelAnimationFrame(raf);
   }, [open]);
-
-  const isNearBottom = () => {
-    const el = scrollRef.current;
-    if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  };
-
-  const handleTranscriptScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const bottom = isNearBottom();
-    if (programmaticScrollRef.current) {
-      // Safari emits intermediate scroll events while a programmatic scroll is
-      // settling. Do not let those transient positions resurrect the FAB.
-      if (bottom) programmaticScrollRef.current = false;
-      else return;
-    }
-    if (bottom && open) {
-      const assistantCount = messages.filter((message) => message.role === 'assistant' && message.status !== 'streaming').length;
-      markChatPresenceRead(sessionKey, assistantCount);
-      // Reaching the bottom is the read acknowledgement.
-    }
-    nearBottomRef.current = bottom;
-    setNearBottom(bottom);
-  }, [messages, open, sessionKey]);
-
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
-    programmaticScrollRef.current = true;
-    if (scrollFrameRef.current !== null) window.cancelAnimationFrame(scrollFrameRef.current);
-    const el = scrollRef.current;
-    if (!el) { programmaticScrollRef.current = false; return; }
-    if (behavior === 'auto') {
-      // Sync scroll for immediate responses (FAB, programmatic jumps).
-      // No RAF delay — critical on iOS where every frame counts.
-      scrollFrameRef.current = null;
-      el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
-      programmaticScrollRef.current = false;
-      return;
-    }
-    // 'smooth' is queued via RAF to stay responsive during token streaming.
-    scrollFrameRef.current = window.requestAnimationFrame(() => {
-      scrollFrameRef.current = null;
-      const e = scrollRef.current;
-      if (!e) { programmaticScrollRef.current = false; return; }
-      e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' });
-      programmaticScrollRef.current = false;
-    });
-  }, []);
-
-  useEffect(() => () => {
-    if (scrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(scrollFrameRef.current);
-      scrollFrameRef.current = null;
-    }
-    programmaticScrollRef.current = false;
-  }, []);
 
   const renderMessages = () => {
     if (previewMode) {
@@ -455,17 +307,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   useEffect(() => {
-    if (!open) return;
-    // Only auto-scroll when the user was already near the bottom. If they've
-    // scrolled up to read earlier content while Hermes streams, we leave them
-    // where they are and show the "jump to bottom" FAB instead.
-    if (!nearBottomRef.current) return;
-    // Never queue smooth animations while messages are changing. One scroll per
-    // animation frame keeps Safari/iOS responsive during token streaming.
-    scrollToBottom('auto');
-  }, [messages, interaction, open, scrollToBottom]);
-
-  useEffect(() => {
     setInteractionDraft('');
     setSelectedChoices([]);
   }, [interaction?.requestId, interaction?.kind]);
@@ -487,61 +328,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         : statusText;
   const contextWindow = contextMax || estimateContextWindow(modelIdentity?.model);
   const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
-  const addFiles = useCallback((files: File[]) => {
-    setAttachmentNotice(null);
-    const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);
-    if (available === 0) {
-      setAttachmentNotice(`You can attach up to ${MAX_ATTACHMENTS} files per message.`);
-      return;
-    }
-    const accepted: PendingAttachment[] = [];
-    for (const file of files.slice(0, available)) {
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        setAttachmentNotice(`${file.name} is too large. The limit is 50 MB.`);
-        continue;
-      }
-      const kind = classifyAttachment(file.type, file.name);
-      accepted.push({
-        id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-        kind,
-        name: file.name,
-        size: file.size,
-        mimeType: file.type || undefined,
-        file,
-        previewUrl: kind === 'image' ? URL.createObjectURL(file) : null,
-      });
-    }
-    if (files.length > available) setAttachmentNotice(`Only ${available} more attachment${available === 1 ? '' : 's'} can be added.`);
-    if (accepted.length) setPendingAttachments((current) => [...current, ...accepted]);
-  }, []);
-
-  const removeAttachment = useCallback((id: string) => {
-    setPendingAttachments((current) => {
-      const target = current.find((attachment) => attachment.id === id);
-      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
-      return current.filter((attachment) => attachment.id !== id);
-    });
-  }, []);
-
-  const handleFileInput = (event: { target: HTMLInputElement }) => {
-    addFiles(Array.from(event.target.files ?? []));
-    event.target.value = '';
-  };
-
-  const handleDrop = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    setIsDragging(false);
-    addFiles(Array.from(event.dataTransfer.files ?? []));
-  };
-
-  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(event.clipboardData.files ?? []);
-    if (files.length) {
-      event.preventDefault();
-      addFiles(files);
-    }
-  };
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = draft;
@@ -573,10 +359,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       nearBottomRef.current = true;
       setNearBottom(true);
       scrollToBottom('auto');
-      for (const attachment of pendingAttachments) {
-        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-      }
-      setPendingAttachments([]);
+      clearAttachments();
     } catch (err) {
       setAttachmentNotice(err instanceof Error ? err.message : 'Could not read the attachment.');
     }
@@ -623,37 +406,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     } finally {
       setNewChatLoading(false);
     }
-  };
-
-  // Desktop resize: drag the left-edge handle to change the drawer width.
-  // The drawer is anchored right, so width = viewport width - cursor x.
-  const startResize = (event: React.MouseEvent) => {
-    if (isExpanded) return; // expanded mode owns its own geometry
-    event.preventDefault();
-    resizingRef.current = true;
-    const onMove = (moveEvent: MouseEvent) => {
-      if (!resizingRef.current) return;
-      const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 360), Math.min(900, window.innerWidth - 16));
-      setDrawerWidth(width);
-    };
-    const onUp = () => {
-      resizingRef.current = false;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      // Persist the final width so it survives reloads.
-      setDrawerWidth((current) => {
-        if (current != null) {
-          try { window.localStorage.setItem('mission-control-chat-width', String(current)); } catch { /* storage unavailable */ }
-        }
-        return current;
-      });
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
   };
 
   const interactionPayload = interaction?.payload ?? {};
@@ -784,79 +536,25 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         </div>
 
         {interaction ? (
-          <section className={`chat-interaction chat-interaction-${interaction.kind}`} aria-label={interactionTitle(interaction)}>
-            <div className="chat-interaction-heading">
-              <span className="chat-interaction-icon">
-                {interaction.kind === 'approval' ? <ShieldCheck size={16} /> : <KeyRound size={16} />}
-              </span>
-              <div>
-                <strong>{interactionTitle(interaction)}</strong>
-                <span>Answering here unblocks the running turn.</span>
-              </div>
-            </div>
-            {interaction.kind === 'approval' ? (
-              <>
-                {approvalDescription ? <p className="chat-interaction-copy">{approvalDescription}</p> : null}
-                {approvalCommand ? <code className="chat-command-preview">{approvalCommand}</code> : null}
-                <div className="chat-choice-row">
-                  {(interactionChoices.length ? interactionChoices : ['once', 'deny']).map((choice) => (
-                    <button key={choice} type="button" className={`chat-choice ${choice === 'deny' ? 'is-danger' : ''}`} onClick={() => void respondInteraction(choice, choice, choice === 'always')}>
-                      {choice === 'deny' ? 'Deny' : choice === 'always' ? 'Always allow' : choice === 'session' ? 'This session' : 'Allow once'}
-                    </button>
-                  ))}
-                </div>
-              </>
-            ) : interaction.kind === 'clarify' ? (
-              <>
-                <p className="chat-interaction-copy">{interactionQuestion || 'Hermes is asking for a decision.'}</p>
-                {interactionChoices.length ? (
-                  <div className="chat-choice-row">
-                    {interactionChoices.map((choice) => {
-                      const selected = selectedChoices.includes(choice);
-                      return (
-                        <button
-                          key={choice}
-                          type="button"
-                          className={`chat-choice ${selected ? 'is-selected' : ''}`}
-                          onClick={() => {
-                            if (multiSelect) setSelectedChoices((current) => selected ? current.filter((item) => item !== choice) : [...current, choice]);
-                            else void respondInteraction(choice);
-                          }}
-                        >
-                          {selected ? <Check size={14} /> : null}{choice}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-                <div className="chat-interaction-input-row">
-                  <input value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder="Type your answer" aria-label="Answer Hermes" />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim() && (!multiSelect || selectedChoices.length === 0)} onClick={() => void respondInteraction(interactionDraft.trim() || selectedChoices.join(', '))}>Send</button>
-                </div>
-              </>
-            ) : interaction.kind === 'terminal_read' ? (
-              <>
-                <p className="chat-interaction-copy">{interactionPrompt || 'Paste the requested terminal output.'}</p>
-                <div className="chat-interaction-input-row">
-                  <textarea value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder="Paste terminal output" aria-label="Terminal output" rows={3} />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim()} onClick={() => void respondInteraction(interactionDraft.trim())}>Send</button>
-                </div>
-              </>
-            ) : (
-              <>
-                {interaction.kind === 'secret' ? (
-                  <p className="chat-interaction-copy">
-                    {interactionPrompt || 'Hermes needs a secret to continue.'}
-                    {secretEnvVar ? <><br /><code>{secretEnvVar}</code></> : null}
-                  </p>
-                ) : null}
-                <div className="chat-interaction-input-row">
-                  <input type="password" value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={interaction.kind === 'sudo' ? 'Password' : secretEnvVar || 'Secret value'} aria-label={interaction.kind === 'sudo' ? 'Sudo password' : interactionPrompt || 'Secret value'} autoComplete="off" />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => void respondInteraction(interactionDraft)}>Send</button>
-                </div>
-              </>
-            )}
-          </section>
+          <ChatInteractionPanel
+            interaction={interaction}
+            choices={interactionChoices}
+            multiSelect={multiSelect}
+            selectedChoices={selectedChoices}
+            interactionDraft={interactionDraft}
+            onDraftChange={setInteractionDraft}
+            onChoice={(choice) => {
+              const selected = selectedChoices.includes(choice);
+              if (multiSelect) setSelectedChoices((current) => selected ? current.filter((item) => item !== choice) : [...current, choice]);
+              else void respondInteraction(choice);
+            }}
+            onSubmit={(answer, choice, resolveAll) => void respondInteraction(answer, choice, resolveAll)}
+            approvalCommand={approvalCommand}
+            approvalDescription={approvalDescription}
+            interactionQuestion={interactionQuestion}
+            interactionPrompt={interactionPrompt}
+            secretEnvVar={secretEnvVar}
+          />
         ) : null}
 
         {error ? (
@@ -866,39 +564,15 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           </div>
         ) : null}
 
-        <div className="chat-status-line" role="status">
-          <span className={`chat-status-line-verb ${running ? 'is-streaming' : statusLineLabel === 'Ready' ? 'is-ready' : ''}`}>
-            {running ? (
-              <span className="chat-status-line-kaomoji" aria-hidden>{streamingKaomoji}</span>
-            ) : null}
-            {statusLineLabel}
-          </span>
-          <span className="chat-status-line-separator">|</span>
-          <span className="chat-status-line-model" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Model not available'}>
-            {modelIdentity?.model || 'Model unavailable'}
-          </span>
-          <span className="chat-status-line-separator">|</span>
-          <span className="chat-status-line-reasoning">
-            {modelIdentity?.reasoningEffort || '—'}
-          </span>
-          <span className="chat-status-line-separator">|</span>
-          <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} context tokens`}>
-            {contextTokens == null ? `—/${formatTokens(contextWindow)}` : `${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`}
-          </span>
-          <span className="chat-status-line-separator">|</span>
-          <span
-            className="chat-status-line-bar"
-            role="progressbar"
-            aria-label="Context window usage"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(contextPercent)}
-            title={contextTokens == null ? 'Context usage not available yet' : `${Math.round(contextPercent)}% of context window`}
-          >
-            <span className="chat-status-line-bar-fill" style={{ width: `${contextPercent}%` }} />
-          </span>
-          <span className="chat-status-line-percent">{contextTokens == null ? '—' : `${Math.round(contextPercent)}%`}</span>
-        </div>
+        <ChatStatusLine
+          statusLineLabel={statusLineLabel}
+          running={running}
+          streamingKaomoji={streamingKaomoji}
+          modelIdentity={modelIdentity}
+          contextTokens={contextTokens}
+          contextWindow={contextWindow}
+          contextPercent={contextPercent}
+        />
         <ChatComposer
           draft={draft}
           onDraftChange={setDraft}
@@ -919,12 +593,12 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         />
       </aside>
       {open && isExpanded ? (canvasMountReady ? (
-        <TLDrawErrorBoundary onClose={canvasClose} onRetry={canvasRetry}>
-          <Suspense fallback={<TLDrawLoadingShell onClose={canvasClose} />}>
+        <ChatCanvasErrorBoundary onClose={canvasClose} onRetry={canvasRetry}>
+          <Suspense fallback={<ChatCanvasLoadingShell onClose={canvasClose} />}>
             <LazyTLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} />
           </Suspense>
-        </TLDrawErrorBoundary>
-      ) : <TLDrawLoadingShell onClose={canvasClose} />) : null}
+        </ChatCanvasErrorBoundary>
+      ) : <ChatCanvasLoadingShell onClose={canvasClose} />) : null}
     </>
   );
 });
