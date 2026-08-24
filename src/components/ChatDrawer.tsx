@@ -93,7 +93,7 @@ function estimateContextWindow(model: string | null | undefined): number {
 
 const LazyTLDrawCanvas = lazy(() => import('./TLDrawCanvas').then(({ TLDrawCanvas }) => ({ default: TLDrawCanvas })));
 
-function TLDrawLoadingShell({ onClose, error, onRetry }: { onClose: () => void; error?: boolean; onRetry?: () => void }) {
+function TLDrawLoadingShell({ onClose, error, onRetry, width }: { onClose: () => void; error?: boolean; onRetry?: () => void; width?: number | null }) {
   return (
     <section className="tldraw-canvas-panel is-expanded" aria-label={error ? 'TLDrawCanvas unavailable' : 'TLDrawCanvas loading'}>
       <header className="tldraw-canvas-head">
@@ -122,6 +122,7 @@ class TLDrawErrorBoundary extends Component<{
   children: ReactNode;
   onClose: () => void;
   onRetry: () => void;
+  width?: number | null;
 }, { hasError: boolean }> {
   state = { hasError: false };
 
@@ -135,7 +136,7 @@ class TLDrawErrorBoundary extends Component<{
 
   render() {
     if (!this.state.hasError) return this.props.children;
-    return <TLDrawLoadingShell onClose={this.props.onClose} error onRetry={this.props.onRetry} />;
+    return <TLDrawLoadingShell onClose={this.props.onClose} error onRetry={this.props.onRetry} width={this.props.width} />;
   }
 }
 
@@ -213,7 +214,17 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     const parsed = Number(stored);
     return Number.isFinite(parsed) && parsed >= 360 && parsed <= 900 ? parsed : null;
   });
+  const [canvasWidth, setCanvasWidth] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const stored = window.localStorage.getItem('mission-control-tldraw-width');
+    const parsed = stored ? Number(stored) : NaN;
+    return Number.isFinite(parsed) && parsed >= 420 && parsed <= 1000 ? parsed : null;
+  });
   const resizingRef = useRef(false);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const canvasResizingRef = useRef(false);
+  const canvasResizeFrameRef = useRef<number | null>(null);
+  const pendingCanvasWidthRef = useRef<number | null>(null);
   const {
     messages,
     sessionId,
@@ -664,7 +675,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     const onMove = (moveEvent: MouseEvent) => {
       if (!resizingRef.current) return;
       const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 360), Math.min(900, window.innerWidth - 16));
-      setDrawerWidth(width);
+      if (drawerRef.current) drawerRef.current.style.width = `${width}px`;
     };
     const onUp = () => {
       resizingRef.current = false;
@@ -676,6 +687,39 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       setDrawerWidth((current) => {
         if (current != null) {
           try { window.localStorage.setItem('mission-control-chat-width', String(current)); } catch { /* storage unavailable */ }
+        }
+        return current;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const startCanvasResize = (event: React.MouseEvent) => {
+    if (!isExpanded) return;
+    event.preventDefault();
+    canvasResizingRef.current = true;
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!canvasResizingRef.current) return;
+      const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 420), Math.min(1000, window.innerWidth - 376));
+      const chatWidth = Math.max(360, Math.min(720, Math.round(720 - (width - window.innerWidth * 0.44))));
+      pendingCanvasWidthRef.current = width;
+      document.documentElement.style.setProperty('--mission-control-tldraw-width', `${width}px`);
+      document.documentElement.style.setProperty('--mission-control-expanded-chat-width', `${chatWidth}px`);
+      document.documentElement.style.setProperty('--mission-control-expanded-chat-right', `${width}px`);
+    };
+    const onUp = () => {
+      canvasResizingRef.current = false;
+      if (pendingCanvasWidthRef.current != null) setCanvasWidth(pendingCanvasWidthRef.current);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setCanvasWidth((current) => {
+        if (current != null) {
+          try { window.localStorage.setItem('mission-control-tldraw-width', String(current)); } catch { /* storage unavailable */ }
         }
         return current;
       });
@@ -715,11 +759,25 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     setIsExpanded(false);
     setIsCanvasLoading(false);
   }, []);
+  useEffect(() => {
+    if (!isExpanded) {
+      document.documentElement.style.removeProperty('--mission-control-tldraw-width');
+      document.documentElement.style.removeProperty('--mission-control-expanded-chat-width');
+      document.documentElement.style.removeProperty('--mission-control-expanded-chat-right');
+      return;
+    }
+    const width = canvasWidth ?? Math.round(window.innerWidth * 0.44);
+    const chatWidth = Math.max(360, Math.min(720, Math.round(720 - (width - window.innerWidth * 0.44))));
+    document.documentElement.style.setProperty('--mission-control-tldraw-width', `${width}px`);
+    document.documentElement.style.setProperty('--mission-control-expanded-chat-width', `${chatWidth}px`);
+    document.documentElement.style.setProperty('--mission-control-expanded-chat-right', `${width}px`);
+  }, [canvasWidth, isExpanded]);
 
   return (
     <>
       {open ? <button className="chat-backdrop is-open" type="button" aria-label="Close chat" onClick={onClose} /> : null}
       <aside
+        ref={drawerRef}
         className={`chat-drawer ${open ? 'is-open' : ''} ${isExpanded ? 'is-expanded' : ''}`}
         style={drawerWidth && !isExpanded ? { width: drawerWidth } : undefined}
         role="dialog"
@@ -945,12 +1003,23 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         />
       </aside>
       {open && isExpanded ? (canvasMountReady ? (
-        <TLDrawErrorBoundary onClose={canvasClose} onRetry={canvasRetry}>
-          <Suspense fallback={<TLDrawLoadingShell onClose={canvasClose} />}>
-            <LazyTLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} onClose={canvasClose} />
+        <TLDrawErrorBoundary onClose={canvasClose} onRetry={canvasRetry} width={canvasWidth}>
+          <Suspense fallback={<TLDrawLoadingShell onClose={canvasClose} width={canvasWidth} />}>
+            <LazyTLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} width={canvasWidth} onClose={canvasClose} />
           </Suspense>
         </TLDrawErrorBoundary>
-      ) : <TLDrawLoadingShell onClose={canvasClose} />) : null}
+      ) : <TLDrawLoadingShell onClose={canvasClose} width={canvasWidth} />) : null}
+      {open && isExpanded ? (
+        <div
+          className="tldraw-canvas-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize tldraw canvas width"
+          title="Drag to resize canvas"
+          style={{ right: canvasWidth ?? '44vw' }}
+          onMouseDown={startCanvasResize}
+        />
+      ) : null}
     </>
   );
 });

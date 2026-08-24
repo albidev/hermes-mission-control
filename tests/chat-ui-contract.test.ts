@@ -16,6 +16,7 @@ const component = readFileSync(new URL('../src/components/ChatDrawer.tsx', impor
 const composer = readFileSync(new URL('../src/components/ChatComposer.tsx', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 const buttonComponent = readFileSync(new URL('../src/components/ui/Button.tsx', import.meta.url), 'utf8');
+const tldraw = readFileSync(new URL('../src/components/TLDrawCanvas.tsx', import.meta.url), 'utf8');
 
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
 assertExcludes(component, '<div className="chat-head-meta">', 'header has no redundant metadata row');
@@ -32,6 +33,12 @@ assertExcludes(styles, '.chat-head-meta', 'legacy metadata row styles are remove
 assertExcludes(styles, '.chat-reasoning-body', 'legacy reasoning body styles are removed');
 assertExcludes(styles, '.chat-status-line-right', 'legacy status right rail is removed');
 assertExcludes(styles, '.chat-attach {', 'legacy attachment selector is removed');
+
+assertExcludes(tldraw, '<option value="">Free</option>', 'agent mode selector is deferred');
+assertIncludes(tldraw, '<Tldraw colorScheme={resolvedTheme}', 'tldraw follows Mission Control theme');
+assertIncludes(tldraw, 'remoteHydratedRef.current = false;', 'board identity changes reset remote hydration gate');
+assertIncludes(tldraw, 'Server snapshot wins for identified sessions.', 'remote snapshot is authoritative');
+assertExcludes(tldraw, 'snapshot: JSON.parse(orphan)', 'legacy local board migration cannot overwrite the server snapshot');
 
 assertIncludes(styles, '--control-height: 44px;', 'global button control token');
 assertIncludes(styles, '--touch-target: 44px;', 'global touch target token');

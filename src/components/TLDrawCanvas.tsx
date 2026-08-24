@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { ArrowLeft, Camera, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import { collectBoardContext } from '../lib/tldraw-visual-context';
-import { AGENT_MODES, modePromptFragment, type AgentMode } from '../lib/tldraw-agent-modes';
 import { formatLints, lintBoard, type BoardLint } from '../lib/tldraw-lints';
+import { useMissionControl } from '../lib/mission-control-store';
 import 'tldraw/tldraw.css';
 
 export type CanvasScreenshotAttachment = {
@@ -66,10 +66,11 @@ type TLDrawCanvasProps = {
   loading: boolean;
   onClose: () => void;
   expanded: boolean;
+  width?: number | null;
 };
 
 function storageKey(sessionId: string | null, sessionKey: string | null) {
-  return `mission-control:whiteboard:v5:${sessionKey || sessionId || 'new'}`;
+  return `mission-control:whiteboard:v5:${sessionId || sessionKey || 'new'}`;
 }
 
 function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
@@ -100,13 +101,14 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
   return <span aria-hidden="true" style={{ fontSize: size * 1.25, fontWeight: 800, lineHeight: 1 }}>;</span>;
 }
 
-export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
+export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded, width }: TLDrawCanvasProps) {
+  const { resolvedTheme } = useMissionControl();
   const [editor, setEditor] = useState<Editor | null>(null);
-  const [agentMode, setAgentMode] = useState<AgentMode>('');
   const [lints, setLints] = useState<BoardLint[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const key = useMemo(() => storageKey(sessionId, sessionKey), [sessionId, sessionKey]);
+  const boardIdentity = useMemo(() => sessionId || sessionKey || '', [sessionId, sessionKey]);
   const remoteHydratedRef = useRef(false);
   const publishTimerRef = useRef<number | null>(null);
 
@@ -116,19 +118,13 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
 
-  const changeAgentMode = useCallback(async (mode: AgentMode) => {
-    setAgentMode(mode);
-    try {
-      await fetch('/api/local/chat/whiteboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
-        body: JSON.stringify({ sessionId, sessionKey, action: 'mode', mode }),
-      });
-    } catch {
-      // Mode persistence is best-effort; local UI state is already updated.
+  useEffect(() => {
+    remoteHydratedRef.current = false;
+    if (publishTimerRef.current !== null) {
+      window.clearTimeout(publishTimerRef.current);
+      publishTimerRef.current = null;
     }
-  }, [sessionId, sessionKey, storedToken]);
-
+  }, [boardIdentity]);
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
     onReady();
@@ -178,17 +174,9 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
       } catch {
         // Best-effort migration; server snapshot remains authoritative anyway.
       }
-      // Also push the migrated snapshot to the server so resume picks it up
-      // even on another device or after localStorage eviction.
-      try {
-        void fetch('/api/local/chat/whiteboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
-          body: JSON.stringify({ sessionId, sessionKey, snapshot: JSON.parse(orphan) }),
-        }).catch(() => {});
-      } catch {
-        // Ignore network errors here; polling will re-sync.
-      }
+      // The hydrated remote snapshot remains authoritative. If the server has
+      // no snapshot, the normal hydration path will use this migrated local
+      // fallback and publish it only after hydration completes.
     }
   }, [sessionKey, sessionId, storedToken]);
 
@@ -540,8 +528,6 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
         throw new Error('Screenshot capture returned no image.');
       }
       const lines: string[] = [];
-      const fragment = modePromptFragment(agentMode);
-      if (fragment) lines.push(fragment);
       lines.push(
       `Whiteboard context from session ${sessionId || 'pending'} (sessionKey ${sessionKey || 'pending'}):`,
       `viewport: x=${context.viewport.x} y=${context.viewport.y} w=${context.viewport.w} h=${context.viewport.h} zoom=${context.viewport.zoom}`,
@@ -583,6 +569,8 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
 
   const exportBoard = async (format: 'png' | 'svg' | 'json') => {
     if (!editor) return;
+    const label = format.toUpperCase();
+    if (!window.confirm(`Export board as ${label}? The file will be downloaded immediately.`)) return;
     const filename = `tldraw-${sessionId || sessionKey || 'board'}-${Date.now()}`;
     if (format === 'json') {
       const blob = new Blob([JSON.stringify(getSnapshot(editor.store), null, 2)], { type: 'application/json' });
@@ -617,18 +605,6 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
         <div className="tldraw-canvas-toolbar">
           <select
             className="tldraw-canvas-select"
-            value={agentMode}
-            onChange={(event) => void changeAgentMode(event.target.value as AgentMode)}
-            title="Agent mode"
-            aria-label="Agent mode"
-          >
-            <option value="">Free</option>
-            {AGENT_MODES.map((mode) => (
-              <option key={mode.id} value={mode.id}>{mode.label}</option>
-            ))}
-          </select>
-          <select
-            className="tldraw-canvas-select"
             value=""
             onChange={(event) => {
               const format = event.target.value as 'png' | 'svg' | 'json' | '';
@@ -657,7 +633,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
         </div>
       </header>
       <div className="tldraw-canvas-canvas" ref={canvasContainerRef}>
-        <Tldraw onMount={handleMount} />
+        <Tldraw colorScheme={resolvedTheme} onMount={handleMount} />
         {loading ? (
           <div className="tldraw-canvas-loading" role="status">
             <Loader2 size={24} className="chat-spin" />
