@@ -80,7 +80,9 @@ export function LogsRoute() {
     }
 
     void refreshLogs();
-    const timer = window.setInterval(() => void refreshLogs(), 5000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshLogs();
+    }, 5000);
 
     return () => {
       cancelled = true;

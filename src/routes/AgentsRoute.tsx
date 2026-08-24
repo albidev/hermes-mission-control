@@ -828,7 +828,7 @@ export function AgentsRoute() {
 
     if (liveMode) {
       const timer = window.setInterval(() => {
-        void fetchTrace();
+        if (document.visibilityState === 'visible') void fetchTrace();
       }, 2500);
       return () => {
         cancelled = true;
