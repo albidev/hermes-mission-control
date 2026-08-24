@@ -752,7 +752,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     setIsCanvasLoading(false);
   }, []);
   const expandedChatWidth = canvasWidth != null && typeof window !== 'undefined'
-    ? Math.max(360, Math.min(720, window.innerWidth - canvasWidth - 16))
+    ? Math.max(360, Math.min(720, Math.round(720 - (canvasWidth - window.innerWidth * 0.44))))
     : undefined;
 
   return (
