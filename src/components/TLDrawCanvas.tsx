@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { ArrowLeft, Camera, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
 import { collectBoardContext } from '../lib/tldraw-visual-context';
-import { AGENT_MODES, modePromptFragment, type AgentMode } from '../lib/tldraw-agent-modes';
 import { formatLints, lintBoard, type BoardLint } from '../lib/tldraw-lints';
 import { useMissionControl } from '../lib/mission-control-store';
 import 'tldraw/tldraw.css';
@@ -104,7 +103,6 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
 export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded }: TLDrawCanvasProps) {
   const { resolvedTheme } = useMissionControl();
   const [editor, setEditor] = useState<Editor | null>(null);
-  const [agentMode, setAgentMode] = useState<AgentMode>('');
   const [lints, setLints] = useState<BoardLint[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
@@ -126,19 +124,6 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
       publishTimerRef.current = null;
     }
   }, [boardIdentity]);
-  const changeAgentMode = useCallback(async (mode: AgentMode) => {
-    setAgentMode(mode);
-    try {
-      await fetch('/api/local/chat/whiteboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
-        body: JSON.stringify({ sessionId, sessionKey, action: 'mode', mode }),
-      });
-    } catch {
-      // Mode persistence is best-effort; local UI state is already updated.
-    }
-  }, [sessionId, sessionKey, storedToken]);
-
   const handleMount = useCallback((nextEditor: Editor) => {
     setEditor(nextEditor);
     onReady();
@@ -542,8 +527,6 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
         throw new Error('Screenshot capture returned no image.');
       }
       const lines: string[] = [];
-      const fragment = modePromptFragment(agentMode);
-      if (fragment) lines.push(fragment);
       lines.push(
       `Whiteboard context from session ${sessionId || 'pending'} (sessionKey ${sessionKey || 'pending'}):`,
       `viewport: x=${context.viewport.x} y=${context.viewport.y} w=${context.viewport.w} h=${context.viewport.h} zoom=${context.viewport.zoom}`,
@@ -617,18 +600,6 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
           </div>
         </div>
         <div className="tldraw-canvas-toolbar">
-          <select
-            className="tldraw-canvas-select"
-            value={agentMode}
-            onChange={(event) => void changeAgentMode(event.target.value as AgentMode)}
-            title="Agent mode"
-            aria-label="Agent mode"
-          >
-            <option value="">Free</option>
-            {AGENT_MODES.map((mode) => (
-              <option key={mode.id} value={mode.id}>{mode.label}</option>
-            ))}
-          </select>
           <select
             className="tldraw-canvas-select"
             value=""
