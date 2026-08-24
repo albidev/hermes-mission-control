@@ -1,5 +1,5 @@
 import { Check, KeyRound, ShieldCheck } from 'lucide-react';
-import { interactionTitle } from '../../lib/chat-gateway';
+import { interactionTitle } from '../../lib/chat-interactions';
 import type { GatewayInteractionRequest } from '../../lib/chat-protocol';
 
 type ChatInteractionPanelProps = {
