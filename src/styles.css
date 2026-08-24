@@ -3518,6 +3518,19 @@
   border-radius: 11px;
 }
 
+.tldraw-brand-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  background: currentColor;
+  mask: url('/icons/tldraw.png') center / contain no-repeat;
+  -webkit-mask: url('/icons/tldraw.png') center / contain no-repeat;
+  color: var(--color-text-muted);
+}
+
+.chat-tldraw-button:hover .tldraw-brand-icon {
+  color: var(--color-accent);
+}
+
 .chat-led {
   width: 1.4rem;
   height: 1.4rem;
