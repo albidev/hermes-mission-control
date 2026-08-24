@@ -3357,6 +3357,38 @@
   background: var(--color-surface-raised);
 }
 
+/* Left-edge resize handle (desktop only). The drawer is anchored right, so
+   dragging this handle changes its width. Hidden on touch/coarse pointers. */
+.chat-drawer-resize-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  bottom: 0;
+  width: 6px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+.chat-drawer-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 2px;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 150ms ease;
+}
+.chat-drawer-resize-handle:hover::after,
+.chat-drawer-resize-handle:active::after {
+  background: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+@media (pointer: coarse) {
+  .chat-drawer-resize-handle {
+    display: none;
+  }
+}
+
 .chat-drawer-head {
   flex: 0 0 auto;
   min-height: 0;
@@ -3541,14 +3573,10 @@
   color: var(--color-text-muted);
 }
 
-.chat-status-line-verb.is-streaming::before {
-  content: '';
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--color-text-muted);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-muted) 20%, transparent);
+.chat-status-line-kaomoji {
   flex: 0 0 auto;
+  font-size: 0.9rem;
+  line-height: 1;
   animation: chat-status-pulse 1.6s ease-in-out infinite;
 }
 
@@ -3619,31 +3647,125 @@
 }
 
 .chat-composer {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: end;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-  border-top-color: var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-surface-sunken) 97%, var(--color-accent) 3%);
+  display: block;
+  padding: 0.65rem 1rem;
+  padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+  border: 0;
+  background: transparent;
 }
 
-.chat-composer textarea {
+.chat-composer-main {
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transition: none;
+}
+
+.chat-composer-main:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+
+.chat-composer-main textarea {
+  display: block;
   width: 100%;
   min-width: 0;
-  min-height: var(--chat-control-size);
+  min-height: 2.75rem;
   max-height: 8rem;
-  padding: 0.7rem 0.8rem;
+  border: 0;
+  border-radius: 13px 13px 0 0;
+  padding: 0.65rem 0.8rem 0.35rem;
   resize: none;
-  border-radius: 13px;
+  color: var(--color-text);
+  background: transparent;
   line-height: 1.35;
+  outline: 0;
 }
 
-.chat-composer textarea:focus {
-  border-color: color-mix(in srgb, var(--color-accent) 72%, var(--color-border));
-  outline: 2px solid color-mix(in srgb, var(--color-accent) 24%, transparent);
-  outline-offset: 0;
+.chat-composer-main textarea:focus,
+.chat-composer-main textarea:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.chat-composer-main textarea:disabled {
+  opacity: 0.65;
+}
+
+.chat-composer-toolbar {
+  display: flex;
+  align-items: center;
+  min-height: 2rem;
+  gap: 0.35rem;
+  padding: 0.1rem 0.45rem 0.35rem;
+}
+
+.chat-composer-attach,
+.chat-composer-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+}
+
+.chat-composer-attach {
+  position: relative;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.chat-composer-attach:hover,
+.chat-composer-action:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+}
+
+.chat-composer-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-composer-spacer {
+  flex: 1 1 auto;
+  min-width: 0.5rem;
+}
+
+.chat-composer-action {
+  color: var(--color-text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.chat-composer-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chat-composer-action.chat-send:not(:disabled) {
+  color: white;
+  background: var(--color-accent);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.chat-composer-action.chat-send:hover:not(:disabled) {
+  color: white;
+  background: var(--color-accent-hover);
+}
+
+.chat-composer-action.chat-stop {
+  color: var(--color-warning);
 }
 
 .chat-attach {
