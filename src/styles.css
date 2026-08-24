@@ -637,8 +637,8 @@
 }
 
 .chat-drawer.is-expanded {
-  width: min(720px, 56vw);
-  right: 44vw;
+  width: var(--mission-control-expanded-chat-width, min(720px, 56vw));
+  right: var(--mission-control-expanded-chat-right, 44vw);
   border-left: 0;
   border-right: 1px solid var(--color-border);
 }
@@ -649,7 +649,7 @@
   right: 0;
   bottom: 0;
   z-index: 61;
-  width: 44vw;
+  width: var(--mission-control-tldraw-width, 44vw);
   min-width: 420px;
   display: flex;
   flex-direction: column;
