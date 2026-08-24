@@ -667,6 +667,21 @@
   display: none;
 }
 
+.tldraw-canvas-resize-handle {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 63;
+  width: 8px;
+  transform: translateX(50%);
+  cursor: col-resize;
+}
+
+.tldraw-canvas-resize-handle:hover,
+.tldraw-canvas-resize-handle:active {
+  background: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
 .tldraw-canvas-head {
   display: flex;
   align-items: center;
@@ -3400,7 +3415,8 @@
   background: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 @media (pointer: coarse) {
-  .chat-drawer-resize-handle {
+  .chat-drawer-resize-handle,
+  .tldraw-canvas-resize-handle {
     display: none;
   }
 }
