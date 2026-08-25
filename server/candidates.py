@@ -136,10 +136,16 @@ def list_candidates(status: Optional[str] = None, vault: Optional[str] = None) -
     return out
 
 
-def _find_by_id(cid: str, vault: Optional[str] = None) -> Optional[Path]:
+def _find_by_id(cid: str, vault: Optional[str] = None, filename: Optional[str] = None) -> Optional[Path]:
     d = _candidates_dir(vault)
     if not d.exists():
         return None
+    if filename:
+        exact = d / Path(filename).name
+        if exact.is_file():
+            c = _read_candidate(exact)
+            if c and c.get("id") == cid:
+                return exact
     for p in d.glob("*.md"):
         c = _read_candidate(p)
         if c and c.get("id") == cid:
@@ -160,9 +166,9 @@ def _quarantine_delta(vault: Optional[str] = None) -> timedelta:
     return timedelta(days=days)
 
 
-def approve(cid: str, vault: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def approve(cid: str, vault: Optional[str] = None, filename: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Approve a candidate -> status approved, quarantine_until = now + delta."""
-    p = _find_by_id(cid, vault)
+    p = _find_by_id(cid, vault, filename)
     if not p:
         return None
     c = _read_candidate(p)
@@ -176,9 +182,9 @@ def approve(cid: str, vault: Optional[str] = None) -> Optional[Dict[str, Any]]:
     return _read_candidate(p)
 
 
-def reject(cid: str, reason: str = "", vault: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def reject(cid: str, reason: str = "", vault: Optional[str] = None, filename: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Reject a candidate -> status rejected, rejection_reason = human feedback."""
-    p = _find_by_id(cid, vault)
+    p = _find_by_id(cid, vault, filename)
     if not p:
         return None
     c = _read_candidate(p)

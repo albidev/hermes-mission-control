@@ -526,7 +526,11 @@ export function eventText(event: GatewayEvent): string {
   if (!payload) return '';
   const text = typeof payload.text === 'string' ? payload.text : '';
   const rendered = typeof payload.rendered === 'string' ? payload.rendered : '';
-  return text || rendered;
+  const delta = typeof payload.delta === 'string' ? payload.delta : '';
+  const content = typeof payload.content === 'string' ? payload.content : '';
+  const output = typeof payload.output === 'string' ? payload.output : '';
+  const finalResponse = typeof payload.final_response === 'string' ? payload.final_response : '';
+  return text || rendered || delta || content || output || finalResponse;
 }
 
 export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, now = Date.now()): ChatMessage[] {
@@ -536,6 +540,9 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
   const isToolStart = event.type === 'tool.start' || event.type === 'tool.started';
   const isToolProgress = event.type === 'tool.progress' || event.type === 'tool.delta' || event.type === 'tool.output';
   const isToolComplete = event.type === 'tool.complete' || event.type === 'tool.completed';
+  const isMessageStart = event.type === 'message.start' || event.type === 'message.started';
+  const isMessageDelta = event.type === 'message.delta' || event.type === 'assistant.delta';
+  const isMessageComplete = event.type === 'message.complete' || event.type === 'message.completed' || event.type === 'assistant.completed';
   const lastIndexOf = (predicate: (message: ChatMessage) => boolean): number => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (predicate(messages[index])) return index;
@@ -543,7 +550,7 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     return -1;
   };
 
-  if (event.type === 'message.start') {
+  if (isMessageStart) {
     const next = messages
       .filter((message) => !(message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()))
       .map((message) => message.kind === 'assistant' && message.status === 'streaming'
@@ -553,7 +560,7 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     return [...next, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: '', status: 'streaming', createdAt: now }];
   }
 
-  if (event.type === 'message.delta') {
+  if (isMessageDelta) {
     const delta = eventText(event);
     if (!delta) return messages;
     const next = [...messages];
@@ -662,17 +669,31 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     return next;
   }
 
-  if (event.type === 'message.complete') {
+  if (isMessageComplete) {
     const finalText = eventText(event);
     const next = [...messages];
     const index = lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
     if (index >= 0) {
-      const current = next[index];
-      next[index] = { ...current, text: finalText || current.text, status: 'complete' };
-      return next;
+      next[index] = { ...next[index], text: finalText || next[index].text, status: 'complete' };
+      return next.filter((message, candidateIndex) => !(candidateIndex !== index && message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()));
     }
     if (finalText) return [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: finalText, status: 'complete', createdAt: now }];
     return messages;
+  }
+
+  if (event.type === 'run.completed') {
+    const transcript = Array.isArray(payload.messages) ? payload.messages : [];
+    const finalMessage = [...transcript].reverse().find((item) => isRecord(item) && item.role === 'assistant');
+    const authoritativeText = finalMessage && isRecord(finalMessage)
+      ? textFromContent(finalMessage.content ?? finalMessage.text)
+      : eventText(event);
+    const next = [...messages];
+    const index = lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
+    if (index >= 0) {
+      next[index] = { ...next[index], text: authoritativeText || next[index].text, status: 'complete' };
+      return next.filter((message, candidateIndex) => !(candidateIndex !== index && message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()));
+    }
+    return authoritativeText ? [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: authoritativeText, status: 'complete', createdAt: now }] : messages;
   }
 
   if (event.type === 'error') {
