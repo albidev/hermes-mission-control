@@ -466,12 +466,23 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
             activityTimerRef.current = window.setTimeout(() => setActivity(null), 1800);
           }
         }
-        if (parsed.event.type === 'run.started' || parsed.event.type === 'message.start' || parsed.event.type === 'message.started') {
+        const isTurnStarted = parsed.event.type === 'run.started' || parsed.event.type === 'message.start' || parsed.event.type === 'message.started' || parsed.event.type === 'response.started';
+        const isTurnCompleted = parsed.event.type === 'message.complete'
+          || parsed.event.type === 'message.completed'
+          || parsed.event.type === 'message.done'
+          || parsed.event.type === 'assistant.completed'
+          || parsed.event.type === 'assistant.done'
+          || parsed.event.type === 'response.completed'
+          || parsed.event.type === 'response.done'
+          || parsed.event.type === 'run.completed'
+          || parsed.event.type === 'run.finished'
+          || parsed.event.type === 'run.done';
+        if (isTurnStarted) {
           setRunning(true);
           setCompleted(false);
           if (completedTimerRef.current !== null) window.clearTimeout(completedTimerRef.current);
         }
-        if (parsed.event.type === 'message.complete' || parsed.event.type === 'message.completed' || parsed.event.type === 'assistant.completed' || parsed.event.type === 'run.completed' || parsed.event.type === 'error') {
+        if (isTurnCompleted || parsed.event.type === 'error') {
           setRunning(false);
           if (parsed.event.type !== 'error') {
             setCompleted(true);
