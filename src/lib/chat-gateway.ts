@@ -75,6 +75,15 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function persistedRunWasCompleted(): boolean {
+  const presence = getChatPresence();
+  if (presence.phase !== 'running') return false;
+  const persisted = readPersistedChat();
+  const hasStreamingAssistant = persisted.messages.some((message) => message.role === 'assistant' && message.status === 'streaming');
+  const hasCompletedAssistant = persisted.messages.some((message) => message.role === 'assistant' && message.status !== 'streaming' && message.text.trim());
+  return !hasStreamingAssistant && hasCompletedAssistant;
+}
+
 export function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: string | null) {
   const initial = useMemo(readPersistedChat, []);
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
@@ -84,11 +93,12 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [statusText, setStatusText] = useState('Disconnected');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [running, setRunning] = useState(() => getChatPresence().phase === 'running');
-  const [completed, setCompleted] = useState(() => getChatPresence().phase === 'completed');
+  const restoredCompleted = persistedRunWasCompleted();
+  const [running, setRunning] = useState(() => getChatPresence().phase === 'running' && !restoredCompleted);
+  const [completed, setCompleted] = useState(() => getChatPresence().phase === 'completed' || restoredCompleted);
   const [activity, setActivity] = useState<ChatActivity | null>(() => {
     const presence = getChatPresence();
-    return presence.phase === 'running' && presence.verb
+    return presence.phase === 'running' && !restoredCompleted && presence.verb
       ? { kind: 'status', label: presence.verb, detail: '', state: 'running' }
       : null;
   });
