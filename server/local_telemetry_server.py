@@ -1938,11 +1938,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
                 return
             cid = data.get('id', '')
+            filename = data.get('filename') or None
             vault = data.get('vault') or None
             if not cid:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
                 return
-            cand = candidates_mod.approve(cid, vault)
+            cand = candidates_mod.approve(cid, vault, filename)
             if not cand:
                 self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
                 return
@@ -1967,12 +1968,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
                 return
             cid = data.get('id', '')
+            filename = data.get('filename') or None
             reason = data.get('reason', '')
             vault = data.get('vault') or None
             if not cid:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
                 return
-            cand = candidates_mod.reject(cid, reason, vault)
+            cand = candidates_mod.reject(cid, reason, vault, filename)
             if not cand:
                 self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
                 return
