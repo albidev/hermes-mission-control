@@ -21,7 +21,7 @@ import { ThemeSelector } from './ThemeSelector';
 import { PushToggle } from './PushToggle';
 import { useMissionControl } from '../lib/mission-control-store';
 import { ChatDrawer } from './ChatDrawer';
-import { markChatPresenceRead, useChatPresence } from '../lib/chat-presence';
+import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
 import { Button } from './ui/Button';
 
@@ -47,8 +47,6 @@ export function MissionControlShell() {
     setTokenDraft,
     unlock,
     logout,
-    lastUpdatedAt,
-    resolvedTheme,
   } = useMissionControl();
 
   const navItems = [
@@ -268,28 +266,24 @@ export function MissionControlShell() {
                 <h1>{activeNav?.label ?? 'Overview'}</h1>
               </div>
             </div>
-            <div className="workspace-meta">
-              <span className="mini-note">theme: {resolvedTheme}</span>
-              {lastUpdatedAt ? <span className="mini-note">Last synced {lastUpdatedAt}</span> : null}
-              <Button
-                ref={chatButtonRef}
-                variant="secondary"
-                size="md"
-                icon={<span className={`chat-presence-dot is-${presence.phase}`} aria-hidden><MessageSquare size={16} /></span>}
-                className={`chat-open-button chat-presence-button is-${presence.phase}`}
-                type="button"
-                onClick={() => { markChatPresenceRead(); setChatOpen(true); }}
-                aria-label={presence.preview ? `${chatButtonLabel}: ${presence.preview}` : chatButtonLabel}
-                aria-expanded={chatOpen}
-                title={presence.preview || chatButtonLabel}
-              >
-                <span className="chat-presence-label-full">{chatButtonLabel}</span>
-                <span className="chat-presence-label-compact" aria-hidden>
-                  {presence.phase === 'running' ? 'Working…' : presence.phase === 'completed' ? 'Done' : presence.phase === 'waiting' ? 'Needs you' : 'Chat'}
-                </span>
-                {presence.unreadCount > 0 ? <span className="chat-unread-badge">{presence.unreadCount > 9 ? '9+' : presence.unreadCount}</span> : null}
-              </Button>
-            </div>
+            <Button
+              ref={chatButtonRef}
+              variant="secondary"
+              size="md"
+              icon={<span className={`chat-presence-dot is-${presence.phase}`} aria-hidden><MessageSquare size={16} /></span>}
+              className={`chat-open-button chat-presence-button is-${presence.phase}`}
+              type="button"
+              onClick={() => { setChatOpen(true); }}
+              aria-label={presence.preview ? `${chatButtonLabel}: ${presence.preview}` : chatButtonLabel}
+              aria-expanded={chatOpen}
+              title={presence.preview || chatButtonLabel}
+            >
+              <span className="chat-presence-label-full">{chatButtonLabel}</span>
+              <span className="chat-presence-label-compact" aria-hidden>
+                {presence.phase === 'running' ? 'Working…' : presence.phase === 'completed' ? 'Done' : presence.phase === 'waiting' ? 'Needs you' : 'Chat'}
+              </span>
+              {presence.unreadCount > 0 ? <span className="chat-unread-badge">{presence.unreadCount > 9 ? '9+' : presence.unreadCount}</span> : null}
+            </Button>
           </header>
 
           <section className={`route-stage ${isOverviewRoute ? 'is-overview' : ''}`}>
