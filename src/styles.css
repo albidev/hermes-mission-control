@@ -1838,6 +1838,8 @@
 .dashboard-grid-spacer {
   display: block;
   min-height: 10rem;
+  margin-bottom: 1rem;
+  break-inside: avoid;
 }
 
 .dashboard-widget-content {
@@ -1864,6 +1866,10 @@
   border-radius: calc(var(--radius-lg) + 2px);
   background: var(--color-accent-subtle);
   transition: transform 150ms ease, opacity 150ms ease, box-shadow 150ms ease;
+}
+
+.dashboard-grid.is-arranging .dashboard-grid-spacer {
+  display: none;
 }
 
 .dashboard-grid.is-arranging .dashboard-widget.is-dragging {
