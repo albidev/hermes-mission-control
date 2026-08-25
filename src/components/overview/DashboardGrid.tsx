@@ -165,6 +165,7 @@ export function DashboardGrid({ widgets }: { widgets: DashboardWidget[] }) {
           </article>
         ))}
       </div>
+      <div className="dashboard-grid-spacer" aria-hidden="true" />
     </section>
   );
 }

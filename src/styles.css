@@ -1835,6 +1835,11 @@
   position: relative;
 }
 
+.dashboard-grid-spacer {
+  display: block;
+  min-height: 10rem;
+}
+
 .dashboard-widget-content {
   min-width: 0;
 }
@@ -2095,6 +2100,10 @@
   .dashboard-grid {
     column-count: 1;
     gap: 1rem;
+  }
+
+  .dashboard-grid-spacer {
+    display: none;
   }
 
   .dashboard-widget {
