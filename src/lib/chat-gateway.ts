@@ -33,7 +33,7 @@ import {
   type GatewayInteractionRequest,
 } from './chat-protocol';
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
-import { getChatReadState, publishChatPresence } from './chat-presence';
+import { CHAT_PRESENCE_EVENT, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
@@ -177,6 +177,16 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       }
     };
   }, [activity, completed, interaction, messages, open, running, sessionKey, sessionTitle]);
+
+  useEffect(() => {
+    const handlePresenceAck = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const detail = event.detail as { phase?: unknown } | undefined;
+      if (detail?.phase === 'idle') setCompleted(false);
+    };
+    window.addEventListener(CHAT_PRESENCE_EVENT, handlePresenceAck);
+    return () => window.removeEventListener(CHAT_PRESENCE_EVENT, handlePresenceAck);
+  }, []);
 
   // (fresh browser) or its local copy is older than the server's last active
   // session, adopt the server's pointer so desktop and mobile open the SAME
