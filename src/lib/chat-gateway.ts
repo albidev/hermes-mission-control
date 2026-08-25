@@ -79,9 +79,11 @@ function persistedRunWasCompleted(): boolean {
   const presence = getChatPresence();
   if (presence.phase !== 'running') return false;
   const persisted = readPersistedChat();
+  const lastTurnMessage = [...persisted.messages].reverse().find((message) => message.role === 'assistant' || message.role === 'user');
+  const hasVisibleCompletedAssistant = lastTurnMessage?.role === 'assistant' && Boolean(lastTurnMessage.text.trim());
   const hasStreamingAssistant = persisted.messages.some((message) => message.role === 'assistant' && message.status === 'streaming');
   const hasCompletedAssistant = persisted.messages.some((message) => message.role === 'assistant' && message.status !== 'streaming' && message.text.trim());
-  return !hasStreamingAssistant && hasCompletedAssistant;
+  return hasVisibleCompletedAssistant || (!hasStreamingAssistant && hasCompletedAssistant);
 }
 
 export function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: string | null) {
