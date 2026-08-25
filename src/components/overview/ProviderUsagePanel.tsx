@@ -98,6 +98,7 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
           ) : null}
         </div>
       )}
+      {provider.provider === 'ollama' ? <div className="provider-card-spacer" aria-hidden="true" /> : null}
     </div>
   );
 }
@@ -165,7 +166,6 @@ export function ProviderUsagePanel() {
       <div className="p-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
         {snapshot.providers.map((provider) => <ProviderCard key={provider.provider} provider={provider} />)}
       </div>
-      <div className="provider-usage-grid-spacer" aria-hidden="true" />
     </Card>
   );
 }
