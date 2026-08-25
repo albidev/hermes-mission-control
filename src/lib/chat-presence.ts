@@ -12,9 +12,10 @@ export type ChatPresence = {
   updatedAt: number;
 };
 
+export const CHAT_PRESENCE_EVENT = 'mission-control:chat-presence';
 const PRESENCE_KEY = 'mission-control-chat-presence-v1';
 const READ_STATE_KEY = 'mission-control-chat-read-state-v1';
-const EVENT_NAME = 'mission-control:chat-presence';
+const EVENT_NAME = CHAT_PRESENCE_EVENT;
 
 const EMPTY_PRESENCE: ChatPresence = {
   sessionKey: null,
