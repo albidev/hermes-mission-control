@@ -471,6 +471,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           setActivity(incomingActivity);
           if (incomingActivity.state === 'running') setRunning(true);
           if (incomingActivity.state === 'error') setRunning(false);
+          if (parsed.event.type === 'status.update' && incomingActivity.state === 'complete') {
+            setRunning(false);
+            setCompleted(true);
+          }
           if (activityTimerRef.current !== null) window.clearTimeout(activityTimerRef.current);
           if (incomingActivity.state === 'complete' || incomingActivity.state === 'error') {
             activityTimerRef.current = window.setTimeout(() => setActivity(null), 1800);
