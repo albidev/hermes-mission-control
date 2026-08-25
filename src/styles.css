@@ -1836,10 +1836,7 @@
 }
 
 .dashboard-grid-spacer {
-  display: block;
-  min-height: 10rem;
-  margin-bottom: 1rem;
-  break-inside: avoid;
+  display: none;
 }
 
 .dashboard-widget-content {
@@ -2098,9 +2095,18 @@
   color: var(--color-text);
 }
 
-/* ============================================
-   Responsive
-   ============================================ */
+@media (min-width: 1280px) {
+  .dashboard-grid {
+    column-count: 3;
+  }
+
+  .dashboard-grid-spacer {
+    display: block;
+    min-height: 10rem;
+    margin-bottom: 1rem;
+    break-inside: avoid;
+  }
+}
 
 @media (max-width: 980px) {
   .dashboard-grid {
