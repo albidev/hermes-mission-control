@@ -165,6 +165,7 @@ export function ProviderUsagePanel() {
       <div className="p-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
         {snapshot.providers.map((provider) => <ProviderCard key={provider.provider} provider={provider} />)}
       </div>
+      <div className="provider-usage-grid-spacer" aria-hidden="true" />
     </Card>
   );
 }
