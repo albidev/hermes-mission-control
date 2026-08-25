@@ -594,9 +594,8 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     let boundary = next.length;
     for (let i = next.length - 1; i >= 0; i -= 1) {
       const item = next[i];
-      if ((item.kind === 'assistant' || item.kind === 'user') && item.status === 'complete') {
+      if (item.kind === 'assistant' && item.status === 'complete') {
         boundary = i;
-        continue;
       }
       break;
     }

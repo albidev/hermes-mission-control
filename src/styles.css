@@ -542,6 +542,10 @@
   gap: 0.45rem;
 }
 
+.chat-presence-label-compact {
+  display: none;
+}
+
 .chat-presence-button.is-running {
   border-color: color-mix(in srgb, var(--color-accent) 65%, var(--color-border));
   color: var(--color-accent);
@@ -2117,6 +2121,29 @@
     text-align: right;
     flex-direction: column;
     gap: 0.125rem;
+  }
+
+  .chat-presence-button {
+    max-width: 7.5rem;
+    min-width: 0;
+    padding-inline: 0.6rem;
+    gap: 0.3rem;
+  }
+
+  .chat-presence-label-full {
+    display: none;
+  }
+
+  .chat-presence-label-compact {
+    display: inline;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-presence-button .chat-unread-badge {
+    flex: 0 0 auto;
   }
 
   .side-menu {

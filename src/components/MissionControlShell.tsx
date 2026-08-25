@@ -281,7 +281,10 @@ export function MissionControlShell() {
                 aria-expanded={chatOpen}
                 title={presence.preview || chatButtonLabel}
               >
-                <span>{chatButtonLabel}</span>
+                <span className="chat-presence-label-full">{chatButtonLabel}</span>
+                <span className="chat-presence-label-compact" aria-hidden>
+                  {presence.phase === 'running' ? 'Working…' : presence.phase === 'waiting' ? 'Needs you' : 'Chat'}
+                </span>
                 {presence.unreadCount > 0 ? <span className="chat-unread-badge">{presence.unreadCount > 9 ? '9+' : presence.unreadCount}</span> : null}
               </Button>
             </div>
