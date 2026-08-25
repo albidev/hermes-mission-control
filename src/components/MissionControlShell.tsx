@@ -15,7 +15,6 @@ import {
   ScrollText,
   Settings,
   Wrench,
-  X,
 } from 'lucide-react';
 import { ThemeSelector } from './ThemeSelector';
 import { PushToggle } from './PushToggle';
@@ -184,16 +183,6 @@ export function MissionControlShell() {
                 aria-expanded={!sideCollapsed}
                 title={sideCollapsed ? 'Expand navigation' : 'Collapse navigation'}
                 onClick={toggleSidebar}
-              />
-              <Button
-                variant="secondary"
-                size="md"
-                icon={<X size={16} />}
-                iconOnly
-                className="side-close"
-                type="button"
-                onClick={toggleSidebar}
-                aria-label="Close navigation"
               />
             </div>
             <strong>Operator panel</strong>
