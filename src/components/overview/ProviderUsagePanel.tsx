@@ -29,11 +29,6 @@ function mainWindow(provider: MissionControlProviderUsage) {
   return provider.primary ?? provider.secondary ?? null;
 }
 
-function mainMetricLabel(provider: MissionControlProviderUsage): string {
-  if (provider.provider === 'openrouter') return 'Balance';
-  return provider.primary ? 'Session' : 'Weekly';
-}
-
 function secondaryMetric(provider: MissionControlProviderUsage): string {
   if (provider.provider === 'openrouter') {
     const monthly = provider.openRouter?.keyUsageMonthly;
@@ -45,10 +40,27 @@ function secondaryMetric(provider: MissionControlProviderUsage): string {
     : 'Weekly —';
 }
 
-function resetLabel(provider: MissionControlProviderUsage): string {
-  if (provider.provider === 'openrouter') return 'API key';
-  const reset = mainWindow(provider)?.resetsAt;
-  return reset ? formatReset(reset) : 'Reset unknown';
+function gaugeTone(value: number, metric: 'session' | 'weekly'): { className?: string; color: string } {
+  if (value >= 85) return { className: 'bg-negative', color: '' };
+  if (value >= 60) return { className: 'bg-warning', color: '' };
+  return { color: `var(--color-usage-${metric})` };
+}
+
+function UsageGauge({ label, metric, window }: { label: string; metric: 'session' | 'weekly'; window?: MissionControlProviderUsage['primary'] }) {
+  const value = typeof window?.usedPercent === 'number' ? Math.max(0, Math.min(100, window.usedPercent)) : null;
+  const tone = value === null ? null : gaugeTone(value, metric);
+  return (
+    <div className="flex flex-col gap-1.5" title={value === null ? `${label}: unavailable` : `${label}: ${formatPercent(value)}`}>
+      <div className="flex items-center justify-between gap-2 text-[10px]">
+        <span className="text-text-muted uppercase tracking-wide">{label}</span>
+        <span className="text-text tabular-nums font-medium">{value === null ? '—' : formatPercent(value)}</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken" role="progressbar" aria-label={`${label} usage`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value ?? undefined}>
+        {tone ? <div className={`h-full rounded-full transition-[width] duration-300 ${tone.className ?? ''}`} style={{ width: `${value}%`, backgroundColor: tone.color || undefined }} /> : null}
+      </div>
+      <span className="text-[10px] text-text-subtle truncate">{window?.resetsAt ? formatReset(window.resetsAt) : 'reset unknown'}</span>
+    </div>
+  );
 }
 
 function mainMetricValue(provider: MissionControlProviderUsage): string {
@@ -69,23 +81,23 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
         <div className="flex flex-1 items-center">
           <span className="text-xs text-text-muted line-clamp-2">{provider.error || 'Unavailable'}</span>
         </div>
-      ) : (
+      ) : provider.provider === 'openrouter' ? (
         <div className="flex flex-1 flex-col justify-between gap-2">
-          <div className="flex items-end justify-between gap-2">
-            <div className="min-w-0">
-              <span className="text-[10px] text-text-muted uppercase tracking-wide">{mainMetricLabel(provider)}</span>
-              <div className={`text-lg font-semibold tabular-nums ${provider.provider === 'openrouter' ? 'text-emerald-400' : 'text-sky-400'}`}>
-                {mainMetricValue(provider)}
-              </div>
-            </div>
-            {typeof provider.resetCreditsAvailable === 'number' ? (
-              <span className="text-[10px] text-text-subtle text-right">{provider.resetCreditsAvailable} reset credits</span>
-            ) : null}
+          <div>
+            <span className="text-[10px] text-text-muted uppercase tracking-wide">Balance</span>
+            <div className="text-lg font-semibold tabular-nums text-emerald-400">{mainMetricValue(provider)}</div>
           </div>
-          <div className="flex items-center justify-between gap-2 text-[10px] text-text-subtle truncate">
-            <span className="truncate">{secondaryMetric(provider)}</span>
-            <span className="truncate text-right">{resetLabel(provider)}</span>
-          </div>
+          <span className="text-[10px] text-text-subtle">{secondaryMetric(provider)}</span>
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col justify-between gap-2.5">
+          <UsageGauge label="Session" metric="session" window={provider.primary ?? undefined} />
+          {provider.secondary || !provider.primary ? <UsageGauge label="Weekly" metric="weekly" window={provider.secondary ?? undefined} /> : null}
+          {typeof provider.resetCreditsAvailable === 'number' ? (
+            <span className="text-[10px] text-text-subtle text-right">{provider.resetCreditsAvailable} reset credits</span>
+          ) : provider.provider === 'ollama' ? (
+            <span className="provider-card-spacer" aria-hidden="true" />
+          ) : null}
         </div>
       )}
     </div>
