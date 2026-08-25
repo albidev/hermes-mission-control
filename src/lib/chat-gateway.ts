@@ -629,10 +629,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
             activityTimerRef.current = window.setTimeout(() => setActivity(null), 1800);
           }
         }
-        if (parsed.event.type === 'message.start') setRunning(true);
-        if (parsed.event.type === 'message.complete' || parsed.event.type === 'error') {
+        if (parsed.event.type === 'run.started' || parsed.event.type === 'message.start' || parsed.event.type === 'message.started') setRunning(true);
+        if (parsed.event.type === 'message.complete' || parsed.event.type === 'message.completed' || parsed.event.type === 'assistant.completed' || parsed.event.type === 'run.completed' || parsed.event.type === 'error') {
           setRunning(false);
-          if (parsed.event.type === 'message.complete') setActivity(null);
+          if (parsed.event.type !== 'error') setActivity(null);
         }
         if (parsed.event.type === 'run.completed') {
           const payload = parsed.event.payload ?? {};
