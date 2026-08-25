@@ -33,7 +33,7 @@ import {
   type GatewayInteractionRequest,
 } from './chat-protocol';
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
-import { getChatReadState, markChatPresenceRead, publishChatPresence } from './chat-presence';
+import { getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
@@ -104,7 +104,6 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const activityTimerRef = useRef<number | null>(null);
   const readyTimerRef = useRef<number | null>(null);
   const presenceTimerRef = useRef<number | null>(null);
-  const completedTimerRef = useRef<number | null>(null);
   const sessionIdRef = useRef(sessionId);
   const sessionKeyRef = useRef(sessionKey);
   const interactionRef = useRef(interaction);
@@ -157,12 +156,6 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     persistChat(sessionId, sessionKey, modelIdentity, messages);
     syncLastChatToServer(sessionId, sessionKey, modelIdentity, storedToken);
   }, [messages, modelIdentity, sessionId, sessionKey]);
-
-  useEffect(() => {
-    if (open) {
-      markChatPresenceRead(sessionKey);
-    }
-  }, [open]);
 
   useEffect(() => {
     if (presenceTimerRef.current !== null) window.clearTimeout(presenceTimerRef.current);
@@ -480,17 +473,11 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         if (isTurnStarted) {
           setRunning(true);
           setCompleted(false);
-          if (completedTimerRef.current !== null) window.clearTimeout(completedTimerRef.current);
         }
         if (isTurnCompleted || parsed.event.type === 'error') {
           setRunning(false);
           if (parsed.event.type !== 'error') {
             setCompleted(true);
-            if (completedTimerRef.current !== null) window.clearTimeout(completedTimerRef.current);
-            completedTimerRef.current = window.setTimeout(() => {
-              setCompleted(false);
-              completedTimerRef.current = null;
-            }, 1800);
             setActivity(null);
           }
         }
@@ -580,9 +567,6 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       intentionalCloseRef.current = true;
       if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
       if (readyTimerRef.current !== null) window.clearTimeout(readyTimerRef.current);
-      if (completedTimerRef.current !== null) window.clearTimeout(completedTimerRef.current);
-      completedTimerRef.current = null;
-      setCompleted(false);
       readyResolveRef.current?.();
       rejectPending('Chat drawer closed.');
       wsRef.current?.close();

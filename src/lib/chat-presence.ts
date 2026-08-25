@@ -83,7 +83,7 @@ export function markChatPresenceRead(sessionKey?: string | null, assistantCount?
       assistantCount: assistantCount ?? persisted.assistantCount,
     } satisfies ChatReadState));
     const current = readPresence();
-    publishChatPresence({ ...current, phase: current.phase === 'unread' ? 'idle' : current.phase, unreadCount: 0 });
+    publishChatPresence({ ...current, phase: current.phase === 'unread' || current.phase === 'completed' ? 'idle' : current.phase, unreadCount: 0 });
   } catch {
     // Ignore storage failures.
   }

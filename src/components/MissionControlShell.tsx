@@ -21,7 +21,7 @@ import { ThemeSelector } from './ThemeSelector';
 import { PushToggle } from './PushToggle';
 import { useMissionControl } from '../lib/mission-control-store';
 import { ChatDrawer } from './ChatDrawer';
-import { markChatPresenceRead, useChatPresence } from '../lib/chat-presence';
+import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
 import { Button } from './ui/Button';
 
@@ -273,7 +273,7 @@ export function MissionControlShell() {
               icon={<span className={`chat-presence-dot is-${presence.phase}`} aria-hidden><MessageSquare size={16} /></span>}
               className={`chat-open-button chat-presence-button is-${presence.phase}`}
               type="button"
-              onClick={() => { markChatPresenceRead(); setChatOpen(true); }}
+              onClick={() => { setChatOpen(true); }}
               aria-label={presence.preview ? `${chatButtonLabel}: ${presence.preview}` : chatButtonLabel}
               aria-expanded={chatOpen}
               title={presence.preview || chatButtonLabel}
