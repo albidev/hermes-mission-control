@@ -41,9 +41,9 @@ function secondaryMetric(provider: MissionControlProviderUsage): string {
 }
 
 function gaugeTone(value: number): string {
-  if (value >= 85) return 'bg-red-400';
-  if (value >= 60) return 'bg-amber-400';
-  return 'bg-sky-400';
+  if (value >= 85) return 'bg-negative';
+  if (value >= 60) return 'bg-warning';
+  return 'bg-accent';
 }
 
 function UsageGauge({ label, window }: { label: string; window?: MissionControlProviderUsage['primary'] }) {
@@ -54,7 +54,7 @@ function UsageGauge({ label, window }: { label: string; window?: MissionControlP
         <span className="text-text-muted uppercase tracking-wide">{label}</span>
         <span className="text-text tabular-nums font-medium">{value === null ? '—' : formatPercent(value)}</span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-strong" role="progressbar" aria-label={`${label} usage`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value ?? undefined}>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken" role="progressbar" aria-label={`${label} usage`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value ?? undefined}>
         {value !== null ? <div className={`h-full rounded-full transition-[width] duration-300 ${gaugeTone(value)}`} style={{ width: `${value}%` }} /> : null}
       </div>
       <span className="text-[10px] text-text-subtle truncate">{window?.resetsAt ? formatReset(window.resetsAt) : 'reset unknown'}</span>
