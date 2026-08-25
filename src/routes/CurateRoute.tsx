@@ -64,7 +64,7 @@ export function CurateRoute() {
 
   const handleApprove = async (c: MissionControlCandidate) => {
     try {
-      await approveCandidate(storedToken ?? undefined, c.id, vault);
+      await approveCandidate(storedToken ?? undefined, c.id, vault, c._filename);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Approve failed');
@@ -74,7 +74,7 @@ export function CurateRoute() {
   const handleReject = async (c: MissionControlCandidate) => {
     const reason = rejectReason[c.id] ?? '';
     try {
-      await rejectCandidate(storedToken ?? undefined, c.id, reason, vault);
+      await rejectCandidate(storedToken ?? undefined, c.id, reason, vault, c._filename);
       setRejectReason((prev) => ({ ...prev, [c.id]: '' }));
       setRejectingId(null);
       await refresh();
@@ -142,7 +142,7 @@ export function CurateRoute() {
             ) : (
               <div className="space-y-3">
                 {pending.map((c) => (
-                  <Card key={c.id} className="p-4">
+                  <Card key={`${c.id}:${c._filename}`} className="p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
@@ -202,7 +202,7 @@ export function CurateRoute() {
               </h2>
               <div className="space-y-2">
                 {reviewed.map((c) => (
-                  <Card key={c.id} className="p-3">
+                  <Card key={`${c.id}:${c._filename}`} className="p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">

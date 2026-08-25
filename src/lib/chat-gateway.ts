@@ -113,6 +113,15 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const readyResolveRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
+    setMessages((current) => {
+      const hasCompletedAssistant = current.some((message) => message.kind === 'assistant' && message.status !== 'streaming' && message.text.trim());
+      if (!hasCompletedAssistant) return current;
+      const cleaned = current.filter((message) => !(message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()));
+      return cleaned.length === current.length ? current : cleaned;
+    });
+  }, []);
+
+  useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 

@@ -683,8 +683,10 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
 
   if (event.type === 'run.completed') {
     const transcript = Array.isArray(payload.messages) ? payload.messages : [];
-    const finalText = [...transcript].reverse().find((item) => isRecord(item) && item.role === 'assistant') as Record<string, unknown> | undefined;
-    const authoritativeText = finalText ? textFromContent(finalText.content ?? finalText.text) : eventText(event);
+    const finalMessage = [...transcript].reverse().find((item) => isRecord(item) && item.role === 'assistant');
+    const authoritativeText = finalMessage && isRecord(finalMessage)
+      ? textFromContent(finalMessage.content ?? finalMessage.text)
+      : eventText(event);
     const next = [...messages];
     const index = lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
     if (index >= 0) {
