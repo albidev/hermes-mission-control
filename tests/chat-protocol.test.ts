@@ -198,15 +198,18 @@ assertEqual(interimMessages.at(-1)?.status, 'complete');
 // Late-arriving reasoning: when the gateway flushes reasoning AFTER the final
 // reply (reasoning rides the turn-completion payload), the bubble must be
 // inserted BEFORE the completed assistant message, not appended below it.
-let lateReasoning = applyGatewayEvent([], { type: 'message.start' }, 2150);
+let lateReasoning = applyGatewayEvent([
+  { id: 'user-1', role: 'user', kind: 'user', text: 'Question', status: 'complete', createdAt: 2149 },
+], { type: 'message.start' }, 2150);
 lateReasoning = applyGatewayEvent(lateReasoning, { type: 'message.delta', payload: { text: 'Final answer' } }, 2151);
 lateReasoning = applyGatewayEvent(lateReasoning, { type: 'message.complete', payload: { text: 'Final answer' } }, 2152);
 lateReasoning = applyGatewayEvent(lateReasoning, { type: 'reasoning.available', payload: { reasoning: 'Late rationale.' } }, 2153);
-assertEqual(lateReasoning.length, 2);
-assertEqual(lateReasoning[0].kind, 'reasoning');
-assertEqual(lateReasoning[0].text, 'Late rationale.');
-assertEqual(lateReasoning[1].kind, 'assistant');
-assertEqual(lateReasoning[1].text, 'Final answer');
+assertEqual(lateReasoning.length, 3);
+assertEqual(lateReasoning[0].kind, 'user');
+assertEqual(lateReasoning[1].kind, 'reasoning');
+assertEqual(lateReasoning[1].text, 'Late rationale.');
+assertEqual(lateReasoning[2].kind, 'assistant');
+assertEqual(lateReasoning[2].text, 'Final answer');
 
 let toolMessages = applyGatewayEvent([], {
   type: 'tool.start',
