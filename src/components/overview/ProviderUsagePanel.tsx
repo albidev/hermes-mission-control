@@ -40,14 +40,15 @@ function secondaryMetric(provider: MissionControlProviderUsage): string {
     : 'Weekly —';
 }
 
-function gaugeTone(value: number): string {
-  if (value >= 85) return 'bg-negative';
-  if (value >= 60) return 'bg-warning';
-  return 'bg-accent';
+function gaugeTone(value: number, metric: 'session' | 'weekly'): { className?: string; color: string } {
+  if (value >= 85) return { className: 'bg-negative', color: '' };
+  if (value >= 60) return { className: 'bg-warning', color: '' };
+  return { color: `var(--color-usage-${metric})` };
 }
 
-function UsageGauge({ label, window }: { label: string; window?: MissionControlProviderUsage['primary'] }) {
+function UsageGauge({ label, metric, window }: { label: string; metric: 'session' | 'weekly'; window?: MissionControlProviderUsage['primary'] }) {
   const value = typeof window?.usedPercent === 'number' ? Math.max(0, Math.min(100, window.usedPercent)) : null;
+  const tone = value === null ? null : gaugeTone(value, metric);
   return (
     <div className="flex flex-col gap-1.5" title={value === null ? `${label}: unavailable` : `${label}: ${formatPercent(value)}`}>
       <div className="flex items-center justify-between gap-2 text-[10px]">
@@ -55,7 +56,7 @@ function UsageGauge({ label, window }: { label: string; window?: MissionControlP
         <span className="text-text tabular-nums font-medium">{value === null ? '—' : formatPercent(value)}</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken" role="progressbar" aria-label={`${label} usage`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value ?? undefined}>
-        {value !== null ? <div className={`h-full rounded-full transition-[width] duration-300 ${gaugeTone(value)}`} style={{ width: `${value}%` }} /> : null}
+        {tone ? <div className={`h-full rounded-full transition-[width] duration-300 ${tone.className ?? ''}`} style={{ width: `${value}%`, backgroundColor: tone.color || undefined }} /> : null}
       </div>
       <span className="text-[10px] text-text-subtle truncate">{window?.resetsAt ? formatReset(window.resetsAt) : 'reset unknown'}</span>
     </div>
@@ -90,8 +91,8 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
         </div>
       ) : (
         <div className="flex flex-1 flex-col justify-between gap-2.5">
-          <UsageGauge label="Session" window={provider.primary ?? undefined} />
-          {provider.secondary || !provider.primary ? <UsageGauge label="Weekly" window={provider.secondary ?? undefined} /> : null}
+          <UsageGauge label="Session" metric="session" window={provider.primary ?? undefined} />
+          {provider.secondary || !provider.primary ? <UsageGauge label="Weekly" metric="weekly" window={provider.secondary ?? undefined} /> : null}
           {typeof provider.resetCreditsAvailable === 'number' ? (
             <span className="text-[10px] text-text-subtle text-right">{provider.resetCreditsAvailable} reset credits</span>
           ) : null}

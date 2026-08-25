@@ -65,6 +65,10 @@
     --color-accent-hover: #6d28d9;
     --color-accent-subtle: rgba(124, 58, 237, 0.1);
 
+    /* Usage window colors */
+    --color-usage-session: #0891b2;
+    --color-usage-weekly: #7c3aed;
+
     /* Semantic colors */
     --color-positive: #059669;
     --color-positive-subtle: rgba(5, 150, 105, 0.1);
@@ -105,6 +109,8 @@
     --color-accent-subtle: rgba(139, 92, 246, 0.15);
 
     /* Semantic */
+    --color-usage-session: #22d3ee;
+    --color-usage-weekly: #a78bfa;
     --color-positive: #10b981;
     --color-positive-subtle: rgba(16, 185, 129, 0.15);
     --color-warning: #f59e0b;
