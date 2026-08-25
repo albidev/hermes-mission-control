@@ -2325,7 +2325,16 @@ export async function approveCandidate(
     body: JSON.stringify(vault ? { id, vault } : { id }),
   });
   if (response.status === 401) throw new MissionControlAuthError();
-  if (!response.ok) return null;
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const payload = await response.json();
+      detail = payload?.detail || payload?.error || '';
+    } catch {
+      // Keep the HTTP status as the useful fallback.
+    }
+    throw new Error(`Approve failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
   const data = await response.json();
   return data?.candidate ?? null;
 }
@@ -2342,7 +2351,16 @@ export async function rejectCandidate(
     body: JSON.stringify(vault ? { id, reason, vault } : { id, reason }),
   });
   if (response.status === 401) throw new MissionControlAuthError();
-  if (!response.ok) return null;
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const payload = await response.json();
+      detail = payload?.detail || payload?.error || '';
+    } catch {
+      // Keep the HTTP status as the useful fallback.
+    }
+    throw new Error(`Reject failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
   const data = await response.json();
   return data?.candidate ?? null;
 }
