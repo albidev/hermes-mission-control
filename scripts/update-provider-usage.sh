@@ -9,8 +9,13 @@ mkdir -p "$OUTPUT_DIR"
 
 sanitize_provider() {
   local provider="$1"
+  local src_flag=""
+  # Ollama's API key source exposes no usage data; must read the web dashboard (Chrome cookies).
+  if [[ "$provider" == "ollama" ]]; then
+    src_flag="--source web"
+  fi
   local raw
-  raw="$(codexbar usage --provider "$provider" --json --no-color 2>/dev/null || true)"
+  raw="$(codexbar usage --provider "$provider" $src_flag --json --no-color 2>/dev/null || true)"
   if [[ -z "$raw" ]]; then
     printf '{"provider":%s,"available":false,"source":"cli","error":"CodexBar returned no data."}' "$(jq -Rn --arg value "$provider" '$value')"
     return

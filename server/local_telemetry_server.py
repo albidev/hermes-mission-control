@@ -301,8 +301,10 @@ def collect_provider_usage() -> Dict[str, Any]:
     providers = []
     for provider in _USAGE_PROVIDERS:
         try:
+            # Ollama's API path exposes no usage data; must read the web dashboard (Chrome cookies).
+            src_flag = ["--source", "web"] if provider == "ollama" else []
             completed = subprocess.run(
-                [executable, "usage", "--provider", provider, "--json", "--no-color"],
+                [executable, "usage", "--provider", provider, *src_flag, "--json", "--no-color"],
                 capture_output=True,
                 text=True,
                 timeout=30,
