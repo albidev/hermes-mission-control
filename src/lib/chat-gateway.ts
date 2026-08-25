@@ -84,9 +84,14 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [statusText, setStatusText] = useState('Disconnected');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState(() => getChatPresence().phase === 'running');
   const [completed, setCompleted] = useState(() => getChatPresence().phase === 'completed');
-  const [activity, setActivity] = useState<ChatActivity | null>(null);
+  const [activity, setActivity] = useState<ChatActivity | null>(() => {
+    const presence = getChatPresence();
+    return presence.phase === 'running' && presence.verb
+      ? { kind: 'status', label: presence.verb, detail: '', state: 'running' }
+      : null;
+  });
   const [interaction, setInteraction] = useState<GatewayInteractionRequest | null>(null);
   const [modelIdentity, setModelIdentity] = useState<ChatModelIdentity | null>(initial.modelIdentity);
   const [contextTokens, setContextTokens] = useState<number | null>(null);
