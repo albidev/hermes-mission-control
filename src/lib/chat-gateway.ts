@@ -266,7 +266,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
   const adoptModel = useCallback((result: unknown) => {
     const next = extractSessionModel(result);
-    if (next) setModelIdentity(next);
+    if (next) setModelIdentity((current) => ({ ...current, ...next }));
     if (isRecord(result)) {
       const title = typeof result.title === 'string' && result.title.trim() ? result.title.trim() : null;
       if (title) setSessionTitle(title);
@@ -712,7 +712,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         };
       }
       const identity = extractSessionModel(raw) ?? { model: selectedModel, ...(provider.trim() ? { provider: provider.trim() } : {}) };
-      setModelIdentity(identity);
+      setModelIdentity((current) => ({ ...current, ...identity }));
       const deferred = result.deferred === true;
       appendSystemMessage(`${deferred ? 'Model queued for next turn' : 'Model switched'}: ${identity.model}${identity.provider ? ` · ${identity.provider}` : ''}`);
       setModelPickerOpen(false);
