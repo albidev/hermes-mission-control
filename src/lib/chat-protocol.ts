@@ -587,6 +587,22 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     return [...next, { id: `assistant-interim-${now}`, role: 'assistant', kind: 'assistant', text, status: 'streaming', createdAt: now }];
   }
 
+  const insertReasoning = (next: ChatMessage[], entry: ChatMessage): ChatMessage[] => {
+    // If a completed assistant reply already precedes this reasoning event (the
+    // gateway sometimes flushes reasoning with the final turn payload), insert
+    // the bubble BEFORE that reply instead of appending it below.
+    let boundary = next.length;
+    for (let i = next.length - 1; i >= 0; i -= 1) {
+      const item = next[i];
+      if ((item.kind === 'assistant' || item.kind === 'user') && item.status === 'complete') {
+        boundary = i;
+        continue;
+      }
+      break;
+    }
+    return [...next.slice(0, boundary), entry, ...next.slice(boundary)];
+  };
+
   if (event.type === 'reasoning.delta' || event.type === 'thinking.delta') {
     const delta = eventText(event);
     if (!delta) return messages;
@@ -597,7 +613,7 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
       next[index] = { ...current, text: `${current.text}${delta}` };
       return next;
     }
-    return [...messages, { id: `reasoning-${now}`, role: 'tool', kind: 'reasoning', text: delta, status: 'streaming', createdAt: now }];
+    return insertReasoning(next, { id: `reasoning-${now}`, role: 'tool', kind: 'reasoning', text: delta, status: 'streaming', createdAt: now });
   }
 
   if (event.type === 'reasoning.available') {
@@ -615,7 +631,7 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     }
     const duplicate = lastIndexOf((message) => message.kind === 'reasoning' && message.text.trim() === text.trim());
     if (duplicate >= 0) return messages;
-    return [...messages, { id: `reasoning-${now}`, role: 'tool', kind: 'reasoning', text, status: 'complete', createdAt: now }];
+    return insertReasoning(next, { id: `reasoning-${now}`, role: 'tool', kind: 'reasoning', text, status: 'complete', createdAt: now });
   }
 
   if (isToolStart) {
