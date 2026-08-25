@@ -95,10 +95,11 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
           {provider.secondary || !provider.primary ? <UsageGauge label="Weekly" metric="weekly" window={provider.secondary ?? undefined} /> : null}
           {typeof provider.resetCreditsAvailable === 'number' ? (
             <span className="text-[10px] text-text-subtle text-right">{provider.resetCreditsAvailable} reset credits</span>
+          ) : provider.provider === 'ollama' ? (
+            <span className="provider-card-spacer" aria-hidden="true" />
           ) : null}
         </div>
       )}
-      {provider.provider === 'ollama' ? <div className="provider-card-spacer" aria-hidden="true" /> : null}
     </div>
   );
 }
