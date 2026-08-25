@@ -160,6 +160,20 @@ assertEqual(messages.length, 1);
 assertEqual(messages[0].text, 'ABC');
 assertEqual(messages[0].status, 'complete');
 
+let modernMessages = applyGatewayEvent([], { type: 'message.started' }, 2050);
+modernMessages = applyGatewayEvent(modernMessages, { type: 'assistant.delta', payload: { delta: 'Hello' } }, 2051);
+modernMessages = applyGatewayEvent(modernMessages, { type: 'assistant.completed', payload: { content: 'Hello Albi' } }, 2052);
+assertEqual(modernMessages.length, 1);
+assertEqual(modernMessages[0].text, 'Hello Albi');
+assertEqual(modernMessages[0].status, 'complete');
+
+let reconciledMessages = applyGatewayEvent([
+  { id: 'placeholder', role: 'assistant', kind: 'assistant', text: '', status: 'streaming', createdAt: 2053 },
+], { type: 'run.completed', payload: { messages: [{ role: 'assistant', content: 'Recovered answer' }] } }, 2054);
+assertEqual(reconciledMessages.length, 1);
+assertEqual(reconciledMessages[0].text, 'Recovered answer');
+assertEqual(reconciledMessages[0].status, 'complete');
+
 assertDeepEqual(eventActivity({ type: 'status.update', payload: { kind: 'compacting', text: 'Summarizing context' }}), {
   kind: 'status',
   label: 'Compacting context',
