@@ -33,7 +33,7 @@ import {
   type GatewayInteractionRequest,
 } from './chat-protocol';
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
-import { CHAT_PRESENCE_EVENT, getChatReadState, publishChatPresence } from './chat-presence';
+import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
@@ -85,7 +85,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [running, setRunning] = useState(false);
-  const [completed, setCompleted] = useState(false);
+  const [completed, setCompleted] = useState(() => getChatPresence().phase === 'completed');
   const [activity, setActivity] = useState<ChatActivity | null>(null);
   const [interaction, setInteraction] = useState<GatewayInteractionRequest | null>(null);
   const [modelIdentity, setModelIdentity] = useState<ChatModelIdentity | null>(initial.modelIdentity);

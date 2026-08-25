@@ -37,6 +37,10 @@ function readPresence(): ChatPresence {
   }
 }
 
+export function getChatPresence(): ChatPresence {
+  return readPresence();
+}
+
 export function publishChatPresence(next: Omit<ChatPresence, 'updatedAt'>) {
   const presence: ChatPresence = { ...next, updatedAt: Date.now() };
   try {
