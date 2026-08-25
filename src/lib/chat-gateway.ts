@@ -85,6 +85,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [running, setRunning] = useState(false);
+  const [completed, setCompleted] = useState(false);
   const [activity, setActivity] = useState<ChatActivity | null>(null);
   const [interaction, setInteraction] = useState<GatewayInteractionRequest | null>(null);
   const [modelIdentity, setModelIdentity] = useState<ChatModelIdentity | null>(initial.modelIdentity);
@@ -103,6 +104,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const activityTimerRef = useRef<number | null>(null);
   const readyTimerRef = useRef<number | null>(null);
   const presenceTimerRef = useRef<number | null>(null);
+  const completedTimerRef = useRef<number | null>(null);
   const sessionIdRef = useRef(sessionId);
   const sessionKeyRef = useRef(sessionKey);
   const interactionRef = useRef(interaction);
@@ -171,7 +173,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         ? (open ? 0 : assistantCount)
         : Math.max(0, assistantCount - readState.assistantCount);
       const preview = [...messages].reverse().find((message) => message.role === 'assistant' && message.text)?.text?.replace(/\s+/g, ' ').slice(0, 120) || null;
-      const phase = interaction ? 'waiting' : running ? 'running' : !open && unreadCount > 0 ? 'unread' : 'idle';
+      const phase = interaction ? 'waiting' : running ? 'running' : completed ? 'completed' : !open && unreadCount > 0 ? 'unread' : 'idle';
       publishChatPresence({ sessionKey, sessionTitle, phase, verb: activity?.label || null, preview, unreadCount });
       presenceTimerRef.current = null;
     }, 120);
@@ -181,7 +183,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         presenceTimerRef.current = null;
       }
     };
-  }, [activity, interaction, messages, open, running, sessionKey, sessionTitle]);
+  }, [activity, completed, interaction, messages, open, running, sessionKey, sessionTitle]);
 
   // (fresh browser) or its local copy is older than the server's last active
   // session, adopt the server's pointer so desktop and mobile open the SAME
@@ -464,10 +466,22 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
             activityTimerRef.current = window.setTimeout(() => setActivity(null), 1800);
           }
         }
-        if (parsed.event.type === 'run.started' || parsed.event.type === 'message.start' || parsed.event.type === 'message.started') setRunning(true);
+        if (parsed.event.type === 'run.started' || parsed.event.type === 'message.start' || parsed.event.type === 'message.started') {
+          setRunning(true);
+          setCompleted(false);
+          if (completedTimerRef.current !== null) window.clearTimeout(completedTimerRef.current);
+        }
         if (parsed.event.type === 'message.complete' || parsed.event.type === 'message.completed' || parsed.event.type === 'assistant.completed' || parsed.event.type === 'run.completed' || parsed.event.type === 'error') {
           setRunning(false);
-          if (parsed.event.type !== 'error') setActivity(null);
+          if (parsed.event.type !== 'error') {
+            setCompleted(true);
+            if (completedTimerRef.current !== null) window.clearTimeout(completedTimerRef.current);
+            completedTimerRef.current = window.setTimeout(() => {
+              setCompleted(false);
+              completedTimerRef.current = null;
+            }, 1800);
+            setActivity(null);
+          }
         }
         if (parsed.event.type === 'run.completed') {
           const payload = parsed.event.payload ?? {};
@@ -555,6 +569,9 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       intentionalCloseRef.current = true;
       if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
       if (readyTimerRef.current !== null) window.clearTimeout(readyTimerRef.current);
+      if (completedTimerRef.current !== null) window.clearTimeout(completedTimerRef.current);
+      completedTimerRef.current = null;
+      setCompleted(false);
       readyResolveRef.current?.();
       rejectPending('Chat drawer closed.');
       wsRef.current?.close();

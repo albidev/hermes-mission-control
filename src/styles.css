@@ -557,6 +557,11 @@
   color: var(--color-warning);
 }
 
+.chat-presence-button.is-completed {
+  border-color: color-mix(in srgb, var(--color-success, #39d98a) 65%, var(--color-border));
+  color: var(--color-success, #39d98a);
+}
+
 .chat-presence-dot {
   position: relative;
   display: inline-grid;

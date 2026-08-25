@@ -32,9 +32,11 @@ export function MissionControlShell() {
   const presence = useChatPresence();
   const chatButtonLabel = presence.phase === 'running'
     ? `Hermes · ${presence.verb || 'working'}`
-    : presence.phase === 'waiting'
-      ? 'Hermes needs you'
-      : 'Chat';
+    : presence.phase === 'completed'
+      ? 'Hermes · completed'
+      : presence.phase === 'waiting'
+        ? 'Hermes needs you'
+        : 'Chat';
   const {
     authRequired,
     authError,
@@ -283,7 +285,7 @@ export function MissionControlShell() {
               >
                 <span className="chat-presence-label-full">{chatButtonLabel}</span>
                 <span className="chat-presence-label-compact" aria-hidden>
-                  {presence.phase === 'running' ? 'Working…' : presence.phase === 'waiting' ? 'Needs you' : 'Chat'}
+                  {presence.phase === 'running' ? 'Working…' : presence.phase === 'completed' ? 'Done' : presence.phase === 'waiting' ? 'Needs you' : 'Chat'}
                 </span>
                 {presence.unreadCount > 0 ? <span className="chat-unread-badge">{presence.unreadCount > 9 ? '9+' : presence.unreadCount}</span> : null}
               </Button>

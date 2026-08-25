@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type ChatPresencePhase = 'idle' | 'running' | 'waiting' | 'unread';
+export type ChatPresencePhase = 'idle' | 'running' | 'completed' | 'waiting' | 'unread';
 
 export type ChatPresence = {
   sessionKey: string | null;
