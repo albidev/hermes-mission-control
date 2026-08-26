@@ -135,7 +135,7 @@ function BoardColumn({
       {hint ? <p className="text-[10px] text-text-muted px-0.5 -mt-1">{hint}</p> : null}
 
       {/* Task cards */}
-      <div className="flex sm:flex-col gap-2 overflow-x-auto sm:overflow-x-visible sm:overflow-y-auto pb-1" role="list">
+      <div className="flex flex-col gap-2 overflow-y-auto overflow-x-hidden pb-1" role="list">
         {tasks.map((task) => {
           const pri = PRIORITY_COLORS[task.priority ?? 0] ?? PRIORITY_COLORS[0];
           const age = formatAge(task.created_at);
