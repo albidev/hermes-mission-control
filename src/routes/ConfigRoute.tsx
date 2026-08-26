@@ -13,7 +13,6 @@ type PathSegment = string | number;
 type PendingEdit = { path: PathSegment[]; value: unknown };
 
 function formatConfigValue(value: unknown) {
-  const { t } = useI18n();
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (value === null || value === undefined) return 'n/a';
