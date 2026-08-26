@@ -274,13 +274,39 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     return next;
   }, []);
 
+  const refreshReasoning = useCallback(async (activeSessionId: string) => {
+    try {
+      // `reasoning` is session-scoped in the gateway. Do not infer it from
+      // config.yaml: a `/reasoning high` override must win for this chat only.
+      const result = await request<unknown>('config.get', {
+        key: 'reasoning',
+        session_id: activeSessionId,
+      });
+      if (!isRecord(result) || typeof result.value !== 'string' || !result.value.trim()) return;
+      const reasoningEffort = result.value.trim();
+      setModelIdentity((current) => current ? { ...current, reasoningEffort } : current);
+    } catch {
+      // The session payload remains the fallback; this is a display-only refresh.
+    }
+  }, [request]);
+
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => {
+      const activeSessionId = sessionIdRef.current;
+      if (activeSessionId) void refreshReasoning(activeSessionId);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [open, refreshReasoning]);
+
   const refreshModel = useCallback(async (activeSessionId: string) => {
     try {
       adoptModel(await request<unknown>('session.status', { session_id: activeSessionId }));
     } catch {
       // The create/resume payload already carries the model; status is a best-effort refresh.
     }
-  }, [adoptModel, request]);
+    void refreshReasoning(activeSessionId);
+  }, [adoptModel, refreshReasoning, request]);
 
   const refreshContext = useCallback(async (activeSessionId: string) => {
     try {
@@ -462,6 +488,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         if (activeSessionRefs.length > 0 && eventSessionRefs.length > 0 && !eventSessionRefs.some((value) => activeSessionRefs.includes(value))) return;
         if (parsed.event.type === 'session.info') {
           adoptModel(eventPayload);
+          const activeSessionId = sessionIdRef.current;
+          if (activeSessionId) void refreshReasoning(activeSessionId);
           if (isRecord(eventPayload)) {
             const title = typeof eventPayload.title === 'string' && eventPayload.title.trim() ? eventPayload.title.trim() : null;
             if (title) setSessionTitle(title);
@@ -522,7 +550,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           const title = typeof payload.title === 'string' && payload.title.trim() ? payload.title.trim() : null;
           if (title) setSessionTitle(title);
           const activeSessionId = sessionIdRef.current;
-          if (activeSessionId) void refreshContext(activeSessionId);
+          if (activeSessionId) {
+            void refreshContext(activeSessionId);
+            void refreshReasoning(activeSessionId);
+          }
         }
         setMessages((current) => applyGatewayEvent(current, parsed.event));
       });
@@ -575,7 +606,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       setStatusText('Connection failed');
       setError(err instanceof Error ? err.message : 'Chat connection failed.');
     }
-  }, [adoptModel, ensureSession, open, refreshContext, refreshModel, rejectPending, scheduleReconnect, storedToken]);
+  }, [adoptModel, ensureSession, open, refreshContext, refreshModel, refreshReasoning, rejectPending, scheduleReconnect, storedToken]);
 
   useEffect(() => {
     connectRef.current = connect;
