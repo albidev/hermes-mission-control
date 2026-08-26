@@ -14,6 +14,7 @@ const SkillsRoute = lazy(() => import('./routes/SkillsRoute').then((m) => ({ def
 const ConfigRoute = lazy(() => import('./routes/ConfigRoute').then((m) => ({ default: m.ConfigRoute })));
 const LogsRoute = lazy(() => import('./routes/LogsRoute').then((m) => ({ default: m.LogsRoute })));
 const CurateRoute = lazy(() => import('./routes/CurateRoute').then((m) => ({ default: m.CurateRoute })));
+const KanbanRoute = lazy(() => import('./routes/KanbanRoute').then((m) => ({ default: m.KanbanRoute })));
 
 function App() {
   return (
@@ -35,6 +36,7 @@ function App() {
               <Route path="config" element={<ConfigRoute />} />
               <Route path="logs" element={<LogsRoute />} />
               <Route path="curate" element={<CurateRoute />} />
+              <Route path="kanban" element={<KanbanRoute />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

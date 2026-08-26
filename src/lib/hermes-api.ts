@@ -2366,3 +2366,176 @@ export async function rejectCandidate(
   const data = await response.json();
   return data?.candidate ?? null;
 }
+
+// ---------------------------------------------------------------------------
+// Kanban (Mission Control → sidecar /api/local/kanban/* → core kanban_db)
+// ---------------------------------------------------------------------------
+
+export type MissionControlKanbanTask = {
+  id: string;
+  title: string;
+  body?: string | null;
+  status?: string;
+  priority: number;
+  assignee?: string | null;
+  created_at?: number | null;
+  comment_count?: number;
+  parents?: string[];
+  children?: string[];
+  progress?: { done: number; total: number } | null;
+};
+
+export type MissionControlKanbanColumn = {
+  name: string;
+  tasks: MissionControlKanbanTask[];
+};
+
+export type MissionControlKanbanBoard = {
+  columns: MissionControlKanbanColumn[];
+  tenants: string[];
+  assignees: string[];
+  latestEventId: number;
+  now: number;
+};
+
+export type MissionControlKanbanComment = {
+  id: number;
+  task_id: string;
+  author: string;
+  body: string;
+  created_at: number;
+};
+
+export type MissionControlKanbanRun = {
+  id: number;
+  profile?: string | null;
+  status: string;
+  outcome?: string | null;
+  summary?: string | null;
+  error?: string | null;
+  started_at: number;
+  ended_at?: number | null;
+};
+
+export type MissionControlKanbanEventEntry = {
+  id: number;
+  kind: string;
+  payload: Record<string, unknown> | null;
+  created_at: number;
+};
+
+export type MissionControlKanbanTaskDetail = MissionControlKanbanTask & {
+  body?: string | null;
+  result?: string | null;
+  latest_summary?: string | null;
+  comments: MissionControlKanbanComment[];
+  runs: MissionControlKanbanRun[];
+  events: MissionControlKanbanEventEntry[];
+};
+
+export type MissionControlKanbanBoardMeta = {
+  slug: string;
+  name?: string | null;
+  is_current?: boolean;
+  total?: number;
+  counts?: Record<string, number>;
+  archived?: boolean;
+};
+
+export async function loadKanbanBoard(accessToken?: string, board?: string): Promise<MissionControlKanbanBoard> {
+  const query = board ? `?board=${encodeURIComponent(board)}` : '';
+  const { payload } = await maybeFetchLocalJson<MissionControlKanbanBoard>(`/kanban/board${query}`, accessToken);
+  if (!payload) throw new Error('Kanban board unavailable.');
+  return payload;
+}
+
+export async function loadKanbanBoards(accessToken?: string): Promise<{ boards: MissionControlKanbanBoardMeta[]; current: string }> {
+  const { payload } = await maybeFetchLocalJson<{ boards: MissionControlKanbanBoardMeta[]; current: string }>('/kanban/boards', accessToken);
+  if (!payload) throw new Error('Kanban boards unavailable.');
+  return payload;
+}
+
+export async function loadKanbanTaskDetail(accessToken?: string, taskId?: string, board?: string): Promise<MissionControlKanbanTaskDetail> {
+  if (!taskId) throw new Error('taskId is required');
+  const params = new URLSearchParams();
+  if (board) params.set('board', board);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const { payload } = await maybeFetchLocalJson<MissionControlKanbanTaskDetail>(`/kanban/tasks/${encodeURIComponent(taskId)}${qs}`, accessToken);
+  if (!payload) throw new Error('Task unavailable.');
+  return payload;
+}
+
+async function kanbanPost<T>(path: string, body: Record<string, unknown>, accessToken?: string): Promise<T> {
+  const response = await fetch(localApiUrl(path), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const err = (await response.json()) as { detail?: string };
+      if (err?.detail) detail = err.detail;
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return (await response.json()) as T;
+}
+
+export function moveKanbanTask(
+  accessToken: string | undefined,
+  taskId: string,
+  status: string,
+  board?: string,
+): Promise<{ task: MissionControlKanbanTask | null }> {
+  const qs = board ? `?board=${encodeURIComponent(board)}` : '';
+  return kanbanPost(`/kanban/tasks/${encodeURIComponent(taskId)}${qs}`, { status }, accessToken);
+}
+
+export function createKanbanTask(
+  accessToken: string | undefined,
+  input: {
+    title: string;
+    body?: string;
+    priority?: number;
+    status?: string;
+    assignee?: string;
+    tenant?: string;
+    skills?: string;
+    parents?: string;
+    workspace_kind?: string;
+    workspace_path?: string;
+    goal_mode?: boolean;
+  },
+  board?: string,
+): Promise<{ id: string }> {
+  const qs = board ? `?board=${encodeURIComponent(board)}` : '';
+  return kanbanPost(`/kanban/tasks${qs}`, input, accessToken);
+}
+
+export function addKanbanComment(
+  accessToken: string | undefined,
+  taskId: string,
+  body: string,
+  board?: string,
+): Promise<{ ok: boolean }> {
+  const qs = board ? `?board=${encodeURIComponent(board)}` : '';
+  return kanbanPost(`/kanban/tasks/${encodeURIComponent(taskId)}/comments${qs}`, { body }, accessToken);
+}
+
+export function createKanbanBoard(
+  accessToken: string | undefined,
+  input: { slug?: string; name?: string; description?: string; icon?: string; default_workdir?: string; switch?: boolean },
+): Promise<{ board: MissionControlKanbanBoardMeta; current: string }> {
+  return kanbanPost('/kanban/boards', input, accessToken);
+}
+
+export function deleteKanbanBoard(
+  accessToken: string | undefined,
+  slug: string,
+  hard = false,
+): Promise<{ result: Record<string, unknown>; current: string }> {
+  return kanbanPost(`/kanban/boards/${encodeURIComponent(slug)}/delete`, { hard }, accessToken);
+}
+

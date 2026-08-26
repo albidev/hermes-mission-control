@@ -3902,3 +3902,54 @@ button {
   }
 
 }
+
+/* Kanban board */
+.kanban-scroller {
+  scrollbar-width: thin;
+}
+.kanban-scroller::-webkit-scrollbar {
+  height: 6px;
+}
+.kanban-scroller::-webkit-scrollbar-thumb {
+  background: var(--color-border-subtle, rgba(128, 128, 128, 0.3));
+  border-radius: 9999px;
+}
+.kanban-column .overflow-x-auto,
+.kanban-column .sm\:overflow-y-auto {
+  scrollbar-width: thin;
+  max-height: calc(100vh - 14rem);
+}
+
+/* Kanban board picker dropdown */
+.kanban-board-menu {
+  animation: kanban-menu-in 120ms ease-out;
+  transform-origin: top left;
+}
+@keyframes kanban-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kanban-board-menu {
+    animation: none;
+  }
+}
+.kanban-board-trigger:focus-visible {
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+}
+
+/* Mobile: prevent iOS auto-zoom on form fields inside kanban modals */
+@media (max-width: 640px) {
+  .kanban-modal input,
+  .kanban-modal textarea,
+  .kanban-drawer input,
+  .kanban-drawer textarea {
+    font-size: 16px !important;
+  }
+}
