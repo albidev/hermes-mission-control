@@ -1824,6 +1824,13 @@ class Handler(BaseHTTPRequestHandler):
             if sub == "boards":
                 self._json(200, kanban_bridge_mod.create_board(payload, switch=bool(payload.get("switch"))))
                 return
+            if sub.startswith("tasks/") and sub.endswith("/links"):
+                task_id = sub[len("tasks/"):-len("/links")]
+                parent_id = str(payload.get("parent_id") or "").strip()
+                if not parent_id:
+                    raise KanbanBridgeError(400, "parent_id is required")
+                self._json(200, kanban_bridge_mod.link_task(parent_id, task_id, board=board, remove=bool(payload.get("remove"))))
+                return
             if sub.startswith("tasks/") and sub.endswith("/comments"):
                 task_id = sub[len("tasks/"):-len("/comments")]
                 author = (payload.get("author") or "mission-control")

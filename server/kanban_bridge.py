@@ -324,6 +324,22 @@ def create_task(payload: Dict[str, Any], board: Optional[str] = None,
         conn.close()
 
 
+def link_task(parent_id: str, child_id: str, board: Optional[str] = None, remove: bool = False) -> Dict[str, Any]:
+    kb = _kb()
+    conn = _conn(board=board)
+    try:
+        if kb.get_task(conn, parent_id) is None or kb.get_task(conn, child_id) is None:
+            raise KanbanError(404, "parent or child task not found")
+        if remove:
+            kb.unlink_tasks(conn, parent_id, child_id)
+        else:
+            kb.link_tasks(conn, parent_id, child_id)
+        return {"ok": True, "parent_id": parent_id, "child_id": child_id, "removed": remove}
+    except ValueError as exc:
+        raise KanbanError(400, str(exc))
+    finally:
+        conn.close()
+
 def update_task(task_id: str, payload: Dict[str, Any], board: Optional[str] = None) -> Dict[str, Any]:
     kb = _kb()
     conn = _conn(board=board)
@@ -370,6 +386,11 @@ def update_task(task_id: str, payload: Dict[str, Any], board: Optional[str] = No
                 kb.assign_task(conn, task_id, payload.get("assignee") or None)
             except RuntimeError as exc:
                 raise KanbanError(409, str(exc))
+
+        if payload.get("priority") is not None:
+            priority = int(payload["priority"])
+            with kb.write_txn(conn):
+                conn.execute("UPDATE tasks SET priority = ? WHERE id = ?", (priority, task_id))
 
         title = payload.get("title")
         body = payload.get("body")

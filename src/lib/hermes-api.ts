@@ -2520,6 +2520,27 @@ export function archiveKanbanTask(
   return kanbanPost(`/kanban/tasks/${encodeURIComponent(taskId)}/archive${qs}`, {}, accessToken);
 }
 
+export function patchKanbanTask(
+  accessToken: string | undefined,
+  taskId: string,
+  input: { assignee?: string | null; priority?: number; title?: string; body?: string },
+  board?: string,
+): Promise<{ task: MissionControlKanbanTask | null }> {
+  const qs = board ? `?board=${encodeURIComponent(board)}` : '';
+  return kanbanPost(`/kanban/tasks/${encodeURIComponent(taskId)}${qs}`, input, accessToken);
+}
+
+export function linkKanbanTask(
+  accessToken: string | undefined,
+  taskId: string,
+  parentId: string,
+  remove = false,
+  board?: string,
+): Promise<{ ok: boolean }> {
+  const qs = board ? `?board=${encodeURIComponent(board)}` : '';
+  return kanbanPost(`/kanban/tasks/${encodeURIComponent(taskId)}/links${qs}`, { parent_id: parentId, remove }, accessToken);
+}
+
 export function createKanbanTask(
   accessToken: string | undefined,
   input: {

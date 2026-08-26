@@ -9,6 +9,8 @@ import {
   loadKanbanTaskLog,
   moveKanbanTask,
   archiveKanbanTask,
+  patchKanbanTask,
+  linkKanbanTask,
   createKanbanTask,
   createKanbanBoard,
   deleteKanbanBoard,
@@ -224,6 +226,8 @@ function TaskDrawer({
   const [commentDraft, setCommentDraft] = useState('');
   const [postingComment, setPostingComment] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [assigneeDraft, setAssigneeDraft] = useState('');
+  const [parentDraft, setParentDraft] = useState('');
 
   const runAction = async (action: 'ready' | 'blocked' | 'done' | 'archive') => {
     if (!detail || actionBusy) return;
@@ -245,6 +249,49 @@ function TaskDrawer({
       setActionBusy(false);
     }
   };
+
+  const saveMetadata = async (input: { assignee?: string | null; priority?: number }) => {
+    if (!detail || actionBusy) return;
+    setActionBusy(true);
+    try {
+      await patchKanbanTask(storedToken || undefined, taskId, input, board);
+      const refreshed = await loadKanbanTaskDetail(storedToken || undefined, taskId, board);
+      setDetail(refreshed);
+      setAssigneeDraft(refreshed.assignee || '');
+      onChanged?.();
+    } catch (e) { setLogError(e instanceof Error ? e.message : 'Metadata update failed.'); }
+    finally { setActionBusy(false); }
+  };
+
+  const addParent = async () => {
+    const parentId = parentDraft.trim();
+    if (!parentId || !detail || actionBusy) return;
+    setActionBusy(true);
+    try {
+      await linkKanbanTask(storedToken || undefined, taskId, parentId, false, board);
+      setParentDraft('');
+      const refreshed = await loadKanbanTaskDetail(storedToken || undefined, taskId, board);
+      setDetail(refreshed);
+      onChanged?.();
+    } catch (e) { setLogError(e instanceof Error ? e.message : 'Dependency update failed.'); }
+    finally { setActionBusy(false); }
+  };
+
+  const removeParent = async (parentId: string) => {
+    if (!detail || actionBusy) return;
+    setActionBusy(true);
+    try {
+      await linkKanbanTask(storedToken || undefined, taskId, parentId, true, board);
+      const refreshed = await loadKanbanTaskDetail(storedToken || undefined, taskId, board);
+      setDetail(refreshed);
+      onChanged?.();
+    } catch (e) { setLogError(e instanceof Error ? e.message : 'Dependency update failed.'); }
+    finally { setActionBusy(false); }
+  };
+
+  useEffect(() => {
+    if (detail) setAssigneeDraft(detail.assignee || '');
+  }, [detail?.id, detail?.assignee]);
 
   useEffect(() => {
     let cancelled = false;
@@ -315,6 +362,28 @@ function TaskDrawer({
               {detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('done')}>Complete</Button> : null}
               <Button variant="ghost" size="sm" disabled={actionBusy} onClick={() => void runAction('archive')}>Archive</Button>
             </div>
+
+            {/* Editable metadata */}
+            <section className="mt-3 grid grid-cols-2 gap-3 rounded-lg border border-border-subtle bg-surface-sunken p-2.5">
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Assignee</span>
+                <div className="mt-1 flex gap-1">
+                  <input value={assigneeDraft} onChange={(e) => setAssigneeDraft(e.target.value)} placeholder="blank = dispatcher" className="min-w-0 flex-1 rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+                  <Button size="sm" disabled={actionBusy} onClick={() => void saveMetadata({ assignee: assigneeDraft.trim() || null })}>Save</Button>
+                </div>
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Priority</span>
+                <div className="mt-1"><Dropdown value={String(detail.priority ?? 0)} onChange={(v) => void saveMetadata({ priority: Number(v) })} ariaLabel="Edit task priority" dropUp options={[{ value: '0', label: 'Normal' }, { value: '1', label: 'P1 — High' }, { value: '2', label: 'P2 — Medium' }, { value: '3', label: 'P3 — Low' }, { value: '-1', label: 'P4 — Lowest' }]} /></div>
+              </label>
+            </section>
+
+            {/* Dependencies */}
+            <section className="mt-3 rounded-lg border border-border-subtle bg-surface-sunken p-2.5">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Dependencies</h3>
+              {(detail.parents?.length ?? 0) > 0 ? <div className="mt-1 space-y-1">{detail.parents!.map((parentId) => <div key={parentId} className="flex items-center justify-between text-[10px] text-text-muted"><code>{parentId}</code><button type="button" className="text-text-subtle hover:text-red-400" onClick={() => void removeParent(parentId)}>remove</button></div>)}</div> : <p className="mt-1 text-[10px] text-text-subtle">No parent tasks.</p>}
+              <div className="mt-2 flex gap-1"><input value={parentDraft} onChange={(e) => setParentDraft(e.target.value)} placeholder="Parent task ID" className="min-w-0 flex-1 rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" /><Button size="sm" disabled={!parentDraft.trim() || actionBusy} onClick={() => void addParent()}>Add parent</Button></div>
+            </section>
 
             {/* Body */}
             {detail.body ? (
