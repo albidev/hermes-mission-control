@@ -2374,7 +2374,8 @@ export async function rejectCandidate(
 export type MissionControlKanbanTask = {
   id: string;
   title: string;
-  status: string;
+  body?: string | null;
+  status?: string;
   priority: number;
   assignee?: string | null;
   created_at?: number | null;
@@ -2494,7 +2495,7 @@ export function moveKanbanTask(
 
 export function createKanbanTask(
   accessToken: string | undefined,
-  input: { title: string; body?: string; priority?: number },
+  input: { title: string; body?: string; priority?: number; status?: string },
   board?: string,
 ): Promise<{ id: string }> {
   const qs = board ? `?board=${encodeURIComponent(board)}` : '';

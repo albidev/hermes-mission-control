@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Kanban as KanbanIcon, RefreshCw, Plus, X, MessageSquare, GitBranch, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Kanban as KanbanIcon, RefreshCw, Plus, X, MessageSquare, GitBranch, Trash2, Search, Filter } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import {
@@ -18,6 +18,10 @@ import {
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
 const STATUS_TONES: Record<string, string> = {
   triage: 'text-amber-400',
   todo: 'text-sky-400',
@@ -29,7 +33,66 @@ const STATUS_TONES: Record<string, string> = {
   done: 'text-emerald-500',
 };
 
-// Mobile: horizontal scroll columns; Desktop: grid fits all columns.
+const STATUS_DOT: Record<string, string> = {
+  triage: 'bg-amber-400',
+  todo: 'bg-sky-400',
+  scheduled: 'bg-violet-400',
+  ready: 'bg-emerald-400',
+  running: 'bg-sky-300',
+  blocked: 'bg-red-400',
+  review: 'bg-amber-300',
+  done: 'bg-emerald-500',
+};
+
+const COLUMN_HINTS: Record<string, string> = {
+  triage: 'Needs classification',
+  todo: 'Committed work',
+  scheduled: 'Planned for a future run',
+  ready: 'Dependencies satisfied',
+  running: 'Claimed — in-flight',
+  blocked: 'Waiting on external input',
+  review: 'Pending human approval',
+  done: 'Completed',
+};
+
+const PRIORITY_COLORS: Record<number, { bg: string; text: string; label: string }> = {
+  0: { bg: 'bg-surface-sunken', text: 'text-text-subtle', label: 'P0' },
+  1: { bg: 'bg-red-500/15', text: 'text-red-400', label: 'P1' },
+  2: { bg: 'bg-amber-500/15', text: 'text-amber-400', label: 'P2' },
+  3: { bg: 'bg-sky-500/15', text: 'text-sky-400', label: 'P3' },
+  4: { bg: 'bg-surface-sunken', text: 'text-text-subtle', label: 'P4' },
+  5: { bg: 'bg-surface-sunken', text: 'text-text-subtle', label: 'P5' },
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatAge(timestamp?: number | null): string | null {
+  if (!timestamp) return null;
+  const diffMs = Date.now() / 1000 - timestamp;
+  if (diffMs < 60) return 'just now';
+  const diffMin = Math.floor(diffMs / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD === 1) return '1d ago';
+  if (diffD < 30) return `${diffD}d ago`;
+  const diffMo = Math.floor(diffD / 30);
+  return `${diffMo}mo ago`;
+}
+
+function shortId(id: string): string {
+  // t_446d7581 → 446d75… or just show the last 6 chars after t_ prefix
+  const suffix = id.replace(/^[a-z]+_/, '');
+  return suffix.length > 6 ? suffix.slice(0, 6) : suffix;
+}
+
+// ---------------------------------------------------------------------------
+// BoardColumn
+// ---------------------------------------------------------------------------
+
 function BoardColumn({
   name,
   tasks,
@@ -46,72 +109,99 @@ function BoardColumn({
   onAddTask: (status: string) => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
+  const hint = COLUMN_HINTS[name];
+
   return (
     <div
       className={`kanban-column flex flex-col min-w-[14rem] w-[17rem] sm:w-auto shrink-0 sm:min-w-0 gap-2 rounded-xl border p-2.5 ${dragOver ? 'border-sky-400/60 bg-sky-400/5' : 'border-border-subtle bg-surface/30'}`}
       data-status={name}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragOver(false);
-        const id = e.dataTransfer.getData('text/plain');
-        if (id) onDropTask(id, name);
-      }}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); const id = e.dataTransfer.getData('text/plain'); if (id) onDropTask(id, name); }}
     >
+      {/* Header */}
       <div className="flex items-center justify-between px-0.5">
-        <span className={`text-[10px] font-semibold uppercase tracking-wide ${STATUS_TONES[name] ?? 'text-text-muted'}`}>{name}</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_DOT[name] ?? 'bg-text-muted'}`} />
+          <span className={`text-[10px] font-semibold uppercase tracking-wide ${STATUS_TONES[name] ?? 'text-text-muted'}`}>{name}</span>
+        </div>
         <div className="flex items-center gap-1">
           <span className="text-[10px] text-text-subtle tabular-nums">{tasks.length}</span>
-          <button
-            type="button"
-            className="flex h-5 w-5 items-center justify-center rounded p-0 text-text-subtle hover:text-text hover:bg-surface-sunken"
-            aria-label={`Add task to ${name}`}
-            onClick={() => onAddTask(name)}
-          >
+          <button type="button" className="flex h-5 w-5 items-center justify-center rounded p-0 text-text-subtle hover:text-text hover:bg-surface-sunken" aria-label={`Add task to ${name}`} onClick={() => onAddTask(name)}>
             <Plus size={12} />
           </button>
         </div>
       </div>
+      {hint ? <p className="text-[9px] text-text-subtle/70 px-0.5 -mt-1">{hint}</p> : null}
+
+      {/* Task cards */}
       <div className="flex sm:flex-col gap-2 overflow-x-auto sm:overflow-x-visible sm:overflow-y-auto pb-1" role="list">
-        {tasks.map((task) => (
-          <button
-            key={task.id}
-            type="button"
-            role="listitem"
-            draggable
-            onDragStart={(e) => e.dataTransfer.setData('text/plain', task.id)}
-            onClick={() => onOpenTask(task.id)}
-            className={`kanban-card w-full min-w-[10rem] sm:min-w-0 rounded-md border p-2 text-left transition-colors ${activeTaskId === task.id ? 'border-sky-400/70 bg-sky-400/10' : 'border-border-subtle bg-surface hover:border-border'}`}
-          >
-            <div className="text-xs font-medium text-text line-clamp-2">{task.title}</div>
-            <div className="mt-1 flex items-center gap-2 text-[10px] text-text-subtle">
-              {task.assignee ? <span className="truncate max-w-[6rem]">@{task.assignee}</span> : null}
-              {(task.children?.length ?? 0) > 0 ? (
-                <span className="inline-flex items-center gap-0.5">
-                  <GitBranch size={9} aria-hidden />
-                  {task.progress ? `${task.progress.done}/${task.progress.total}` : task.children!.length}
-                </span>
-              ) : null}
-              {(task.comment_count ?? 0) > 0 ? (
-                <span className="inline-flex items-center gap-0.5">
-                  <MessageSquare size={9} aria-hidden />
-                  {task.comment_count}
-                </span>
-              ) : null}
-            </div>
-          </button>
-        ))}
+        {tasks.map((task) => {
+          const pri = PRIORITY_COLORS[task.priority ?? 0] ?? PRIORITY_COLORS[0];
+          const age = formatAge(task.created_at);
+          return (
+            <button
+              key={task.id}
+              type="button"
+              role="listitem"
+              draggable
+              onDragStart={(e) => e.dataTransfer.setData('text/plain', task.id)}
+              onClick={() => onOpenTask(task.id)}
+              className={`kanban-card w-full min-w-[10rem] sm:min-w-0 rounded-md border p-2 text-left transition-colors ${activeTaskId === task.id ? 'border-sky-400/70 bg-sky-400/10' : 'border-border-subtle bg-surface hover:border-border'}`}
+            >
+              {/* Priority badge + ID + age */}
+              <div className="flex items-center justify-between gap-1">
+                <div className="flex items-center gap-1.5">
+                  {task.priority != null && task.priority > 0 ? (
+                    <span className={`inline-flex items-center rounded px-1 py-px text-[9px] font-semibold ${pri.bg} ${pri.text}`}>{pri.label}</span>
+                  ) : null}
+                  <span className="text-[9px] tabular-nums text-text-subtle font-mono">{shortId(task.id)}</span>
+                </div>
+                {age ? <span className="text-[9px] text-text-subtle">{age}</span> : null}
+              </div>
+
+              {/* Title */}
+              <div className="mt-1 text-xs font-medium text-text line-clamp-2">{task.title}</div>
+
+              {/* Bottom row: assignee + progress + comments */}
+              <div className="mt-1.5 flex items-center gap-2 text-[10px] text-text-subtle">
+                {task.assignee ? <span className="truncate max-w-[6rem]">{'@' + task.assignee}</span> : null}
+                {(task.progress?.total ?? 0) > 0 ? (
+                  <span className="inline-flex items-center gap-0.5">
+                    <span className={`h-1.5 w-1.5 rounded-full ${task.progress?.done === task.progress?.total ? 'bg-emerald-400' : 'bg-sky-400/60'}`} />
+                    {task.progress!.done}/{task.progress!.total}
+                  </span>
+                ) : (task.children?.length ?? 0) > 0 ? (
+                  <span className="inline-flex items-center gap-0.5">
+                    <GitBranch size={9} aria-hidden />
+                    {task.children!.length}
+                  </span>
+                ) : null}
+                {(task.comment_count ?? 0) > 0 ? (
+                  <span className="inline-flex items-center gap-0.5">
+                    <MessageSquare size={9} aria-hidden />
+                    {task.comment_count}
+                  </span>
+                ) : null}
+              </div>
+            </button>
+          );
+        })}
+
+        {/* Empty state */}
         {tasks.length === 0 ? (
-          <div className="hidden sm:block rounded-md border border-dashed border-border-subtle p-3 text-center text-[10px] text-text-subtle">Empty</div>
+          <div className="hidden sm:flex items-center justify-center rounded-md border border-dashed border-border-subtle p-6 text-[10px] text-text-subtle">
+            — no tasks —
+          </div>
         ) : null}
       </div>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// TaskDrawer
+// ---------------------------------------------------------------------------
 
 function TaskDrawer({
   taskId,
@@ -129,15 +219,9 @@ function TaskDrawer({
     let cancelled = false;
     setDetail(null);
     loadKanbanTaskDetail(storedToken || undefined, taskId)
-      .then((d) => {
-        if (!cancelled) setDetail(d);
-      })
-      .catch(() => {
-        if (!cancelled) setDetail(null);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .then((d) => { if (!cancelled) setDetail(d); })
+      .catch(() => { if (!cancelled) setDetail(null); });
+    return () => { cancelled = true; };
   }, [storedToken, taskId]);
 
   const postComment = async () => {
@@ -155,35 +239,39 @@ function TaskDrawer({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Task ${detail?.title ?? taskId}`}
-      onClick={onClose}
-    >
-      <div
-        className="w-full sm:max-w-lg max-h-[85vh] overflow-y-auto rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`Task ${detail?.title ?? taskId}`} onClick={onClose}>
+      <div className="w-full sm:max-w-lg max-h-[85vh] overflow-y-auto rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
         {!detail ? (
           <p className="text-sm text-text-muted py-8 text-center">Loading task…</p>
         ) : (
           <>
+            {/* Header */}
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-text">{detail.title}</h2>
-                <p className="mt-0.5 text-[10px] uppercase tracking-wide text-text-subtle">{detail.status}</p>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {detail.priority != null && detail.priority > 0 ? (
+                    <span className={`inline-flex items-center rounded px-1.5 py-px text-[10px] font-semibold ${(PRIORITY_COLORS[detail.priority] ?? PRIORITY_COLORS[0]).bg} ${(PRIORITY_COLORS[detail.priority] ?? PRIORITY_COLORS[0]).text}`}>P{detail.priority}</span>
+                  ) : null}
+                  <span className="text-[10px] font-mono text-text-subtle">{shortId(detail.id)}</span>
+                </div>
+                <h2 className="mt-1 text-sm font-semibold text-text">{detail.title}</h2>
+                <div className="mt-0.5 flex items-center gap-2 text-[10px] text-text-subtle">
+                  <span className="uppercase tracking-wide">{detail.status}</span>
+                  {detail.assignee ? <span>{'@' + detail.assignee}</span> : null}
+                  {formatAge(detail.created_at) ? <span>{formatAge(detail.created_at)}</span> : null}
+                </div>
               </div>
               <Button variant="ghost" size="sm" aria-label="Close task" onClick={onClose}>
                 <X size={14} />
               </Button>
             </div>
 
+            {/* Body */}
             {detail.body ? (
               <p className="mt-3 whitespace-pre-wrap text-xs text-text-muted leading-relaxed">{detail.body}</p>
             ) : null}
 
+            {/* Summary */}
             {detail.latest_summary ? (
               <div className="mt-3 rounded-md border border-border-subtle bg-surface-sunken p-2">
                 <span className="text-[10px] uppercase tracking-wide text-text-subtle">Latest summary</span>
@@ -191,6 +279,7 @@ function TaskDrawer({
               </div>
             ) : null}
 
+            {/* Comments */}
             {detail.comments.length > 0 ? (
               <div className="mt-4">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Comments ({detail.comments.length})</span>
@@ -198,30 +287,26 @@ function TaskDrawer({
                   {detail.comments.map((c) => (
                     <li key={c.id} className="rounded-md border border-border-subtle bg-surface/60 p-2">
                       <div className="flex items-center justify-between text-[10px] text-text-subtle">
-                        <span>@{c.author}</span>
-                        <span>{new Date(c.created_at * 1000).toLocaleString()}</span>
+                        <span>{c.author || 'unknown'}</span>
+                        <span>{formatAge(c.created_at) ?? '—'}</span>
                       </div>
-                      <p className="mt-1 whitespace-pre-wrap text-xs text-text-muted">{c.body}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs text-text-muted leading-relaxed">{c.body}</p>
                     </li>
                   ))}
                 </ul>
               </div>
             ) : null}
 
+            {/* New comment */}
             <form
-              className="mt-3 flex items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void postComment();
-              }}
+              className="mt-4 flex gap-2"
+              onSubmit={(e) => { e.preventDefault(); void postComment(); }}
             >
-              <textarea
+              <input
                 value={commentDraft}
                 onChange={(e) => setCommentDraft(e.target.value)}
                 placeholder="Add a comment…"
-                rows={2}
-                className="min-h-0 flex-1 resize-none rounded-md border border-border-subtle bg-surface-sunken px-2 py-1.5 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
-                aria-label="New comment"
+                className="flex-1 rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
               />
               <Button type="submit" size="sm" disabled={!commentDraft.trim() || postingComment}>
                 {postingComment ? '…' : 'Send'}
@@ -233,6 +318,10 @@ function TaskDrawer({
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// BoardPicker (custom dropdown)
+// ---------------------------------------------------------------------------
 
 function BoardPicker({
   boards,
@@ -250,80 +339,41 @@ function BoardPicker({
 
   useEffect(() => {
     if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
+    const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('mousedown', onDocClick);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDocClick);
-      document.removeEventListener('keydown', onKey);
-    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const active = boards.find((b) => b.slug === activeBoard);
+  const active = boards.find((b) => b.slug === activeBoard) ?? boards[0];
+
   return (
-    <div className="kanban-board-picker relative" ref={ref}>
+    <div className="relative" ref={ref}>
       <button
         type="button"
-        className="kanban-board-trigger flex items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-xs font-medium text-text hover:border-border focus:border-sky-400/60 focus:outline-none"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="Select kanban board"
+        className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-2 py-1.5 text-xs text-text hover:border-border transition-colors"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
       >
-        <KanbanIcon size={13} className="text-sky-400 shrink-0" />
-        <span className="max-w-[11rem] truncate">{active ? active.name || active.slug : 'Select board'}</span>
-        {typeof active?.total === 'number' ? (
-          <span className="rounded-full bg-surface-sunken px-1.5 py-px text-[10px] tabular-nums text-text-subtle">{active.total}</span>
-        ) : null}
-        <svg
-          className={`ml-auto h-3.5 w-3.5 shrink-0 text-text-subtle transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          aria-hidden
-        >
-          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.23 8.29a.75.75 0 010-1.08z" clipRule="evenodd" />
-        </svg>
+        <span className="truncate max-w-[10rem]">{active?.name || activeBoard}</span>
+        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${active?.is_current ? 'bg-emerald-400' : 'bg-border-subtle'}`} title={active?.is_current ? 'Active board (CLI/gateway)' : undefined} />
       </button>
       {open ? (
-        <ul
-          role="listbox"
-          aria-label="Kanban boards"
-          className="kanban-board-menu absolute left-0 top-[calc(100%+4px)] z-40 min-w-full w-max max-w-[18rem] overflow-hidden rounded-xl border border-border-subtle bg-surface p-1 shadow-xl"
-        >
+        <ul className="absolute z-30 mt-1 min-w-[14rem] max-w-[20rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl" role="listbox" aria-label="Select board">
           {boards.map((b) => {
             const selected = b.slug === activeBoard;
             const deletable = b.slug !== 'default' && boards.filter((x) => !x.archived).length > 1;
             return (
               <li key={b.slug} role="option" aria-selected={selected}>
                 <div className={`flex w-full items-center gap-2 rounded-lg px-2.5 transition-colors ${selected ? 'bg-sky-400/10' : 'hover:bg-surface-sunken'}`}>
-                  <button
-                    type="button"
-                    className={`flex flex-1 items-center gap-2 py-2 text-left text-xs ${selected ? 'text-text font-medium' : 'text-text-muted hover:text-text'}`}
-                    onClick={() => {
-                      onSelect(b.slug);
-                      setOpen(false);
-                    }}
-                  >
+                  <button type="button" className={`flex flex-1 items-center gap-2 py-2 text-left text-xs ${selected ? 'text-text font-medium' : 'text-text-muted hover:text-text'}`} onClick={() => { onSelect(b.slug); setOpen(false); }}>
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${b.is_current ? 'bg-emerald-400' : 'bg-transparent border border-border-subtle'}`} title={b.is_current ? 'Active board (CLI/gateway)' : undefined} />
                     <span className="truncate flex-1">{b.name || b.slug}</span>
                   </button>
                   <span className="rounded-full bg-surface-sunken px-1.5 py-px text-[10px] tabular-nums text-text-subtle">{typeof b.total === 'number' ? b.total : ''}</span>
-                  <button
-                    type="button"
-                    className={`rounded p-1 text-text-subtle hover:bg-red-500/10 hover:text-red-400 disabled:pointer-events-none disabled:opacity-0 ${deletable ? '' : 'invisible'}`}
-                    aria-label={`Delete board ${b.name || b.slug}`}
-                    title={deletable ? 'Delete board' : 'The default board cannot be deleted'}
-                    disabled={!deletable}
-                    onClick={() => {
-                      setOpen(false);
-                      onDeleteRequest(b.slug);
-                    }}
-                  >
+                  <button type="button" className={`rounded p-1 text-text-subtle hover:bg-red-500/10 hover:text-red-400 disabled:pointer-events-none disabled:opacity-0 ${deletable ? '' : 'invisible'}`} aria-label={`Delete board ${b.name || b.slug}`} title={deletable ? 'Delete board' : 'The default board cannot be deleted'} disabled={!deletable} onClick={() => { setOpen(false); onDeleteRequest(b.slug); }}>
                     <Trash2 size={12} />
                   </button>
                 </div>
@@ -336,134 +386,159 @@ function BoardPicker({
   );
 }
 
+// ---------------------------------------------------------------------------
+// KanbanRoute (main component)
+// ---------------------------------------------------------------------------
+
 export function KanbanRoute() {
   const { storedToken } = useMissionControl();
-  const [board, setBoard] = useState<MissionControlKanbanBoard | null>(null);
   const [boards, setBoards] = useState<MissionControlKanbanBoardMeta[]>([]);
-  const [activeBoard, setActiveBoard] = useState<string>('');
-  const [loading, setLoading] = useState(true);
+  const [activeBoard, setActiveBoard] = useState('');
+  const [board, setBoard] = useState<MissionControlKanbanBoard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const latestEventRef = useRef(0);
 
-  const refresh = useCallback(
-    async (boardSlug?: string) => {
-      const target = boardSlug !== undefined ? boardSlug : activeBoard;
-      setRefreshing(true);
-      try {
-        const next = await loadKanbanBoard(storedToken || undefined, target || undefined);
-        setBoard(next);
-        latestEventRef.current = next.latestEventId;
-        setError(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load board.');
-      } finally {
-        setRefreshing(false);
-        setLoading(false);
-      }
-    },
-    [storedToken, activeBoard],
-  );
+  // Filters
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterTenant, setFilterTenant] = useState('');
+  const [filterAssignee, setFilterAssignee] = useState('');
 
-  // Initial boards list + board selection.
-  useEffect(() => {
-    let cancelled = false;
-    loadKanbanBoards(storedToken || undefined)
-      .then(({ boards: list, current }) => {
-        if (cancelled) return;
-        setBoards(list);
-        setActiveBoard(current || '');
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [storedToken]);
-
-  useEffect(() => {
-    void refresh(activeBoard);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeBoard]);
-
-  // Live updates: poll the event tail; refresh the board when new events arrive.
-  useEffect(() => {
-    if (!board) return;
-    let cancelled = false;
-    const interval = window.setInterval(async () => {
-      if (document.hidden) return;
-      try {
-        const params = new URLSearchParams({ since: String(latestEventRef.current) });
-        if (activeBoard) params.set('board', activeBoard);
-        const response = await fetch(`/api/local/kanban/events?${params.toString()}`, {
-          headers: storedToken ? { Authorization: `Bearer ${storedToken}` } : undefined,
-          cache: 'no-store',
-        });
-        if (!response.ok || cancelled) return;
-        const data = (await response.json()) as { events?: unknown[]; cursor?: number };
-        if (data.cursor && data.cursor > latestEventRef.current) {
-          latestEventRef.current = data.cursor;
-          void refresh(activeBoard);
-        }
-      } catch {
-        /* transient — next tick retries */
-      }
-    }, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [board, activeBoard, storedToken, refresh]);
-
-  const handleMove = async (taskId: string, status: string) => {
-    if (!board) return;
-    const current = board.columns.find((c) => c.tasks.some((t) => t.id === taskId));
-    if (current?.name === status) return;
-    // Optimistic move; rollback on failure.
-    setBoard((prev) =>
-      prev
-        ? {
-            ...prev,
-            columns: prev.columns.map((c) => {
-              const tasks = c.name === status
-                ? [...c.tasks, ...prev.columns.find((x) => x.name === current?.name)?.tasks.filter((t) => t.id === taskId) ?? []]
-                : c.tasks.filter((t) => t.id !== taskId);
-              return { ...c, tasks };
-            }),
-          }
-        : prev,
-    );
-    try {
-      await moveKanbanTask(storedToken || undefined, taskId, status, activeBoard || undefined);
-      await refresh(activeBoard);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Move failed.');
-      await refresh(activeBoard);
-    }
-  };
-
+  // Task interactions
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [newTaskStatus, setNewTaskStatus] = useState<string | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskBody, setNewTaskBody] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState(0);
   const [creating, setCreating] = useState(false);
 
+  // Board management
   const [newBoardOpen, setNewBoardOpen] = useState(false);
   const [newBoardName, setNewBoardName] = useState('');
   const [newBoardDesc, setNewBoardDesc] = useState('');
   const [creatingBoard, setCreatingBoard] = useState(false);
-
   const [deleteTarget, setDeleteTarget] = useState<MissionControlKanbanBoardMeta | null>(null);
   const [deleteHard, setDeleteHard] = useState(false);
   const [deletingBoard, setDeletingBoard] = useState(false);
 
-  const closeNewBoard = () => {
-    setNewBoardOpen(false);
-    setNewBoardName('');
-    setNewBoardDesc('');
-    setCreatingBoard(false);
+  // --- Board list + board load ---
+  const refresh = useCallback(async (boardSlug?: string) => {
+    if (!storedToken) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      const targetSlug = boardSlug ?? activeBoard ?? undefined;
+      const [boardsData, boardData] = await Promise.all([
+        loadKanbanBoards(storedToken),
+        loadKanbanBoard(storedToken, targetSlug),
+      ]);
+      setBoards(boardsData.boards);
+      setActiveBoard(targetSlug || boardsData.current || '');
+      setBoard(boardData);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Load failed');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [storedToken, activeBoard]);
+
+  useEffect(() => { void refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!activeBoard) return;
+    const t = setInterval(() => void refresh(activeBoard), 5000);
+    return () => clearInterval(t);
+  }, [refresh, activeBoard]);
+
+  // --- Filtered tasks ---
+  const filteredColumns = useMemo(() => {
+    if (!board) return [];
+    const q = searchQuery.toLowerCase().trim();
+    return board.columns.map((col) => {
+      let tasks = col.tasks;
+      if (q) tasks = tasks.filter((t) => t.title.toLowerCase().includes(q) || t.id.includes(q) || (t.assignee ?? '').toLowerCase().includes(q));
+      if (filterTenant) tasks = tasks.filter((t) => ((t as MissionControlKanbanTask & { tenant?: string }).tenant ?? '') === filterTenant);
+      if (filterAssignee) tasks = tasks.filter((t) => t.assignee === filterAssignee);
+      return { ...col, tasks };
+    });
+  }, [board, searchQuery, filterTenant, filterAssignee]);
+
+  // Tenants + assignees from the board payload (sidecar computes them)
+  const tenants = board?.tenants ?? [];
+  const assignees = board?.assignees ?? [];
+
+  const hasFilters = searchQuery || filterTenant || filterAssignee;
+  const totalVisible = filteredColumns.reduce((s, c) => s + c.tasks.length, 0);
+  const totalAll = board?.columns.reduce((s, c) => s + c.tasks.length, 0) ?? 0;
+
+  // --- Move task (optimistic) ---
+  const handleMove = useCallback(async (taskId: string, newStatus: string) => {
+    if (!board || !storedToken) return;
+    setBoard((prev) => {
+      if (!prev) return prev;
+      let movedTask: MissionControlKanbanTask | null = null;
+      const cols = prev.columns.map((c) => {
+        const idx = c.tasks.findIndex((t) => t.id === taskId);
+        if (idx >= 0) {
+          movedTask = { ...c.tasks[idx], status: newStatus };
+          return { ...c, tasks: c.tasks.filter((t) => t.id !== taskId) };
+        }
+        return c;
+      });
+      if (!movedTask) return prev;
+      return {
+        ...prev,
+        columns: cols.map((c) => c.name === newStatus ? { ...c, tasks: [...c.tasks, movedTask!] } : c),
+      };
+    });
+    try {
+      await moveKanbanTask(storedToken, taskId, newStatus);
+    } catch {
+      void refresh(activeBoard);
+    }
+  }, [board, storedToken, refresh, activeBoard]);
+
+  // --- Create task ---
+  const closeNewTask = () => { setNewTaskStatus(null); setNewTaskTitle(''); setNewTaskBody(''); setNewTaskPriority(0); setCreating(false); };
+
+  const submitNewTask = async () => {
+    const title = newTaskTitle.trim();
+    if (!title || !newTaskStatus) return;
+    setCreating(true);
+    try {
+      const result = await createKanbanTask(storedToken || undefined, {
+        title,
+        body: newTaskBody.trim() || undefined,
+        priority: newTaskPriority,
+        status: newTaskStatus,
+      });
+      if (result?.id) {
+        setBoard((prev) => {
+          if (!prev) return prev;
+      const newTask: MissionControlKanbanTask = {
+        id: result.id,
+        title,
+        priority: newTaskPriority,
+        status: newTaskStatus,
+        created_at: Date.now() / 1000,
+        assignee: null,
+        children: [],
+        comment_count: 0,
+      };
+          return { ...prev, columns: prev.columns.map((c) => c.name === newTaskStatus ? { ...c, tasks: [...c.tasks, newTask] } : c) };
+        });
+      }
+      closeNewTask();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Create failed.');
+    } finally {
+      setCreating(false);
+    }
   };
 
+  // --- Create board ---
+  const closeNewBoard = () => { setNewBoardOpen(false); setNewBoardName(''); setNewBoardDesc(''); setCreatingBoard(false); };
   const submitNewBoard = async () => {
     const name = newBoardName.trim();
     if (!name) return;
@@ -471,23 +546,16 @@ export function KanbanRoute() {
     try {
       await createKanbanBoard(storedToken || undefined, { name, description: newBoardDesc.trim() || undefined });
       closeNewBoard();
-      // Reload boards list and jump to the new board (last created = current).
       const { boards: list, current } = await loadKanbanBoards(storedToken || undefined);
       setBoards(list);
       setActiveBoard(current || '');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Create board failed.');
-    } finally {
-      setCreatingBoard(false);
-    }
+      void refresh(current || '');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Create board failed.'); }
+    finally { setCreatingBoard(false); }
   };
 
-  const closeDeleteBoard = () => {
-    setDeleteTarget(null);
-    setDeleteHard(false);
-    setDeletingBoard(false);
-  };
-
+  // --- Delete board ---
+  const closeDeleteBoard = () => { setDeleteTarget(null); setDeleteHard(false); setDeletingBoard(false); };
   const confirmDeleteBoard = async () => {
     if (!deleteTarget) return;
     setDeletingBoard(true);
@@ -497,276 +565,172 @@ export function KanbanRoute() {
       const { boards: list, current } = await loadKanbanBoards(storedToken || undefined);
       setBoards(list);
       setActiveBoard((prev) => (list.some((b) => b.slug === prev) ? prev : current || ''));
-      await refresh(current || '');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed.');
-    } finally {
-      setDeletingBoard(false);
-    }
+      void refresh(current || '');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Delete failed.'); }
+    finally { setDeletingBoard(false); }
   };
 
-  const closeNewTask = () => {
-    setNewTaskStatus(null);
-    setNewTaskTitle('');
-    setNewTaskBody('');
-    setNewTaskPriority(0);
-  };
+  // --- Board switch ---
+  const handleBoardSwitch = useCallback((slug: string) => {
+    setActiveBoard(slug);
+    void refresh(slug);
+  }, [refresh]);
 
-  const submitNewTask = async () => {
-    const title = newTaskTitle.trim();
-    if (!title || !newTaskStatus) return;
-    setCreating(true);
-    try {
-      await createKanbanTask(
-        storedToken || undefined,
-        { title, body: newTaskBody.trim() || undefined, priority: newTaskPriority },
-        activeBoard || undefined,
-      );
-      closeNewTask();
-      await refresh(activeBoard);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Create failed.');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <Card padding="none">
-        <div className="p-6 text-center text-sm text-text-muted">Loading Kanban board…</div>
-      </Card>
-    );
-  }
+  // =========================================================================
+  // Render
+  // =========================================================================
 
   return (
-    <div className="flex flex-col gap-3 h-full min-h-0">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <KanbanIcon size={16} className="text-sky-400 shrink-0" />
-          <BoardPicker boards={boards} activeBoard={activeBoard} onSelect={setActiveBoard} onDeleteRequest={(slug) => {
-            const target = boards.find((b) => b.slug === slug) ?? null;
-            setDeleteHard(false);
-            setDeleteTarget(target);
-          }} />
+    <div className="flex flex-1 flex-col overflow-hidden text-text" style={{ minHeight: 0 }}>
+      {/* Header */}
+      <div className="flex flex-col gap-2 border-b border-border-subtle px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <KanbanIcon size={16} className="text-sky-400 shrink-0" />
+            <BoardPicker boards={boards} activeBoard={activeBoard} onSelect={handleBoardSwitch} onDeleteRequest={(slug) => { const target = boards.find((b) => b.slug === slug) ?? null; setDeleteHard(false); setDeleteTarget(target); }} />
+          </div>
+          <div className="flex items-center gap-2">
+            {error ? <span className="text-[10px] text-red-400 truncate max-w-[14rem]" role="alert">{error}</span> : null}
+            {refreshing ? <RefreshCw size={12} className="text-text-subtle animate-spin" /> : null}
+            <Button size="sm" onClick={() => setNewBoardOpen(true)}>
+              <Plus size={13} className="mr-1" /> New
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {error ? <span className="text-[10px] text-red-400 truncate max-w-[14rem]" role="alert">{error}</span> : null}
-          {refreshing ? <RefreshCw size={12} className="text-text-subtle animate-spin" /> : null}
-          <Button size="sm" onClick={() => setNewBoardOpen(true)}>
-            <Plus size={13} className="mr-1" /> New
-          </Button>
-          <span className="text-[10px] text-text-subtle hidden sm:inline">Live · 5s</span>
+
+        {/* Filter toolbar */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[10rem] max-w-[16rem]">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-subtle pointer-events-none" />
+            <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks…" className="w-full rounded-lg border border-border-subtle bg-surface-sunken pl-6 pr-2 py-1.5 text-[11px] text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+          </div>
+          {tenants.length > 0 ? (
+            <select value={filterTenant} onChange={(e) => setFilterTenant(e.target.value)} className="rounded-lg border border-border-subtle bg-surface-sunken px-2 py-1.5 text-[11px] text-text focus:border-border focus:outline-none">
+              <option value="">All tenants</option>
+              {tenants.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          ) : null}
+          {assignees.length > 0 ? (
+            <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)} className="rounded-lg border border-border-subtle bg-surface-sunken px-2 py-1.5 text-[11px] text-text focus:border-border focus:outline-none">
+              <option value="">All assignees</option>
+              {assignees.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+          ) : null}
+          {hasFilters ? (
+            <button type="button" onClick={() => { setSearchQuery(''); setFilterTenant(''); setFilterAssignee(''); }} className="text-[10px] text-text-subtle hover:text-text transition-colors">
+              Clear filters
+            </button>
+          ) : null}
+          {hasFilters ? (
+            <span className="text-[10px] text-text-subtle tabular-nums">{totalVisible}/{totalAll} visible</span>
+          ) : null}
         </div>
       </div>
 
-      {board ? (
-        <div className="kanban-scroller flex gap-2 overflow-x-auto sm:overflow-x-auto pb-2 -mx-1 px-1 sm:grid sm:grid-cols-4 xl:grid-cols-8 sm:gap-2 flex-1 min-h-0">
-          {board.columns.map((col) => (
-            <BoardColumn
-              key={col.name}
-              name={col.name}
-              tasks={col.tasks}
-              activeTaskId={openTaskId}
-              onOpenTask={setOpenTaskId}
-              onDropTask={(id, s) => void handleMove(id, s)}
-              onAddTask={setNewTaskStatus}
-            />
-          ))}
-        </div>
+      {/* Board columns */}
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-sm text-text-muted">Loading board…</div>
+      ) : !board ? (
+        <div className="flex-1 flex items-center justify-center text-sm text-text-muted">No board loaded.</div>
       ) : (
-        <Card padding="none">
-          <div className="p-6 text-center text-sm text-text-muted">{error ?? 'No board available.'}</div>
-        </Card>
+        <div className="flex-1 overflow-x-auto sm:overflow-x-visible p-4" style={{ minHeight: 0 }}>
+          <div className="flex sm:grid gap-3 h-full sm:grid-cols-8" style={{ minWidth: 'max-content' }}>
+            {filteredColumns.map((col) => (
+              <BoardColumn key={col.name} name={col.name} tasks={col.tasks} activeTaskId={openTaskId} onOpenTask={setOpenTaskId} onDropTask={(id, s) => void handleMove(id, s)} onAddTask={setNewTaskStatus} />
+            ))}
+          </div>
+        </div>
       )}
 
-      {openTaskId ? <TaskDrawer taskId={openTaskId} onClose={() => setOpenTaskId(null)} /> : null}
-
+      {/* New Task Modal */}
       {newTaskStatus ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-label="New task"
-          onClick={() => setNewTaskStatus(null)}
-        >
-          <form
-            className="w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitNewTask();
-            }}
-          >
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="New task" onClick={closeNewTask}>
+          <form className="w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void submitNewTask(); }}>
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-text">New task</h2>
-              <Button variant="ghost" size="sm" type="button" aria-label="Cancel new task" onClick={closeNewTask}>
-                <X size={14} />
-              </Button>
+              <h2 className="text-sm font-semibold text-text">New task → {newTaskStatus}</h2>
+              <Button variant="ghost" size="sm" type="button" aria-label="Cancel new task" onClick={closeNewTask}><X size={14} /></Button>
             </div>
-
             <label className="mt-3 block">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Column</span>
-              <div className="mt-1 flex flex-wrap gap-1">
-                {(board?.columns ?? []).map((c) => (
-                  <button
-                    key={c.name}
-                    type="button"
-                    className={`rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide transition-colors ${newTaskStatus === c.name ? 'border-sky-400/70 bg-sky-400/10 text-text' : 'border-border-subtle text-text-muted hover:border-border hover:text-text'}`}
-                    aria-pressed={newTaskStatus === c.name}
-                    onClick={() => setNewTaskStatus(c.name)}
-                  >
-                    {c.name}
-                  </button>
-                ))}
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {board?.columns.map((col) => {
+                  const active = col.name === newTaskStatus;
+                  const tone = STATUS_TONES[col.name] ?? 'text-text-muted';
+                  return <button key={col.name} type="button" onClick={() => setNewTaskStatus(col.name)} className={`rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors ${active ? 'border-sky-400/50 bg-sky-400/10 text-text' : `border-border-subtle text-text-subtle hover:border-border hover:text-text`} ${tone}`}>{col.name}</button>;
+                })}
               </div>
             </label>
-
             <label className="mt-3 block">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Title *</span>
-              <input
-                autoFocus
-                value={newTaskTitle}
-                onChange={(e) => setNewTaskTitle(e.target.value)}
-                placeholder="Short, actionable title"
-                maxLength={200}
-                className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
-              />
+              <input autoFocus value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="e.g. Implement vault fallback" maxLength={200} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
             </label>
-
             <label className="mt-3 block">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description</span>
-              <textarea
-                value={newTaskBody}
-                onChange={(e) => setNewTaskBody(e.target.value)}
-                placeholder="Context, acceptance criteria, links…"
-                rows={4}
-                className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[5rem]"
-              />
+              <textarea value={newTaskBody} onChange={(e) => setNewTaskBody(e.target.value)} placeholder="What needs to happen?" rows={3} className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[4rem]" />
             </label>
-
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <label className="flex items-center gap-2">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Priority</span>
-                <select
-                  value={newTaskPriority}
-                  onChange={(e) => setNewTaskPriority(Number(e.target.value))}
-                  className="rounded-lg border border-border-subtle bg-surface px-2 py-1.5 text-xs text-text focus:outline-none"
-                  aria-label="Task priority"
-                >
-                  <option value={2}>High</option>
-                  <option value={1}>Medium</option>
-                  <option value={0}>Normal</option>
-                  <option value={-1}>Low</option>
-                </select>
-              </label>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" type="button" onClick={closeNewTask}>Cancel</Button>
-                <Button type="submit" size="sm" disabled={!newTaskTitle.trim() || creating}>
-                  {creating ? 'Creating…' : 'Create'}
-                </Button>
-              </div>
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Priority</span>
+              <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text focus:border-border focus:outline-none">
+                <option value={0}>Normal</option>
+                <option value={1}>P1 — High</option>
+                <option value={2}>P2 — Medium</option>
+                <option value={3}>P3 — Low</option>
+                <option value={-1}>P4 — Lowest</option>
+              </select>
+            </label>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Button variant="ghost" size="sm" type="button" onClick={closeNewTask}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={!newTaskTitle.trim() || creating}>{creating ? 'Creating…' : 'Create'}</Button>
             </div>
           </form>
         </div>
       ) : null}
 
+      {/* New Board Modal */}
       {newBoardOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-label="New board"
-          onClick={closeNewBoard}
-        >
-          <form
-            className="w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitNewBoard();
-            }}
-          >
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="New board" onClick={closeNewBoard}>
+          <form className="w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void submitNewBoard(); }}>
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-text">New board</h2>
-              <Button variant="ghost" size="sm" type="button" aria-label="Cancel new board" onClick={closeNewBoard}>
-                <X size={14} />
-              </Button>
+              <Button variant="ghost" size="sm" type="button" aria-label="Cancel new board" onClick={closeNewBoard}><X size={14} /></Button>
             </div>
             <label className="mt-3 block">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Name *</span>
-              <input
-                autoFocus
-                value={newBoardName}
-                onChange={(e) => setNewBoardName(e.target.value)}
-                placeholder="e.g. Home Renovation"
-                maxLength={80}
-                className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
-              />
+              <input autoFocus value={newBoardName} onChange={(e) => setNewBoardName(e.target.value)} placeholder="e.g. Home Renovation" maxLength={80} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
             </label>
             <label className="mt-3 block">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description</span>
-              <textarea
-                value={newBoardDesc}
-                onChange={(e) => setNewBoardDesc(e.target.value)}
-                placeholder="What is this board for?"
-                rows={3}
-                className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[4rem]"
-              />
+              <textarea value={newBoardDesc} onChange={(e) => setNewBoardDesc(e.target.value)} placeholder="What is this board for?" rows={3} className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[4rem]" />
             </label>
             <p className="mt-2 text-[10px] text-text-subtle">The new board becomes the active one for CLI and gateway too.</p>
             <div className="mt-3 flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" type="button" onClick={closeNewBoard}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={!newBoardName.trim() || creatingBoard}>
-                {creatingBoard ? 'Creating…' : 'Create board'}
-              </Button>
+              <Button type="submit" size="sm" disabled={!newBoardName.trim() || creatingBoard}>{creatingBoard ? 'Creating…' : 'Create board'}</Button>
             </div>
           </form>
         </div>
       ) : null}
 
+      {/* Delete Board Confirmation */}
       {deleteTarget ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
-          role="alertdialog"
-          aria-modal="true"
-          aria-label={`Delete board ${deleteTarget.name || deleteTarget.slug}`}
-          onClick={closeDeleteBoard}
-        >
-          <form
-            className="w-full sm:max-w-sm rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void confirmDeleteBoard();
-            }}
-          >
-            <h2 className="text-sm font-semibold text-text">Delete board “{deleteTarget.name || deleteTarget.slug}”?</h2>
-            <p className="mt-1 text-xs text-text-muted">
-              {typeof deleteTarget.total === 'number' && deleteTarget.total > 0
-                ? `${deleteTarget.total} task${deleteTarget.total === 1 ? '' : 's'} on this board.`
-                : 'This board has no tasks.'}
-            </p>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="alertdialog" aria-modal="true" aria-label={`Delete board ${deleteTarget.name || deleteTarget.slug}`} onClick={closeDeleteBoard}>
+          <form className="w-full sm:max-w-sm rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void confirmDeleteBoard(); }}>
+            <h2 className="text-sm font-semibold text-text">Delete board "{deleteTarget.name || deleteTarget.slug}"?</h2>
+            <p className="mt-1 text-xs text-text-muted">{typeof deleteTarget.total === 'number' && deleteTarget.total > 0 ? `${deleteTarget.total} task${deleteTarget.total === 1 ? '' : 's'} on this board.` : 'This board has no tasks.'}</p>
             <label className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-2.5">
-              <input
-                type="checkbox"
-                checked={deleteHard}
-                onChange={(e) => setDeleteHard(e.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 accent-red-500"
-              />
-              <span className="text-xs text-text-muted">
-                <span className="font-medium text-text">Permanently delete</span> — unchecked, the board is archived and can be restored later; checked, the board and its database are gone for good.
-              </span>
+              <input type="checkbox" checked={deleteHard} onChange={(e) => setDeleteHard(e.target.checked)} className="mt-0.5 h-3.5 w-3.5 accent-red-500" />
+              <span className="text-xs text-text-muted"><span className="font-medium text-text">Permanently delete</span> — unchecked, the board is archived and can be restored later; checked, the board and its database are gone for good.</span>
             </label>
             <div className="mt-3 flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" type="button" onClick={closeDeleteBoard}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={deletingBoard} className={deleteHard ? 'bg-red-500 hover:bg-red-600' : ''}>
-                {deletingBoard ? 'Deleting…' : deleteHard ? 'Delete permanently' : 'Archive board'}
-              </Button>
+              <Button type="submit" size="sm" disabled={deletingBoard} className={deleteHard ? 'bg-red-500 hover:bg-red-600' : ''}>{deletingBoard ? 'Deleting…' : deleteHard ? 'Delete permanently' : 'Archive board'}</Button>
             </div>
           </form>
         </div>
       ) : null}
+
+      {/* Task Drawer */}
+      {openTaskId ? <TaskDrawer taskId={openTaskId} onClose={() => setOpenTaskId(null)} /> : null}
     </div>
   );
 }
