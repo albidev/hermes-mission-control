@@ -583,6 +583,8 @@
   "chatDrawer.contextUnavailable": "Uso del contesto non ancora disponibile",
   "chatDrawer.contextPercent": "{percent}% della finestra di contesto",
   "chatDrawer.contextTokens": "{used} / {total} token di contesto",
+  "chatDrawer.contextTokensLabel": "token di contesto",
+  "chatDrawer.contextWindowUsage": "Uso della finestra di contesto",
   "chatDrawer.retry": "Riprova",
   "chatDrawer.modelVia": "{model} tramite {provider}",
   "chatDrawer.backToChat": "Torna alla chat",
@@ -643,7 +645,12 @@
   "tldraw.unavailable": "Impossibile caricare TLDrawCanvas",
   "tldraw.checkConnection": "Controlla la connessione e riprova.",
   "tldraw.retry": "Riprova",
-  "tldraw.actionsApplied": "Azioni sul canvas applicate: {summary}",
+  "tldraw.exportBoard": "Esporta board",
+  "tldraw.export": "Esporta",
+  "tldraw.loading": "Caricamento TLDrawCanvas…",
+  "tldraw.canvasActions": "Azioni canvas",
+  "tldraw.actionsApplied": "Azioni canvas applicate: {summary}",
+
   "tldraw.attachedToChat": "Questa whiteboard è associata alla Chat corrente.",
 
   "theme.label": "Tema",

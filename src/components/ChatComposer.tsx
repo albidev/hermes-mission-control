@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import {
   forwardRef,
   useEffect,
@@ -49,6 +50,7 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
   submitting,
   disabled,
 }, _ref) {
+  const { t } = useI18n();
   const canSend = Boolean(draft.trim() || pendingAttachments.length);
 
   useEffect(() => {
@@ -61,7 +63,7 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
   return (
     <>
       {pendingAttachments.length ? (
-        <div className="chat-pending-attachments" aria-label="Pending attachments">
+        <div className="chat-pending-attachments" aria-label={t('chatDrawer.pendingAttachments')}>
           {pendingAttachments.map((attachment) => (
             <div className="chat-pending-attachment" key={attachment.id}>
               {attachment.previewUrl ? <img src={attachment.previewUrl} alt="" /> : <AttachmentIcon kind={attachment.kind} />}
@@ -87,14 +89,14 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
             aria-label={running ? 'Steer Hermes' : 'Message Hermes'}
           />
           <div className="chat-composer-toolbar">
-            <label className="chat-composer-attach" title="Attach image or file" aria-label="Attach image or file">
+            <label className="chat-composer-attach" title={t('chatDrawer.attach')} aria-label={t('chatDrawer.attach')}>
               <Paperclip size={16} />
               <input className="chat-file-input" type="file" multiple accept="image/*,application/pdf,*/*" onChange={onFileInput} />
             </label>
             <span className="chat-composer-hint">{running ? 'Enter sends steer' : 'Shift+Enter for newline'}</span>
             <span className="chat-composer-spacer" />
             {running ? (
-              <button className="chat-composer-action chat-stop" type="button" onClick={onStop} aria-label="Interrupt response" title="Interrupt">
+              <button className="chat-composer-action chat-stop" type="button" onClick={onStop} aria-label={t('chatDrawer.interrupt')} title="Interrupt">
                 <Pause size={16} />
               </button>
             ) : null}

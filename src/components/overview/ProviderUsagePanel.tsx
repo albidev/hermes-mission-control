@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { useEffect, useState } from 'react';
 import { Cloud, RefreshCw } from 'lucide-react';
 import { Card } from '../ui/Card';
@@ -26,6 +27,7 @@ function formatReset(value?: string): string {
 }
 
 function mainWindow(provider: MissionControlProviderUsage) {
+  const { t } = useI18n();
   return provider.primary ?? provider.secondary ?? null;
 }
 
@@ -47,6 +49,7 @@ function gaugeTone(value: number, metric: 'session' | 'weekly'): { className?: s
 }
 
 function UsageGauge({ label, metric, window }: { label: string; metric: 'session' | 'weekly'; window?: MissionControlProviderUsage['primary'] }) {
+  const { t } = useI18n();
   const value = typeof window?.usedPercent === 'number' ? Math.max(0, Math.min(100, window.usedPercent)) : null;
   const tone = value === null ? null : gaugeTone(value, metric);
   return (
@@ -69,6 +72,7 @@ function mainMetricValue(provider: MissionControlProviderUsage): string {
 }
 
 function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
+  const { t } = useI18n();
   const label = PROVIDER_LABELS[provider.provider] ?? provider.provider;
   const unavailable = !provider.available;
   return (
@@ -84,7 +88,7 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
       ) : provider.provider === 'openrouter' ? (
         <div className="flex flex-1 flex-col justify-between gap-2">
           <div>
-            <span className="text-[10px] text-text-muted uppercase tracking-wide">Balance</span>
+            <span className="text-[10px] text-text-muted uppercase tracking-wide">{t('provider.balance')}</span>
             <div className="text-lg font-semibold tabular-nums text-emerald-400">{mainMetricValue(provider)}</div>
           </div>
           <span className="text-[10px] text-text-subtle">{secondaryMetric(provider)}</span>
@@ -105,6 +109,7 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
 }
 
 export function ProviderUsagePanel() {
+  const { t } = useI18n();
   const { storedToken } = useMissionControl();
   const [snapshot, setSnapshot] = useState<MissionControlProviderUsageSnapshot | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -134,7 +139,7 @@ export function ProviderUsagePanel() {
           <div className="flex items-center gap-2">
             <Cloud size={15} className="text-sky-400" />
             <div className="flex flex-col gap-0.5">
-              <span className="eyebrow">Provider usage</span>
+              <span className="eyebrow">{t('overview.providerUsage')}</span>
               <h2 className="text-sm font-semibold text-text">Cloud limits &amp; balances</h2>
             </div>
           </div>
@@ -155,13 +160,13 @@ export function ProviderUsagePanel() {
         <div className="flex items-center gap-2">
           <Cloud size={15} className="text-sky-400" />
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Provider usage</span>
+            <span className="eyebrow">{t('overview.providerUsage')}</span>
             <h2 className="text-sm font-semibold text-text">Cloud limits &amp; balances</h2>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {refreshing ? <RefreshCw size={12} className="text-text-subtle animate-spin" /> : null}
-          <span className="text-[10px] text-text-subtle">Live · 60s</span>
+          <span className="text-[10px] text-text-subtle">{t('provider.live')}</span>
         </div>
       </div>
       <div className="p-3 grid grid-cols-1 sm:grid-cols-3 gap-3">

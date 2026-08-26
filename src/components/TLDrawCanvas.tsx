@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { ArrowLeft, Camera, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
@@ -70,6 +71,7 @@ type TLDrawCanvasProps = {
 };
 
 function storageKey(sessionId: string | null, sessionKey: string | null) {
+  const { t } = useI18n();
   return `mission-control:whiteboard:v5:${sessionId || sessionKey || 'new'}`;
 }
 
@@ -90,6 +92,7 @@ function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
 }
 
 function triggerDownload(href: string, filename: string) {
+  const { t } = useI18n();
   const link = document.createElement('a');
   link.href = href;
   link.download = filename;
@@ -102,6 +105,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
 }
 
 export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded, width }: TLDrawCanvasProps) {
+  const { t } = useI18n();
   const { resolvedTheme } = useMissionControl();
   const [editor, setEditor] = useState<Editor | null>(null);
   const [lints, setLints] = useState<BoardLint[]>([]);
@@ -204,6 +208,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   useEffect(() => {
     if (!editor) return;
     const publishSnapshot = () => {
+  const { t } = useI18n();
       if (sessionId && !remoteHydratedRef.current) return;
       if (publishTimerRef.current !== null) window.clearTimeout(publishTimerRef.current);
       publishTimerRef.current = window.setTimeout(() => {
@@ -561,6 +566,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   };
 
   const clearBoard = () => {
+  const { t } = useI18n();
     if (!editor) return;
     editor.selectAll();
     editor.deleteShapes(editor.getSelectedShapeIds());
@@ -590,11 +596,11 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
     <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
       <header className="tldraw-canvas-head">
         <div className="tldraw-canvas-title">
-          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
+          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title={t('chatDrawer.backToChat')} aria-label={t('chatDrawer.backToChat')}>
             <ArrowLeft size={18} />
           </button>
           <div className="tldraw-canvas-heading">
-            <span className="eyebrow">Session canvas</span>
+            <span className="eyebrow">{t('tldraw.sessionCanvas')}</span>
             <h3>TLDrawCanvas</h3>
             <span className="tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
               {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}

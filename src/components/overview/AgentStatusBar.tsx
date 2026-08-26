@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { useMissionControl } from '../../lib/mission-control-store';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
@@ -18,6 +19,7 @@ const STATUS_VARIANTS: Record<string, 'default' | 'positive' | 'warning' | 'nega
 };
 
 export function AgentStatusBar() {
+  const { t } = useI18n();
   const { snapshot } = useMissionControl();
 
   // Infer agent status from gateway + session activity
@@ -32,14 +34,14 @@ export function AgentStatusBar() {
         {/* Agent identity */}
         <div className="flex items-center gap-2 shrink-0">
           <Zap className="h-4 w-4 text-accent" />
-          <span className="text-sm font-semibold text-text">Hermes</span>
+          <span className="text-sm font-semibold text-text">{t('chatDrawer.eyebrow')}</span>
         </div>
 
         <div className="hidden sm:block h-4 w-px bg-border" />
 
         {/* Model */}
         <div className="flex items-center gap-1.5 min-w-0 max-w-full">
-          <span className="text-xs text-text-muted shrink-0">Model</span>
+          <span className="text-xs text-text-muted shrink-0">{t('statusbar.model')}</span>
           <code
             className="text-xs font-mono bg-surface-raised px-1.5 py-0.5 rounded text-text truncate max-w-[170px] sm:max-w-[260px] md:max-w-none"
             title={snapshot.activeModel}
@@ -61,7 +63,7 @@ export function AgentStatusBar() {
         <>
           <div className="hidden lg:block h-4 w-px bg-border" />
           <div className="hidden lg:flex items-center gap-1.5 min-w-0">
-            <span className="text-xs text-text-subtle shrink-0">fallback</span>
+            <span className="text-xs text-text-subtle shrink-0">{t('statusbar.fallback')}</span>
             <code className="text-xs font-mono text-text-muted truncate max-w-[220px]" title={snapshot.fallbackModel}>
               {snapshot.fallbackModel}
             </code>

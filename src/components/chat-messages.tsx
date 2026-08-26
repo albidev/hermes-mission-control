@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { memo } from 'react';
 import {
   Bot,
@@ -79,6 +80,7 @@ export function ToolMessage({ message }: { message: ChatMessage }) {
 }
 
 export const ChatMessageCard = memo(function ChatMessageCard({ message }: { message: ChatMessage }) {
+  const { t } = useI18n();
   const visualKind = message.kind ?? message.role;
   const isTool = visualKind === 'tool';
   const isReasoning = visualKind === 'reasoning';
@@ -99,7 +101,7 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
             </span>
             <span>{label}</span>
             {message.status === 'streaming'
-              ? <Loader2 size={12} className="chat-spin" aria-label="Streaming" />
+              ? <Loader2 size={12} className="chat-spin" aria-label={t('chatDrawer.streaming')} />
               : message.createdAt ? (
                 <time className="chat-message-time" dateTime={new Date(message.createdAt).toISOString()}>
                   {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

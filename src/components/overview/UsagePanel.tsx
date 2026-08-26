@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
@@ -36,6 +37,7 @@ function MiniStat({ label, value, sub, color }: { label: string; value: string; 
 }
 
 export function UsagePanel() {
+  const { t } = useI18n();
   const { storedToken } = useMissionControl();
   const [usage, setUsage] = useState<MissionControlSessionsUsageSnapshot | null>(null);
 
@@ -55,7 +57,7 @@ export function UsagePanel() {
     <Card padding="none">
       <div className="px-3 pt-3 pb-2 border-b border-border-subtle flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
-          <span className="eyebrow">Usage</span>
+          <span className="eyebrow">{t('nav.usage')}</span>
           <h2 className="text-sm font-semibold text-text">Token consumption &amp; cost estimate</h2>
         </div>
         <Link to="/usage" className="pill pill-subtle pill-button text-xs flex items-center gap-1">

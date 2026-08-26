@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   forwardRef,
@@ -34,6 +35,7 @@ const DEBOUNCE_MS = 60;
 
 export const ChatSlashPopover = forwardRef<ChatSlashPopoverHandle, ChatSlashPopoverProps>(
   function ChatSlashPopover({ input, complete, onApply }, ref) {
+  const { t } = useI18n();
     const [items, setItems] = useState<CompletionItem[]>([]);
     const [selected, setSelected] = useState(0);
     const [replaceFrom, setReplaceFrom] = useState(0);
@@ -108,8 +110,8 @@ export const ChatSlashPopover = forwardRef<ChatSlashPopoverHandle, ChatSlashPopo
     if (!visible) return null;
 
     return (
-      <div className="chat-slash-popover" role="listbox" aria-label="Slash commands">
-        <div className="chat-slash-popover-label">Commands</div>
+      <div className="chat-slash-popover" role="listbox" aria-label={t('slash.commandsAria')}>
+        <div className="chat-slash-popover-label">{t('slash.commands')}</div>
         {items.map((item, index) => {
           const active = index === selected;
           return (

@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, ArrowRight, PanelLeftClose, RefreshCw, Rocket } from 'lucide-react';
@@ -65,6 +66,7 @@ function SectionCard({
 }
 
 export function OverviewDashboard() {
+  const { t } = useI18n();
   const {
     snapshot,
     loading,
@@ -188,7 +190,7 @@ export function OverviewDashboard() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-text-muted italic py-1">No active sessions right now.</p>
+            <p className="text-sm text-text-muted italic py-1">{t('overview.noActiveSessions')}</p>
           )}
         </SectionCard>
       ),
@@ -212,7 +214,7 @@ export function OverviewDashboard() {
             label: 'Scheduled jobs',
             className: 'widget-cron',
             content: (
-              <SectionCard eyebrow="Scheduled jobs" title="Cron status at a glance">
+              <SectionCard eyebrow="Scheduled jobs" title={t('overview.cronStatusAtGlance')}>
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                   <Badge variant="default">{cron.queuedJobs} queued</Badge>
                   <Badge variant={runningCron > 0 ? 'positive' : 'default'}>{runningCron} running</Badge>

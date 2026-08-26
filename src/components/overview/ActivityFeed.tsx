@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { useRef } from 'react';
 import { Activity, Bot, User, Wrench } from 'lucide-react';
 import type { MissionControlSnapshot } from '../../lib/hermes-api';
@@ -23,18 +24,19 @@ function signalToneClass(tone: Signal['tone']) {
 }
 
 export function ActivityFeed({ signals }: { signals: Signal[] }) {
+  const { t } = useI18n();
   const listRef = useRef<HTMLDivElement>(null);
 
   return (
     <Card padding="none">
       <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
-          <span className="eyebrow">Events</span>
-          <h2 className="text-sm font-semibold text-text">Live feed</h2>
+          <span className="eyebrow">{t('activity.eyebrow')}</span>
+          <h2 className="text-sm font-semibold text-text">{t('activity.title')}</h2>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-positive animate-pulse" />
-          <span className="text-xs text-text-muted">Live</span>
+          <span className="text-xs text-text-muted">{t('activity.live')}</span>
         </div>
       </div>
 
@@ -70,7 +72,7 @@ export function ActivityFeed({ signals }: { signals: Signal[] }) {
           })
         ) : (
           <div className="flex items-center justify-center py-6">
-            <p className="text-sm text-text-muted italic">No signals yet.</p>
+            <p className="text-sm text-text-muted italic">{t('activity.noSignals')}</p>
           </div>
         )}
       </div>

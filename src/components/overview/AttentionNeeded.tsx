@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertCircle, Bell, CheckCircle, Clock, PanelLeftClose } from 'lucide-react';
@@ -33,6 +34,7 @@ function SectionLink({
 }
 
 export function AttentionNeeded({ alerts }: AttentionNeededProps) {
+  const { t } = useI18n();
   const { storedToken } = useMissionControl();
   const [pendingCandidates, setPendingCandidates] = useState(0);
   const [pendingByVault, setPendingByVault] = useState<Array<{ label: string; count: number }>>([]);
@@ -73,8 +75,8 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
     <Card padding="none">
       <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
-          <span className="eyebrow">Attention</span>
-          <h2 className="text-sm font-semibold text-text">Needs review</h2>
+          <span className="eyebrow">{t('attention.eyebrow')}</span>
+          <h2 className="text-sm font-semibold text-text">{t('attention.title')}</h2>
         </div>
         {hasAttention ? (
           <Badge variant={errorAlerts.length > 0 ? 'negative' : 'warning'}>
@@ -95,7 +97,7 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
               <div className="flex items-start gap-2">
                 <Bell className="h-4 w-4 text-warning mt-0.5 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-text">Curate approvals pending</p>
+                  <p className="text-sm font-medium text-text">{t('attention.curatePending')}</p>
                   <p className="text-xs text-text-muted line-clamp-2 mt-0.5">
                     {pendingCandidates} candidate{pendingCandidates === 1 ? '' : 's'} awaiting review
                     {pendingByVault.length > 0
@@ -146,7 +148,7 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
         ) : (
           <div className="flex flex-col items-center gap-2 py-3 text-center">
             <CheckCircle className="h-7 w-7 text-positive" />
-            <p className="text-sm text-text-muted">No issues detected.</p>
+            <p className="text-sm text-text-muted">{t('attention.noIssues')}</p>
           </div>
         )}
 

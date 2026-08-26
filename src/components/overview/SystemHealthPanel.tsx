@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { Cpu, Disc, Fan, HardDrive, Server, Thermometer } from 'lucide-react';
 import type { MissionControlMachineStatus } from '../../lib/hermes-api';
 import { Card } from '../ui/Card';
@@ -103,6 +104,7 @@ export function SystemHealthPanel({
   gatewayStatus,
   backendHealth,
 }: SystemHealthPanelProps) {
+  const { t } = useI18n();
   const healthVariant =
     machine.health === 'healthy' ? 'positive' :
     machine.health === 'degraded' ? 'warning' :
@@ -138,8 +140,8 @@ export function SystemHealthPanel({
     <Card padding="none">
       <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
-          <span className="eyebrow">System</span>
-          <h2 className="text-sm font-semibold text-text">Health</h2>
+          <span className="eyebrow">{t('health.system')}</span>
+          <h2 className="text-sm font-semibold text-text">{t('health.title')}</h2>
         </div>
         <Badge
           variant={
