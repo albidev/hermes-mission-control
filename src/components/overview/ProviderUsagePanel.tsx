@@ -99,7 +99,7 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
           {typeof provider.resetCreditsAvailable === 'number' ? (
             <span className="text-[10px] text-text-subtle text-right">{t('provider.resetCreditsCount', { count: provider.resetCreditsAvailable })}</span>
           ) : provider.provider === 'codex' ? (
-            <span className="text-[10px] text-text-subtle text-right">{t('provider.resetCreditsCount', { count: provider.creditsRemaining ?? 0 })}</span>
+            <span className="text-[10px] text-text-subtle text-right">{t('provider.resetCredits')}</span>
           ) : provider.provider === 'ollama' ? (
             <span className="provider-card-spacer" aria-hidden="true" />
           ) : null}
