@@ -71,7 +71,6 @@ type TLDrawCanvasProps = {
 };
 
 function storageKey(sessionId: string | null, sessionKey: string | null) {
-  const { t } = useI18n();
   return `mission-control:whiteboard:v5:${sessionId || sessionKey || 'new'}`;
 }
 
@@ -92,7 +91,6 @@ function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
 }
 
 function triggerDownload(href: string, filename: string) {
-  const { t } = useI18n();
   const link = document.createElement('a');
   link.href = href;
   link.download = filename;

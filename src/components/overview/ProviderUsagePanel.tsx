@@ -27,7 +27,6 @@ function formatReset(value?: string): string {
 }
 
 function mainWindow(provider: MissionControlProviderUsage) {
-  const { t } = useI18n();
   return provider.primary ?? provider.secondary ?? null;
 }
 
