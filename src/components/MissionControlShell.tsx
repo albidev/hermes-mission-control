@@ -8,6 +8,7 @@ import {
   DollarSign,
   LayoutDashboard,
   LockKeyhole,
+  Kanban,
   Menu,
   MessageSquare,
   PanelLeftClose,
@@ -51,6 +52,7 @@ export function MissionControlShell() {
   const navItems = [
     { to: '/', label: 'Overview', icon: LayoutDashboard },
     { to: '/sessions', label: 'Sessions', icon: MessageSquare },
+    { to: '/kanban', label: 'Kanban', icon: Kanban },
     { to: '/agents', label: 'Agents', icon: Bot },
     { to: '/usage', label: 'Usage', icon: DollarSign },
     { to: '/knowledge', label: 'Knowledge', icon: BookOpen },

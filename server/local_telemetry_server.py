@@ -47,6 +47,8 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
+import kanban_bridge as kanban_bridge_mod
+from kanban_bridge import KanbanError as KanbanBridgeError
 from whiteboard_store import acknowledge_commands, enqueue_command, get_whiteboard, load_state, save_snapshot, save_state, get_agent_mode
 
 
@@ -1552,6 +1554,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, collect_provider_usage())
             return
+        if parsed.path.startswith("/api/local/kanban/"):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._kanban_get(parsed)
+            return
         if parsed.path == "/api/local/mission-control/agents/trace":
             if not _is_authorized(self):
                 self._unauthorized()
@@ -1759,10 +1767,94 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(404, {'error': 'not_found', 'path': self.path})
 
+    # ------------------------------------------------------------------
+    # Kanban (delegates to server/kanban_bridge.py → hermes_cli.kanban_db)
+    # ------------------------------------------------------------------
+
+    def _kanban_get(self, parsed) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        board = (params.get("board") or [None])[0] or None
+        sub = parsed.path[len("/api/local/kanban/"):].strip("/")
+        try:
+            if sub == "board":
+                self._json(200, kanban_bridge_mod.get_board(board=board))
+                return
+            if sub == "boards":
+                include_archived = (params.get("include_archived") or ["false"])[0].lower() == "true"
+                self._json(200, kanban_bridge_mod.list_boards(include_archived=include_archived))
+                return
+            if sub == "events":
+                since_raw = (params.get("since") or ["0"])[0]
+                try:
+                    since = int(since_raw)
+                except ValueError:
+                    since = 0
+                self._json(200, kanban_bridge_mod.get_events(since=since, board=board))
+                return
+            if sub.startswith("tasks/"):
+                task_id = sub[len("tasks/"):]
+                if not task_id:
+                    self._json(404, {"error": "not_found", "path": parsed.path})
+                    return
+                self._json(200, kanban_bridge_mod.get_task_detail(task_id, board=board))
+                return
+            self._json(404, {"error": "not_found", "path": parsed.path})
+        except KanbanBridgeError as exc:
+            self._json(exc.status_code, {"error": "kanban_error", "detail": exc.message})
+        except Exception as exc:  # defensive: never kill the sidecar worker
+            self._json(500, {"error": "kanban_failed", "detail": str(exc)[:240]})
+
+    def _kanban_post(self, parsed, payload: Dict[str, Any]) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        board = (params.get("board") or [None])[0] or None
+        sub = parsed.path[len("/api/local/kanban/"):].strip("/")
+        try:
+            if sub == "tasks":
+                author = (payload.get("author") or "mission-control")
+                self._json(200, kanban_bridge_mod.create_task(payload, board=board, author=author))
+                return
+            if sub.startswith("tasks/") and sub.endswith("/comments"):
+                task_id = sub[len("tasks/"):-len("/comments")]
+                author = (payload.get("author") or "mission-control")
+                self._json(200, kanban_bridge_mod.add_comment(task_id, payload, board=board, author=author))
+                return
+            if sub.startswith("tasks/") and sub.endswith("/archive"):
+                task_id = sub[len("tasks/"):-len("/archive")]
+                self._json(200, kanban_bridge_mod.delete_task(task_id, board=board))
+                return
+            if sub.startswith("tasks/"):
+                task_id = sub[len("tasks/"):]
+                self._json(200, kanban_bridge_mod.update_task(task_id, payload, board=board))
+                return
+            if sub.startswith("boards/") and sub.endswith("/switch"):
+                slug = sub[len("boards/"):-len("/switch")]
+                self._json(200, kanban_bridge_mod.switch_board(slug))
+                return
+            self._json(404, {"error": "not_found", "path": parsed.path})
+        except KanbanBridgeError as exc:
+            self._json(exc.status_code, {"error": "kanban_error", "detail": exc.message})
+        except Exception as exc:  # defensive: never kill the sidecar worker
+            self._json(500, {"error": "kanban_failed", "detail": str(exc)[:240]})
+
     def do_POST(self) -> None:  # noqa: N802
         if self._reject_mutation_in_read_only_mode():
             return
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/local/kanban/"):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8", errors="replace") if length else "{}"
+            try:
+                payload = json.loads(raw or "{}")
+                if not isinstance(payload, dict):
+                    raise ValueError("payload must be a JSON object")
+            except (ValueError, json.JSONDecodeError) as exc:
+                self._json(400, {"error": "bad_request", "detail": f"invalid JSON: {exc}"})
+                return
+            self._kanban_post(parsed, payload)
+            return
         if parsed.path == '/api/local/gateway/restart':
             if not _is_authorized(self):
                 self._unauthorized()
