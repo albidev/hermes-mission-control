@@ -6,6 +6,7 @@ import {
   loadKanbanBoard,
   loadKanbanBoards,
   loadKanbanTaskDetail,
+  loadKanbanTaskLog,
   moveKanbanTask,
   createKanbanTask,
   createKanbanBoard,
@@ -212,15 +213,25 @@ function TaskDrawer({
 }) {
   const { storedToken } = useMissionControl();
   const [detail, setDetail] = useState<MissionControlKanbanTaskDetail | null>(null);
+  const [workerLog, setWorkerLog] = useState<{ exists: boolean; content: string; size_bytes: number; truncated: boolean } | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
   const [postingComment, setPostingComment] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setDetail(null);
+    setWorkerLog(null);
+    setLogError(null);
+    setLogLoading(true);
     loadKanbanTaskDetail(storedToken || undefined, taskId)
       .then((d) => { if (!cancelled) setDetail(d); })
       .catch(() => { if (!cancelled) setDetail(null); });
+    loadKanbanTaskLog(storedToken || undefined, taskId)
+      .then((log) => { if (!cancelled) setWorkerLog(log); })
+      .catch((e) => { if (!cancelled) setLogError(e instanceof Error ? e.message : 'Worker log unavailable.'); })
+      .finally(() => { if (!cancelled) setLogLoading(false); });
     return () => { cancelled = true; };
   }, [storedToken, taskId]);
 
@@ -281,6 +292,79 @@ function TaskDrawer({
                 <p className="mt-1 whitespace-pre-wrap text-xs text-text-muted leading-relaxed line-clamp-6">{detail.latest_summary}</p>
               </div>
             ) : null}
+
+            {/* Result / final summary */}
+            {(detail.result || detail.latest_summary) ? (
+              <section className="mt-4 rounded-lg border border-border-subtle bg-surface-sunken p-3">
+                <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">{detail.result ? 'Result' : 'Final result (run summary)'}</h3>
+                <p className="mt-1 whitespace-pre-wrap text-xs text-text-muted leading-relaxed">{detail.result || detail.latest_summary}</p>
+              </section>
+            ) : detail.status === 'done' ? (
+              <section className="mt-4 rounded-lg border border-border-subtle bg-surface-sunken p-3 text-xs text-text-subtle">No final result recorded. Check Run history, Worker log, or Events.</section>
+            ) : null}
+
+            {/* Child results / dependencies */}
+            {(detail.children?.length ?? 0) > 0 ? (
+              <section className="mt-4">
+                <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Child tasks ({detail.children!.length})</h3>
+                <div className="mt-1.5 space-y-1">
+                  {detail.children!.map((childId) => (
+                    <div key={childId} className="flex items-center justify-between rounded-md border border-border-subtle bg-surface/60 px-2 py-1.5">
+                      <code className="text-[10px] text-text-muted">{childId}</code>
+                      <span className="text-[10px] text-text-subtle">Open from the board</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {/* Run history */}
+            {detail.runs.length > 0 ? (
+              <section className="mt-4">
+                <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Run history ({detail.runs.length})</h3>
+                <div className="mt-1.5 space-y-1.5">
+                  {detail.runs.map((run) => {
+                    const elapsed = run.started_at ? Math.max(0, (run.ended_at ?? Date.now() / 1000) - run.started_at) : 0;
+                    const elapsedLabel = elapsed < 60 ? `${Math.round(elapsed)}s` : `${Math.round(elapsed / 60)}m`;
+                    return (
+                      <div key={run.id} className={`rounded-md border p-2 ${run.ended_at ? 'border-border-subtle bg-surface/60' : 'border-sky-400/40 bg-sky-400/5'}`}>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className="font-medium text-text">{run.ended_at ? (run.outcome || run.status || 'ended') : 'active'}</span>
+                          <span className="text-text-muted">{run.profile ? `@${run.profile}` : '(no profile)'}</span>
+                          <span className="ml-auto text-text-subtle">{elapsedLabel} · {formatAge(run.started_at)}</span>
+                        </div>
+                        {run.summary ? <p className="mt-1 whitespace-pre-wrap text-xs text-text-muted">{run.summary}</p> : null}
+                        {run.error ? <p className="mt-1 whitespace-pre-wrap text-xs text-red-400">{run.error}</p> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+
+            {/* Events / activity timeline */}
+            {detail.events.length > 0 ? (
+              <details className="mt-4" open={detail.status === 'running'}>
+                <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Events ({detail.events.length})</summary>
+                <div className="mt-1.5 space-y-1">
+                  {detail.events.slice(0, 20).map((event) => (
+                    <div key={event.id} className="rounded-md border border-border-subtle bg-surface/60 p-2">
+                      <div className="flex items-center justify-between text-[10px]"><code className="text-text-muted">{event.kind}</code><span className="text-text-subtle">{formatAge(event.created_at)}</span></div>
+                      {event.payload ? <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all text-[10px] text-text-subtle">{JSON.stringify(event.payload, null, 2)}</pre> : null}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+
+            {/* Worker log */}
+            <details className="mt-4" open={detail.status === 'running'}>
+              <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Worker log{workerLog?.size_bytes ? ` (${workerLog.size_bytes} B)` : ''}</summary>
+              <div className="mt-1.5">
+                {logLoading ? <p className="text-xs text-text-subtle">Loading log…</p> : logError ? <p className="text-xs text-red-400">{logError}</p> : workerLog?.exists ? <pre className="max-h-64 overflow-auto rounded-md border border-border-subtle bg-black/30 p-2 font-mono text-[10px] leading-relaxed text-text-muted">{workerLog.content || '(empty)'}</pre> : <p className="text-xs italic text-text-subtle">— no worker log yet —</p>}
+                {workerLog?.truncated ? <p className="mt-1 text-[10px] text-text-subtle">Showing the last 100 KB.</p> : null}
+              </div>
+            </details>
 
             {/* Comments */}
             {detail.comments.length > 0 ? (

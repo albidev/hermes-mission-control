@@ -2424,6 +2424,15 @@ export type MissionControlKanbanEventEntry = {
   created_at: number;
 };
 
+export type MissionControlKanbanTaskLog = {
+  task_id: string;
+  path: string;
+  exists: boolean;
+  size_bytes: number;
+  content: string;
+  truncated: boolean;
+};
+
 export type MissionControlKanbanTaskDetail = MissionControlKanbanTask & {
   body?: string | null;
   result?: string | null;
@@ -2452,6 +2461,15 @@ export async function loadKanbanBoard(accessToken?: string, board?: string): Pro
 export async function loadKanbanBoards(accessToken?: string): Promise<{ boards: MissionControlKanbanBoardMeta[]; current: string }> {
   const { payload } = await maybeFetchLocalJson<{ boards: MissionControlKanbanBoardMeta[]; current: string }>('/kanban/boards', accessToken);
   if (!payload) throw new Error('Kanban boards unavailable.');
+  return payload;
+}
+
+export async function loadKanbanTaskLog(accessToken?: string, taskId?: string, board?: string): Promise<MissionControlKanbanTaskLog> {
+  if (!taskId) throw new Error('taskId is required');
+  const params = new URLSearchParams({ tail: '100000' });
+  if (board) params.set('board', board);
+  const { payload } = await maybeFetchLocalJson<MissionControlKanbanTaskLog>(`/kanban/tasks/${encodeURIComponent(taskId)}/log?${params.toString()}`, accessToken);
+  if (!payload) throw new Error('Worker log unavailable.');
   return payload;
 }
 

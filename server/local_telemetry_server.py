@@ -1791,6 +1791,14 @@ class Handler(BaseHTTPRequestHandler):
                     since = 0
                 self._json(200, kanban_bridge_mod.get_events(since=since, board=board))
                 return
+            if sub.startswith("tasks/") and sub.endswith("/log"):
+                task_id = sub[len("tasks/"):-len("/log")]
+                try:
+                    tail = int((params.get("tail") or ["100000"])[0])
+                except ValueError:
+                    tail = 100000
+                self._json(200, kanban_bridge_mod.get_task_log(task_id, board=board, tail=max(1, min(tail, 2_000_000))))
+                return
             if sub.startswith("tasks/"):
                 task_id = sub[len("tasks/"):]
                 if not task_id:

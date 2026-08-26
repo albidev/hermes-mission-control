@@ -174,6 +174,28 @@ def _latest_summary(conn, task_id: str) -> Optional[str]:
         return None
 
 
+def get_task_log(task_id: str, board: Optional[str] = None, tail: int = 100_000) -> Dict[str, Any]:
+    """Return the bounded worker stdout/stderr log for a task."""
+    kb = _kb()
+    conn = _conn(board=board)
+    try:
+        if kb.get_task(conn, task_id) is None:
+            raise KanbanError(404, f"task {task_id} not found")
+    finally:
+        conn.close()
+    log_path = kb.worker_log_path(task_id, board=board)
+    content = kb.read_worker_log(task_id, tail_bytes=tail, board=board)
+    size = log_path.stat().st_size if log_path.exists() else 0
+    return {
+        "task_id": task_id,
+        "path": str(log_path),
+        "exists": content is not None,
+        "size_bytes": size,
+        "content": content or "",
+        "truncated": bool(tail and size > tail),
+    }
+
+
 def get_task_detail(task_id: str, board: Optional[str] = None) -> Dict[str, Any]:
     kb = _kb()
     conn = _conn(board=board)
