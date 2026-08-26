@@ -1020,7 +1020,7 @@ export function KanbanRoute() {
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Parent task</span>
                 {(() => {
                   const allTasks = (board?.columns ?? []).flatMap((c) => c.tasks);
-                  const parentOptions = [{ value: '', label: '— no parent —' }, ...allTasks.map((t) => ({ value: t.id, label: `${t.title.slice(0, 40)}${t.title.length > 40 ? '…' : ''}` }))];
+                  const parentOptions = [{ value: '', label: t('kanban.noParent') }, ...allTasks.map((t) => ({ value: t.id, label: `${t.title.slice(0, 40)}${t.title.length > 40 ? '…' : ''}` }))];
                   return (
                     <div className="mt-1">
                       <Dropdown value={newTaskParent} onChange={setNewTaskParent} ariaLabel="Parent task" dropUp options={parentOptions} />

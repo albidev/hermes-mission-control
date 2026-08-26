@@ -236,6 +236,7 @@ const AgentRegistryRow = memo(function AgentRegistryRow({
   agent: AgentAggregate;
   isSelected: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className={`px-4 py-3 grid grid-cols-1 lg:grid-cols-12 gap-2 items-center ${isSelected ? 'bg-surface-sunken/70' : ''}`}>
       <div className="lg:col-span-5 min-w-0">
@@ -250,7 +251,7 @@ const AgentRegistryRow = memo(function AgentRegistryRow({
       <div className="lg:col-span-5 flex flex-wrap items-center gap-2 text-xs text-text-subtle">
         <span className="inline-flex items-center gap-1"><Cpu className="h-3.5 w-3.5" /> sessions {agent.totalSessions}</span>
         <span className="inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> msgs {agent.totalMessages}</span>
-        <span>last active {formatRelativeTime(agent.lastActive)}</span>
+        <span>{t('agents.lastActive', { time: formatRelativeTime(agent.lastActive) })}</span>
         <span className="text-text-muted">({formatTimestamp(agent.lastActive)})</span>
         <Link
           to={`/agents/${encodeURIComponent(agent.id)}?mode=${agent.liveSessions > 0 ? 'live' : 'post'}`}
@@ -1000,7 +1001,7 @@ export function AgentsRoute() {
                     Clear filters
                   </button>
                 ) : (
-                  <Badge variant="default">All actions</Badge>
+                  <Badge variant="default">{t('ui.allActions')}</Badge>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1029,11 +1030,11 @@ export function AgentsRoute() {
             <div className="flex flex-wrap items-center gap-2 text-xs text-text-subtle">
               <Badge variant={visibleTrace.mode === 'live' ? 'positive' : 'default'}>{visibleTrace.mode}</Badge>
               <span className="break-all">{visibleTrace.session.title} · {visibleTrace.session.model}</span>
-              <span>turns {visibleTrace.stats.turns}</span>
-              <span>tools {visibleTrace.stats.toolCalls}</span>
-              <span>skills {visibleTrace.stats.skills}</span>
-              <span>thoughts {visibleTrace.stats.thoughts}</span>
-              <span>errors {visibleTrace.stats.errors}</span>
+              <span>{t('ui.turns')} {visibleTrace.stats.turns}</span>
+              <span>{t('ui.tools')} {visibleTrace.stats.toolCalls}</span>
+              <span>{t('ui.skills')} {visibleTrace.stats.skills}</span>
+              <span>{t('ui.thoughts')} {visibleTrace.stats.thoughts}</span>
+              <span>{t('ui.errors')} {visibleTrace.stats.errors}</span>
               {(() => {
                 const agentSession = orderedSessions.find((s) => s.sessionId === selectedSessionId);
                 if (!agentSession || agentSession.inputTokens + agentSession.outputTokens === 0) return null;
