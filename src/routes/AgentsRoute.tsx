@@ -1095,12 +1095,12 @@ export function AgentsRoute() {
                       </div>
                       <p className="text-xs text-text-muted break-words">{summarizeEventPreview(event.detail)}</p>
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-subtle">
-                        <span>turn {event.turnId}</span>
-                        {event.toolName ? <span>tool {event.toolName}</span> : null}
-                        {event.skillName ? <span>skill {event.skillName}</span> : null}
-                        {event.callId ? <span>call {event.callId}</span> : null}
+                        <span>{t('ui.turn')} {event.turnId}</span>
+                        {event.toolName ? <span>{t('ui.tool')} {event.toolName}</span> : null}
+                        {event.skillName ? <span>{t('ui.skills')} {event.skillName}</span> : null}
+                        {event.callId ? <span>{t('ui.call')} {event.callId}</span> : null}
                         <span>{formatTimestamp(event.timestamp)}</span>
-                        <span className="text-text-muted">tap for details</span>
+                        <span className="text-text-muted">{t('knowledge.openDetails')}</span>
                       </div>
                     </button>
                   );
