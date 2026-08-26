@@ -52,16 +52,20 @@ function formatRelative(value: string | null | undefined): string {
   return `${days}d ${delta >= 0 ? 'from now' : 'ago'}`;
 }
 
+function isCronPaused(job: MissionControlCronJob): boolean {
+  return !job.enabled || job.state === 'paused';
+}
+
 function statusVariant(job: MissionControlCronJob): 'positive' | 'warning' | 'negative' | 'default' {
   if (job.lastError || job.lastStatus === 'error' || job.lastStatus === 'failed') return 'negative';
-  if (!job.enabled || job.state === 'paused') return 'warning';
+  if (isCronPaused(job)) return 'warning';
   if (job.state === 'scheduled' || job.state === 'running') return 'positive';
   return 'default';
 }
 
 function statusLabel(job: MissionControlCronJob, t: (key: string) => string): string {
   if (job.lastError || job.lastStatus === 'error' || job.lastStatus === 'failed') return t('cron.status.error');
-  if (!job.enabled || job.state === 'paused') return t('cron.status.paused');
+  if (isCronPaused(job)) return t('cron.status.paused');
   if (job.noAgent) return t('cron.status.script');
   if (job.state === 'completed') return t('cron.status.completed');
   return t('cron.status.scheduled');
@@ -350,6 +354,11 @@ export function CronRoute() {
     failed: jobs.filter((job) => Boolean(job.lastError) || job.lastStatus === 'failed' || job.lastStatus === 'error').length,
   }), [jobs]);
 
+  const orderedJobs = useMemo(
+    () => [...jobs].sort((left, right) => Number(isCronPaused(left)) - Number(isCronPaused(right))),
+    [jobs],
+  );
+
   const runAction = async (job: MissionControlCronJob, action: 'run' | 'pause' | 'resume' | 'delete') => {
     if (action === 'delete' && !window.confirm(t('cron.deleteConfirm', { name: job.label }))) return;
     setActionJobId(job.id);
@@ -402,9 +411,9 @@ export function CronRoute() {
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4"><Metric label={t('cron.metrics.total')} value={String(jobs.length)} icon={Clock3} /><Metric label={t('cron.metrics.enabled')} value={String(counters.enabled)} icon={Play} /><Metric label={t('cron.metrics.paused')} value={String(counters.paused)} icon={Pause} /><Metric label={t('cron.metrics.failed')} value={String(counters.failed)} icon={RotateCcw} /></div>
       <Card padding="none">
         <div className="border-b border-border-subtle px-4 pb-3 pt-4"><span className="eyebrow">{t('cron.list.eyebrow')}</span><h3 className="mt-0.5 text-sm font-semibold text-text">{t('cron.list.title')}</h3></div>
-        {loading ? <div className="px-4 py-10 text-center text-sm text-text-muted">{t('cron.loading')}</div> : jobs.length === 0 ? <div className="px-4 py-10 text-center text-sm text-text-muted">{t('cron.empty')}</div> : <div className="divide-y divide-border-subtle">{jobs.map((job) => {
+        {loading ? <div className="px-4 py-10 text-center text-sm text-text-muted">{t('cron.loading')}</div> : jobs.length === 0 ? <div className="px-4 py-10 text-center text-sm text-text-muted">{t('cron.empty')}</div> : <div className="divide-y divide-border-subtle">{orderedJobs.map((job) => {
           const busy = actionJobId === job.id;
-          const paused = !job.enabled || job.state === 'paused';
+          const paused = isCronPaused(job);
           return <div key={job.id} className="flex flex-col gap-3 px-4 py-4 xl:flex-row xl:items-center xl:gap-5">
             <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h4 className="truncate text-sm font-medium text-text">{job.label}</h4><Badge variant={statusVariant(job)}>{statusLabel(job, t)}</Badge></div><p className="mt-1 truncate font-mono text-xs text-text-muted">{job.scheduleDisplay}</p><p className="mt-1 text-xs text-text-subtle">{job.id}</p></div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-text-muted sm:grid-cols-4 xl:w-[30rem]"><div><span className="block text-text-subtle">{t('cron.list.next')}</span><span>{formatRelative(job.nextRunAt)}</span></div><div><span className="block text-text-subtle">{t('cron.list.last')}</span><span>{formatRelative(job.lastRunAt)}</span></div><div><span className="block text-text-subtle">{t('cron.list.delivery')}</span><span className="max-w-28 truncate block">{job.deliver || 'local'}</span></div><div><span className="block text-text-subtle">{t('cron.list.mode')}</span><span>{job.noAgent ? t('cron.status.script') : t('cron.status.agent')}</span></div></div>
