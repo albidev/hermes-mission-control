@@ -26,6 +26,7 @@ import { useI18n } from '../lib/i18n';
 import { ChatDrawer } from './ChatDrawer';
 import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
+import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 import { Button } from './ui/Button';
 
 export function MissionControlShell() {
@@ -34,6 +35,11 @@ export function MissionControlShell() {
   useLastRoutePersistence();
   const presence = useChatPresence();
   const { t } = useI18n();
+
+  useEffect(() => {
+    recordReloadDiagnostic('mission-control-shell-mounted');
+    return () => recordReloadDiagnostic('mission-control-shell-unmounted');
+  }, []);
   const chatButtonLabel = presence.phase === 'running'
     ? t('chat.working')
     : presence.phase === 'completed'

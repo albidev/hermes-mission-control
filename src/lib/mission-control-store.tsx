@@ -139,6 +139,11 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>(initialTheme);
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>('dark');
 
+  useEffect(() => {
+    recordReloadDiagnostic('mission-control-provider-mounted');
+    return () => recordReloadDiagnostic('mission-control-provider-unmounted');
+  }, []);
+
   const gatewayActions = useMemo<MissionControlGatewayAction[]>(
     () => [
       { id: 'refresh', label: 'Refresh snapshot', hint: 'Reload all live Mission Control data.', endpoint: '/status', method: 'GET' },
