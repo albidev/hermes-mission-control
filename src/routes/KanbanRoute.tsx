@@ -427,14 +427,14 @@ function Dropdown({
     <div className="relative" ref={ref}>
       <button
         type="button"
-        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] transition-colors ${value ? 'border-border bg-surface-sunken text-text' : 'border-border-subtle bg-surface text-text-muted hover:border-border hover:text-text'}`}
+        className={`flex w-full items-center justify-between gap-1.5 rounded-lg border px-2.5 py-2 text-xs transition-colors ${value ? 'border-border bg-surface-sunken text-text' : 'border-border-subtle bg-surface text-text-muted hover:border-border hover:text-text'}`}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel}
       >
-        <span className="truncate max-w-[9rem]">{activeLabel}</span>
-        <ChevronDown size={12} className={`shrink-0 text-text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
+        <span className="truncate">{activeLabel}</span>
+        <ChevronDown size={13} className={`shrink-0 text-text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open ? (
         <ul className={`absolute z-30 min-w-[10rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl ${dropUp ? 'bottom-full mb-1' : 'mt-1'}`} role="listbox" aria-label={ariaLabel}>
@@ -702,22 +702,26 @@ export function KanbanRoute() {
             <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks…" className="w-full rounded-lg border border-border-subtle bg-surface-sunken pl-6 pr-2 py-1.5 text-[11px] text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
           </div>
           {tenants.length > 0 ? (
-            <Dropdown
-              value={filterTenant}
-              onChange={setFilterTenant}
-              ariaLabel="Filter by tenant"
-              placeholder="All tenants"
-              options={[{ value: '', label: 'All tenants' }, ...tenants.map((t) => ({ value: t, label: t }))]}
-            />
+            <div className="w-32">
+              <Dropdown
+                value={filterTenant}
+                onChange={setFilterTenant}
+                ariaLabel="Filter by tenant"
+                placeholder="All tenants"
+                options={[{ value: '', label: 'All tenants' }, ...tenants.map((t) => ({ value: t, label: t }))]}
+              />
+            </div>
           ) : null}
           {assignees.length > 0 ? (
-            <Dropdown
-              value={filterAssignee}
-              onChange={setFilterAssignee}
-              ariaLabel="Filter by assignee"
-              placeholder="All assignees"
-              options={[{ value: '', label: 'All assignees' }, ...assignees.map((a) => ({ value: a, label: a }))]}
-            />
+            <div className="w-32">
+              <Dropdown
+                value={filterAssignee}
+                onChange={setFilterAssignee}
+                ariaLabel="Filter by assignee"
+                placeholder="All assignees"
+                options={[{ value: '', label: 'All assignees' }, ...assignees.map((a) => ({ value: a, label: a }))]}
+              />
+            </div>
           ) : null}
           {hasFilters ? (
             <button type="button" onClick={() => { setSearchQuery(''); setFilterTenant(''); setFilterAssignee(''); }} className="text-[10px] text-text-subtle hover:text-text transition-colors">
@@ -764,13 +768,13 @@ export function KanbanRoute() {
               </div>
             </label>
             <label className="mt-3 block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Title *</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Title <span className="text-red-400">*</span></span>
               <input autoFocus value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="e.g. Implement vault fallback" maxLength={200} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
             </label>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Specifier (blank = dispatcher picks)</span>
-                <input value={newTaskSpecifier} onChange={(e) => setNewTaskSpecifier(e.target.value)} placeholder="specifier" className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Specifier</span>
+                <input value={newTaskSpecifier} onChange={(e) => setNewTaskSpecifier(e.target.value)} placeholder="blank = auto" className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
               </label>
               <label className="block">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Priority</span>
@@ -792,8 +796,8 @@ export function KanbanRoute() {
               </label>
             </div>
             <label className="mt-3 block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Skills (optional, comma-separated)</span>
-              <input value={newTaskSkills} onChange={(e) => setNewTaskSkills(e.target.value)} placeholder="skills (optional, comma-separated): translation, review…" spellCheck={false} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Skills</span>
+              <input value={newTaskSkills} onChange={(e) => setNewTaskSkills(e.target.value)} placeholder="comma-separated, e.g. translation, review" spellCheck={false} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
             </label>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <label className="block">
@@ -813,28 +817,31 @@ export function KanbanRoute() {
                 </div>
               </label>
               <label className="block">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Workspace path</span>
-                <input value={newTaskWorkspacePath} onChange={(e) => setNewTaskWorkspacePath(e.target.value)} placeholder="/Users/albi/Projects/…" spellCheck={false} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Path</span>
+                <input value={newTaskWorkspacePath} onChange={(e) => setNewTaskWorkspacePath(e.target.value)} placeholder="defaults to board workdir" spellCheck={false} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
               </label>
             </div>
+            <div className="mt-3 grid grid-cols-2 gap-3 items-end">
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Parent task</span>
+                {(() => {
+                  const allTasks = (board?.columns ?? []).flatMap((c) => c.tasks);
+                  const parentOptions = [{ value: '', label: '— no parent —' }, ...allTasks.map((t) => ({ value: t.id, label: `${t.title.slice(0, 40)}${t.title.length > 40 ? '…' : ''}` }))];
+                  return (
+                    <div className="mt-1">
+                      <Dropdown value={newTaskParent} onChange={setNewTaskParent} ariaLabel="Parent task" dropUp options={parentOptions} />
+                    </div>
+                  );
+                })()}
+              </label>
+              <label className="flex items-center gap-2 pb-2">
+                <input type="checkbox" checked={newTaskGoalMode} onChange={(e) => setNewTaskGoalMode(e.target.checked)} className="h-3.5 w-3.5 accent-sky-500" />
+                <span className="text-xs text-text-muted">goal mode</span>
+              </label>
+            </div>
+            <p className="mt-2 text-[10px] text-text-subtle">A child task stays blocked until its parent is done.</p>
             <label className="mt-3 block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Parent task (child stays blocked until the parent is done)</span>
-              {(() => {
-                const allTasks = (board?.columns ?? []).flatMap((c) => c.tasks);
-                const parentOptions = [{ value: '', label: '— no parent —' }, ...allTasks.map((t) => ({ value: t.id, label: `${t.title.slice(0, 40)}${t.title.length > 40 ? '…' : ''}` }))];
-                return (
-                  <div className="mt-1">
-                    <Dropdown value={newTaskParent} onChange={setNewTaskParent} ariaLabel="Parent task" dropUp options={parentOptions} />
-                  </div>
-                );
-              })()}
-            </label>
-            <label className="mt-3 flex items-center gap-2">
-              <input type="checkbox" checked={newTaskGoalMode} onChange={(e) => setNewTaskGoalMode(e.target.checked)} className="h-3.5 w-3.5 accent-sky-500" />
-              <span className="text-xs text-text-muted">goal mode</span>
-            </label>
-            <label className="mt-3 block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description (optional)</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description</span>
               <textarea value={newTaskBody} onChange={(e) => setNewTaskBody(e.target.value)} placeholder="Rough idea — AI will spec it…" rows={2} className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[3rem]" />
             </label>
             <div className="mt-3 flex items-center justify-end gap-2">
