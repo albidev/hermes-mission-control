@@ -14,16 +14,35 @@ from pathlib import Path
 SERVER_DIR = Path(__file__).resolve().parent.parent / "server"
 CORE_ROOT = Path.home() / ".hermes" / "hermes-agent"
 
-sys.path.insert(0, str(SERVER_DIR))
+# These tests exercise the real core kanban_db — they can only run on a
+# machine with the Hermes core checkout (~/.hermes/hermes-agent) AND a
+# Python compatible with it (>=3.11). CI and other environments skip them.
+_CORE_DB = CORE_ROOT / "hermes_cli" / "kanban_db.py"
+_CORE_AVAILABLE = _CORE_DB.exists()
+kb = None
+kanban_db = None
+if _CORE_AVAILABLE:
+    try:
+        sys.path.insert(0, str(CORE_ROOT))
+        sys.path.insert(0, str(SERVER_DIR))
+        # Point hermes at an isolated home BEFORE importing the bridge.
+        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="mc-kanban-test-")
+        # Probe: hermes_constants uses `str | object` unions and fails with
+        # TypeError on Python < 3.10 — sometimes lazily (inside connect()).
+        # Import it directly here so the incompatibility is caught up front.
+        import hermes_constants  # type: ignore  # noqa: E402, F401
+        import kanban_bridge as kb  # noqa: E402
+        from hermes_cli import kanban_db  # type: ignore  # noqa: E402
+    except TypeError:
+        _CORE_AVAILABLE = False
 
-# Point hermes at an isolated home BEFORE importing the bridge.
-_tmp_home = tempfile.mkdtemp(prefix="mc-kanban-test-")
-os.environ["HERMES_HOME"] = _tmp_home
-
-import kanban_bridge as kb  # noqa: E402
-from hermes_cli import kanban_db  # type: ignore  # noqa: E402
+_skip_reason = (
+    "kanban bridge tests need the Hermes core checkout and a Python >= 3.10 "
+    "compatible with it (use ~/.hermes/hermes-agent/venv)"
+)
 
 
+@unittest.skipUnless(_CORE_AVAILABLE, _skip_reason)
 class KanbanBridgeTest(unittest.TestCase):
     def setUp(self):
         # Fresh DB per test: connect auto-inits the schema.
