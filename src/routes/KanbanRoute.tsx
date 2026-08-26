@@ -113,7 +113,7 @@ function BoardColumn({
 
   return (
     <div
-      className={`kanban-column flex flex-col min-w-[14rem] w-[17rem] sm:w-auto shrink-0 sm:min-w-0 gap-2 rounded-xl border p-2.5 ${dragOver ? 'border-sky-400/60 bg-sky-400/5' : 'border-border-subtle bg-surface/30'}`}
+      className={`kanban-column flex flex-col min-w-[15rem] w-[19rem] sm:w-auto sm:min-w-[16.5rem] shrink-0 gap-3 rounded-xl border p-3 ${dragOver ? 'border-sky-400/60 bg-sky-400/5' : 'border-border-subtle bg-surface/30'}`}
       data-status={name}
       onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
@@ -388,6 +388,73 @@ function BoardPicker({
 }
 
 // ---------------------------------------------------------------------------
+// Dropdown — shared select-style component (same look as the board picker)
+// ---------------------------------------------------------------------------
+
+function Dropdown({
+  value,
+  options,
+  onChange,
+  placeholder = 'All',
+  ariaLabel,
+}: {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const activeLabel = options.find((o) => o.value === value)?.label ?? placeholder;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] transition-colors ${value ? 'border-border bg-surface-sunken text-text' : 'border-border-subtle bg-surface text-text-muted hover:border-border hover:text-text'}`}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+      >
+        <span className="truncate max-w-[9rem]">{activeLabel}</span>
+        <ChevronDown size={12} className={`shrink-0 text-text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open ? (
+        <ul className="absolute z-30 mt-1 min-w-[10rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl" role="listbox" aria-label={ariaLabel}>
+          {options.map((o) => {
+            const selected = o.value === value;
+            return (
+              <li key={o.value || '__all__'} role="option" aria-selected={selected}>
+                <button
+                  type="button"
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${selected ? 'bg-sky-400/10 text-text font-medium' : 'text-text-muted hover:bg-surface-sunken hover:text-text'}`}
+                  onClick={() => { onChange(o.value); setOpen(false); }}
+                >
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${selected ? 'bg-sky-400' : 'bg-transparent'}`} />
+                  <span className="truncate flex-1">{o.label}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // KanbanRoute (main component)
 // ---------------------------------------------------------------------------
 
@@ -606,16 +673,22 @@ export function KanbanRoute() {
             <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks…" className="w-full rounded-lg border border-border-subtle bg-surface-sunken pl-6 pr-2 py-1.5 text-[11px] text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
           </div>
           {tenants.length > 0 ? (
-            <select value={filterTenant} onChange={(e) => setFilterTenant(e.target.value)} className="rounded-lg border border-border-subtle bg-surface-sunken px-2 py-1.5 text-[11px] text-text focus:border-border focus:outline-none">
-              <option value="">All tenants</option>
-              {tenants.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            <Dropdown
+              value={filterTenant}
+              onChange={setFilterTenant}
+              ariaLabel="Filter by tenant"
+              placeholder="All tenants"
+              options={[{ value: '', label: 'All tenants' }, ...tenants.map((t) => ({ value: t, label: t }))]}
+            />
           ) : null}
           {assignees.length > 0 ? (
-            <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)} className="rounded-lg border border-border-subtle bg-surface-sunken px-2 py-1.5 text-[11px] text-text focus:border-border focus:outline-none">
-              <option value="">All assignees</option>
-              {assignees.map((a) => <option key={a} value={a}>{a}</option>)}
-            </select>
+            <Dropdown
+              value={filterAssignee}
+              onChange={setFilterAssignee}
+              ariaLabel="Filter by assignee"
+              placeholder="All assignees"
+              options={[{ value: '', label: 'All assignees' }, ...assignees.map((a) => ({ value: a, label: a }))]}
+            />
           ) : null}
           {hasFilters ? (
             <button type="button" onClick={() => { setSearchQuery(''); setFilterTenant(''); setFilterAssignee(''); }} className="text-[10px] text-text-subtle hover:text-text transition-colors">
@@ -671,13 +744,20 @@ export function KanbanRoute() {
             </label>
             <label className="mt-3 block">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Priority</span>
-              <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text focus:border-border focus:outline-none">
-                <option value={0}>Normal</option>
-                <option value={1}>P1 — High</option>
-                <option value={2}>P2 — Medium</option>
-                <option value={3}>P3 — Low</option>
-                <option value={-1}>P4 — Lowest</option>
-              </select>
+              <div className="mt-1">
+                <Dropdown
+                  value={String(newTaskPriority)}
+                  onChange={(v) => setNewTaskPriority(Number(v))}
+                  ariaLabel="Task priority"
+                  options={[
+                    { value: '0', label: 'Normal' },
+                    { value: '1', label: 'P1 — High' },
+                    { value: '2', label: 'P2 — Medium' },
+                    { value: '3', label: 'P3 — Low' },
+                    { value: '-1', label: 'P4 — Lowest' },
+                  ]}
+                />
+              </div>
             </label>
             <div className="mt-3 flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" type="button" onClick={closeNewTask}>Cancel</Button>
