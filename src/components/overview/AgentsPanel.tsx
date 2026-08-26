@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { Sparkles } from 'lucide-react';
 import type { MissionControlSessionsSnapshot } from '../../lib/hermes-api';
 import { Card } from '../ui/Card';
@@ -11,6 +12,7 @@ export function AgentsPanel({
   activeAgents: number;
   sessions: MissionControlSessionsSnapshot;
 }) {
+  const { t } = useI18n();
   const liveSessions = sessions.items.filter((session) => session.endedAt === null);
   const modelCount = new Map<string, number>();
 
@@ -27,8 +29,8 @@ export function AgentsPanel({
     <Card padding="none">
       <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
-          <span className="eyebrow">Agents</span>
-          <h2 className="text-sm font-semibold text-text">Runtime footprint</h2>
+          <span className="eyebrow">{t('nav.agents')}</span>
+          <h2 className="text-sm font-semibold text-text">{t('agentsPanel.title')}</h2>
         </div>
         <Badge variant={activeAgents > 0 ? 'positive' : 'default'} dot>
           {activeAgents} active
@@ -37,12 +39,12 @@ export function AgentsPanel({
 
       <div className="p-3 flex flex-col gap-2">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-text-muted">Live sessions</span>
+          <span className="text-text-muted">{t('agentsPanel.liveSessions')}</span>
           <span className="font-medium text-text">{liveSessions.length}</span>
         </div>
 
         <div className="flex items-center justify-between text-sm">
-          <span className="text-text-muted">Tracked sessions</span>
+          <span className="text-text-muted">{t('agentsPanel.trackedSessions')}</span>
           <span className="font-medium text-text">{sessions.totalSessions}</span>
         </div>
 
@@ -61,7 +63,7 @@ export function AgentsPanel({
               ))}
             </div>
           ) : (
-            <p className="text-xs text-text-subtle italic">No live model usage right now.</p>
+            <p className="text-xs text-text-subtle italic">{t('agentsPanel.noLiveModelUsage')}</p>
           )}
         </div>
       </div>

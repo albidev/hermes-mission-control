@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import {
   Component,
   type ClipboardEvent,
@@ -40,7 +41,6 @@ import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
   classifyAttachment,
-  formatBytes,
   interactionTitle,
   readFileAsDataUrl,
   useGatewayChat,
@@ -94,25 +94,26 @@ function estimateContextWindow(model: string | null | undefined): number {
 const LazyTLDrawCanvas = lazy(() => import('./TLDrawCanvas').then(({ TLDrawCanvas }) => ({ default: TLDrawCanvas })));
 
 function TLDrawLoadingShell({ onClose, error, onRetry, width }: { onClose: () => void; error?: boolean; onRetry?: () => void; width?: number | null }) {
+  const { t } = useI18n();
   return (
     <section className="tldraw-canvas-panel is-expanded" aria-label={error ? 'TLDrawCanvas unavailable' : 'TLDrawCanvas loading'}>
       <header className="tldraw-canvas-head">
         <div className="tldraw-canvas-title">
-          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
+          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title={t('chatDrawer.backToChat')} aria-label={t('chatDrawer.backToChat')}>
             <ArrowLeft size={18} />
           </button>
           <div>
-            <span className="eyebrow">Session canvas</span>
+            <span className="eyebrow">{t('tldraw.sessionCanvas')}</span>
             <h3>TLDrawCanvas</h3>
-            <span className="tldraw-canvas-linked-session">{error ? 'Canvas unavailable' : 'Preparing workspace…'}</span>
+            <span className="tldraw-canvas-linked-session">{error ? t('chatDrawer.canvasUnavailable') : t('chatDrawer.preparingWorkspace')}</span>
           </div>
         </div>
       </header>
       <div className="tldraw-canvas-loading" role={error ? 'alert' : 'status'}>
         {error ? <XCircle size={24} aria-hidden /> : <Loader2 size={24} className="chat-spin" />}
-        <strong>{error ? 'Unable to load TLDrawCanvas' : 'Opening TLDrawCanvas…'}</strong>
-        <span>{error ? 'Check the connection and try again.' : 'Preparing the editable workspace.'}</span>
-        {error && onRetry ? <button type="button" className="chat-control" onClick={onRetry}>Retry</button> : null}
+        <strong>{error ? t('tldraw.unavailable') : t('tldraw.opening')}</strong>
+        <span>{error ? t('tldraw.checkConnection') : t('tldraw.preparingWorkspace')}</span>
+        {error && onRetry ? <button type="button" className="chat-control" onClick={onRetry}>{t('chatDrawer.retry')}</button> : null}
       </div>
     </section>
   );
@@ -185,6 +186,7 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
 }
 
 export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -339,6 +341,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   }, [open]);
 
   const isNearBottom = () => {
+  const { t } = useI18n();
     const el = scrollRef.current;
     if (!el) return true;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -395,13 +398,14 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   }, []);
 
   const renderMessages = () => {
+  const { t } = useI18n();
     if (previewMode) {
       if (previewLoading) {
         return (
           <section className="chat-preview-surface">
             <div className="chat-preview-empty">
               <Loader2 size={20} className="chat-spin" />
-              <p>Loading session preview…</p>
+              <p>{t('chatDrawer.loadingPreview')}</p>
             </div>
           </section>
         );
@@ -411,7 +415,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           <section className="chat-preview-surface">
             <div className="chat-preview-heading">
               <div>
-                <p className="eyebrow">Session preview</p>
+                <p className="eyebrow">{t('chatDrawer.sessionPreview')}</p>
                 <h3 className="chat-preview-title">{preview.title || 'Untitled session'}</h3>
               </div>
               <span className="chat-preview-meta">
@@ -442,7 +446,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         <section className="chat-preview-surface">
           <div className="chat-preview-empty">
             <MessageSquare size={20} />
-            <p>Session preview unavailable.</p>
+            <p>{t('chatDrawer.previewUnavailable')}</p>
             <button type="button" className="chat-resume-button" onClick={() => void resumeSession()} disabled={connectionState !== 'connected'}>
               <Bot size={15} aria-hidden />
               Resume session
@@ -456,8 +460,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       return (
         <section className="chat-empty">
           <MessageSquare size={22} />
-          <p>Start a Hermes session from Mission Control.</p>
-          <span>Ask, inspect, fix, ship.</span>
+          <p>{t('chatDrawer.emptyTitle')}</p>
+          <span>{t('chatDrawer.emptySubtitle')}</span>
         </section>
       );
     }
@@ -570,12 +574,14 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const handleDrop = (event: DragEvent<HTMLElement>) => {
+  const { t } = useI18n();
     event.preventDefault();
     setIsDragging(false);
     addFiles(Array.from(event.dataTransfer.files ?? []));
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+  const { t } = useI18n();
     const files = Array.from(event.clipboardData.files ?? []);
     if (files.length) {
       event.preventDefault();
@@ -624,6 +630,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const { t } = useI18n();
     if (slashPopoverRef.current?.handleKey(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -639,6 +646,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const handleDrawerKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+  const { t } = useI18n();
     if (event.key !== 'Tab') return;
     const focusable = Array.from(
       event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'),
@@ -670,6 +678,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   // Desktop resize: drag the left-edge handle to change the drawer width.
   // The drawer is anchored right, so width = viewport width - cursor x.
   const startResize = (event: React.MouseEvent) => {
+  const { t } = useI18n();
     if (isExpanded) return; // expanded mode owns its own geometry
     event.preventDefault();
     resizingRef.current = true;
@@ -699,6 +708,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const startCanvasResize = (event: React.MouseEvent) => {
+  const { t } = useI18n();
     if (!isExpanded) return;
     event.preventDefault();
     canvasResizingRef.current = true;
@@ -712,6 +722,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       document.documentElement.style.setProperty('--mission-control-expanded-chat-right', `${width}px`);
     };
     const onUp = () => {
+  const { t } = useI18n();
       canvasResizingRef.current = false;
       if (pendingCanvasWidthRef.current != null) setCanvasWidth(pendingCanvasWidthRef.current);
       window.removeEventListener('mousemove', onMove);
@@ -776,14 +787,14 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
 
   return (
     <>
-      {open ? <button className="chat-backdrop is-open" type="button" aria-label="Close chat" onClick={onClose} /> : null}
+      {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('chatDrawer.close')} onClick={onClose} /> : null}
       <aside
         ref={drawerRef}
         className={`chat-drawer ${open ? 'is-open' : ''} ${isExpanded ? 'is-expanded' : ''}`}
         style={drawerWidth && !isExpanded ? { width: drawerWidth } : undefined}
         role="dialog"
         aria-modal="true"
-        aria-label="Hermes chat"
+        aria-label={t('chatDrawer.chatLabel')}
         aria-labelledby="chat-drawer-title"
         aria-hidden={!open}
         inert={!open ? true : undefined}
@@ -797,8 +808,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             className="chat-drawer-resize-handle"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize chat width"
-            title="Drag to resize"
+            aria-label={t('chatDrawer.resize')}
+            title={t('chatDrawer.dragToResize')}
             onMouseDown={startResize}
           />
         ) : null}
@@ -807,13 +818,13 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             <div className="chat-head-identity">
               <span className="chat-mark" aria-hidden><Bot size={18} /></span>
               <div className="chat-head-copy">
-                <p className="eyebrow">Hermes</p>
-                <h2 id="chat-drawer-title">Chat</h2>
+                <p className="eyebrow">{t('chatDrawer.eyebrow')}</p>
+                <h2 id="chat-drawer-title">{t('chat.button')}</h2>
                 <span className="chat-session-title" title={headerSessionTitle}>{headerSessionTitle}</span>
               </div>
             </div>
             <div className="chat-head-actions">
-              {submitting || running ? <Loader2 size={16} className="chat-header-loader chat-spin" aria-label="Hermes is working" /> : null}
+              {submitting || running ? <Loader2 size={16} className="chat-header-loader chat-spin" aria-label={t('chatDrawer.working')} /> : null}
               <span
                 className={`chat-led ${statusClass}`}
                 title={`Gateway connection: ${statusText}`}
@@ -821,14 +832,14 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               >
                 <span className="chat-led-dot" />
               </span>
-              <button className="chat-new-button" type="button" onClick={() => void handleNewChat()} disabled={newChatLoading} title="Start a new chat" aria-label="Start a new chat">
+              <button className="chat-new-button" type="button" onClick={() => void handleNewChat()} disabled={newChatLoading} title={t('chatDrawer.startNew')} aria-label={t('chatDrawer.startNew')}>
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
-                <span>New</span>
+                <span>{t('kanban.new')}</span>
               </button>
-              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onPointerDown={openCanvas} onClick={openCanvas} title="Open TLDrawCanvas" aria-label="Open TLDrawCanvas">
+              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onPointerDown={openCanvas} onClick={openCanvas} title={t('chatDrawer.openTldraw')} aria-label={t('chatDrawer.openTldraw')}>
                 {isCanvasLoading ? <Loader2 size={16} className="chat-spin" /> : <TldrawMark size={34} />}
               </button>
-              <button className="chat-control chat-icon-button" type="button" onClick={onClose} title="Close chat" aria-label="Close chat">
+              <button className="chat-control chat-icon-button" type="button" onClick={onClose} title={t('chatDrawer.close')} aria-label={t('chatDrawer.close')}>
                 <X size={18} />
               </button>
             </div>
@@ -848,7 +859,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
 
         <div ref={scrollRef} onScroll={handleTranscriptScroll} className={`chat-transcript ${isDragging ? 'is-dragging' : ''}`} aria-live="polite">
           {isDragging ? (
-            <div className="chat-drop-hint"><Paperclip size={20} /><span>Drop files to attach</span></div>
+            <div className="chat-drop-hint"><Paperclip size={20} /><span>{t('chatDrawer.dropFiles')}</span></div>
           ) : null}
           {renderMessages()}
           {!nearBottom ? (
@@ -860,8 +871,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                 setNearBottom(true);
                 scrollToBottom('auto');
               }}
-              aria-label="Scroll to latest message"
-              title="Scroll to latest message"
+              aria-label={t('chatDrawer.scrollLatest')}
+              title={t('chatDrawer.scrollLatest')}
             >
               <ChevronDown size={18} />
             </button>
@@ -876,7 +887,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               </span>
               <div>
                 <strong>{interactionTitle(interaction)}</strong>
-                <span>Answering here unblocks the running turn.</span>
+                <span>{t('interaction.unblocks')}</span>
               </div>
             </div>
             {interaction.kind === 'approval' ? (
@@ -915,16 +926,16 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                   </div>
                 ) : null}
                 <div className="chat-interaction-input-row">
-                  <input value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder="Type your answer" aria-label="Answer Hermes" />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim() && (!multiSelect || selectedChoices.length === 0)} onClick={() => void respondInteraction(interactionDraft.trim() || selectedChoices.join(', '))}>Send</button>
+                  <input value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={t('interaction.typeAnswer')} aria-label={t('interaction.answerHermes')} />
+                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim() && (!multiSelect || selectedChoices.length === 0)} onClick={() => void respondInteraction(interactionDraft.trim() || selectedChoices.join(', '))}>{t('kanban.send')}</button>
                 </div>
               </>
             ) : interaction.kind === 'terminal_read' ? (
               <>
                 <p className="chat-interaction-copy">{interactionPrompt || 'Paste the requested terminal output.'}</p>
                 <div className="chat-interaction-input-row">
-                  <textarea value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder="Paste terminal output" aria-label="Terminal output" rows={3} />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim()} onClick={() => void respondInteraction(interactionDraft.trim())}>Send</button>
+                  <textarea value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={t('interaction.pasteOutputPlaceholder')} aria-label={t('interaction.terminalOutputAria')} rows={3} />
+                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim()} onClick={() => void respondInteraction(interactionDraft.trim())}>{t('kanban.send')}</button>
                 </div>
               </>
             ) : (
@@ -937,7 +948,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                 ) : null}
                 <div className="chat-interaction-input-row">
                   <input type="password" value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={interaction.kind === 'sudo' ? 'Password' : secretEnvVar || 'Secret value'} aria-label={interaction.kind === 'sudo' ? 'Sudo password' : interactionPrompt || 'Secret value'} autoComplete="off" />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => void respondInteraction(interactionDraft)}>Send</button>
+                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => void respondInteraction(interactionDraft)}>{t('kanban.send')}</button>
                 </div>
               </>
             )}
@@ -947,7 +958,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         {error ? (
           <div className="chat-error" role="alert">
             <span>{error}</span>
-            <button type="button" onClick={() => void connect()}>Retry</button>
+            <button type="button" onClick={() => void connect()}>{t('chatDrawer.retry')}</button>
           </div>
         ) : null}
 
@@ -974,7 +985,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           <span
             className="chat-status-line-bar"
             role="progressbar"
-            aria-label="Context window usage"
+            aria-label={t('chatDrawer.contextWindowUsage')}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.round(contextPercent)}
@@ -1015,8 +1026,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           className="tldraw-canvas-resize-handle"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize tldraw canvas width"
-          title="Drag to resize canvas"
+          aria-label={t('ui.resizeCanvas')}
+          title={t('chatDrawer.dragToResize')}
           style={{ right: canvasWidth ?? '44vw' }}
           onMouseDown={startCanvasResize}
         />

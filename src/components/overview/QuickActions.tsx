@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { RefreshCw, Rocket, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { MissionControlGatewayAction } from '../../lib/mission-control-store';
@@ -15,6 +16,7 @@ export function QuickActions({
   runGatewayAction,
   actionLoading,
 }: QuickActionsProps) {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const refreshAction = gatewayActions.find((a) => a.id === 'refresh');
   const restartAction = gatewayActions.find((a) => a.id === 'restart-gateway');
@@ -23,8 +25,8 @@ export function QuickActions({
     <Card padding="none">
       <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-border-subtle">
         <div className="flex flex-col gap-0.5">
-          <span className="eyebrow">Controls</span>
-          <h2 className="text-sm font-semibold text-text">Quick actions</h2>
+          <span className="eyebrow">{t('overview.controls')}</span>
+          <h2 className="text-sm font-semibold text-text">{t('overview.quickActions')}</h2>
         </div>
       </div>
 

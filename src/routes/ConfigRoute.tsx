@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FilePenLine, Hash, Server, Settings2 } from 'lucide-react';
 import { parse as parseYaml, parseDocument, stringify as stringifyYaml } from 'yaml';
@@ -12,6 +13,7 @@ type PathSegment = string | number;
 type PendingEdit = { path: PathSegment[]; value: unknown };
 
 function formatConfigValue(value: unknown) {
+  const { t } = useI18n();
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (value === null || value === undefined) return 'n/a';
@@ -100,6 +102,7 @@ function MetricCard({
 }
 
 export function ConfigRoute() {
+  const { t } = useI18n();
   const { config, theme, resolvedTheme, snapshot, reloadConfig, saveConfig } = useMissionControl();
   const [draft, setDraft] = useState(config.content);
   const [status, setStatus] = useState<string | null>(null);
@@ -304,10 +307,10 @@ export function ConfigRoute() {
         <div key={key} className={`rounded-lg border border-border-subtle bg-surface-elevated/30 ${depth > 0 ? 'p-3' : 'p-4'}`}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-semibold text-text uppercase tracking-wide">{label}</p>
-            {changed ? <Badge variant="warning">changed</Badge> : null}
+            {changed ? <Badge variant="warning">{t('config.changed')}</Badge> : null}
           </div>
           <div className="mt-3 flex flex-col gap-3">
-            {entries.length > 0 ? entries : <p className="text-xs text-text-muted italic">Empty object.</p>}
+            {entries.length > 0 ? entries : <p className="text-xs text-text-muted italic">{t('config.emptyObject')}</p>}
           </div>
         </div>
       );
@@ -323,9 +326,9 @@ export function ConfigRoute() {
         <div key={key} className="rounded-lg border border-border-subtle bg-surface-elevated/20 p-3">
           <div className="flex items-center justify-between gap-2">
             <label className="text-xs font-medium text-text">{label}</label>
-            {changed ? <Badge variant="warning">changed</Badge> : null}
+            {changed ? <Badge variant="warning">{t('config.changed')}</Badge> : null}
           </div>
-          <p className="text-[11px] text-text-subtle mt-1">Array editor (YAML)</p>
+          <p className="text-[11px] text-text-subtle mt-1">{t('config.arrayEditor')}</p>
           <textarea
             className="mt-2 w-full min-h-[120px] rounded-md border border-border bg-surface p-2 text-xs font-mono text-text resize-y"
             value={staged}
@@ -367,9 +370,9 @@ export function ConfigRoute() {
           <div>
             <div className="flex items-center gap-2">
               <p className="text-xs font-medium text-text">{label}</p>
-              {changed ? <Badge variant="warning">changed</Badge> : null}
+              {changed ? <Badge variant="warning">{t('config.changed')}</Badge> : null}
             </div>
-            <p className="text-[11px] text-text-subtle">Boolean</p>
+            <p className="text-[11px] text-text-subtle">{t('config.boolean')}</p>
           </div>
           <label className="inline-flex items-center gap-2 text-xs text-text-muted">
             <input
@@ -392,7 +395,7 @@ export function ConfigRoute() {
         <div key={key} className="rounded-lg border border-border-subtle bg-surface-elevated/20 p-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-text" htmlFor={key}>{label}</label>
-            {changed ? <Badge variant="warning">changed</Badge> : null}
+            {changed ? <Badge variant="warning">{t('config.changed')}</Badge> : null}
           </div>
           <input
             id={key}
@@ -420,7 +423,7 @@ export function ConfigRoute() {
         <div key={key} className="rounded-lg border border-border-subtle bg-surface-elevated/20 p-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-text" htmlFor={key}>{label}</label>
-            {changed ? <Badge variant="warning">changed</Badge> : null}
+            {changed ? <Badge variant="warning">{t('config.changed')}</Badge> : null}
           </div>
           <input
             id={key}
@@ -444,7 +447,7 @@ export function ConfigRoute() {
       <div key={key} className="rounded-lg border border-border-subtle bg-surface-elevated/20 p-3">
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-text" htmlFor={key}>{label}</label>
-          {changed ? <Badge variant="warning">changed</Badge> : null}
+          {changed ? <Badge variant="warning">{t('config.changed')}</Badge> : null}
         </div>
         {multiline ? (
           <textarea
@@ -472,8 +475,8 @@ export function ConfigRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Config</span>
-            <h2 className="text-sm font-semibold text-text">config.yaml editor</h2>
+            <span className="eyebrow">{t('nav.config')}</span>
+            <h2 className="text-sm font-semibold text-text">{t('config.title')}</h2>
           </div>
           <Badge variant={config.available ? 'positive' : 'warning'}>
             {config.available ? 'live endpoint' : 'fallback'}
@@ -512,10 +515,10 @@ export function ConfigRoute() {
         <Card padding="none">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
             <div className="flex flex-col gap-0.5">
-              <span className="eyebrow">Editor</span>
+              <span className="eyebrow">{t('config.editor')}</span>
               <h3 className="text-sm font-semibold text-text">config.yaml</h3>
             </div>
-            {dirty ? <Badge variant="warning">unsaved changes</Badge> : <Badge variant="default">in sync</Badge>}
+            {dirty ? <Badge variant="warning">{t('config.unsavedChanges')}</Badge> : <Badge variant="default">{t('config.inSync')}</Badge>}
           </div>
 
           <form className="p-4 flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void handleSave(); }}>
@@ -529,9 +532,9 @@ export function ConfigRoute() {
             {status ? <p className="text-xs text-text-muted">{status}</p> : null}
 
             <div className="flex flex-wrap gap-2">
-              <Button type="submit" variant="primary" disabled={saving || !dirty} loading={saving}>Save config</Button>
-              <Button type="button" variant="secondary" onClick={() => void handleReload()} disabled={saving}>Reload</Button>
-              <Button type="button" variant="ghost" onClick={handleReset} disabled={saving || !dirty}>Reset draft</Button>
+              <Button type="submit" variant="primary" disabled={saving || !dirty} loading={saving}>{t('config.save')}</Button>
+              <Button type="button" variant="secondary" onClick={() => void handleReload()} disabled={saving}>{t('config.reload')}</Button>
+              <Button type="button" variant="ghost" onClick={handleReset} disabled={saving || !dirty}>{t('config.resetDraft')}</Button>
             </div>
           </form>
         </Card>
@@ -539,10 +542,10 @@ export function ConfigRoute() {
         <Card padding="none">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
             <div>
-              <span className="eyebrow">Schema-driven form</span>
-              <h3 className="text-sm font-semibold text-text mt-0.5">All config sections</h3>
+              <span className="eyebrow">{t('config.schemaDrivenForm')}</span>
+              <h3 className="text-sm font-semibold text-text mt-0.5">{t('config.allSections')}</h3>
             </div>
-            {dirty ? <Badge variant="warning">unsaved changes</Badge> : <Badge variant="default">in sync</Badge>}
+            {dirty ? <Badge variant="warning">{t('config.unsavedChanges')}</Badge> : <Badge variant="default">{t('config.inSync')}</Badge>}
           </div>
 
           <div className="px-4 pt-2 text-xs text-text-subtle">
@@ -555,19 +558,19 @@ export function ConfigRoute() {
               type="text"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search keys and values"
+              placeholder={t('config.searchKeys')}
               className="min-w-[220px] flex-1 rounded-md border border-border bg-surface px-3 py-2 text-xs text-text"
             />
             <Button type="button" variant={showChangedOnly ? 'primary' : 'secondary'} onClick={() => setShowChangedOnly((previous) => !previous)}>
               {showChangedOnly ? 'Show all fields' : 'Show changed only'}
             </Button>
-            <Button type="button" variant="ghost" onClick={() => setAllSectionsOpen(true)}>Expand all</Button>
-            <Button type="button" variant="ghost" onClick={() => setAllSectionsOpen(false)}>Collapse all</Button>
+            <Button type="button" variant="ghost" onClick={() => setAllSectionsOpen(true)}>{t('config.expandAll')}</Button>
+            <Button type="button" variant="ghost" onClick={() => setAllSectionsOpen(false)}>{t('config.collapseAll')}</Button>
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-4 p-4">
             <Card className="xl:sticky xl:top-4 h-fit" padding="none">
-              <div className="px-3 py-2 border-b border-border-subtle text-xs font-semibold text-text">Sections</div>
+              <div className="px-3 py-2 border-b border-border-subtle text-xs font-semibold text-text">{t('knowledge.sections')}</div>
               <div className="max-h-[520px] overflow-y-auto p-2 flex flex-col gap-1">
                 {formSections.map(([sectionKey, sectionValue]) => {
                   const content = renderField([sectionKey], sectionValue, 0);
@@ -620,9 +623,9 @@ export function ConfigRoute() {
           <div className="px-4 pb-4 pt-2 border-t border-border-subtle">
             {status ? <p className="text-xs text-text-muted mb-3">{status}</p> : null}
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="primary" disabled={saving || !dirty} loading={saving} onClick={() => void handleSave()}>Save config</Button>
-              <Button type="button" variant="secondary" onClick={() => void handleReload()} disabled={saving}>Reload</Button>
-              <Button type="button" variant="ghost" onClick={handleReset} disabled={saving || !dirty}>Reset draft</Button>
+              <Button type="button" variant="primary" disabled={saving || !dirty} loading={saving} onClick={() => void handleSave()}>{t('config.save')}</Button>
+              <Button type="button" variant="secondary" onClick={() => void handleReload()} disabled={saving}>{t('config.reload')}</Button>
+              <Button type="button" variant="ghost" onClick={handleReset} disabled={saving || !dirty}>{t('config.resetDraft')}</Button>
             </div>
           </div>
         </Card>

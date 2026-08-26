@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DollarSign, Layers, Zap, TrendingUp, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { Card } from '../components/ui/Card';
@@ -78,6 +79,7 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 
 function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  const { t } = useI18n();
   if (!active) return <ArrowUpDown size={12} className="text-text-subtle" />;
   return dir === 'desc' ? <ArrowDown size={12} className="text-sky-400" /> : <ArrowUp size={12} className="text-sky-400" />;
 }
@@ -111,6 +113,7 @@ function ThSortable({
 }
 
 export function UsageRoute() {
+  const { t } = useI18n();
   const { storedToken } = useMissionControl();
   const [usage, setUsage] = useState<MissionControlSessionsUsageSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -172,7 +175,7 @@ export function UsageRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Usage</span>
+            <span className="eyebrow">{t('nav.usage')}</span>
             <h2 className="text-sm font-semibold text-text">Token consumption &amp; cost estimate</h2>
           </div>
           <div className="flex items-center gap-2">
@@ -218,9 +221,9 @@ export function UsageRoute() {
             />
           </div>
         ) : loading ? (
-          <div className="p-8 text-center text-sm text-text-muted">Loading usage data…</div>
+          <div className="p-8 text-center text-sm text-text-muted">{t('usage.loading')}</div>
         ) : (
-          <div className="p-8 text-center text-sm text-text-muted">No usage data available.</div>
+          <div className="p-8 text-center text-sm text-text-muted">{t('usage.noData')}</div>
         )}
       </Card>
 
@@ -229,12 +232,12 @@ export function UsageRoute() {
         <Card padding="none">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
             <div>
-              <span className="eyebrow">Breakdown</span>
-              <h3 className="text-sm font-semibold text-text">Per-model usage</h3>
+              <span className="eyebrow">{t('usage.breakdown')}</span>
+              <h3 className="text-sm font-semibold text-text">{t('usage.perModelUsage')}</h3>
             </div>
             {/* Mobile sort control */}
             <div className="md:hidden flex items-center gap-1.5">
-              <span className="text-[11px] text-text-muted">Sort:</span>
+              <span className="text-[11px] text-text-muted">{t('usage.sort')}</span>
               <select
                 className="bg-surface border border-border-subtle rounded px-2 py-1 text-xs text-text"
                 value={`${sortKey}:${sortDir}`}
@@ -287,7 +290,7 @@ export function UsageRoute() {
             {totals ? (
               <div className="px-4 py-3 bg-surface/30">
                 <div className="flex items-baseline justify-between mb-1">
-                  <span className="text-xs font-medium text-text">Total</span>
+                  <span className="text-xs font-medium text-text">{t('usage.total')}</span>
                   <span className="text-xs text-text-muted">{totals.sessionCount} sessions</span>
                 </div>
                 <div className="flex items-baseline justify-between">
@@ -342,7 +345,7 @@ export function UsageRoute() {
               {totals ? (
                 <tfoot>
                   <tr className="border-t-2 border-border-subtle bg-surface/30 font-medium">
-                    <td className="px-4 py-2.5 text-text">Total</td>
+                    <td className="px-4 py-2.5 text-text">{t('usage.total')}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{totals.sessionCount}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.inputTokens)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-text">{formatTokens(totals.outputTokens)}</td>

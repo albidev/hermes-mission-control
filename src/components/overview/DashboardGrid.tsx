@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import { Check, GripVertical, LayoutDashboard, RotateCcw, X } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { useI18n } from '../../lib/i18n';
 
 const STORAGE_KEY = 'mission-control-dashboard-layout:v1';
 
@@ -26,6 +27,7 @@ function loadOrder(ids: string[], fallback: string[]): string[] {
 }
 
 export function DashboardGrid({ widgets }: { widgets: DashboardWidget[] }) {
+  const { t } = useI18n();
   const ids = useMemo(() => widgets.map((widget) => widget.id), [widgets]);
   const defaultOrder = useMemo(() => widgets.map((widget) => widget.id), [widgets]);
   const [order, setOrder] = useState(() => loadOrder(ids, defaultOrder));
@@ -98,17 +100,17 @@ export function DashboardGrid({ widgets }: { widgets: DashboardWidget[] }) {
   };
 
   return (
-    <section className="dashboard-workspace" aria-label="Dashboard workspace">
+    <section className="dashboard-workspace" aria-label={t('ui.dashboardWorkspace')}>
       <div className="dashboard-toolbar">
         <div className="flex min-w-0 items-center gap-2">
           <LayoutDashboard className="h-4 w-4 shrink-0 text-accent" />
           <div className="min-w-0">
-            <p className="eyebrow">Operator dashboard</p>
+            <p className="eyebrow">{t('ui.operatorDashboard')}</p>
             <p className="truncate text-sm font-semibold text-text">
-              {arranging ? 'Arrange your cockpit' : 'Your cockpit'}
+              {arranging ? t('ui.arrangeCockpit') : t('ui.yourCockpit')}
             </p>
           </div>
-          {arranging ? <span className="dashboard-saved-badge"><Check className="h-3 w-3" /> Auto-saved</span> : null}
+          {arranging ? <span className="dashboard-saved-badge"><Check className="h-3 w-3" /> {t('ui.autoSaved')}</span> : null}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {arranging ? (

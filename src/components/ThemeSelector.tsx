@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useMissionControl } from '../lib/mission-control-store';
 
 function SunIcon() {
@@ -24,33 +25,34 @@ function MoonIcon() {
 }
 
 export function ThemeSelector({ showLabel = true, className = '' }: { showLabel?: boolean; className?: string }) {
+  const { t } = useI18n();
   const { resolvedTheme, setTheme } = useMissionControl();
 
   return (
     <div className={`theme-toggle ${className}`.trim()} role="group" aria-label="Theme mode">
-      {showLabel ? <span className="theme-toggle-label">Theme</span> : null}
+      {showLabel ? <span className="theme-toggle-label">{t('theme.label')}</span> : null}
       <div className="theme-toggle-track">
         <button
           type="button"
-          title="Light theme"
+          title={t('theme.lightTitle')}
           className={`theme-toggle-option ${resolvedTheme === 'light' ? 'is-active' : ''}`}
           onClick={() => setTheme('light')}
-          aria-label="Enable light theme"
+          aria-label={t('theme.enableLight')}
           aria-pressed={resolvedTheme === 'light'}
         >
           <SunIcon />
-          <span>Light</span>
+          <span>{t('theme.light')}</span>
         </button>
         <button
           type="button"
-          title="Dark theme"
+          title={t('theme.darkTitle')}
           className={`theme-toggle-option ${resolvedTheme === 'dark' ? 'is-active' : ''}`}
           onClick={() => setTheme('dark')}
-          aria-label="Enable dark theme"
+          aria-label={t('theme.enableDark')}
           aria-pressed={resolvedTheme === 'dark'}
         >
           <MoonIcon />
-          <span>Dark</span>
+          <span>{t('theme.dark')}</span>
         </button>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, RefreshCw, Inbox, ShieldCheck } from 'lucide-react';
 import { Card } from '../components/ui/Card';
@@ -26,6 +27,7 @@ function statusBadge(status: string) {
 }
 
 export function CurateRoute() {
+  const { t } = useI18n();
   const { storedToken } = useMissionControl();
   const [candidates, setCandidates] = useState<MissionControlCandidate[]>([]);
   const [vaults, setVaults] = useState<MissionControlVaultInfo[]>([]);
@@ -90,7 +92,7 @@ export function CurateRoute() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Curate</h1>
+          <h1 className="text-2xl font-bold text-foreground">{t('nav.curate')}</h1>
           <p className="text-sm text-foreground/60">
             Nightly brain candidates. Approve to enter quarantine (1 day), or reject with an
             optional reason used as model feedback.
@@ -126,7 +128,7 @@ export function CurateRoute() {
       {loading && pending.length === 0 && reviewed.length === 0 ? (
         <div className="flex items-center justify-center py-16 text-foreground/50">
           <RefreshCw className="h-5 w-5 animate-spin" />
-          <span className="ml-2">Loading candidates…</span>
+          <span className="ml-2">{t('curate.loading')}</span>
         </div>
       ) : (
         <>
@@ -165,7 +167,7 @@ export function CurateRoute() {
                           <div className="flex flex-col items-end gap-1">
                             <input
                               className="w-56 rounded border border-border bg-surface px-2 py-1 text-xs text-foreground"
-                              placeholder="Reason (optional)"
+                              placeholder={t('curate.reasonPlaceholder')}
                               value={rejectReason[c.id] ?? ''}
                               onChange={(e) =>
                                 setRejectReason((prev) => ({ ...prev, [c.id]: e.target.value }))

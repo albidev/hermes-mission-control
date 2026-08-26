@@ -8,6 +8,7 @@ import {
   DollarSign,
   LayoutDashboard,
   LockKeyhole,
+  Kanban,
   Menu,
   MessageSquare,
   PanelLeftClose,
@@ -17,8 +18,10 @@ import {
   Wrench,
 } from 'lucide-react';
 import { ThemeSelector } from './ThemeSelector';
+import { LanguageSwitcher } from './LanguageSwitcher';
 import { PushToggle } from './PushToggle';
 import { useMissionControl } from '../lib/mission-control-store';
+import { useI18n } from '../lib/i18n';
 import { ChatDrawer } from './ChatDrawer';
 import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
@@ -29,13 +32,14 @@ export function MissionControlShell() {
   const navigate = useNavigate();
   useLastRoutePersistence();
   const presence = useChatPresence();
+  const { t } = useI18n();
   const chatButtonLabel = presence.phase === 'running'
-    ? `Hermes · ${presence.verb || 'working'}`
+    ? t('chat.working')
     : presence.phase === 'completed'
-      ? 'Hermes · completed'
+      ? t('chat.completed')
       : presence.phase === 'waiting'
-        ? 'Hermes needs you'
-        : 'Chat';
+        ? t('chat.needsYou')
+        : t('chat.button');
   const {
     authRequired,
     authError,
@@ -49,17 +53,18 @@ export function MissionControlShell() {
   } = useMissionControl();
 
   const navItems = [
-    { to: '/', label: 'Overview', icon: LayoutDashboard },
-    { to: '/sessions', label: 'Sessions', icon: MessageSquare },
-    { to: '/agents', label: 'Agents', icon: Bot },
-    { to: '/usage', label: 'Usage', icon: DollarSign },
-    { to: '/knowledge', label: 'Knowledge', icon: BookOpen },
-    { to: '/tools', label: 'Tools', icon: Wrench },
-    { to: '/skills', label: 'Skills', icon: Brain },
-    { to: '/config', label: 'Config', icon: Settings },
-    { to: '/logs', label: 'Logs', icon: ScrollText },
+    { to: '/', label: t('nav.overview'), icon: LayoutDashboard },
+    { to: '/sessions', label: t('nav.sessions'), icon: MessageSquare },
+    { to: '/kanban', label: t('nav.kanban'), icon: Kanban },
+    { to: '/agents', label: t('nav.agents'), icon: Bot },
+    { to: '/usage', label: t('nav.usage'), icon: DollarSign },
+    { to: '/knowledge', label: t('nav.knowledge'), icon: BookOpen },
+    { to: '/tools', label: t('nav.tools'), icon: Wrench },
+    { to: '/skills', label: t('nav.skills'), icon: Brain },
+    { to: '/config', label: t('nav.config'), icon: Settings },
+    { to: '/logs', label: t('nav.logs'), icon: ScrollText },
     ...(snapshot.candidatesEnabled
-      ? [{ to: '/curate', label: 'Curate', icon: ClipboardCheck }]
+      ? [{ to: '/curate', label: t('nav.curate'), icon: ClipboardCheck }]
       : []),
   ];
   const [sideOpen, setSideOpen] = useState(false);
@@ -168,10 +173,10 @@ export function MissionControlShell() {
       <div className="ambient ambient-b" />
 
       <div className={`layout-frame ${sideOpen ? 'is-open' : ''} ${sideCollapsed ? 'is-collapsed' : ''} ${authRequired ? 'is-locked' : ''}`}>
-        <aside className="card side-menu" aria-label="Mission Control navigation">
+        <aside className="card side-menu" aria-label={t('nav.aria')}>
           <div className="side-menu-head">
             <div className="side-menu-head-top">
-              <p className="eyebrow">Hermes Mission Control</p>
+              <p className="eyebrow">{t('nav.missionControl')}</p>
               <Button
                 variant="ghost"
                 size="md"
@@ -179,17 +184,17 @@ export function MissionControlShell() {
                 iconOnly
                 className="desktop-sidebar-toggle"
                 type="button"
-                aria-label={sideCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                aria-label={sideCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
                 aria-expanded={!sideCollapsed}
-                title={sideCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                title={sideCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
                 onClick={toggleSidebar}
               />
             </div>
-            <strong>Operator panel</strong>
-            <span className="mini-note">Gateway, sessions, agents, usage, tools, skills, config, logs, curate</span>
+            <strong>{t('nav.operatorPanel')}</strong>
+            <span className="mini-note">{t('nav.miniNote')}</span>
           </div>
 
-          <nav className="side-nav" aria-label="Mission Control routes">
+          <nav className="side-nav" aria-label={t('nav.routesAria')}>
             {navItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -212,6 +217,7 @@ export function MissionControlShell() {
           <div className="side-menu-actions">
             <PushToggle />
             <ThemeSelector />
+            <LanguageSwitcher />
             <Button
               variant="secondary"
               size="md"
@@ -219,10 +225,10 @@ export function MissionControlShell() {
               className="side-action-button lock-button"
               type="button"
               onClick={logout}
-              aria-label="Lock dashboard"
-              title="Lock"
+              aria-label={t('auth.lockDashboard')}
+              title={t('auth.lock')}
             >
-              <span className="lock-label">Lock</span>
+              <span className="lock-label">{t('auth.lock')}</span>
             </Button>
           </div>
         </aside>
@@ -231,7 +237,7 @@ export function MissionControlShell() {
           <button
             className="mobile-nav-backdrop"
             type="button"
-            aria-label="Close navigation"
+            aria-label={t('nav.closeMenu')}
             onClick={() => setSideOpen(false)}
           />
         ) : null}
@@ -246,13 +252,13 @@ export function MissionControlShell() {
                 iconOnly
                 className="sidebar-toggle mobile-sidebar-toggle"
                 type="button"
-                aria-label="Open navigation menu"
+                aria-label={t('nav.openMenu')}
                 aria-expanded={sideOpen}
                 onClick={toggleSidebar}
               />
               <div>
-                <p className="eyebrow">Workspace</p>
-                <h1>{activeNav?.label ?? 'Overview'}</h1>
+                <p className="eyebrow">{t('app.workspace')}</p>
+                <h1>{activeNav?.label ?? t('nav.overview')}</h1>
               </div>
             </div>
             <Button
@@ -269,7 +275,7 @@ export function MissionControlShell() {
             >
               <span className="chat-presence-label-full">{chatButtonLabel}</span>
               <span className="chat-presence-label-compact" aria-hidden>
-                {presence.phase === 'running' ? 'Working…' : presence.phase === 'completed' ? 'Done' : presence.phase === 'waiting' ? 'Needs you' : 'Chat'}
+                {presence.phase === 'running' ? t('chat.workingCompact') : presence.phase === 'completed' ? t('chat.doneCompact') : presence.phase === 'waiting' ? t('chat.needsYouCompact') : t('chat.button')}
               </span>
               {presence.unreadCount > 0 ? <span className="chat-unread-badge">{presence.unreadCount > 9 ? '9+' : presence.unreadCount}</span> : null}
             </Button>
@@ -292,15 +298,15 @@ export function MissionControlShell() {
                   <ThemeSelector showLabel={false} className="auth-theme-toggle" />
                 </div>
 
-                <p className="eyebrow">Access required</p>
-                <h2 id="mission-control-auth-title">Locked cockpit.</h2>
+                <p className="eyebrow">{t('auth.accessRequired')}</p>
+                <h2 id="mission-control-auth-title">{t('auth.lockedTitle')}</h2>
                 <p className="lede">
-                  Mission Control is visible but frozen until you enter the bearer token. Nice dashboard, shame if someone actually got in.
+                  {t('auth.lede')}
                 </p>
 
                 <form className="auth-form" onSubmit={handleUnlock}>
                   <label className="auth-label" htmlFor="mission-control-token">
-                    Access token
+                    {t('auth.tokenLabel')}
                   </label>
                   <input
                     ref={tokenInputRef}
@@ -311,20 +317,20 @@ export function MissionControlShell() {
                     inputMode="text"
                     value={tokenDraft}
                     onChange={(event) => setTokenDraft(event.target.value)}
-                    placeholder="Paste bearer token"
+                    placeholder={t('auth.tokenPlaceholder')}
                   />
 
                   {authError ? <p className="auth-error">{authError}</p> : null}
 
                   <div className="auth-actions">
                     <button className="auth-primary" type="submit" disabled={loading}>
-                      {loading ? 'Unlocking…' : 'Unlock cockpit'}
+                      {loading ? t('auth.unlocking') : t('auth.unlock')}
                     </button>
                   </div>
 
                   {storedToken ? (
                     <button className="auth-reset" type="button" onClick={logout}>
-                      Use a different token
+                      {t('auth.useDifferentToken')}
                     </button>
                   ) : null}
                 </form>

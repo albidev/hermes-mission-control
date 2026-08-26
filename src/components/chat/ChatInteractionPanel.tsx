@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n';
 import { Check, KeyRound, ShieldCheck } from 'lucide-react';
 import { interactionTitle } from '../../lib/chat-interactions';
 import type { GatewayInteractionRequest } from '../../lib/chat-protocol';
@@ -33,6 +34,7 @@ export function ChatInteractionPanel({
   interactionPrompt,
   secretEnvVar,
 }: ChatInteractionPanelProps) {
+  const { t } = useI18n();
   return (
     <section className={`chat-interaction chat-interaction-${interaction.kind}`} aria-label={interactionTitle(interaction)}>
       <div className="chat-interaction-heading">
@@ -41,7 +43,7 @@ export function ChatInteractionPanel({
         </span>
         <div>
           <strong>{interactionTitle(interaction)}</strong>
-          <span>Answering here unblocks the running turn.</span>
+          <span>{t('interaction.unblocks')}</span>
         </div>
       </div>
       {interaction.kind === 'approval' ? (
@@ -77,16 +79,16 @@ export function ChatInteractionPanel({
             </div>
           ) : null}
           <div className="chat-interaction-input-row">
-            <input value={interactionDraft} onChange={(event) => onDraftChange(event.target.value)} placeholder="Type your answer" aria-label="Answer Hermes" />
-            <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim() && (!multiSelect || selectedChoices.length === 0)} onClick={() => onSubmit(interactionDraft.trim() || selectedChoices.join(', '))}>Send</button>
+            <input value={interactionDraft} onChange={(event) => onDraftChange(event.target.value)} placeholder={t('interaction.typeAnswer')} aria-label={t('interaction.answerHermes')} />
+            <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim() && (!multiSelect || selectedChoices.length === 0)} onClick={() => onSubmit(interactionDraft.trim() || selectedChoices.join(', '))}>{t('kanban.send')}</button>
           </div>
         </>
       ) : interaction.kind === 'terminal_read' ? (
         <>
           <p className="chat-interaction-copy">{interactionPrompt || 'Paste the requested terminal output.'}</p>
           <div className="chat-interaction-input-row">
-            <textarea value={interactionDraft} onChange={(event) => onDraftChange(event.target.value)} placeholder="Paste terminal output" aria-label="Terminal output" rows={3} />
-            <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim()} onClick={() => onSubmit(interactionDraft.trim())}>Send</button>
+            <textarea value={interactionDraft} onChange={(event) => onDraftChange(event.target.value)} placeholder={t('interaction.pasteOutputPlaceholder')} aria-label={t('interaction.terminalOutputAria')} rows={3} />
+            <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim()} onClick={() => onSubmit(interactionDraft.trim())}>{t('kanban.send')}</button>
           </div>
         </>
       ) : (
@@ -99,7 +101,7 @@ export function ChatInteractionPanel({
           ) : null}
           <div className="chat-interaction-input-row">
             <input type="password" value={interactionDraft} onChange={(event) => onDraftChange(event.target.value)} placeholder={interaction.kind === 'sudo' ? 'Password' : secretEnvVar || 'Secret value'} aria-label={interaction.kind === 'sudo' ? 'Sudo password' : interactionPrompt || 'Secret value'} autoComplete="off" />
-            <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => onSubmit(interactionDraft)}>Send</button>
+            <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => onSubmit(interactionDraft)}>{t('kanban.send')}</button>
           </div>
         </>
       )}

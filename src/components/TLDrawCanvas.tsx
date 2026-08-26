@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { ArrowLeft, Camera, Loader2, RotateCcw, Send } from 'lucide-react';
 import { Tldraw, createBindingId, createShapeId, getSnapshot, loadSnapshot, toRichText, type Editor, type TLStoreSnapshot } from 'tldraw';
@@ -70,6 +71,7 @@ type TLDrawCanvasProps = {
 };
 
 function storageKey(sessionId: string | null, sessionKey: string | null) {
+  const { t } = useI18n();
   return `mission-control:whiteboard:v5:${sessionId || sessionKey || 'new'}`;
 }
 
@@ -90,6 +92,7 @@ function sanitizeSnapshot(snapshot: TLStoreSnapshot): TLStoreSnapshot {
 }
 
 function triggerDownload(href: string, filename: string) {
+  const { t } = useI18n();
   const link = document.createElement('a');
   link.href = href;
   link.download = filename;
@@ -102,6 +105,7 @@ export function TldrawMark({ size = 16 }: { size?: number }) {
 }
 
 export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, sessionTitle, storedToken, onSendSelection, onActionApplied, onReady, loading, onClose, expanded, width }: TLDrawCanvasProps) {
+  const { t } = useI18n();
   const { resolvedTheme } = useMissionControl();
   const [editor, setEditor] = useState<Editor | null>(null);
   const [lints, setLints] = useState<BoardLint[]>([]);
@@ -204,6 +208,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   useEffect(() => {
     if (!editor) return;
     const publishSnapshot = () => {
+  const { t } = useI18n();
       if (sessionId && !remoteHydratedRef.current) return;
       if (publishTimerRef.current !== null) window.clearTimeout(publishTimerRef.current);
       publishTimerRef.current = window.setTimeout(() => {
@@ -570,7 +575,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   const exportBoard = async (format: 'png' | 'svg' | 'json') => {
     if (!editor) return;
     const label = format.toUpperCase();
-    if (!window.confirm(`Export board as ${label}? The file will be downloaded immediately.`)) return;
+    if (!window.confirm(t('tldraw.exportConfirm', { label }))) return;
     const filename = `tldraw-${sessionId || sessionKey || 'board'}-${Date.now()}`;
     if (format === 'json') {
       const blob = new Blob([JSON.stringify(getSnapshot(editor.store), null, 2)], { type: 'application/json' });
@@ -590,11 +595,11 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
     <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
       <header className="tldraw-canvas-head">
         <div className="tldraw-canvas-title">
-          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title="Back to chat" aria-label="Back to chat">
+          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title={t('chatDrawer.backToChat')} aria-label={t('chatDrawer.backToChat')}>
             <ArrowLeft size={18} />
           </button>
           <div className="tldraw-canvas-heading">
-            <span className="eyebrow">Session canvas</span>
+            <span className="eyebrow">{t('tldraw.sessionCanvas')}</span>
             <h3>TLDrawCanvas</h3>
             <span className="tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
               {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
@@ -611,23 +616,23 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
               if (format) void exportBoard(format);
               event.target.value = '';
             }}
-            title="Export board"
-            aria-label="Export board"
+            title={t('tldraw.exportBoard')}
+            aria-label={t('tldraw.exportBoard')}
           >
-            <option value="">Export</option>
+            <option value="">{t('tldraw.export')}</option>
             <option value="png">PNG</option>
             <option value="svg">SVG</option>
             <option value="json">JSON</option>
           </select>
           <span className="tldraw-canvas-sep" />
-          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title="Screenshot to chat" aria-label="Screenshot to chat">
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title={t('ui.screenshotToChat')} aria-label={t('ui.screenshotToChat')}>
             <Camera size={16} />
           </button>
-          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title="Send selection to chat" aria-label="Send selection to chat">
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title={t('ui.sendSelectionToChat')} aria-label={t('ui.sendSelectionToChat')}>
             <Send size={16} />
           </button>
           {toastMessage ? <div className="tldraw-canvas-toast" role="status">{toastMessage}</div> : null}
-          <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear board" aria-label="Clear board">
+          <button type="button" className="chat-icon-button" onClick={clearBoard} title={t('ui.clearBoard')} aria-label={t('ui.clearBoard')}>
             <RotateCcw size={16} />
           </button>
         </div>
@@ -637,7 +642,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
         {loading ? (
           <div className="tldraw-canvas-loading" role="status">
             <Loader2 size={24} className="chat-spin" />
-            <span>Loading TLDrawCanvas…</span>
+            <span>{t('tldraw.loading')}</span>
           </div>
         ) : null}
       </div>

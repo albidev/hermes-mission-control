@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { memo } from 'react';
 import {
   Bot,
@@ -30,6 +31,7 @@ export function formatToolDuration(durationS: number | undefined): string | null
 }
 
 export function ToolMessage({ message }: { message: ChatMessage }) {
+  const { t } = useI18n();
   const running = message.status === 'streaming';
   const failed = message.status === 'error';
   const input = message.toolInput || message.text;
@@ -42,7 +44,7 @@ export function ToolMessage({ message }: { message: ChatMessage }) {
         <span className="chat-tool-avatar" aria-hidden><Wrench size={15} /></span>
         <div className="chat-tool-heading">
           <strong>{message.toolName || 'Tool'}</strong>
-          <span>Hermes tool call</span>
+          <span>{t('ui.hermesToolCall')}</span>
         </div>
         <span className={`chat-tool-state is-${failed ? 'error' : running ? 'running' : 'complete'}`}>
           {failed ? <XCircle size={13} /> : running ? <Loader2 size={13} className="chat-spin" /> : <CheckCircle2 size={13} />}
@@ -79,6 +81,7 @@ export function ToolMessage({ message }: { message: ChatMessage }) {
 }
 
 export const ChatMessageCard = memo(function ChatMessageCard({ message }: { message: ChatMessage }) {
+  const { t } = useI18n();
   const visualKind = message.kind ?? message.role;
   const isTool = visualKind === 'tool';
   const isReasoning = visualKind === 'reasoning';
@@ -99,7 +102,7 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
             </span>
             <span>{label}</span>
             {message.status === 'streaming'
-              ? <Loader2 size={12} className="chat-spin" aria-label="Streaming" />
+              ? <Loader2 size={12} className="chat-spin" aria-label={t('chatDrawer.streaming')} />
               : message.createdAt ? (
                 <time className="chat-message-time" dateTime={new Date(message.createdAt).toISOString()}>
                   {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

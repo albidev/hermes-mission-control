@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -11,12 +12,14 @@ type ModalProps = {
 };
 
 export function Modal({ open, title, subtitle, onClose, children, footer }: ModalProps) {
+  const { t } = useI18n();
   useEffect(() => {
     if (!open || typeof window === 'undefined') {
       return;
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
+  const { t } = useI18n();
       if (event.key === 'Escape') {
         onClose();
       }
@@ -62,7 +65,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer }: Moda
       >
         <div className="px-4 py-3 border-b border-border-subtle flex items-start justify-between gap-3 sticky top-0 bg-surface z-10">
           <div className="min-w-0">
-            <p className="eyebrow">Detail view</p>
+            <p className="eyebrow">{t('modal.detailView')}</p>
             <h3 id="modal-title" className="text-sm font-semibold text-text break-words">{title}</h3>
             {subtitle ? <p className="text-xs text-text-subtle break-words mt-0.5">{subtitle}</p> : null}
           </div>
@@ -70,7 +73,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer }: Moda
             className="inline-flex items-center justify-center rounded-lg h-8 w-8 border border-border-subtle bg-surface-raised text-text-muted hover:text-text hover:bg-surface"
             type="button"
             onClick={onClose}
-            aria-label="Close dialog"
+            aria-label={t('modal.closeDialog')}
           >
             ×
           </button>

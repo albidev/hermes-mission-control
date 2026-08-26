@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, FileText, RefreshCw, TerminalSquare } from 'lucide-react';
 import { Card } from '../components/ui/Card';
@@ -26,6 +27,7 @@ function formatTimestamp(value: string | null): string {
 }
 
 export function LogsRoute() {
+  const { t } = useI18n();
   const { storedToken } = useMissionControl();
   const [logs, setLogs] = useState<MissionControlLogsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -136,8 +138,8 @@ export function LogsRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Logs</span>
-            <h2 className="text-sm font-semibold text-text">Live tail from ~/.hermes/logs</h2>
+            <span className="eyebrow">{t('nav.logs')}</span>
+            <h2 className="text-sm font-semibold text-text">{t('logs.title')}</h2>
           </div>
           <Badge variant={logs?.available ? 'positive' : 'warning'}>
             {loading ? 'loading' : logs?.available ? 'live' : 'unavailable'}
@@ -147,25 +149,25 @@ export function LogsRoute() {
         <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
           <Card className="p-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-text-muted">Errors</span>
+              <span className="text-xs text-text-muted">{t('logs.errors')}</span>
               <AlertTriangle className="h-4 w-4 text-negative" />
             </div>
             <p className="text-lg font-semibold text-text mt-2">{counters.errors}</p>
-            <p className="text-xs text-text-subtle mt-1">in current tail window</p>
+            <p className="text-xs text-text-subtle mt-1">{t('logs.inCurrentTail')}</p>
           </Card>
 
           <Card className="p-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-text-muted">Warnings</span>
+              <span className="text-xs text-text-muted">{t('logs.warnings')}</span>
               <FileText className="h-4 w-4 text-warning" />
             </div>
             <p className="text-lg font-semibold text-text mt-2">{counters.warnings}</p>
-            <p className="text-xs text-text-subtle mt-1">in current tail window</p>
+            <p className="text-xs text-text-subtle mt-1">{t('logs.inCurrentTail')}</p>
           </Card>
 
           <Card className="p-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-text-muted">Files</span>
+              <span className="text-xs text-text-muted">{t('knowledge.files')}</span>
               <RefreshCw className="h-4 w-4 text-text-subtle" />
             </div>
             <p className="text-lg font-semibold text-text mt-2">{logs?.fileCount ?? 0}</p>
@@ -183,10 +185,10 @@ export function LogsRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Filters</span>
-            <h3 className="text-sm font-semibold text-text">Single full-width stream with log switcher</h3>
+            <span className="eyebrow">{t('logs.filters')}</span>
+            <h3 className="text-sm font-semibold text-text">{t('logs.streamTitle')}</h3>
           </div>
-          <span className="text-xs text-text-subtle">auto-refresh 5s</span>
+          <span className="text-xs text-text-subtle">{t('logs.autoRefresh')}</span>
         </div>
 
         {visibleFiles.length > 0 && activeFile ? (
@@ -239,13 +241,13 @@ export function LogsRoute() {
                       </div>
                     ))
                 ) : (
-                  <div className="px-4 py-6 text-sm text-text-muted italic">No lines captured for this file.</div>
+                  <div className="px-4 py-6 text-sm text-text-muted italic">{t('logs.noLines')}</div>
                 )}
               </div>
             </Card>
           </div>
         ) : (
-          <div className="px-4 py-8 text-center text-sm text-text-muted italic">No log files found.</div>
+          <div className="px-4 py-8 text-center text-sm text-text-muted italic">{t('logs.noFiles')}</div>
         )}
       </Card>
     </div>

@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { Check, ChevronRight, Cpu, Loader2, RefreshCw, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ChatModelProviderOption, ChatModelSwitchResult } from '../lib/chat-protocol';
@@ -49,6 +50,7 @@ export function ChatModelPicker({
   onClose,
   onSelect,
 }: ChatModelPickerProps) {
+  const { t } = useI18n();
   const [providers, setProviders] = useState<ChatModelProviderOption[]>([]);
   const [selectedProviderSlug, setSelectedProviderSlug] = useState('');
   const [filter, setFilter] = useState('');
@@ -126,20 +128,20 @@ export function ChatModelPicker({
   };
 
   return (
-    <section className="chat-model-picker" aria-label="Choose Hermes model">
+    <section className="chat-model-picker" aria-label={t('modelPicker.chooseAria')}>
       <header className="chat-model-picker-head">
         <div className="chat-model-picker-title">
           <span className="chat-model-picker-icon"><Cpu size={16} aria-hidden /></span>
           <div>
-            <span className="eyebrow">Runtime</span>
-            <strong>Choose model</strong>
+            <span className="eyebrow">{t('chatDrawer.runtime')}</span>
+            <strong>{t('chatDrawer.chooseModel')}</strong>
           </div>
         </div>
         <div className="chat-model-picker-actions">
-          <button type="button" className="chat-model-picker-icon-button" onClick={() => void loadOptions(true)} disabled={refreshing} aria-label="Refresh model list" title="Refresh model list">
+          <button type="button" className="chat-model-picker-icon-button" onClick={() => void loadOptions(true)} disabled={refreshing} aria-label={t('modelPicker.refresh')} title={t('modelPicker.refresh')}>
             <RefreshCw size={15} className={refreshing ? 'chat-spin' : ''} />
           </button>
-          <button type="button" className="chat-model-picker-icon-button" onClick={onClose} aria-label="Close model picker" title="Close model picker">
+          <button type="button" className="chat-model-picker-icon-button" onClick={onClose} aria-label={t('modelPicker.close')} title={t('modelPicker.close')}>
             <X size={17} />
           </button>
         </div>
@@ -147,7 +149,7 @@ export function ChatModelPicker({
 
       {currentModel ? (
         <div className="chat-model-picker-current">
-          <span>ACTIVE</span>
+          <span>{t('modelPicker.active')}</span>
           <strong>{currentModel}</strong>
         </div>
       ) : null}
@@ -158,8 +160,8 @@ export function ChatModelPicker({
         <div className="chat-model-picker-state is-error">{error}</div>
       ) : (
         <>
-          <div className="chat-model-picker-section-label">Provider</div>
-          <div className="chat-model-provider-list" role="tablist" aria-label="Model providers">
+          <div className="chat-model-picker-section-label">{t('modelPicker.provider')}</div>
+          <div className="chat-model-provider-list" role="tablist" aria-label={t('modelPicker.modelProviders')}>
             {providers.map((provider) => {
               const active = provider.slug === selectedProvider?.slug;
               const disabled = provider.authenticated === false || provider.models.length === 0;
@@ -183,16 +185,16 @@ export function ChatModelPicker({
 
           <label className="chat-model-search">
             <Search size={15} aria-hidden />
-            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter models" aria-label="Filter models" autoFocus />
+            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={t('modelPicker.filterModels')} aria-label={t('modelPicker.filterModels')} autoFocus />
           </label>
 
           {pendingConfirmation ? (
             <div className="chat-model-confirm" role="alert">
-              <strong>Confirm model switch</strong>
+              <strong>{t('modelPicker.confirmSwitch')}</strong>
               <p>{pendingConfirmation.message}</p>
               <div className="chat-model-confirm-actions">
-                <button type="button" className="chat-choice" onClick={() => setPendingConfirmation(null)}>Cancel</button>
-                <button type="button" className="chat-choice is-primary" onClick={() => void choose(pendingConfirmation.model, pendingConfirmation.provider, true)}>Switch anyway</button>
+                <button type="button" className="chat-choice" onClick={() => setPendingConfirmation(null)}>{t('curate.cancel')}</button>
+                <button type="button" className="chat-choice is-primary" onClick={() => void choose(pendingConfirmation.model, pendingConfirmation.provider, true)}>{t('modelPicker.switchAnyway')}</button>
               </div>
             </div>
           ) : null}
@@ -203,7 +205,7 @@ export function ChatModelPicker({
           </div>
           <div className="chat-model-list" role="listbox" aria-label="Available models">
             {filteredModels.length === 0 ? (
-              <div className="chat-model-picker-state">No models match this filter.</div>
+              <div className="chat-model-picker-state">{t('modelPicker.noMatch')}</div>
             ) : filteredModels.map((model) => {
               const active = model === currentModel;
               const switching = switchingModel === model;
@@ -219,13 +221,13 @@ export function ChatModelPicker({
                 >
                   <span className="chat-model-option-mark">{switching ? <Loader2 size={14} className="chat-spin" /> : active ? <Check size={14} /> : <ChevronRight size={14} />}</span>
                   <span className="chat-model-option-name">{model}</span>
-                  {active ? <small>current</small> : null}
+                  {active ? <small>{t('modelPicker.current')}</small> : null}
                 </button>
               );
             })}
           </div>
           {error ? <p className="chat-model-picker-error">{error}</p> : null}
-          <p className="chat-model-picker-footnote">Selection is session-scoped. The next turn uses the new model.</p>
+          <p className="chat-model-picker-footnote">{t('modelPicker.footnote')}</p>
         </>
       )}
     </section>

@@ -12,15 +12,32 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 
 > **Satellite by design.** Mission Control has zero runtime dependency on the Hermes core backend. It talks to a small local telemetry sidecar (Python stdlib + psutil) on port `8765`.
 
-## What you get
+## Features
+
+### Operations dashboard
 
 - Gateway/runtime health and system metrics
 - Active model, fallback model, and agent status
-- Sessions, agents, usage, knowledge, tools, skills, config, logs routes
-- Cron/job visibility and quick actions
-- Responsive layout: side rail on desktop, drawer on mobile
+- Sessions, agents, tools, skills, configuration, logs, and cron visibility
+- Provider usage for Codex and Ollama with session/weekly gauges
 - Draggable dashboard widgets with persisted layout
+
+### Kanban operations
+
+- Multi-board task management backed by Hermes core `kanban_db`
+- Eight workflow columns with rich task cards, priorities, IDs, ages, progress, and comments
+- Drag-and-drop task movement with optimistic updates and rollback
+- Board and task creation, archive/permanent deletion, comments, search, and filters
+- Mobile-safe task and board creation flows
+- See [docs/kanban.md](docs/kanban.md) for the complete Kanban feature and API reference
+
+### Chat and agent workspace
+
+- Streaming Chat with presence states, reasoning events, and completion recovery
 - **Expanded Chat + tldraw Agent Mode**: session-bound whiteboard, authenticated bridge, screenshot-to-chat, agent actions, Mermaid import, board lints, exports, and mobile-safe persistence
+- Responsive layout: side rail on desktop, drawer and bottom sheets on mobile
+
+For Chat internals, see [docs/chat.md](docs/chat.md). For telemetry and provider usage, see [docs/telemetry.md](docs/telemetry.md).
 
 ## tldraw Agent Mode
 
@@ -33,7 +50,7 @@ Mission Control links the expanded Chat to a tldraw whiteboard using the current
 - PNG/SVG/JSON export and Mermaid flowchart import
 - Mobile-safe open feedback and explicit close/unmount to keep iOS input responsive
 
-See the [tldraw feature matrix](docs/tldraw-feature-matrix.md) and the [Mission Control tldraw Agent Mode vault note](https://github.com/albidev/hermes-vault/blob/main/wiki/concepts/mission-control-tldraw-agent-mode.md).
+For the Chat internals (WebSocket transport, presence pill, persistence, streaming & reasoning), see [docs/chat.md](docs/chat.md). See the [tldraw feature matrix](docs/tldraw-feature-matrix.md) and the [Mission Control tldraw Agent Mode vault note](https://github.com/albidev/hermes-vault/blob/main/wiki/concepts/mission-control-tldraw-agent-mode.md).
 
 ## Architecture
 
@@ -45,6 +62,8 @@ See the [tldraw feature matrix](docs/tldraw-feature-matrix.md) and the [Mission 
 All data flows through `/api/local/*` endpoints. In development, Vite proxies those requests to the telemetry server.
 
 See [docs/telemetry.md](docs/telemetry.md) for the full telemetry overview, including the **provider-usage** pipeline (CodexBar → cache → gauges) and its troubleshooting.
+
+See [docs/kanban.md](docs/kanban.md) for the Kanban board architecture, supported task/board operations, API endpoints, and desktop/mobile behavior.
 
 ## Quick start
 
@@ -115,6 +134,17 @@ CI runs the frontend build and Python test suite on pushes and pull requests.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Roadmap
+
+Planned work, tracked as GitHub issues:
+
+- None currently.
+
+Completed:
+
+- [#7 — i18n / UI localization](https://github.com/albidev/hermes-mission-control/issues/7) — shipped on `develop`; see the locale catalogs in `src/locales/` and the shared `I18nProvider`
+- [#8 — Implement Kanban Board in Mission Control UI](https://github.com/albidev/hermes-mission-control/issues/8) — shipped on `develop`; see [docs/kanban.md](docs/kanban.md)
 
 ## License
 

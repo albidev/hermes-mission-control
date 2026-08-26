@@ -1,4 +1,5 @@
 import type { ChatModelIdentity } from '../../lib/chat-protocol';
+import { useI18n } from '../../lib/i18n';
 
 type ChatStatusLineProps = {
   statusLineLabel: string;
@@ -25,6 +26,7 @@ export function ChatStatusLine({
   contextWindow,
   contextPercent,
 }: ChatStatusLineProps) {
+  const { t } = useI18n();
   return (
     <div className="chat-status-line" role="status">
       <span className={`chat-status-line-verb ${running ? 'is-streaming' : statusLineLabel === 'Ready' ? 'is-ready' : ''}`}>
@@ -32,26 +34,26 @@ export function ChatStatusLine({
         {statusLineLabel}
       </span>
       <span className="chat-status-line-separator">|</span>
-      <span className="chat-status-line-model" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Model not available'}>
-        {modelIdentity?.model || 'Model unavailable'}
+      <span className="chat-status-line-model" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : t('chatDrawer.modelUnavailable')}>
+        {modelIdentity?.model || t('chatDrawer.modelUnavailable')}
       </span>
       <span className="chat-status-line-separator">|</span>
       <span className="chat-status-line-reasoning">
         {modelIdentity?.reasoningEffort || '—'}
       </span>
       <span className="chat-status-line-separator">|</span>
-      <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} context tokens`}>
+      <span className="chat-status-line-ctx" title={contextTokens == null ? t('chatDrawer.contextUnavailable') : `${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} ${t('chatDrawer.contextTokensLabel')}`}>
         {contextTokens == null ? `—/${formatTokens(contextWindow)}` : `${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`}
       </span>
       <span className="chat-status-line-separator">|</span>
       <span
         className="chat-status-line-bar"
         role="progressbar"
-        aria-label="Context window usage"
+        aria-label={t('chatDrawer.contextWindowUsage')}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(contextPercent)}
-        title={contextTokens == null ? 'Context usage not available yet' : `${Math.round(contextPercent)}% of context window`}
+        title={contextTokens == null ? t('chatDrawer.contextUnavailable') : t('chatDrawer.contextPercent', { percent: Math.round(contextPercent) })}
       >
         <span className="chat-status-line-bar-fill" style={{ width: `${contextPercent}%` }} />
       </span>
