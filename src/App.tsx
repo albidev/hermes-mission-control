@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { MissionControlProvider } from './lib/mission-control-store';
+import { I18nProvider } from './lib/i18n';
 import { MissionControlShell } from './components/MissionControlShell';
 import { OverviewLayout } from './routes/OverviewRoute';
 import { OverviewDashboard } from './components/overview/OverviewDashboard';
@@ -18,31 +19,33 @@ const KanbanRoute = lazy(() => import('./routes/KanbanRoute').then((m) => ({ def
 
 function App() {
   return (
-    <MissionControlProvider>
-      <BrowserRouter>
-        <Suspense fallback={<div className="route-loading" role="status">Loading Mission Control…</div>}>
-          <Routes>
-            <Route element={<MissionControlShell />}>
-              <Route element={<OverviewLayout />}>
-                <Route index element={<OverviewDashboard />} />
+    <I18nProvider>
+      <MissionControlProvider>
+        <BrowserRouter>
+          <Suspense fallback={<div className="route-loading" role="status">Loading Mission Control…</div>}>
+            <Routes>
+              <Route element={<MissionControlShell />}>
+                <Route element={<OverviewLayout />}>
+                  <Route index element={<OverviewDashboard />} />
+                </Route>
+                <Route path="sessions" element={<SessionsRoute />} />
+                <Route path="agents" element={<AgentsRoute />} />
+                <Route path="agents/:agentId" element={<AgentsRoute />} />
+                <Route path="usage" element={<UsageRoute />} />
+                <Route path="knowledge" element={<KnowledgeRoute />} />
+                <Route path="tools" element={<ToolsRoute />} />
+                <Route path="skills" element={<SkillsRoute />} />
+                <Route path="config" element={<ConfigRoute />} />
+                <Route path="logs" element={<LogsRoute />} />
+                <Route path="curate" element={<CurateRoute />} />
+                <Route path="kanban" element={<KanbanRoute />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
-              <Route path="sessions" element={<SessionsRoute />} />
-              <Route path="agents" element={<AgentsRoute />} />
-              <Route path="agents/:agentId" element={<AgentsRoute />} />
-              <Route path="usage" element={<UsageRoute />} />
-              <Route path="knowledge" element={<KnowledgeRoute />} />
-              <Route path="tools" element={<ToolsRoute />} />
-              <Route path="skills" element={<SkillsRoute />} />
-              <Route path="config" element={<ConfigRoute />} />
-              <Route path="logs" element={<LogsRoute />} />
-              <Route path="curate" element={<CurateRoute />} />
-              <Route path="kanban" element={<KanbanRoute />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
-          </Routes>
-        </Suspense>
-      </BrowserRouter>
-    </MissionControlProvider>
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+      </MissionControlProvider>
+    </I18nProvider>
   );
 }
 

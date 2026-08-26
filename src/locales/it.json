@@ -643,5 +643,11 @@
   "pull.pull": "Trascina per ricaricare",
 
   "common.unknown": "sconosciuto",
-  "common.all": "Tutti"
+  "common.all": "Tutti",
+
+  "lang.label": "Lingua",
+  "lang.english": "English",
+  "lang.italian": "Italiano",
+  "lang.englishTitle": "Passa all'inglese",
+  "lang.italianTitle": "Passa all'italiano"
 }

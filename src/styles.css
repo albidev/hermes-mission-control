@@ -410,6 +410,62 @@
 }
 
 /* ============================================
+   Language Switcher
+   ============================================ */
+
+.lang-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.lang-toggle-label {
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+  padding: 0 0.25rem;
+}
+
+.lang-toggle-track {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.375rem;
+}
+
+.lang-toggle-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0 0.6rem;
+  transition: all 150ms ease;
+}
+
+.lang-toggle-option:hover {
+  border-color: var(--color-border-subtle);
+  color: var(--color-text);
+}
+
+.lang-toggle-option.is-active {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+}
+
+.lang-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+/* ============================================
    Workspace Column
    ============================================ */
 
@@ -2408,6 +2464,8 @@
   .layout-frame.is-collapsed .side-nav-label,
   .layout-frame.is-collapsed .theme-toggle-label,
   .layout-frame.is-collapsed .theme-toggle-option span,
+  .layout-frame.is-collapsed .lang-toggle-label,
+  .layout-frame.is-collapsed .lang-toggle-option span,
   .layout-frame.is-collapsed .lock-label,
   .layout-frame.is-collapsed .push-toggle-label {
     display: none;
@@ -2418,18 +2476,21 @@
     align-items: center;
   }
 
-  .layout-frame.is-collapsed .theme-toggle {
+  .layout-frame.is-collapsed .theme-toggle,
+  .layout-frame.is-collapsed .lang-toggle {
     width: 44px;
     align-items: center;
   }
 
-  .layout-frame.is-collapsed .theme-toggle-track {
+  .layout-frame.is-collapsed .theme-toggle-track,
+  .layout-frame.is-collapsed .lang-toggle-track {
     grid-template-columns: 1fr;
     width: 44px;
     gap: 0.375rem;
   }
 
   .layout-frame.is-collapsed .theme-toggle-option,
+  .layout-frame.is-collapsed .lang-toggle-option,
   .layout-frame.is-collapsed .side-action-button {
     width: 44px;
     min-width: 44px;

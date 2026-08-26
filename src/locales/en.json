@@ -643,5 +643,11 @@
   "pull.pull": "Pull to reload",
 
   "common.unknown": "unknown",
-  "common.all": "All"
+  "common.all": "All",
+
+  "lang.label": "Language",
+  "lang.english": "English",
+  "lang.italian": "Italiano",
+  "lang.englishTitle": "Switch to English",
+  "lang.italianTitle": "Passa all'italiano"
 }
