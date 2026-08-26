@@ -31,6 +31,7 @@ export function formatToolDuration(durationS: number | undefined): string | null
 }
 
 export function ToolMessage({ message }: { message: ChatMessage }) {
+  const { t } = useI18n();
   const running = message.status === 'streaming';
   const failed = message.status === 'error';
   const input = message.toolInput || message.text;
@@ -43,7 +44,7 @@ export function ToolMessage({ message }: { message: ChatMessage }) {
         <span className="chat-tool-avatar" aria-hidden><Wrench size={15} /></span>
         <div className="chat-tool-heading">
           <strong>{message.toolName || 'Tool'}</strong>
-          <span>Hermes tool call</span>
+          <span>{t('ui.hermesToolCall')}</span>
         </div>
         <span className={`chat-tool-state is-${failed ? 'error' : running ? 'running' : 'complete'}`}>
           {failed ? <XCircle size={13} /> : running ? <Loader2 size={13} className="chat-spin" /> : <CheckCircle2 size={13} />}

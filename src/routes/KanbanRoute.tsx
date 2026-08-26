@@ -372,7 +372,7 @@ function TaskDrawer({
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">{t('kanban.assignee')}</span>
                 <div className="mt-1 flex gap-1">
                   <input value={assigneeDraft} onChange={(e) => setAssigneeDraft(e.target.value)} placeholder="blank = dispatcher" className="min-w-0 flex-1 rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
-                  <Button size="sm" disabled={actionBusy} onClick={() => void saveMetadata({ assignee: assigneeDraft.trim() || null })}>Save</Button>
+                  <Button size="sm" disabled={actionBusy} onClick={() => void saveMetadata({ assignee: assigneeDraft.trim() || null })}>{t('ui.save')}</Button>
                 </div>
               </label>
               <label className="block">
