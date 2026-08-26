@@ -2514,7 +2514,7 @@ export function addKanbanComment(
 
 export function createKanbanBoard(
   accessToken: string | undefined,
-  input: { name: string; description?: string; switch?: boolean },
+  input: { slug?: string; name?: string; description?: string; icon?: string; default_workdir?: string; switch?: boolean },
 ): Promise<{ board: MissionControlKanbanBoardMeta; current: string }> {
   return kanbanPost('/kanban/boards', input, accessToken);
 }

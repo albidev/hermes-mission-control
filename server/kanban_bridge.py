@@ -469,18 +469,20 @@ def delete_board(slug: str, hard: bool = False) -> Dict[str, Any]:
 
 def create_board(payload: Dict[str, Any], switch: bool = False) -> Dict[str, Any]:
     kb = _kb()
+    slug = (payload.get("slug") or "").strip()
     name = (payload.get("name") or "").strip()
-    if not name:
-        raise KanbanError(400, "board name is required")
-    # Derive a slug from the name; kanban_db validates + normalizes it.
-    slug = (payload.get("slug") or "").strip() or kb._normalize_board_slug(
-        name.lower().replace(" ", "-")
-    )
+    if not slug and not name:
+        raise KanbanError(400, "board slug or name is required")
+    # Slug is authoritative; derive from name only when omitted.
+    if not slug:
+        slug = name.lower().replace(" ", "-")
     try:
         meta = kb.create_board(
             slug,
-            name=name,
+            name=name or None,
             description=(payload.get("description") or "").strip() or None,
+            icon=(payload.get("icon") or "").strip() or None,
+            default_workdir=(payload.get("default_workdir") or "").strip() or None,
         )
         if switch:
             kb.set_current_board(meta["slug"])

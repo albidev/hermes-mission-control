@@ -485,8 +485,12 @@ export function KanbanRoute() {
 
   // Board management
   const [newBoardOpen, setNewBoardOpen] = useState(false);
+  const [newBoardSlug, setNewBoardSlug] = useState('');
   const [newBoardName, setNewBoardName] = useState('');
   const [newBoardDesc, setNewBoardDesc] = useState('');
+  const [newBoardWorkdir, setNewBoardWorkdir] = useState('');
+  const [newBoardIcon, setNewBoardIcon] = useState('');
+  const [newBoardSwitch, setNewBoardSwitch] = useState(true);
   const [creatingBoard, setCreatingBoard] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<MissionControlKanbanBoardMeta | null>(null);
   const [deleteHard, setDeleteHard] = useState(false);
@@ -609,13 +613,21 @@ export function KanbanRoute() {
   };
 
   // --- Create board ---
-  const closeNewBoard = () => { setNewBoardOpen(false); setNewBoardName(''); setNewBoardDesc(''); setCreatingBoard(false); };
+  const closeNewBoard = () => { setNewBoardOpen(false); setNewBoardSlug(''); setNewBoardName(''); setNewBoardDesc(''); setNewBoardWorkdir(''); setNewBoardIcon(''); setNewBoardSwitch(true); setCreatingBoard(false); };
   const submitNewBoard = async () => {
+    const slug = newBoardSlug.trim();
     const name = newBoardName.trim();
-    if (!name) return;
+    if (!slug && !name) return;
     setCreatingBoard(true);
     try {
-      await createKanbanBoard(storedToken || undefined, { name, description: newBoardDesc.trim() || undefined });
+      await createKanbanBoard(storedToken || undefined, {
+        slug: slug || undefined,
+        name: name || undefined,
+        description: newBoardDesc.trim() || undefined,
+        icon: newBoardIcon.trim() || undefined,
+        default_workdir: newBoardWorkdir.trim() || undefined,
+        switch: newBoardSwitch,
+      });
       closeNewBoard();
       const { boards: list, current } = await loadKanbanBoards(storedToken || undefined);
       setBoards(list);
@@ -778,18 +790,66 @@ export function KanbanRoute() {
               <h2 className="text-sm font-semibold text-text">New board</h2>
               <Button variant="ghost" size="sm" type="button" aria-label="Cancel new board" onClick={closeNewBoard}><X size={14} /></Button>
             </div>
+            <p className="mt-1 text-[10px] text-text-muted">Boards let you separate unrelated streams of work — one per project, repo, or domain. Workers on one board never see another board's tasks.</p>
             <label className="mt-3 block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Name *</span>
-              <input autoFocus value={newBoardName} onChange={(e) => setNewBoardName(e.target.value)} placeholder="e.g. Home Renovation" maxLength={80} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Slug — lowercase, hyphens <span className="text-red-400">*</span></span>
+              <input
+                autoFocus
+                value={newBoardSlug}
+                onChange={(e) => setNewBoardSlug(e.target.value)}
+                placeholder="atm10-server"
+                maxLength={64}
+                className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
+              />
             </label>
             <label className="mt-3 block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description</span>
-              <textarea value={newBoardDesc} onChange={(e) => setNewBoardDesc(e.target.value)} placeholder="What is this board for?" rows={3} className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[4rem]" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Display name (optional)</span>
+              <input
+                value={newBoardName}
+                onChange={(e) => setNewBoardName(e.target.value)}
+                placeholder="ATM10 Server"
+                maxLength={80}
+                className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
+              />
             </label>
-            <p className="mt-2 text-[10px] text-text-subtle">The new board becomes the active one for CLI and gateway too.</p>
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description (optional)</span>
+              <textarea
+                value={newBoardDesc}
+                onChange={(e) => setNewBoardDesc(e.target.value)}
+                placeholder="What goes on this board?"
+                rows={2}
+                className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[3rem]"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Project directory (recommended)</span>
+              <input
+                value={newBoardWorkdir}
+                onChange={(e) => setNewBoardWorkdir(e.target.value)}
+                placeholder="/Users/albi/Projects/my-project"
+                spellCheck={false}
+                className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
+              />
+              <span className="mt-1 block text-[10px] text-text-subtle">Sets the default location for task files so project output is preserved.</span>
+            </label>
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Icon (single character or emoji)</span>
+              <input
+                value={newBoardIcon}
+                onChange={(e) => setNewBoardIcon(e.target.value)}
+                placeholder="📦"
+                maxLength={4}
+                className="mt-1 w-20 rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-center text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
+              />
+            </label>
+            <label className="mt-3 flex items-center gap-2">
+              <input type="checkbox" checked={newBoardSwitch} onChange={(e) => setNewBoardSwitch(e.target.checked)} className="h-3.5 w-3.5 accent-sky-500" />
+              <span className="text-xs text-text-muted">Switch to this board after creating it</span>
+            </label>
             <div className="mt-3 flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" type="button" onClick={closeNewBoard}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={!newBoardName.trim() || creatingBoard}>{creatingBoard ? 'Creating…' : 'Create board'}</Button>
+              <Button type="submit" size="sm" disabled={(!newBoardSlug.trim() && !newBoardName.trim()) || creatingBoard}>{creatingBoard ? 'Creating…' : 'Create board'}</Button>
             </div>
           </form>
         </div>
