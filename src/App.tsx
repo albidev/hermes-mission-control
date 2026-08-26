@@ -11,6 +11,7 @@ const AgentsRoute = lazy(() => import('./routes/AgentsRoute').then((m) => ({ def
 const UsageRoute = lazy(() => import('./routes/UsageRoute').then((m) => ({ default: m.UsageRoute })));
 const KnowledgeRoute = lazy(() => import('./routes/KnowledgeRoute').then((m) => ({ default: m.KnowledgeRoute })));
 const ToolsRoute = lazy(() => import('./routes/ToolsRoute').then((m) => ({ default: m.ToolsRoute })));
+const CronRoute = lazy(() => import('./routes/CronRoute').then((m) => ({ default: m.CronRoute })));
 const SkillsRoute = lazy(() => import('./routes/SkillsRoute').then((m) => ({ default: m.SkillsRoute })));
 const ConfigRoute = lazy(() => import('./routes/ConfigRoute').then((m) => ({ default: m.ConfigRoute })));
 const LogsRoute = lazy(() => import('./routes/LogsRoute').then((m) => ({ default: m.LogsRoute })));
@@ -34,6 +35,7 @@ function App() {
                 <Route path="usage" element={<UsageRoute />} />
                 <Route path="knowledge" element={<KnowledgeRoute />} />
                 <Route path="tools" element={<ToolsRoute />} />
+                <Route path="cron" element={<CronRoute />} />
                 <Route path="skills" element={<SkillsRoute />} />
                 <Route path="config" element={<ConfigRoute />} />
                 <Route path="logs" element={<LogsRoute />} />
