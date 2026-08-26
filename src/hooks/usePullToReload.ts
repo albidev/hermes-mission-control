@@ -121,10 +121,18 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
     };
     const onTouchMove = (event: TouchEvent) => {
       if (pullStartedRef.current || startYRef.current !== null) {
-        if (state.pulling) {
+        const clientY = event.touches[0].clientY;
+        // Do not wait for React to re-render `state.pulling`: the first move
+        // after the threshold can otherwise reach iOS' native pull-to-refresh
+        // before the stateful listener sees `pulling === true`.
+        if (
+          startYRef.current !== null &&
+          clientY > startYRef.current &&
+          isAtTop(getTarget())
+        ) {
           event.preventDefault();
         }
-        handleMove(event.touches[0].clientY);
+        handleMove(clientY);
       }
     };
     const onTouchEnd = () => handleEnd();
@@ -155,7 +163,7 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
       target.removeEventListener('mousemove', onMouseMove);
       target.removeEventListener('mouseup', onMouseUp);
     };
-  }, [getTarget, handleStart, handleMove, handleEnd, state.pulling]);
+  }, [getTarget, handleStart, handleMove, handleEnd]);
 
   return { state, reset };
 }
