@@ -37,7 +37,7 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 - **Expanded Chat + tldraw Agent Mode**: session-bound whiteboard, authenticated bridge, screenshot-to-chat, agent actions, Mermaid import, board lints, exports, and mobile-safe persistence
 - Responsive layout: side rail on desktop, drawer and bottom sheets on mobile
 
-For Chat internals, see [docs/chat.md](docs/chat.md). For telemetry and provider usage, see [docs/telemetry.md](docs/telemetry.md).
+For Chat internals, see [docs/chat.md](docs/chat.md). For localization, see [docs/i18n.md](docs/i18n.md). For telemetry and provider usage, see [docs/telemetry.md](docs/telemetry.md).
 
 ## tldraw Agent Mode
 
@@ -63,7 +63,7 @@ All data flows through `/api/local/*` endpoints. In development, Vite proxies th
 
 See [docs/telemetry.md](docs/telemetry.md) for the full telemetry overview, including the **provider-usage** pipeline (CodexBar → cache → gauges) and its troubleshooting.
 
-See [docs/kanban.md](docs/kanban.md) for the Kanban board architecture, supported task/board operations, API endpoints, and desktop/mobile behavior.
+See [docs/kanban.md](docs/kanban.md) for the Kanban board architecture, supported task/board operations, API endpoints, and desktop/mobile behavior. See [docs/tools.md](docs/tools.md) for the tool inventory source and discovery behavior.
 
 ## Quick start
 
