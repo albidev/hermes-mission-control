@@ -343,11 +343,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     return () => window.cancelAnimationFrame(raf);
   }, [open]);
 
-  const isNearBottom = () => {
+  const isNearBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return true;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  };
+  }, []);
 
   const handleTranscriptScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -366,7 +366,19 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     }
     nearBottomRef.current = bottom;
     setNearBottom(bottom);
-  }, [messages, open, sessionKey]);
+  }, [isNearBottom, messages, open, sessionKey]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (!isNearBottom()) return;
+      const assistantCount = messages.filter((message) => message.role === 'assistant' && message.status !== 'streaming').length;
+      markChatPresenceRead(sessionKey, assistantCount);
+      nearBottomRef.current = true;
+      setNearBottom(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isNearBottom, messages, open, sessionKey]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     programmaticScrollRef.current = true;
