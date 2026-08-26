@@ -46,7 +46,7 @@ function BoardColumn({
   const [dragOver, setDragOver] = useState(false);
   return (
     <div
-      className={`kanban-column flex flex-col min-w-[11rem] w-[13rem] sm:w-auto shrink-0 sm:min-w-0 gap-1.5 rounded-lg border p-2 ${dragOver ? 'border-sky-400/60 bg-sky-400/5' : 'border-border-subtle bg-surface/30'}`}
+      className={`kanban-column flex flex-col min-w-[14rem] w-[17rem] sm:w-auto shrink-0 sm:min-w-0 gap-2 rounded-xl border p-2.5 ${dragOver ? 'border-sky-400/60 bg-sky-400/5' : 'border-border-subtle bg-surface/30'}`}
       data-status={name}
       onDragOver={(e) => {
         e.preventDefault();
@@ -74,7 +74,7 @@ function BoardColumn({
           </button>
         </div>
       </div>
-      <div className="flex sm:flex-col gap-1.5 overflow-x-auto sm:overflow-x-visible sm:overflow-y-auto pb-1" role="list">
+      <div className="flex sm:flex-col gap-2 overflow-x-auto sm:overflow-x-visible sm:overflow-y-auto pb-1" role="list">
         {tasks.map((task) => (
           <button
             key={task.id}
@@ -232,6 +232,92 @@ function TaskDrawer({
   );
 }
 
+function BoardPicker({
+  boards,
+  activeBoard,
+  onSelect,
+}: {
+  boards: MissionControlKanbanBoardMeta[];
+  activeBoard: string;
+  onSelect: (slug: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const active = boards.find((b) => b.slug === activeBoard);
+  return (
+    <div className="kanban-board-picker relative" ref={ref}>
+      <button
+        type="button"
+        className="kanban-board-trigger flex items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-xs font-medium text-text hover:border-border focus:border-sky-400/60 focus:outline-none"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Select kanban board"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <KanbanIcon size={13} className="text-sky-400 shrink-0" />
+        <span className="max-w-[11rem] truncate">{active ? active.name || active.slug : 'Select board'}</span>
+        {typeof active?.total === 'number' ? (
+          <span className="rounded-full bg-surface-sunken px-1.5 py-px text-[10px] tabular-nums text-text-subtle">{active.total}</span>
+        ) : null}
+        <svg
+          className={`ml-auto h-3.5 w-3.5 shrink-0 text-text-subtle transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          aria-hidden
+        >
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.23 8.29a.75.75 0 010-1.08z" clipRule="evenodd" />
+        </svg>
+      </button>
+      {open ? (
+        <ul
+          role="listbox"
+          aria-label="Kanban boards"
+          className="kanban-board-menu absolute left-0 top-[calc(100%+4px)] z-40 min-w-full w-max max-w-[18rem] overflow-hidden rounded-xl border border-border-subtle bg-surface p-1 shadow-xl"
+        >
+          {boards.map((b) => {
+            const selected = b.slug === activeBoard;
+            return (
+              <li key={b.slug} role="option" aria-selected={selected}>
+                <button
+                  type="button"
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${selected ? 'bg-sky-400/10 text-text font-medium' : 'text-text-muted hover:bg-surface-sunken hover:text-text'}`}
+                  onClick={() => {
+                    onSelect(b.slug);
+                    setOpen(false);
+                  }}
+                >
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${b.is_current ? 'bg-emerald-400' : 'bg-transparent border border-border-subtle'}`} title={b.is_current ? 'Active board (CLI/gateway)' : undefined} />
+                  <span className="truncate flex-1">{b.name || b.slug}</span>
+                  {typeof b.total === 'number' ? (
+                    <span className="rounded-full bg-surface-sunken px-1.5 py-px text-[10px] tabular-nums text-text-subtle">{b.total}</span>
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function KanbanRoute() {
   const { storedToken } = useMissionControl();
   const [board, setBoard] = useState<MissionControlKanbanBoard | null>(null);
@@ -340,16 +426,28 @@ export function KanbanRoute() {
 
   const [newTaskStatus, setNewTaskStatus] = useState<string | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskBody, setNewTaskBody] = useState('');
+  const [newTaskPriority, setNewTaskPriority] = useState(0);
   const [creating, setCreating] = useState(false);
+
+  const closeNewTask = () => {
+    setNewTaskStatus(null);
+    setNewTaskTitle('');
+    setNewTaskBody('');
+    setNewTaskPriority(0);
+  };
 
   const submitNewTask = async () => {
     const title = newTaskTitle.trim();
     if (!title || !newTaskStatus) return;
     setCreating(true);
     try {
-      await createKanbanTask(storedToken || undefined, { title }, activeBoard || undefined);
-      setNewTaskTitle('');
-      setNewTaskStatus(null);
+      await createKanbanTask(
+        storedToken || undefined,
+        { title, body: newTaskBody.trim() || undefined, priority: newTaskPriority },
+        activeBoard || undefined,
+      );
+      closeNewTask();
       await refresh(activeBoard);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Create failed.');
@@ -371,18 +469,7 @@ export function KanbanRoute() {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <KanbanIcon size={16} className="text-sky-400 shrink-0" />
-          <select
-            value={activeBoard}
-            onChange={(e) => setActiveBoard(e.target.value)}
-            aria-label="Select kanban board"
-            className="max-w-[12rem] truncate rounded-md border border-border-subtle bg-surface px-2 py-1 text-xs text-text focus:outline-none"
-          >
-            {boards.map((b) => (
-              <option key={b.slug} value={b.slug}>
-                {b.name || b.slug}{typeof b.total === 'number' ? ` (${b.total})` : ''}
-              </option>
-            ))}
-          </select>
+          <BoardPicker boards={boards} activeBoard={activeBoard} onSelect={setActiveBoard} />
         </div>
         <div className="flex items-center gap-2">
           {error ? <span className="text-[10px] text-red-400 truncate max-w-[14rem]" role="alert">{error}</span> : null}
@@ -422,7 +509,7 @@ export function KanbanRoute() {
           onClick={() => setNewTaskStatus(null)}
         >
           <form
-            className="w-full sm:max-w-sm rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl"
+            className="w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
             onSubmit={(e) => {
               e.preventDefault();
@@ -430,23 +517,73 @@ export function KanbanRoute() {
             }}
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-text">New task → {newTaskStatus}</h2>
-              <Button variant="ghost" size="sm" type="button" aria-label="Cancel new task" onClick={() => setNewTaskStatus(null)}>
+              <h2 className="text-sm font-semibold text-text">New task</h2>
+              <Button variant="ghost" size="sm" type="button" aria-label="Cancel new task" onClick={closeNewTask}>
                 <X size={14} />
               </Button>
             </div>
-            <input
-              autoFocus
-              value={newTaskTitle}
-              onChange={(e) => setNewTaskTitle(e.target.value)}
-              placeholder="Task title"
-              className="mt-3 w-full rounded-md border border-border-subtle bg-surface-sunken px-2 py-1.5 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
-              aria-label="Task title"
-            />
-            <div className="mt-3 flex justify-end gap-2">
-              <Button type="submit" size="sm" disabled={!newTaskTitle.trim() || creating}>
-                {creating ? 'Creating…' : 'Create'}
-              </Button>
+
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Column</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {(board?.columns ?? []).map((c) => (
+                  <button
+                    key={c.name}
+                    type="button"
+                    className={`rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide transition-colors ${newTaskStatus === c.name ? 'border-sky-400/70 bg-sky-400/10 text-text' : 'border-border-subtle text-text-muted hover:border-border hover:text-text'}`}
+                    aria-pressed={newTaskStatus === c.name}
+                    onClick={() => setNewTaskStatus(c.name)}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </label>
+
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Title *</span>
+              <input
+                autoFocus
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                placeholder="Short, actionable title"
+                maxLength={200}
+                className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
+              />
+            </label>
+
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description</span>
+              <textarea
+                value={newTaskBody}
+                onChange={(e) => setNewTaskBody(e.target.value)}
+                placeholder="Context, acceptance criteria, links…"
+                rows={4}
+                className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[5rem]"
+              />
+            </label>
+
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Priority</span>
+                <select
+                  value={newTaskPriority}
+                  onChange={(e) => setNewTaskPriority(Number(e.target.value))}
+                  className="rounded-lg border border-border-subtle bg-surface px-2 py-1.5 text-xs text-text focus:outline-none"
+                  aria-label="Task priority"
+                >
+                  <option value={2}>High</option>
+                  <option value={1}>Medium</option>
+                  <option value={0}>Normal</option>
+                  <option value={-1}>Low</option>
+                </select>
+              </label>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" type="button" onClick={closeNewTask}>Cancel</Button>
+                <Button type="submit" size="sm" disabled={!newTaskTitle.trim() || creating}>
+                  {creating ? 'Creating…' : 'Create'}
+                </Button>
+              </div>
             </div>
           </form>
         </div>

@@ -2493,7 +2493,7 @@ export function moveKanbanTask(
 
 export function createKanbanTask(
   accessToken: string | undefined,
-  input: { title: string; body?: string },
+  input: { title: string; body?: string; priority?: number },
   board?: string,
 ): Promise<{ id: string }> {
   const qs = board ? `?board=${encodeURIComponent(board)}` : '';

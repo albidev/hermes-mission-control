@@ -3919,3 +3919,27 @@ button {
   scrollbar-width: thin;
   max-height: calc(100vh - 14rem);
 }
+
+/* Kanban board picker dropdown */
+.kanban-board-menu {
+  animation: kanban-menu-in 120ms ease-out;
+  transform-origin: top left;
+}
+@keyframes kanban-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kanban-board-menu {
+    animation: none;
+  }
+}
+.kanban-board-trigger:focus-visible {
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+}
