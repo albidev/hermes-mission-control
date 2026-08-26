@@ -19,7 +19,6 @@ export function Modal({ open, title, subtitle, onClose, children, footer }: Moda
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-  const { t } = useI18n();
       if (event.key === 'Escape') {
         onClose();
       }
