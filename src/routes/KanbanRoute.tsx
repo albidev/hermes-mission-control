@@ -240,7 +240,10 @@ function TaskDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`Task ${detail?.title ?? taskId}`} onClick={onClose}>
-      <div className="w-full sm:max-w-lg max-h-[85vh] overflow-y-auto rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="kanban-drawer w-full sm:max-w-lg max-h-[88dvh] overflow-y-auto rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         {!detail ? (
           <p className="text-sm text-text-muted py-8 text-center">Loading task…</p>
         ) : (
@@ -719,7 +722,7 @@ export function KanbanRoute() {
       {/* New Task Modal */}
       {newTaskStatus ? (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="New task" onClick={closeNewTask}>
-          <form className="w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void submitNewTask(); }}>
+          <form className="kanban-modal w-full sm:max-w-md max-h-[92dvh] overflow-y-auto rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void submitNewTask(); }}>
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-text">New task → {newTaskStatus}</h2>
               <Button variant="ghost" size="sm" type="button" aria-label="Cancel new task" onClick={closeNewTask}><X size={14} /></Button>
@@ -770,7 +773,7 @@ export function KanbanRoute() {
       {/* New Board Modal */}
       {newBoardOpen ? (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="New board" onClick={closeNewBoard}>
-          <form className="w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void submitNewBoard(); }}>
+          <form className="kanban-modal w-full sm:max-w-md max-h-[92dvh] overflow-y-auto rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void submitNewBoard(); }}>
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-text">New board</h2>
               <Button variant="ghost" size="sm" type="button" aria-label="Cancel new board" onClick={closeNewBoard}><X size={14} /></Button>
@@ -795,7 +798,7 @@ export function KanbanRoute() {
       {/* Delete Board Confirmation */}
       {deleteTarget ? (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="alertdialog" aria-modal="true" aria-label={`Delete board ${deleteTarget.name || deleteTarget.slug}`} onClick={closeDeleteBoard}>
-          <form className="w-full sm:max-w-sm rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void confirmDeleteBoard(); }}>
+          <form className="kanban-modal w-full sm:max-w-sm max-h-[92dvh] overflow-y-auto rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void confirmDeleteBoard(); }}>
             <h2 className="text-sm font-semibold text-text">Delete board "{deleteTarget.name || deleteTarget.slug}"?</h2>
             <p className="mt-1 text-xs text-text-muted">{typeof deleteTarget.total === 'number' && deleteTarget.total > 0 ? `${deleteTarget.total} task${deleteTarget.total === 1 ? '' : 's'} on this board.` : 'This board has no tasks.'}</p>
             <label className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-2.5">

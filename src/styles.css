@@ -3943,3 +3943,13 @@ button {
 .kanban-board-trigger:focus-visible {
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
 }
+
+/* Mobile: prevent iOS auto-zoom on form fields inside kanban modals */
+@media (max-width: 640px) {
+  .kanban-modal input,
+  .kanban-modal textarea,
+  .kanban-drawer input,
+  .kanban-drawer textarea {
+    font-size: 16px !important;
+  }
+}
