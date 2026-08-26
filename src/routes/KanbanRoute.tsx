@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Kanban as KanbanIcon, RefreshCw, Plus, X, MessageSquare, GitBranch, Trash2, Search, Filter } from 'lucide-react';
+import { Kanban as KanbanIcon, RefreshCw, Plus, X, MessageSquare, GitBranch, Trash2, Search, ChevronDown } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import {
@@ -122,17 +122,17 @@ function BoardColumn({
       {/* Header */}
       <div className="flex items-center justify-between px-0.5">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_DOT[name] ?? 'bg-text-muted'}`} />
-          <span className={`text-[10px] font-semibold uppercase tracking-wide ${STATUS_TONES[name] ?? 'text-text-muted'}`}>{name}</span>
+          <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${STATUS_DOT[name] ?? 'bg-text-muted'}`} />
+          <span className={`text-xs font-semibold uppercase tracking-wide ${STATUS_TONES[name] ?? 'text-text-muted'}`}>{name}</span>
         </div>
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-text-subtle tabular-nums">{tasks.length}</span>
+          <span className="text-[11px] text-text-subtle tabular-nums">{tasks.length}</span>
           <button type="button" className="flex h-5 w-5 items-center justify-center rounded p-0 text-text-subtle hover:text-text hover:bg-surface-sunken" aria-label={`Add task to ${name}`} onClick={() => onAddTask(name)}>
-            <Plus size={12} />
+            <Plus size={13} />
           </button>
         </div>
       </div>
-      {hint ? <p className="text-[9px] text-text-subtle/70 px-0.5 -mt-1">{hint}</p> : null}
+      {hint ? <p className="text-[10px] text-text-muted px-0.5 -mt-1">{hint}</p> : null}
 
       {/* Task cards */}
       <div className="flex sm:flex-col gap-2 overflow-x-auto sm:overflow-x-visible sm:overflow-y-auto pb-1" role="list">
@@ -359,6 +359,7 @@ function BoardPicker({
       >
         <span className="truncate max-w-[10rem]">{active?.name || activeBoard}</span>
         <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${active?.is_current ? 'bg-emerald-400' : 'bg-border-subtle'}`} title={active?.is_current ? 'Active board (CLI/gateway)' : undefined} />
+        <ChevronDown size={13} className={`shrink-0 text-text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open ? (
         <ul className="absolute z-30 mt-1 min-w-[14rem] max-w-[20rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl" role="listbox" aria-label="Select board">
@@ -373,7 +374,7 @@ function BoardPicker({
                     <span className="truncate flex-1">{b.name || b.slug}</span>
                   </button>
                   <span className="rounded-full bg-surface-sunken px-1.5 py-px text-[10px] tabular-nums text-text-subtle">{typeof b.total === 'number' ? b.total : ''}</span>
-                  <button type="button" className={`rounded p-1 text-text-subtle hover:bg-red-500/10 hover:text-red-400 disabled:pointer-events-none disabled:opacity-0 ${deletable ? '' : 'invisible'}`} aria-label={`Delete board ${b.name || b.slug}`} title={deletable ? 'Delete board' : 'The default board cannot be deleted'} disabled={!deletable} onClick={() => { setOpen(false); onDeleteRequest(b.slug); }}>
+                  <button type="button" className={`rounded p-1 text-text-subtle hover:bg-red-500/10 hover:text-red-400 disabled:pointer-events-none disabled:opacity-0 ${deletable ? '' : 'invisible'}`} style={{ width: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} aria-label={`Delete board ${b.name || b.slug}`} title={deletable ? 'Delete board' : 'The default board cannot be deleted'} disabled={!deletable} onClick={() => { setOpen(false); onDeleteRequest(b.slug); }}>
                     <Trash2 size={12} />
                   </button>
                 </div>
@@ -633,8 +634,8 @@ export function KanbanRoute() {
       ) : !board ? (
         <div className="flex-1 flex items-center justify-center text-sm text-text-muted">No board loaded.</div>
       ) : (
-        <div className="flex-1 overflow-x-auto sm:overflow-x-visible p-4" style={{ minHeight: 0 }}>
-          <div className="flex sm:grid gap-3 h-full sm:grid-cols-8" style={{ minWidth: 'max-content' }}>
+        <div className="kanban-scroller flex-1 overflow-x-auto overflow-y-hidden p-4" style={{ minHeight: 0 }}>
+          <div className="flex gap-3 h-full items-stretch" style={{ width: 'max-content' }}>
             {filteredColumns.map((col) => (
               <BoardColumn key={col.name} name={col.name} tasks={col.tasks} activeTaskId={openTaskId} onOpenTask={setOpenTaskId} onDropTask={(id, s) => void handleMove(id, s)} onAddTask={setNewTaskStatus} />
             ))}
