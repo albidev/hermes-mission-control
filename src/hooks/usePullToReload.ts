@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 
 const PULL_THRESHOLD = 72;
 const RESISTANCE = 0.55;
@@ -54,6 +55,7 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
       startYRef.current = clientY;
       currentYRef.current = clientY;
       pullStartedRef.current = false;
+      recordReloadDiagnostic('touchstart-at-top', { clientY });
     },
     [disabled, getTarget, isAtTop],
   );
@@ -76,6 +78,10 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
           return;
         }
         pullStartedRef.current = true;
+        recordReloadDiagnostic('touch-pull-start', {
+          delta,
+          stack: new Error('Mission Control pull gesture').stack,
+        });
       }
 
       if (!pullStartedRef.current) return;
@@ -131,11 +137,17 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
           isAtTop(getTarget())
         ) {
           event.preventDefault();
+          recordReloadDiagnostic('touch-prevent-default', { delta: clientY - startYRef.current });
         }
         handleMove(clientY);
       }
     };
-    const onTouchEnd = () => handleEnd();
+    const onTouchEnd = () => {
+      if (startYRef.current !== null || pullStartedRef.current) {
+        recordReloadDiagnostic('touchend', { pullStarted: pullStartedRef.current });
+      }
+      void handleEnd();
+    };
 
     const onMouseDown = (event: MouseEvent) => {
       handleStart(event.clientY);

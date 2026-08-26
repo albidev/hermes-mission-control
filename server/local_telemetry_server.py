@@ -28,6 +28,9 @@ SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
+CLIENT_DIAGNOSTICS_LOG = Path.home() / ".hermes" / "logs" / "mission-control-client.log"
+_CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
+
 import candidates as candidates_mod
 
 from mission_control_agents import (
@@ -391,6 +394,16 @@ def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool =
     if not expected or not candidate:
         return False
     return hmac.compare_digest(candidate, expected)
+
+
+def _append_client_diagnostic(payload: Dict[str, Any]) -> None:
+    """Persist browser reload breadcrumbs without ever recording its auth token."""
+    safe_payload = {key: value for key, value in payload.items() if key != "_accessToken"}
+    line = json.dumps(safe_payload, ensure_ascii=False, separators=(",", ":"))
+    with _CLIENT_DIAGNOSTICS_LOCK:
+        CLIENT_DIAGNOSTICS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with CLIENT_DIAGNOSTICS_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
 
 
 def _read_only_mode() -> bool:
@@ -1382,7 +1395,7 @@ def _collect_logs(max_files: int = 10, max_lines: int = 160) -> Dict[str, Any]:
             reverse=True,
         )
         # Prioritize gateway and agent logs by boosting them when present.
-        priority_names = {"gateway.log", "gateway.error.log", "agent.log", "dashboard-api.error.log", "mission-control-telemetry.error.log", "mission-control.error.log", "tui_gateway_crash.log"}
+        priority_names = {"gateway.log", "gateway.error.log", "agent.log", "dashboard-api.error.log", "mission-control-telemetry.error.log", "mission-control.error.log", "mission-control-client.log", "tui_gateway_crash.log"}
         priority_files = [f for f in all_files if f.name in priority_names]
         other_files = [f for f in all_files if f.name not in priority_names]
         merged = priority_files + other_files
@@ -1950,9 +1963,26 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": "kanban_failed", "detail": str(exc)[:240]})
 
     def do_POST(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/local/client-diagnostics":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            supplied_token = str(payload.pop("_accessToken", "") or "").strip()
+            expected_token = _resolve_access_token()
+            body_authorized = bool(
+                expected_token
+                and supplied_token
+                and hmac.compare_digest(supplied_token, expected_token)
+            )
+            if not _is_authorized(self) and not body_authorized:
+                self._unauthorized()
+                return
+            _append_client_diagnostic(payload)
+            self._json(200, {"success": True})
+            return
         if self._reject_mutation_in_read_only_mode():
             return
-        parsed = urllib.parse.urlparse(self.path)
         if parsed.path.startswith("/api/local/cron/"):
             if not _is_authorized(self):
                 self._unauthorized()
