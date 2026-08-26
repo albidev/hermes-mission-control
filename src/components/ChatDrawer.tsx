@@ -658,6 +658,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
 
   const handleNewChat = async () => {
     if (newChatLoading) return;
+    if (!window.confirm('Start a new chat? The current transcript will be cleared.')) return;
     setNewChatLoading(true);
     try {
       await reset();

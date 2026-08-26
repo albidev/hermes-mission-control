@@ -44,6 +44,8 @@ See the [tldraw feature matrix](docs/tldraw-feature-matrix.md) and the [Mission 
 
 All data flows through `/api/local/*` endpoints. In development, Vite proxies those requests to the telemetry server.
 
+See [docs/telemetry.md](docs/telemetry.md) for the full telemetry overview, including the **provider-usage** pipeline (CodexBar → cache → gauges) and its troubleshooting.
+
 ## Quick start
 
 ```bash
