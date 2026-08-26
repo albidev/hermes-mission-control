@@ -139,10 +139,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Planned work, tracked as GitHub issues:
 
-- [#7 — i18n / UI localization](https://github.com/albidev/hermes-mission-control/issues/7)
+- None currently.
 
 Completed:
 
+- [#7 — i18n / UI localization](https://github.com/albidev/hermes-mission-control/issues/7) — shipped on `develop`; see the locale catalogs in `src/locales/` and the shared `I18nProvider`
 - [#8 — Implement Kanban Board in Mission Control UI](https://github.com/albidev/hermes-mission-control/issues/8) — shipped on `develop`; see [docs/kanban.md](docs/kanban.md)
 
 ## License

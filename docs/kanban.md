@@ -71,7 +71,20 @@ The frontend calls the sidecar endpoints under `/api/local/kanban/*`:
 
 The bridge delegates database and task lifecycle operations to the Hermes core `kanban_db`. Orchestration settings remain in the Hermes core configuration and dashboard; Mission Control deliberately does not duplicate that settings panel.
 
-## Testing
+## Localization
+
+The UI supports English (`en`) and Italian (`it`) through the shared `I18nProvider` and catalogs in `src/locales/en.json` and `src/locales/it.json`.
+
+- The language switcher is available in the global shell and persists the selected locale in `localStorage`.
+- All user-facing dashboard, Kanban, Chat, canvas, dialog, tooltip, placeholder, and accessibility labels resolve through the active catalog.
+- Dates, times, numbers, percentages, and currencies use locale-aware formatters from `src/lib/format.ts`.
+- Missing keys fall back to English; missing keys in both catalogs remain visible as their key name rather than silently disappearing.
+- Product names, model names, IDs, paths, slugs, file formats, and user-generated content are intentionally not translated.
+
+## Tool inventory
+
+The Tools route reads configurable toolsets from the Hermes installation resolved through `HERMES_HOME`, rather than relying on the Mission Control repository layout. This keeps the inventory accurate when Hermes is installed outside the dashboard checkout.
+
 
 The bridge tests use an isolated temporary `HERMES_HOME` and the real Hermes core checkout. They run locally with the core virtual environment:
 
