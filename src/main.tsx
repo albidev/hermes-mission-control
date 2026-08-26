@@ -1,10 +1,11 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { I18nProvider, useI18n } from './lib/i18n';
 import { ensureServiceWorker } from './lib/push-client';
 import './styles.css';
 
-class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+class AppErrorBoundary extends Component<{ children: ReactNode; copy: { title: string; message: string; reload: string } }, { hasError: boolean }> {
   state = { hasError: false };
 
   static getDerivedStateFromError() {
@@ -20,21 +21,28 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: bo
     return (
       <main className="app-error-screen" role="alert">
         <div className="app-error-card">
-          <strong>Mission Control needs to reload</strong>
-          <span>The page was interrupted while returning to the foreground.</span>
-          <button type="button" onClick={() => window.location.reload()}>Reload Mission Control</button>
+          <strong>{this.props.copy.title}</strong>
+          <span>{this.props.copy.message}</span>
+          <button type="button" onClick={() => window.location.reload()}>{this.props.copy.reload}</button>
         </div>
       </main>
     );
   }
 }
 
+function LocalizedErrorBoundary({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
+  return <AppErrorBoundary copy={{ title: t('error.reloadTitle'), message: t('error.reloadMessage'), reload: t('error.reloadAction') }}>{children}</AppErrorBoundary>;
+}
+
 const root = document.getElementById('root') as HTMLElement;
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
+    <I18nProvider>
+      <LocalizedErrorBoundary>
+        <App />
+      </LocalizedErrorBoundary>
+    </I18nProvider>
   </React.StrictMode>,
 );
 

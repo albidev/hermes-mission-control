@@ -500,7 +500,7 @@ function TaskDrawer({
               <input
                 value={commentDraft}
                 onChange={(e) => setCommentDraft(e.target.value)}
-                placeholder="Add a comment…"
+                placeholder={t('kanban.addComment')}
                 className="flex-1 rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
               />
               <Button type="submit" size="sm" disabled={!commentDraft.trim() || postingComment}>
@@ -901,8 +901,8 @@ export function KanbanRoute() {
                 value={filterTenant}
                 onChange={setFilterTenant}
                 ariaLabel="Filter by tenant"
-                placeholder="All tenants"
-                options={[{ value: '', label: 'All tenants' }, ...tenants.map((t) => ({ value: t, label: t }))]}
+                placeholder={t('kanban.allTenants')}
+                options={[{ value: '', label: t('kanban.allTenants') }, ...tenants.map((tenant) => ({ value: tenant, label: tenant }))]}
               />
             </div>
           ) : null}
@@ -912,8 +912,8 @@ export function KanbanRoute() {
                 value={filterAssignee}
                 onChange={setFilterAssignee}
                 ariaLabel="Filter by assignee"
-                placeholder="All assignees"
-                options={[{ value: '', label: 'All assignees' }, ...assignees.map((a) => ({ value: a, label: a }))]}
+                placeholder={t('kanban.allAssignees')}
+                options={[{ value: '', label: t('kanban.allAssignees') }, ...assignees.map((assignee) => ({ value: assignee, label: assignee }))]}
               />
             </div>
           ) : null}
