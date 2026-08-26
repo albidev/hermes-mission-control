@@ -2150,6 +2150,21 @@
   display: none;
 }
 
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.new-chat-confirm-modal {
+  width: min(420px, 92vw) !important;
+}
+
+.new-chat-confirm-modal .modal-footer {
+  gap: 0.75rem;
+}
+
 @media (min-width: 640px) {
   .provider-card-spacer {
     display: block;

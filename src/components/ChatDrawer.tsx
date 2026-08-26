@@ -1035,6 +1035,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       ) : null}
       <Modal
         open={newChatConfirmOpen}
+        className="new-chat-confirm-modal"
         title={t('chatDrawer.startNew')}
         subtitle={t('chatDrawer.startNewConfirm')}
         onClose={() => setNewChatConfirmOpen(false)}
