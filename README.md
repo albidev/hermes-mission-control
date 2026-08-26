@@ -20,6 +20,7 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 - Cron/job visibility and quick actions
 - Responsive layout: side rail on desktop, drawer on mobile
 - Draggable dashboard widgets with persisted layout
+- **Kanban board**: multi-board task operations, rich cards, drag-and-drop, filters, comments, live updates, and mobile-safe creation flows
 - **Expanded Chat + tldraw Agent Mode**: session-bound whiteboard, authenticated bridge, screenshot-to-chat, agent actions, Mermaid import, board lints, exports, and mobile-safe persistence
 
 ## tldraw Agent Mode
@@ -45,6 +46,8 @@ For the Chat internals (WebSocket transport, presence pill, persistence, streami
 All data flows through `/api/local/*` endpoints. In development, Vite proxies those requests to the telemetry server.
 
 See [docs/telemetry.md](docs/telemetry.md) for the full telemetry overview, including the **provider-usage** pipeline (CodexBar → cache → gauges) and its troubleshooting.
+
+See [docs/kanban.md](docs/kanban.md) for the Kanban board architecture, supported task/board operations, API endpoints, and desktop/mobile behavior.
 
 ## Quick start
 
@@ -121,7 +124,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 Planned work, tracked as GitHub issues:
 
 - [#7 — i18n / UI localization](https://github.com/albidev/hermes-mission-control/issues/7)
-- [#8 — Implement Kanban Board in Mission Control UI](https://github.com/albidev/hermes-mission-control/issues/8)
+
+Completed:
+
+- [#8 — Implement Kanban Board in Mission Control UI](https://github.com/albidev/hermes-mission-control/issues/8) — shipped on `develop`; see [docs/kanban.md](docs/kanban.md)
 
 ## License
 
