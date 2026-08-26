@@ -400,12 +400,14 @@ function Dropdown({
   onChange,
   placeholder = 'All',
   ariaLabel,
+  dropUp = false,
 }: {
   value: string;
   options: { value: string; label: string }[];
   onChange: (value: string) => void;
   placeholder?: string;
   ariaLabel: string;
+  dropUp?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -435,7 +437,7 @@ function Dropdown({
         <ChevronDown size={12} className={`shrink-0 text-text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open ? (
-        <ul className="absolute z-30 mt-1 min-w-[10rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl" role="listbox" aria-label={ariaLabel}>
+        <ul className={`absolute z-30 min-w-[10rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl ${dropUp ? 'bottom-full mb-1' : 'mt-1'}`} role="listbox" aria-label={ariaLabel}>
           {options.map((o) => {
             const selected = o.value === value;
             return (
@@ -481,6 +483,12 @@ export function KanbanRoute() {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskBody, setNewTaskBody] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState(0);
+  const [newTaskSpecifier, setNewTaskSpecifier] = useState('');
+  const [newTaskSkills, setNewTaskSkills] = useState('');
+  const [newTaskWorkspaceKind, setNewTaskWorkspaceKind] = useState('scratch');
+  const [newTaskWorkspacePath, setNewTaskWorkspacePath] = useState('');
+  const [newTaskParent, setNewTaskParent] = useState('');
+  const [newTaskGoalMode, setNewTaskGoalMode] = useState(false);
   const [creating, setCreating] = useState(false);
 
   // Board management
@@ -575,7 +583,7 @@ export function KanbanRoute() {
   }, [board, storedToken, refresh, activeBoard]);
 
   // --- Create task ---
-  const closeNewTask = () => { setNewTaskStatus(null); setNewTaskTitle(''); setNewTaskBody(''); setNewTaskPriority(0); setCreating(false); };
+  const closeNewTask = () => { setNewTaskStatus(null); setNewTaskTitle(''); setNewTaskBody(''); setNewTaskPriority(0); setNewTaskSpecifier(''); setNewTaskSkills(''); setNewTaskWorkspaceKind('scratch'); setNewTaskWorkspacePath(''); setNewTaskParent(''); setNewTaskGoalMode(false); setCreating(false); };
 
   const submitNewTask = async () => {
     const title = newTaskTitle.trim();
@@ -587,6 +595,12 @@ export function KanbanRoute() {
         body: newTaskBody.trim() || undefined,
         priority: newTaskPriority,
         status: newTaskStatus,
+        assignee: newTaskSpecifier.trim() || undefined,
+        skills: newTaskSkills.trim() || undefined,
+        workspace_kind: newTaskWorkspaceKind,
+        workspace_path: newTaskWorkspacePath.trim() || undefined,
+        parents: newTaskParent || undefined,
+        goal_mode: newTaskGoalMode || undefined,
       });
       if (result?.id) {
         setBoard((prev) => {
@@ -753,26 +767,75 @@ export function KanbanRoute() {
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Title *</span>
               <input autoFocus value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="e.g. Implement vault fallback" maxLength={200} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
             </label>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Specifier (blank = dispatcher picks)</span>
+                <input value={newTaskSpecifier} onChange={(e) => setNewTaskSpecifier(e.target.value)} placeholder="specifier" className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Priority</span>
+                <div className="mt-1">
+                  <Dropdown
+                    value={String(newTaskPriority)}
+                    onChange={(v) => setNewTaskPriority(Number(v))}
+                    ariaLabel="Task priority"
+                    dropUp
+                    options={[
+                      { value: '0', label: 'Normal' },
+                      { value: '1', label: 'P1 — High' },
+                      { value: '2', label: 'P2 — Medium' },
+                      { value: '3', label: 'P3 — Low' },
+                      { value: '-1', label: 'P4 — Lowest' },
+                    ]}
+                  />
+                </div>
+              </label>
+            </div>
             <label className="mt-3 block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description</span>
-              <textarea value={newTaskBody} onChange={(e) => setNewTaskBody(e.target.value)} placeholder="What needs to happen?" rows={3} className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[4rem]" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Skills (optional, comma-separated)</span>
+              <input value={newTaskSkills} onChange={(e) => setNewTaskSkills(e.target.value)} placeholder="skills (optional, comma-separated): translation, review…" spellCheck={false} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+            </label>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Workspace</span>
+                <div className="mt-1">
+                  <Dropdown
+                    value={newTaskWorkspaceKind}
+                    onChange={setNewTaskWorkspaceKind}
+                    ariaLabel="Workspace kind"
+                    dropUp
+                    options={[
+                      { value: 'scratch', label: 'Scratch — ephemeral' },
+                      { value: 'worktree', label: 'Git worktree — preserved' },
+                      { value: 'dir', label: 'Directory — persistent' },
+                    ]}
+                  />
+                </div>
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Workspace path</span>
+                <input value={newTaskWorkspacePath} onChange={(e) => setNewTaskWorkspacePath(e.target.value)} placeholder="/Users/albi/Projects/…" spellCheck={false} className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+              </label>
+            </div>
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Parent task (child stays blocked until the parent is done)</span>
+              {(() => {
+                const allTasks = (board?.columns ?? []).flatMap((c) => c.tasks);
+                const parentOptions = [{ value: '', label: '— no parent —' }, ...allTasks.map((t) => ({ value: t.id, label: `${t.title.slice(0, 40)}${t.title.length > 40 ? '…' : ''}` }))];
+                return (
+                  <div className="mt-1">
+                    <Dropdown value={newTaskParent} onChange={setNewTaskParent} ariaLabel="Parent task" dropUp options={parentOptions} />
+                  </div>
+                );
+              })()}
+            </label>
+            <label className="mt-3 flex items-center gap-2">
+              <input type="checkbox" checked={newTaskGoalMode} onChange={(e) => setNewTaskGoalMode(e.target.checked)} className="h-3.5 w-3.5 accent-sky-500" />
+              <span className="text-xs text-text-muted">goal mode</span>
             </label>
             <label className="mt-3 block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Priority</span>
-              <div className="mt-1">
-                <Dropdown
-                  value={String(newTaskPriority)}
-                  onChange={(v) => setNewTaskPriority(Number(v))}
-                  ariaLabel="Task priority"
-                  options={[
-                    { value: '0', label: 'Normal' },
-                    { value: '1', label: 'P1 — High' },
-                    { value: '2', label: 'P2 — Medium' },
-                    { value: '3', label: 'P3 — Low' },
-                    { value: '-1', label: 'P4 — Lowest' },
-                  ]}
-                />
-              </div>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description (optional)</span>
+              <textarea value={newTaskBody} onChange={(e) => setNewTaskBody(e.target.value)} placeholder="Rough idea — AI will spec it…" rows={2} className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[3rem]" />
             </label>
             <div className="mt-3 flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" type="button" onClick={closeNewTask}>Cancel</Button>

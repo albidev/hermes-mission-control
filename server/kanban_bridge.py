@@ -247,15 +247,52 @@ def create_task(payload: Dict[str, Any], board: Optional[str] = None,
     title = (payload.get("title") or "").strip()
     if not title:
         raise KanbanError(400, "title is required")
+    # Optional advanced fields (mirrors the core dashboard's New task form).
+    skills_raw = payload.get("skills")
+    skills = None
+    if isinstance(skills_raw, str):
+        skills = [s.strip() for s in skills_raw.split(",") if s.strip()] or None
+    elif isinstance(skills_raw, (list, tuple)):
+        skills = [str(s).strip() for s in skills_raw if str(s).strip()] or None
+    parents_raw = payload.get("parents")
+    parents = None
+    if isinstance(parents_raw, str):
+        parents = [p.strip() for p in parents_raw.split(",") if p.strip()] or None
+    elif isinstance(parents_raw, (list, tuple)):
+        parents = [str(p).strip() for p in parents_raw if str(p).strip()] or None
+    workspace_kind = (payload.get("workspace_kind") or "scratch").strip()
+    workspace_path = (payload.get("workspace_path") or "").strip() or None
+    # Column selection: 'triage' maps to the triage flag; other explicit
+    # statuses use initial_status (validated by kanban_db for create paths).
+    initial_status = (payload.get("initial_status") or "").strip()
+    triage = bool(payload.get("triage")) or initial_status == "triage"
     conn = _conn(board=board)
     try:
-        task_id = kb.create_task(
-            conn,
+        kwargs: Dict[str, Any] = dict(
             title=title,
             body=(payload.get("body") or "").strip() or None,
             created_by=author,
             priority=int(payload.get("priority") or 0),
         )
+        if payload.get("assignee"):
+            kwargs["assignee"] = str(payload["assignee"]).strip()
+        if payload.get("tenant"):
+            kwargs["tenant"] = str(payload["tenant"]).strip()
+        if skills:
+            kwargs["skills"] = skills
+        if parents:
+            kwargs["parents"] = parents
+        if workspace_kind in ("scratch", "worktree", "dir"):
+            kwargs["workspace_kind"] = workspace_kind
+        if workspace_path:
+            kwargs["workspace_path"] = workspace_path
+        if payload.get("goal_mode") is not None:
+            kwargs["goal_mode"] = bool(payload["goal_mode"])
+        if triage:
+            kwargs["triage"] = True
+        elif initial_status in ("todo", "ready"):
+            kwargs["initial_status"] = "todo" if initial_status == "todo" else "ready"
+        task_id = kb.create_task(conn, **kwargs)
         return {"id": task_id}
     except KanbanError:
         raise

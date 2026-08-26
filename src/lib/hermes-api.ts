@@ -2495,7 +2495,19 @@ export function moveKanbanTask(
 
 export function createKanbanTask(
   accessToken: string | undefined,
-  input: { title: string; body?: string; priority?: number; status?: string },
+  input: {
+    title: string;
+    body?: string;
+    priority?: number;
+    status?: string;
+    assignee?: string;
+    tenant?: string;
+    skills?: string;
+    parents?: string;
+    workspace_kind?: string;
+    workspace_path?: string;
+    goal_mode?: boolean;
+  },
   board?: string,
 ): Promise<{ id: string }> {
   const qs = board ? `?board=${encodeURIComponent(board)}` : '';
