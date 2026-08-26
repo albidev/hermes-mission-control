@@ -113,7 +113,7 @@ function BoardColumn({
 
   return (
     <div
-      className={`kanban-column flex flex-col min-w-[15rem] w-[19rem] sm:w-auto sm:min-w-[16.5rem] shrink-0 gap-3 rounded-xl border p-3 ${dragOver ? 'border-sky-400/60 bg-sky-400/5' : 'border-border-subtle bg-surface/30'}`}
+      className={`kanban-column flex flex-col w-[19rem] shrink-0 gap-3 rounded-xl border p-3 ${dragOver ? 'border-sky-400/60 bg-sky-400/5' : 'border-border-subtle bg-surface/30'}`}
       data-status={name}
       onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
