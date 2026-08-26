@@ -34,6 +34,8 @@ import {
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatComposer } from './ChatComposer';
+import { Modal } from './Modal';
+import { Button } from './ui/Button';
 import type { ChatSlashPopoverHandle } from './ChatSlashPopover';
 import type { CanvasScreenshotAttachment } from './TLDrawCanvas';
 import { ChatMessageCard } from './chat-messages';
@@ -194,6 +196,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const [interactionDraft, setInteractionDraft] = useState('');
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
   const [newChatLoading, setNewChatLoading] = useState(false);
+  const [newChatConfirmOpen, setNewChatConfirmOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
@@ -660,9 +663,14 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     }
   };
 
-  const handleNewChat = async () => {
+  const handleNewChat = () => {
     if (newChatLoading) return;
-    if (!window.confirm('Start a new chat? The current transcript will be cleared.')) return;
+    setNewChatConfirmOpen(true);
+  };
+
+  const confirmNewChat = async () => {
+    if (newChatLoading) return;
+    setNewChatConfirmOpen(false);
     setNewChatLoading(true);
     try {
       await reset();
@@ -825,7 +833,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               >
                 <span className="chat-led-dot" />
               </span>
-              <button className="chat-new-button" type="button" onClick={() => void handleNewChat()} disabled={newChatLoading} title={t('chatDrawer.startNew')} aria-label={t('chatDrawer.startNew')}>
+              <button className="chat-new-button" type="button" onClick={handleNewChat} disabled={newChatLoading} title={t('chatDrawer.startNew')} aria-label={t('chatDrawer.startNew')}>
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>{t('kanban.new')}</span>
               </button>
@@ -1025,6 +1033,21 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           onMouseDown={startCanvasResize}
         />
       ) : null}
+      <Modal
+        open={newChatConfirmOpen}
+        className="new-chat-confirm-modal"
+        title={t('chatDrawer.startNew')}
+        subtitle={t('chatDrawer.startNewConfirm')}
+        onClose={() => setNewChatConfirmOpen(false)}
+        footer={(
+          <>
+            <Button variant="ghost" size="sm" type="button" onClick={() => setNewChatConfirmOpen(false)}>{t('kanban.cancel')}</Button>
+            <Button size="sm" type="button" onClick={() => void confirmNewChat()} disabled={newChatLoading}>{t('chatDrawer.confirmStartNew')}</Button>
+          </>
+        )}
+      >
+        <p className="text-sm text-text-muted">{t('chatDrawer.startNewConfirm')}</p>
+      </Modal>
     </>
   );
 });

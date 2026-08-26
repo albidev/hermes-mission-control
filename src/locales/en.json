@@ -554,6 +554,7 @@
   "chatDrawer.resumeSession": "Resume session",
   "chatDrawer.noRecentMessages": "No recent messages available.",
   "chatDrawer.startNewConfirm": "Start a new chat? The current transcript will be cleared.",
+  "chatDrawer.confirmStartNew": "Start new chat",
   "chatDrawer.steer": "Steer Hermes…",
   "chatDrawer.message": "Message Hermes",
   "chatDrawer.attach": "Attach image or file",

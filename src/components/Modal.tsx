@@ -9,9 +9,10 @@ type ModalProps = {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  className?: string;
 };
 
-export function Modal({ open, title, subtitle, onClose, children, footer }: ModalProps) {
+export function Modal({ open, title, subtitle, onClose, children, footer, className }: ModalProps) {
   const { t } = useI18n();
   useEffect(() => {
     if (!open || typeof window === 'undefined') {
@@ -56,6 +57,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer }: Moda
           'mobile-modal',
           'rounded-t-2xl sm:rounded-2xl border border-border bg-surface shadow-2xl',
           'flex flex-col overflow-hidden',
+          className,
         ].join(' ')}
         role="dialog"
         aria-modal="true"
@@ -80,7 +82,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer }: Moda
 
         <div className="flex-1 overflow-y-auto p-4">{children}</div>
 
-        {footer ? <div className="px-4 py-3 border-t border-border-subtle bg-surface-raised/40">{footer}</div> : null}
+        {footer ? <div className="modal-footer px-4 py-3 border-t border-border-subtle bg-surface-raised/40">{footer}</div> : null}
       </section>
     </div>,
     document.body,
