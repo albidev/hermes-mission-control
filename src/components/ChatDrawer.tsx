@@ -344,7 +344,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   }, [open]);
 
   const isNearBottom = () => {
-  const { t } = useI18n();
     const el = scrollRef.current;
     if (!el) return true;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -401,7 +400,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   }, []);
 
   const renderMessages = () => {
-  const { t } = useI18n();
     if (previewMode) {
       if (previewLoading) {
         return (
