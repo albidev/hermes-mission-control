@@ -12,16 +12,32 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 
 > **Satellite by design.** Mission Control has zero runtime dependency on the Hermes core backend. It talks to a small local telemetry sidecar (Python stdlib + psutil) on port `8765`.
 
-## What you get
+## Features
+
+### Operations dashboard
 
 - Gateway/runtime health and system metrics
 - Active model, fallback model, and agent status
-- Sessions, agents, usage, knowledge, tools, skills, config, logs routes
-- Cron/job visibility and quick actions
-- Responsive layout: side rail on desktop, drawer on mobile
+- Sessions, agents, tools, skills, configuration, logs, and cron visibility
+- Provider usage for Codex and Ollama with session/weekly gauges
 - Draggable dashboard widgets with persisted layout
-- **Kanban board**: multi-board task operations, rich cards, drag-and-drop, filters, comments, live updates, and mobile-safe creation flows
+
+### Kanban operations
+
+- Multi-board task management backed by Hermes core `kanban_db`
+- Eight workflow columns with rich task cards, priorities, IDs, ages, progress, and comments
+- Drag-and-drop task movement with optimistic updates and rollback
+- Board and task creation, archive/permanent deletion, comments, search, and filters
+- Mobile-safe task and board creation flows
+- See [docs/kanban.md](docs/kanban.md) for the complete Kanban feature and API reference
+
+### Chat and agent workspace
+
+- Streaming Chat with presence states, reasoning events, and completion recovery
 - **Expanded Chat + tldraw Agent Mode**: session-bound whiteboard, authenticated bridge, screenshot-to-chat, agent actions, Mermaid import, board lints, exports, and mobile-safe persistence
+- Responsive layout: side rail on desktop, drawer and bottom sheets on mobile
+
+For Chat internals, see [docs/chat.md](docs/chat.md). For telemetry and provider usage, see [docs/telemetry.md](docs/telemetry.md).
 
 ## tldraw Agent Mode
 
