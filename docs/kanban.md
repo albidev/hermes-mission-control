@@ -29,6 +29,15 @@ The feature is available from the **Kanban** route in the side navigation. It su
   - goal mode
 - Drag and drop tasks between columns with optimistic UI and rollback on failure
 - Task drawer with task details and comments
+- Operational task inspector with:
+  - result/final summary
+  - child task relationships
+  - run history (profile, outcome, elapsed time, summaries, errors)
+  - event/activity timeline with structured payloads
+  - bounded worker log tail
+  - status actions (ready, block, complete, archive)
+  - assignee and priority editing
+  - parent dependency linking and unlinking
 - Search by task title, ID, or assignee
 - Tenant and assignee filters
 - Live board refresh through event-tail polling
