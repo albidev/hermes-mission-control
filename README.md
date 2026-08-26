@@ -33,7 +33,7 @@ Mission Control links the expanded Chat to a tldraw whiteboard using the current
 - PNG/SVG/JSON export and Mermaid flowchart import
 - Mobile-safe open feedback and explicit close/unmount to keep iOS input responsive
 
-See the [tldraw feature matrix](docs/tldraw-feature-matrix.md) and the [Mission Control tldraw Agent Mode vault note](https://github.com/albidev/hermes-vault/blob/main/wiki/concepts/mission-control-tldraw-agent-mode.md).
+For the Chat internals (WebSocket transport, presence pill, persistence, streaming & reasoning), see [docs/chat.md](docs/chat.md). See the [tldraw feature matrix](docs/tldraw-feature-matrix.md) and the [Mission Control tldraw Agent Mode vault note](https://github.com/albidev/hermes-vault/blob/main/wiki/concepts/mission-control-tldraw-agent-mode.md).
 
 ## Architecture
 
