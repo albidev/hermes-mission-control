@@ -49,6 +49,8 @@ from push_server import (
 from last_chat_store import get_last_chat, set_last_chat
 import kanban_bridge as kanban_bridge_mod
 from kanban_bridge import KanbanError as KanbanBridgeError
+import cron_bridge as cron_bridge_mod
+from cron_bridge import CronBridgeError
 from whiteboard_store import acknowledge_commands, enqueue_command, get_whiteboard, load_state, save_snapshot, save_state, get_agent_mode
 
 
@@ -847,14 +849,21 @@ def _collect_model_info() -> Dict[str, Any]:
 
 
 def _collect_cron_jobs() -> list[Dict[str, Any]]:
-    jobs_path = _get_hermes_home() / 'cron' / 'jobs.json'
-    if not jobs_path.exists():
-        return []
+    """Return the core cron inventory, enriched with latest execution output."""
     try:
-        data = json.loads(jobs_path.read_text())
-        return data.get('jobs', [])
-    except Exception:
-        return []
+        return cron_bridge_mod.list_jobs(include_disabled=True)
+    except CronBridgeError:
+        # Keep the dashboard readable if the core is temporarily unavailable.
+        # The raw file is still useful for diagnostics and does not mutate state.
+        jobs_path = _get_hermes_home() / 'cron' / 'jobs.json'
+        if not jobs_path.exists():
+            return []
+        try:
+            data = json.loads(jobs_path.read_text(encoding='utf-8'))
+            jobs = data.get('jobs', []) if isinstance(data, dict) else []
+            return jobs if isinstance(jobs, list) else []
+        except (OSError, TypeError, ValueError):
+            return []
 
 
 def _read_config_snapshot() -> Dict[str, Any]:
@@ -1470,6 +1479,70 @@ class Handler(BaseHTTPRequestHandler):
         )
         return True
 
+    def _read_json_body(self) -> Dict[str, Any] | None:
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length).decode("utf-8", errors="replace") if length else "{}"
+        try:
+            payload = json.loads(raw or "{}")
+        except (ValueError, json.JSONDecodeError) as exc:
+            self._json(400, {"error": "bad_request", "detail": f"invalid JSON: {exc}"})
+            return None
+        if not isinstance(payload, dict):
+            self._json(400, {"error": "bad_request", "detail": "JSON payload must be an object."})
+            return None
+        return payload
+
+    def _cron_error(self, exc: Exception) -> None:
+        if isinstance(exc, CronBridgeError):
+            self._json(exc.status_code, {"error": "cron_error", "detail": exc.message})
+        else:
+            self._json(500, {"error": "cron_failed", "detail": str(exc)[:240]})
+
+    def _cron_post(self, parsed, payload: Dict[str, Any]) -> None:
+        sub = parsed.path[len("/api/local/cron/"):].strip("/")
+        try:
+            if sub == "jobs":
+                self._json(200, cron_bridge_mod.create_job(payload))
+                return
+            if sub.startswith("jobs/"):
+                parts = sub[len("jobs/"):].split("/")
+                if len(parts) == 2 and parts[1] in {"pause", "resume", "run"}:
+                    job_id = urllib.parse.unquote(parts[0])
+                    action = parts[1]
+                    if action == "pause":
+                        result = cron_bridge_mod.pause_job(job_id, reason=payload.get("reason"))
+                    elif action == "resume":
+                        result = cron_bridge_mod.resume_job(job_id)
+                    else:
+                        result = cron_bridge_mod.run_job(job_id)
+                    self._json(200, result)
+                    return
+            self._json(404, {"error": "not_found", "path": parsed.path})
+        except Exception as exc:
+            self._cron_error(exc)
+
+    def _cron_patch(self, parsed, payload: Dict[str, Any]) -> None:
+        sub = parsed.path[len("/api/local/cron/"):].strip("/")
+        if not sub.startswith("jobs/") or sub.count("/") != 1:
+            self._json(404, {"error": "not_found", "path": parsed.path})
+            return
+        job_id = urllib.parse.unquote(sub[len("jobs/"):])
+        try:
+            self._json(200, cron_bridge_mod.update_job(job_id, payload))
+        except Exception as exc:
+            self._cron_error(exc)
+
+    def _cron_delete(self, parsed) -> None:
+        sub = parsed.path[len("/api/local/cron/"):].strip("/")
+        if not sub.startswith("jobs/") or sub.count("/") != 1:
+            self._json(404, {"error": "not_found", "path": parsed.path})
+            return
+        job_id = urllib.parse.unquote(sub[len("jobs/"):])
+        try:
+            self._json(200, cron_bridge_mod.delete_job(job_id))
+        except Exception as exc:
+            self._cron_error(exc)
+
     def _stream_trace(self, session_id: str | None, limit: int, compact: bool, interval: float) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -1603,6 +1676,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             jobs = _collect_cron_jobs()
             self._json(200, {'jobs': jobs, 'count': len(jobs)})
+            return
+        if parsed.path.startswith('/api/local/cron/jobs/'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            job_id = urllib.parse.unquote(parsed.path[len('/api/local/cron/jobs/'):].strip('/'))
+            try:
+                self._json(200, cron_bridge_mod.get_job(job_id))
+            except CronBridgeError as exc:
+                self._json(exc.status_code, {'error': 'cron_error', 'detail': exc.message})
+            except Exception as exc:
+                self._json(500, {'error': 'cron_failed', 'detail': str(exc)[:240]})
             return
         if parsed.path == '/api/local/config':
             if not _is_authorized(self):
@@ -1868,6 +1953,15 @@ class Handler(BaseHTTPRequestHandler):
         if self._reject_mutation_in_read_only_mode():
             return
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/local/cron/"):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            self._cron_post(parsed, payload)
+            return
         if parsed.path.startswith("/api/local/kanban/"):
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2130,10 +2224,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(404, {'error': 'not_found', 'path': self.path})
 
+    def do_PATCH(self) -> None:  # noqa: N802
+        if self._reject_mutation_in_read_only_mode():
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/local/cron/"):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            self._cron_patch(parsed, payload)
+            return
+        self._json(404, {'error': 'not_found', 'path': self.path})
+
     def do_DELETE(self) -> None:  # noqa: N802
         if self._reject_mutation_in_read_only_mode():
             return
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith('/api/local/cron/jobs/'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._cron_delete(parsed)
+            return
         if parsed.path == '/api/local/push/subscriptions':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2161,7 +2276,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         for key, value in self._cors_headers().items():
             self.send_header(key, value)
-        self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, PUT, PATCH, POST, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-API-Key')
         self.send_header('Access-Control-Allow-Credentials', 'true')
         self.send_header('Access-Control-Max-Age', '0')

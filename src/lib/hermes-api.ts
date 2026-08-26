@@ -110,14 +110,24 @@ export type MissionControlAgentTraceSnapshot = {
   warnings?: string[];
 };
 
+export type MissionControlCronExecution = {
+  status: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+};
+
 export type MissionControlCronJob = {
   id: string;
   label: string;
   enabled: boolean;
   state: string;
   scheduleDisplay: string;
+  scheduleKind?: string;
+  scheduleExpr?: string | null;
   nextRunAt: string | null;
   lastRunAt: string | null;
+  createdAt?: string | null;
   pausedReason: string | null;
   lastStatus: string | null;
   lastError: string | null;
@@ -126,6 +136,19 @@ export type MissionControlCronJob = {
   provider: string | null;
   skill: string | null;
   skills: string[];
+  repeat?: { times?: number | null; completed?: number | null } | number | null;
+  deliver?: string | null;
+  script?: string | null;
+  noAgent?: boolean;
+  contextFrom?: string[];
+  enabledToolsets?: string[];
+  workdir?: string | null;
+  monitorScript?: string | null;
+  monitorUrl?: string | null;
+  attachToSession?: boolean | null;
+  reasoningEffort?: string | null;
+  lastOutput?: string | null;
+  latestExecution?: MissionControlCronExecution | null;
 };
 
 export type MissionControlCronSnapshot = {
@@ -1042,8 +1065,11 @@ function normalizeCronJob(input: Partial<MissionControlCronJob> | undefined): Mi
     enabled: input?.enabled ?? true,
     state: input?.state ?? 'scheduled',
     scheduleDisplay: input?.scheduleDisplay ?? 'unspecified',
+    scheduleKind: input?.scheduleKind,
+    scheduleExpr: input?.scheduleExpr ?? null,
     nextRunAt: input?.nextRunAt ?? null,
     lastRunAt: input?.lastRunAt ?? null,
+    createdAt: input?.createdAt ?? null,
     pausedReason: input?.pausedReason ?? null,
     lastStatus: input?.lastStatus ?? null,
     lastError: input?.lastError ?? null,
@@ -1052,6 +1078,19 @@ function normalizeCronJob(input: Partial<MissionControlCronJob> | undefined): Mi
     provider: input?.provider ?? null,
     skill: input?.skill ?? null,
     skills: input?.skills ?? [],
+    repeat: input?.repeat ?? null,
+    deliver: input?.deliver ?? null,
+    script: input?.script ?? null,
+    noAgent: input?.noAgent ?? false,
+    contextFrom: input?.contextFrom ?? [],
+    enabledToolsets: input?.enabledToolsets ?? [],
+    workdir: input?.workdir ?? null,
+    monitorScript: input?.monitorScript ?? null,
+    monitorUrl: input?.monitorUrl ?? null,
+    attachToSession: input?.attachToSession ?? null,
+    reasoningEffort: input?.reasoningEffort ?? null,
+    lastOutput: input?.lastOutput ?? null,
+    latestExecution: input?.latestExecution ?? null,
   };
 }
 
@@ -1674,19 +1713,35 @@ function deriveSessionsSnapshot(payload: OfficialSessionsPayload | null, status:
 }
 
 function normalizeOfficialCronJob(input: Record<string, unknown>): MissionControlCronJob {
+  const schedule = isRecord(input.schedule) ? input.schedule : {};
   const scheduleDisplay = readString(input.schedule_display)
-    || (isRecord(input.schedule) ? readString(input.schedule.display) : '')
+    || readString(schedule.display)
+    || readString(schedule.expr)
     || 'unspecified';
   const enabled = readBoolean(input.enabled, true);
   const state = readString(input.state) || (enabled ? 'scheduled' : 'paused');
+  const repeat = isRecord(input.repeat)
+    ? { times: readNumber(input.repeat.times, 0), completed: readNumber(input.repeat.completed, 0) }
+    : typeof input.repeat === 'number' ? input.repeat : null;
+  const latestExecution = isRecord(input.latest_execution)
+    ? {
+        status: readNullableString(input.latest_execution.status),
+        startedAt: readNullableString(input.latest_execution.started_at),
+        finishedAt: readNullableString(input.latest_execution.finished_at),
+        error: readNullableString(input.latest_execution.error),
+      }
+    : null;
   return normalizeCronJob({
     id: readString(input.id, 'scheduled-job'),
     label: readString(input.name) || readString(input.label) || readString(input.id, 'Scheduled job'),
     enabled,
     state,
     scheduleDisplay,
+    scheduleKind: readString(schedule.kind),
+    scheduleExpr: readNullableString(schedule.expr),
     nextRunAt: readNullableString(input.next_run_at),
     lastRunAt: readNullableString(input.last_run_at),
+    createdAt: readNullableString(input.created_at),
     pausedReason: readNullableString(input.paused_reason),
     lastStatus: readNullableString(input.last_status),
     lastError: readNullableString(input.last_error) ?? readNullableString(input.last_delivery_error),
@@ -1695,6 +1750,19 @@ function normalizeOfficialCronJob(input: Record<string, unknown>): MissionContro
     provider: readNullableString(input.provider),
     skill: readNullableString(input.skill),
     skills: readStringArray(input.skills),
+    repeat,
+    deliver: readNullableString(input.deliver),
+    script: readNullableString(input.script),
+    noAgent: readBoolean(input.no_agent),
+    contextFrom: readStringArray(input.context_from),
+    enabledToolsets: readStringArray(input.enabled_toolsets),
+    workdir: readNullableString(input.workdir),
+    monitorScript: readNullableString(input.monitor_script),
+    monitorUrl: readNullableString(input.monitor_url),
+    attachToSession: typeof input.attach_to_session === 'boolean' ? input.attach_to_session : null,
+    reasoningEffort: readNullableString(input.reasoning_effort),
+    lastOutput: readNullableString(input.last_output),
+    latestExecution,
   });
 }
 
@@ -1988,8 +2056,9 @@ export async function loadMissionControlAgentTrace(
 
 export async function loadMissionControlCron(accessToken?: string): Promise<MissionControlCronSnapshot> {
   try {
-    const { payload: jobs } = await maybeFetchLocalJson<Array<Record<string, unknown>>>('/cron/jobs', accessToken);
-    const items = Array.isArray(jobs) ? jobs.filter(isRecord).map((job) => normalizeOfficialCronJob(job)) : [];
+    const { payload } = await maybeFetchLocalJson<Array<Record<string, unknown>> | { jobs?: Array<Record<string, unknown>> }>('/cron/jobs', accessToken);
+    const rawJobs = Array.isArray(payload) ? payload : payload?.jobs;
+    const items = Array.isArray(rawJobs) ? rawJobs.filter(isRecord).map((job) => normalizeOfficialCronJob(job)) : [];
     const queuedJobs = items.filter((job) => job.enabled && job.state !== 'paused' && Boolean(job.nextRunAt)).length;
     return normalizeCron({ queuedJobs, items });
   } catch (error) {
@@ -1999,6 +2068,79 @@ export async function loadMissionControlCron(accessToken?: string): Promise<Miss
 
     return fallbackCron;
   }
+}
+
+async function requestCronJson<T>(
+  path: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  accessToken?: string,
+  body?: Record<string, unknown>,
+): Promise<T> {
+  const response = await fetch(localApiUrl(path), {
+    method,
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : '{}',
+    cache: 'no-store',
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  if (!response.ok) {
+    let detail = `Cron API returned ${response.status}`;
+    try {
+      const payload = await response.json() as { detail?: string };
+      if (payload.detail) detail = payload.detail;
+    } catch {
+      // Preserve the HTTP error if the backend did not return JSON.
+    }
+    throw new Error(detail);
+  }
+  return await response.json() as T;
+}
+
+function normalizeCronMutationResult(payload: unknown): MissionControlCronJob {
+  if (isRecord(payload) && isRecord(payload.job)) return normalizeOfficialCronJob(payload.job);
+  return normalizeOfficialCronJob(isRecord(payload) ? payload : {});
+}
+
+export async function loadMissionControlCronJobs(accessToken?: string): Promise<MissionControlCronJob[]> {
+  const snapshot = await loadMissionControlCron(accessToken);
+  return snapshot.items;
+}
+
+export async function loadMissionControlCronJob(jobId: string, accessToken?: string): Promise<MissionControlCronJob> {
+  const { payload } = await maybeFetchLocalJson<Record<string, unknown>>(`/cron/jobs/${encodeURIComponent(jobId)}`, accessToken);
+  if (!payload) throw new Error('Cron job not found.');
+  return normalizeOfficialCronJob(isRecord(payload.job) ? payload.job : payload);
+}
+
+export async function createMissionControlCronJob(
+  payload: Record<string, unknown>,
+  accessToken?: string,
+): Promise<MissionControlCronJob> {
+  return normalizeCronMutationResult(await requestCronJson('/cron/jobs', 'POST', accessToken, payload));
+}
+
+export async function updateMissionControlCronJob(
+  jobId: string,
+  payload: Record<string, unknown>,
+  accessToken?: string,
+): Promise<MissionControlCronJob> {
+  return normalizeCronMutationResult(await requestCronJson(`/cron/jobs/${encodeURIComponent(jobId)}`, 'PATCH', accessToken, payload));
+}
+
+export async function pauseMissionControlCronJob(jobId: string, accessToken?: string): Promise<MissionControlCronJob> {
+  return normalizeCronMutationResult(await requestCronJson(`/cron/jobs/${encodeURIComponent(jobId)}/pause`, 'POST', accessToken));
+}
+
+export async function resumeMissionControlCronJob(jobId: string, accessToken?: string): Promise<MissionControlCronJob> {
+  return normalizeCronMutationResult(await requestCronJson(`/cron/jobs/${encodeURIComponent(jobId)}/resume`, 'POST', accessToken));
+}
+
+export async function runMissionControlCronJob(jobId: string, accessToken?: string): Promise<MissionControlCronJob> {
+  return normalizeCronMutationResult(await requestCronJson(`/cron/jobs/${encodeURIComponent(jobId)}/run`, 'POST', accessToken));
+}
+
+export async function deleteMissionControlCronJob(jobId: string, accessToken?: string): Promise<void> {
+  await requestCronJson(`/cron/jobs/${encodeURIComponent(jobId)}`, 'DELETE', accessToken);
 }
 
 export async function loadMissionControlAlerts(accessToken?: string): Promise<MissionControlAlertsSnapshot> {

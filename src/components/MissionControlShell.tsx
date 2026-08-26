@@ -15,6 +15,7 @@ import {
   PanelLeftOpen,
   ScrollText,
   Settings,
+  Timer,
   Wrench,
 } from 'lucide-react';
 import { ThemeSelector } from './ThemeSelector';
@@ -60,6 +61,7 @@ export function MissionControlShell() {
     { to: '/usage', label: t('nav.usage'), icon: DollarSign },
     { to: '/knowledge', label: t('nav.knowledge'), icon: BookOpen },
     { to: '/tools', label: t('nav.tools'), icon: Wrench },
+    { to: '/cron', label: t('nav.cron'), icon: Timer },
     { to: '/skills', label: t('nav.skills'), icon: Brain },
     { to: '/config', label: t('nav.config'), icon: Settings },
     { to: '/logs', label: t('nav.logs'), icon: ScrollText },
