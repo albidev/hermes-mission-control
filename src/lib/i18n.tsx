@@ -1,15 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { translate, type LocaleCode, type TranslateParams } from './i18n-core';
+import { translate, resolveLocale, LOCALE_STORAGE_KEY, type LocaleCode, type TranslateParams } from './i18n-core';
 
 export type Locale = LocaleCode;
-
-export const LOCALE_STORAGE_KEY = 'mission-control-locale';
+export { LOCALE_STORAGE_KEY };
 export const SUPPORTED_LOCALES: readonly Locale[] = ['en', 'it'];
 
 function readStoredLocale(): Locale {
   try {
-    const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-    return stored === 'it' ? 'it' : 'en';
+    return resolveLocale(window.localStorage.getItem(LOCALE_STORAGE_KEY));
   } catch {
     return 'en';
   }

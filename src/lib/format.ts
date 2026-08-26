@@ -53,3 +53,62 @@ export function formatRelativeTime(value: unknown): string {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   return `${Math.floor(seconds / 86400)}d ago`;
 }
+
+/**
+ * Locale-aware formatting primitives built on the Intl API.
+ *
+ * Pure functions (no React/DOM dependency) so they run under plain Node and
+ * are directly unit-testable. A small `Intl` guard lets them be imported in
+ * runtimes where full ICU data is unavailable (e.g. a stripped-down Node
+ * binary) without crashing — they fall back to the raw value in that case.
+ */
+
+function hasIntl(): boolean {
+  return typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat === 'function';
+}
+
+export function formatDate(value: unknown, locale: string = 'en'): string {
+  if (value === null || value === undefined || value === '') return 'n/a';
+  const date = value instanceof Date ? value : new Date(value as number | string);
+  if (Number.isNaN(date.getTime())) return String(value);
+  if (!hasIntl()) return date.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: 'numeric' }).format(date);
+}
+
+export function formatTime(value: unknown, locale: string = 'en'): string {
+  if (value === null || value === undefined || value === '') return 'n/a';
+  const date = value instanceof Date ? value : new Date(value as number | string);
+  if (Number.isNaN(date.getTime())) return String(value);
+  if (!hasIntl()) return date.toISOString().slice(11, 16);
+  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
+export function formatDateTime(value: unknown, locale: string = 'en'): string {
+  if (value === null || value === undefined || value === '') return 'n/a';
+  const date = value instanceof Date ? value : new Date(value as number | string);
+  if (Number.isNaN(date.getTime())) return String(value);
+  if (!hasIntl()) return date.toISOString();
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+export function formatNumber(value: number, locale: string = 'en'): string {
+  if (!hasIntl()) return String(value);
+  return new Intl.NumberFormat(locale).format(value);
+}
+
+export function formatCurrency(value: number, currency: string, locale: string = 'en'): string {
+  if (!hasIntl()) return `${currency} ${value}`;
+  return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(value);
+}
+
+export function formatPercent(value: number, locale: string = 'en'): string {
+  if (!hasIntl()) return `${value}%`;
+  return new Intl.NumberFormat(locale, { style: 'percent' }).format(value);
+}
+

@@ -23,6 +23,19 @@ export const CATALOGS: Record<LocaleCode, MessageCatalog> = {
 
 export const FALLBACK_LOCALE: LocaleCode = 'en';
 
+/** localStorage key used to persist the active locale across reloads. */
+export const LOCALE_STORAGE_KEY = 'mission-control-locale';
+
+/**
+ * Normalize a raw stored value to a canonical locale. Anything that is not
+ * exactly 'it' resolves to the fallback ('en'). This is the single source of
+ * truth for reading a persisted preference, so it is kept pure (no DOM) and
+ * unit-testable.
+ */
+export function resolveLocale(value: string | null | undefined): LocaleCode {
+  return value === 'it' ? 'it' : 'en';
+}
+
 /** Development-mode detection, guarded for non-Vite runners. */
 function isDevMode(): boolean {
   try {
