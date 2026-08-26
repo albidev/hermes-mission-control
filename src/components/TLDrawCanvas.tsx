@@ -566,7 +566,6 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   };
 
   const clearBoard = () => {
-  const { t } = useI18n();
     if (!editor) return;
     editor.selectAll();
     editor.deleteShapes(editor.getSelectedShapeIds());
@@ -576,7 +575,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   const exportBoard = async (format: 'png' | 'svg' | 'json') => {
     if (!editor) return;
     const label = format.toUpperCase();
-    if (!window.confirm(`Export board as ${label}? The file will be downloaded immediately.`)) return;
+    if (!window.confirm(t('tldraw.exportConfirm', { label }))) return;
     const filename = `tldraw-${sessionId || sessionKey || 'board'}-${Date.now()}`;
     if (format === 'json') {
       const blob = new Blob([JSON.stringify(getSnapshot(editor.store), null, 2)], { type: 'application/json' });
@@ -617,10 +616,10 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
               if (format) void exportBoard(format);
               event.target.value = '';
             }}
-            title="Export board"
-            aria-label="Export board"
+            title={t('tldraw.exportBoard')}
+            aria-label={t('tldraw.exportBoard')}
           >
-            <option value="">Export</option>
+            <option value="">{t('tldraw.export')}</option>
             <option value="png">PNG</option>
             <option value="svg">SVG</option>
             <option value="json">JSON</option>
@@ -643,7 +642,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
         {loading ? (
           <div className="tldraw-canvas-loading" role="status">
             <Loader2 size={24} className="chat-spin" />
-            <span>Loading TLDrawCanvas…</span>
+            <span>{t('tldraw.loading')}</span>
           </div>
         ) : null}
       </div>

@@ -647,6 +647,7 @@
   "tldraw.unavailable": "Unable to load TLDrawCanvas",
   "tldraw.checkConnection": "Check the connection and try again.",
   "tldraw.retry": "Retry",
+  "tldraw.exportConfirm": "Export board as {label}? The file will be downloaded immediately.",
   "tldraw.exportBoard": "Export board",
   "tldraw.export": "Export",
   "tldraw.loading": "Loading TLDrawCanvas…",
