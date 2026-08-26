@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useRef, useState } from 'react';
 import { Blocks, CheckCircle2, Hammer, KeyRound, ChevronRight } from 'lucide-react';
 import { Card } from '../components/ui/Card';
@@ -37,6 +38,7 @@ function ToolDetailPanel({
   toolsetName: string;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const { tools } = useMissionControl();
   const toolset = tools.availableToolsets.find((ts) => ts.name === toolsetName);
   const toolCatalog = tools.toolCatalog.filter((tc) => tc.toolset === toolsetName);
@@ -55,7 +57,7 @@ function ToolDetailPanel({
               <Badge variant={toolset.available ? 'positive' : 'warning'}>
                 {toolset.available ? 'available' : 'needs key'}
               </Badge>
-              {toolset.isComposite ? <Badge variant="accent">composite</Badge> : <Badge variant="default">direct</Badge>}
+              {toolset.isComposite ? <Badge variant="accent">{t('tools.composite')}</Badge> : <Badge variant="default">{t('tools.direct')}</Badge>}
             </div>
 
             {toolset.description ? (
@@ -64,7 +66,7 @@ function ToolDetailPanel({
 
             {toolset.requirements.length > 0 ? (
               <div>
-                <p className="eyebrow mb-2">Requirements</p>
+                <p className="eyebrow mb-2">{t('tools.requirements')}</p>
                 <div className="flex flex-wrap gap-2">
                   {toolset.requirements.map((req) => (
                     <Badge key={req} variant="warning">{req}</Badge>
@@ -88,7 +90,7 @@ function ToolDetailPanel({
 
             {toolset.directTools.length > 0 ? (
               <div>
-                <p className="eyebrow mb-2">Direct tools</p>
+                <p className="eyebrow mb-2">{t('tools.directTools')}</p>
                 <div className="flex flex-wrap gap-2">
                   {toolset.directTools.map((tool) => (
                     <Badge key={tool} variant="default">{tool}</Badge>
@@ -99,7 +101,7 @@ function ToolDetailPanel({
 
             {toolset.includes.length > 0 ? (
               <div>
-                <p className="eyebrow mb-2">Includes</p>
+                <p className="eyebrow mb-2">{t('tools.includes')}</p>
                 <div className="flex flex-wrap gap-2">
                   {toolset.includes.map((inc) => (
                     <Badge key={inc} variant="accent">{inc}</Badge>
@@ -109,7 +111,7 @@ function ToolDetailPanel({
             ) : null}
           </>
         ) : (
-          <p className="text-sm text-text-muted">Toolset not found.</p>
+          <p className="text-sm text-text-muted">{t('tools.notFound')}</p>
         )}
       </div>
     </Modal>
@@ -117,6 +119,7 @@ function ToolDetailPanel({
 }
 
 export function ToolsRoute() {
+  const { t } = useI18n();
   const { tools } = useMissionControl();
   const [detailTool, setDetailTool] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -138,8 +141,8 @@ export function ToolsRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Tools</span>
-            <h2 className="text-sm font-semibold text-text">Runtime tool inventory</h2>
+            <span className="eyebrow">{t('nav.tools')}</span>
+            <h2 className="text-sm font-semibold text-text">{t('tools.title')}</h2>
           </div>
           <Badge variant={tools.available ? 'positive' : 'warning'}>{tools.available ? 'live' : 'fallback'}</Badge>
         </div>
@@ -154,8 +157,8 @@ export function ToolsRoute() {
 
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle">
-          <span className="eyebrow">Toolsets</span>
-          <h3 className="text-sm font-semibold text-text mt-0.5">Grouped by availability</h3>
+          <span className="eyebrow">{t('tools.toolsets')}</span>
+          <h3 className="text-sm font-semibold text-text mt-0.5">{t('tools.groupedByAvailability')}</h3>
         </div>
 
         <div className="divide-y divide-border-subtle">

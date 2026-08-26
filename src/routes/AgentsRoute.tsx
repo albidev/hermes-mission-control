@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Activity, Bot, Clock3, Cpu, Gauge, GitBranch, Layers, ListTree, Workflow } from 'lucide-react';
@@ -203,12 +204,13 @@ const AgentRegistryCard = memo(function AgentRegistryCard({
   registry: AgentAggregate[];
   selectedAgentId: string;
 }) {
+  const { t } = useI18n();
   return (
     <Card padding="none">
       <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
-          <span className="eyebrow">Agent registry</span>
-          <h3 className="text-sm font-semibold text-text">Per-agent stats by source + model</h3>
+          <span className="eyebrow">{t('agents.registry')}</span>
+          <h3 className="text-sm font-semibold text-text">{t('agents.perAgentStats')}</h3>
         </div>
         <Badge variant="default">{registry.length} agents</Badge>
       </div>
@@ -220,7 +222,7 @@ const AgentRegistryCard = memo(function AgentRegistryCard({
             return <AgentRegistryRow key={agent.id} agent={agent} isSelected={isSelected} />;
           })
         ) : (
-          <div className="px-4 py-8 text-center text-sm text-text-muted italic">No agent registry data yet.</div>
+          <div className="px-4 py-8 text-center text-sm text-text-muted italic">{t('agents.noRegistry')}</div>
         )}
       </div>
     </Card>
@@ -262,6 +264,7 @@ const AgentRegistryRow = memo(function AgentRegistryRow({
 });
 
 export function AgentsRoute() {
+  const { t } = useI18n();
   const { agentId } = useParams<{ agentId?: string }>();
   const [searchParams] = useSearchParams();
   const selectedAgentId = agentId ? decodeURIComponent(agentId) : '';
@@ -847,7 +850,7 @@ export function AgentsRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Agents</span>
+            <span className="eyebrow">{t('nav.agents')}</span>
             <h2 className="text-sm font-semibold text-text">
               {selectedAgent ? `Agent cockpit · ${selectedAgent.source}` : 'Runtime + trace chain (Timeline and DAG)'}
             </h2>
@@ -961,7 +964,7 @@ export function AgentsRoute() {
 
         <div className="p-4 flex flex-col gap-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <label className="text-xs text-text-muted shrink-0">Session</label>
+            <label className="text-xs text-text-muted shrink-0">{t('provider.session')}</label>
             <select
               className="auth-input py-2 text-sm"
               value={selectedSessionId}
@@ -1063,7 +1066,7 @@ export function AgentsRoute() {
             </p>
           ) : null}
 
-          {traceLoading ? <p className="text-sm text-text-muted">Loading trace…</p> : null}
+          {traceLoading ? <p className="text-sm text-text-muted">{t('agents.loadingTrace')}</p> : null}
 
           {!traceLoading && visibleTrace && visibleTrace.stats.toolCalls === 0 && visibleTrace.stats.skills === 0 ? (
             <div className="card p-3 text-xs text-text-muted">

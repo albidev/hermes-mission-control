@@ -21,6 +21,7 @@ import {
   type MissionControlKanbanTaskDetail,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { useI18n } from '../lib/i18n';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -112,8 +113,9 @@ function BoardColumn({
   onDropTask: (taskId: string, status: string) => void;
   onAddTask: (status: string) => void;
 }) {
+  const { t } = useI18n();
   const [dragOver, setDragOver] = useState(false);
-  const hint = COLUMN_HINTS[name];
+  const hint = name ? t(`kanban.columnHint.${name}`) : null;
 
   return (
     <div
@@ -131,7 +133,7 @@ function BoardColumn({
         </div>
         <div className="flex items-center gap-1">
           <span className="text-[11px] text-text-subtle tabular-nums">{tasks.length}</span>
-          <button type="button" className="flex h-5 w-5 items-center justify-center rounded p-0 text-text-subtle hover:text-text hover:bg-surface-sunken" aria-label={`Add task to ${name}`} onClick={() => onAddTask(name)}>
+          <button type="button" className="flex h-5 w-5 items-center justify-center rounded p-0 text-text-subtle hover:text-text hover:bg-surface-sunken" aria-label={t('kanban.addTaskAria', { name })} onClick={() => onAddTask(name)}>
             <Plus size={13} />
           </button>
         </div>
@@ -195,7 +197,7 @@ function BoardColumn({
         {/* Empty state */}
         {tasks.length === 0 ? (
           <div className="hidden sm:flex items-center justify-center rounded-md border border-dashed border-border-subtle p-6 text-[10px] text-text-subtle">
-            — no tasks —
+            {t('kanban.noTasks')}
           </div>
         ) : null}
       </div>
@@ -219,6 +221,7 @@ function TaskDrawer({
   onChanged?: () => void;
 }) {
   const { storedToken } = useMissionControl();
+  const { t } = useI18n();
   const [detail, setDetail] = useState<MissionControlKanbanTaskDetail | null>(null);
   const [workerLog, setWorkerLog] = useState<{ exists: boolean; content: string; size_bytes: number; truncated: boolean } | null>(null);
   const [logLoading, setLogLoading] = useState(false);
@@ -330,7 +333,7 @@ function TaskDrawer({
         onClick={(e) => e.stopPropagation()}
       >
         {!detail ? (
-          <p className="text-sm text-text-muted py-8 text-center">Loading task…</p>
+          <p className="text-sm text-text-muted py-8 text-center">{t('kanban.loadingTask')}</p>
         ) : (
           <>
             {/* Header */}
@@ -349,24 +352,24 @@ function TaskDrawer({
                   {formatAge(detail.created_at) ? <span>{formatAge(detail.created_at)}</span> : null}
                 </div>
               </div>
-              <Button variant="ghost" size="sm" aria-label="Close task" onClick={onClose}>
+              <Button variant="ghost" size="sm" aria-label={t('kanban.closeTask')} onClick={onClose}>
                 <X size={14} />
               </Button>
             </div>
 
             {/* Status actions */}
             <div className="mt-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-sunken p-2">
-              <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Actions</span>
-              {detail.status !== 'ready' && detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('ready')}>Ready</Button> : null}
-              {detail.status !== 'blocked' && detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('blocked')}>Block</Button> : null}
-              {detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('done')}>Complete</Button> : null}
-              <Button variant="ghost" size="sm" disabled={actionBusy} onClick={() => void runAction('archive')}>Archive</Button>
+              <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">{t('kanban.actions')}</span>
+              {detail.status !== 'ready' && detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('ready')}>{t('kanban.ready')}</Button> : null}
+              {detail.status !== 'blocked' && detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('blocked')}>{t('kanban.block')}</Button> : null}
+              {detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('done')}>{t('kanban.complete')}</Button> : null}
+              <Button variant="ghost" size="sm" disabled={actionBusy} onClick={() => void runAction('archive')}>{t('kanban.archive')}</Button>
             </div>
 
             {/* Editable metadata */}
             <section className="mt-3 grid grid-cols-2 gap-3 rounded-lg border border-border-subtle bg-surface-sunken p-2.5">
               <label className="block">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Assignee</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">{t('kanban.assignee')}</span>
                 <div className="mt-1 flex gap-1">
                   <input value={assigneeDraft} onChange={(e) => setAssigneeDraft(e.target.value)} placeholder="blank = dispatcher" className="min-w-0 flex-1 rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
                   <Button size="sm" disabled={actionBusy} onClick={() => void saveMetadata({ assignee: assigneeDraft.trim() || null })}>Save</Button>
@@ -380,8 +383,8 @@ function TaskDrawer({
 
             {/* Dependencies */}
             <section className="mt-3 rounded-lg border border-border-subtle bg-surface-sunken p-2.5">
-              <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Dependencies</h3>
-              {(detail.parents?.length ?? 0) > 0 ? <div className="mt-1 space-y-1">{detail.parents!.map((parentId) => <div key={parentId} className="flex items-center justify-between text-[10px] text-text-muted"><code>{parentId}</code><button type="button" className="text-text-subtle hover:text-red-400" onClick={() => void removeParent(parentId)}>remove</button></div>)}</div> : <p className="mt-1 text-[10px] text-text-subtle">No parent tasks.</p>}
+              <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">{t('kanban.dependencies')}</h3>
+              {(detail.parents?.length ?? 0) > 0 ? <div className="mt-1 space-y-1">{detail.parents!.map((parentId) => <div key={parentId} className="flex items-center justify-between text-[10px] text-text-muted"><code>{parentId}</code><button type="button" className="text-text-subtle hover:text-red-400" onClick={() => void removeParent(parentId)}>remove</button></div>)}</div> : <p className="mt-1 text-[10px] text-text-subtle">{t('kanban.noParentTasks')}</p>}
               <div className="mt-2 flex gap-1"><input value={parentDraft} onChange={(e) => setParentDraft(e.target.value)} placeholder="Parent task ID" className="min-w-0 flex-1 rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none" /><Button size="sm" disabled={!parentDraft.trim() || actionBusy} onClick={() => void addParent()}>Add parent</Button></div>
             </section>
 
@@ -526,6 +529,7 @@ function BoardPicker({
   onSelect: (slug: string) => void;
   onDeleteRequest: (slug: string) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -554,7 +558,7 @@ function BoardPicker({
         <ChevronDown size={13} className={`shrink-0 text-text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open ? (
-        <ul className="absolute z-30 mt-1 min-w-[14rem] max-w-[20rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl" role="listbox" aria-label="Select board">
+        <ul className="absolute z-30 mt-1 min-w-[14rem] max-w-[20rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl" role="listbox" aria-label={t('kanban.selectBoard')}>
           {boards.map((b) => {
             const selected = b.slug === activeBoard;
             const deletable = b.slug !== 'default' && boards.filter((x) => !x.archived).length > 1;
@@ -654,6 +658,7 @@ function Dropdown({
 
 export function KanbanRoute() {
   const { storedToken } = useMissionControl();
+  const { t } = useI18n();
   const [boards, setBoards] = useState<MissionControlKanbanBoardMeta[]>([]);
   const [activeBoard, setActiveBoard] = useState('');
   const [board, setBoard] = useState<MissionControlKanbanBoard | null>(null);
@@ -1046,10 +1051,10 @@ export function KanbanRoute() {
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="New board" onClick={closeNewBoard}>
           <form className="kanban-modal w-full sm:max-w-md max-h-[92dvh] overflow-y-auto rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void submitNewBoard(); }}>
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-text">New board</h2>
+              <h2 className="text-sm font-semibold text-text">{t('kanban.newBoard')}</h2>
               <Button variant="ghost" size="sm" type="button" aria-label="Cancel new board" onClick={closeNewBoard}><X size={14} /></Button>
             </div>
-            <p className="mt-1 text-[10px] text-text-muted">Boards let you separate unrelated streams of work — one per project, repo, or domain. Workers on one board never see another board's tasks.</p>
+            <p className="mt-1 text-[10px] text-text-muted">{t('kanban.newBoardSubtitle')}</p>
             <label className="mt-3 block">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Slug — lowercase, hyphens <span className="text-red-400">*</span></span>
               <input

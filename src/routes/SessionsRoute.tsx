@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, Bot, Clock3, Copy, DollarSign, Layers, MessageSquare, MessagesSquare, Workflow } from 'lucide-react';
@@ -52,6 +53,7 @@ function formatCost(usd: number): string {
 }
 
 export function SessionsRoute() {
+  const { t } = useI18n();
   const { snapshot, storedToken } = useMissionControl();
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentsSessionsSnapshot | null>(null);
   const [loadedItems, setLoadedItems] = useState<MissionControlAgentSessionItem[]>([]);
@@ -122,8 +124,8 @@ export function SessionsRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Sessions</span>
-            <h2 className="text-sm font-semibold text-text">Conversation runtime archive</h2>
+            <span className="eyebrow">{t('nav.sessions')}</span>
+            <h2 className="text-sm font-semibold text-text">{t('sessions.title')}</h2>
           </div>
           <Badge variant="default">{snapshot.sessions.totalSessions} tracked</Badge>
         </div>
@@ -171,10 +173,10 @@ export function SessionsRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Timeline</span>
-            <h3 className="text-sm font-semibold text-text">Latest sessions</h3>
+            <span className="eyebrow">{t('sessions.timeline')}</span>
+            <h3 className="text-sm font-semibold text-text">{t('sessions.latest')}</h3>
           </div>
-          <span className="text-xs text-text-subtle">sorted by last activity</span>
+          <span className="text-xs text-text-subtle">{t('sessions.sortedByActivity')}</span>
         </div>
 
         <div className="divide-y divide-border-subtle">
@@ -200,7 +202,7 @@ export function SessionsRoute() {
                     <button
                       type="button"
                       onClick={() => navigator.clipboard?.writeText(session.sessionId)}
-                      title="Copy session id"
+                      title={t('sessions.copySessionId')}
                       className="inline-flex items-center gap-1 text-[10px] font-mono text-text-subtle hover:text-sky-300 transition-colors truncate"
                     >
                       <Copy size={10} />
@@ -241,26 +243,26 @@ export function SessionsRoute() {
                     <Link
                       to={`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`}
                       className="ml-auto pill-button inline-flex items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-500/10 px-2.5 py-1.5 text-violet-200 hover:border-violet-300/50 hover:bg-violet-500/20 transition-colors shrink-0"
-                      title="Resume this session in Hermes Chat"
+                      title={t('sessions.resumeInChat')}
                       aria-label={`Resume chat for ${session.title}`}
                     >
                       <MessageSquare size={13} />
-                      <span>Resume chat</span>
+                      <span>{t('sessions.resumeChat')}</span>
                     </Link>
                     <Link
                       to={`/agents?session=${encodeURIComponent(session.sessionId)}`}
                       className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors shrink-0"
-                      title="Open trace in Agents"
+                      title={t('sessions.openTrace')}
                     >
                       <Workflow size={12} />
-                      <span>Trace</span>
+                      <span>{t('sessions.trace')}</span>
                     </Link>
                   </div>
                 </div>
               );
             })
           ) : (
-            <div className="px-4 py-8 text-center text-sm text-text-muted italic">No sessions yet.</div>
+            <div className="px-4 py-8 text-center text-sm text-text-muted italic">{t('sessions.noSessions')}</div>
           )}
         </div>
 

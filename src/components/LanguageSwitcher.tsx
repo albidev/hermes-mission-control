@@ -3,8 +3,15 @@ import { useI18n } from '../lib/i18n';
 function BritishFlag() {
   return (
     <svg viewBox="0 0 24 24" className="lang-icon" aria-hidden>
-      <rect x="3" y="5" width="18" height="14" rx="1.5" fill="#fff" stroke="currentColor" strokeWidth="0.8" />
-      <path d="M3 5l7.5 5.2L18 5M3 19l7.5-5.2L18 19M6 5v14M18 5v14M3 9.6h18M3 14.4h18" stroke="#012169" strokeWidth="0.9" fill="none" strokeLinejoin="round" />
+      <clipPath id="union-jack-clip"><rect x="2" y="5" width="20" height="14" rx="1.5" /></clipPath>
+      <g clipPath="url(#union-jack-clip)">
+        <rect x="2" y="5" width="20" height="14" fill="#012169" />
+        <path d="M2 5l20 14M22 5L2 19" stroke="#fff" strokeWidth="4" />
+        <path d="M2 5l20 14M22 5L2 19" stroke="#c8102e" strokeWidth="2" />
+        <path d="M12 5v14M2 12h20" stroke="#fff" strokeWidth="5" />
+        <path d="M12 5v14M2 12h20" stroke="#c8102e" strokeWidth="2.5" />
+      </g>
+      <rect x="2" y="5" width="20" height="14" rx="1.5" fill="none" stroke="currentColor" strokeWidth="0.8" />
     </svg>
   );
 }

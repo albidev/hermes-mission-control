@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useMemo, useRef, useState, type ElementType } from 'react';
 import { Brain, FolderTree, LibraryBig, Power, RefreshCw, Search, FileText, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -65,6 +66,7 @@ function SkillDetailPanel({
   isEnabled?: boolean;
   isToggling?: boolean;
 }) {
+  const { t } = useI18n();
   const [files, setFiles] = useState<MissionControlSkillFilesPayload | null>(null);
   const [filesLoading, setFilesLoading] = useState(true);
   const [filesError, setFilesError] = useState<string | null>(null);
@@ -125,16 +127,16 @@ function SkillDetailPanel({
     >
       <div className="flex flex-col gap-4">
         {filesLoading ? (
-          <p className="text-sm text-text-muted">Loading skill files…</p>
+          <p className="text-sm text-text-muted">{t('skills.detail.loading')}</p>
         ) : filesError ? (
           <p className="text-sm text-warning">{filesError}</p>
         ) : fileTree.length === 0 ? (
-          <p className="text-sm text-text-muted">No files found in this skill directory.</p>
+          <p className="text-sm text-text-muted">{t('skills.detail.noFiles')}</p>
         ) : (
           <div className="flex flex-col lg:flex-row gap-4 min-h-[400px]">
             {/* File tree sidebar */}
             <div className="lg:w-56 shrink-0 border-b lg:border-b-0 lg:border-r border-border-subtle pb-3 lg:pb-0 lg:pr-3">
-              <p className="eyebrow mb-2">Files</p>
+              <p className="eyebrow mb-2">{t('knowledge.files')}</p>
               <div className="flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-x-visible">
                 {fileTree.map((file) => (
                   <button
@@ -178,7 +180,7 @@ function SkillDetailPanel({
                   </div>
                 </>
               ) : (
-                <p className="text-sm text-text-muted">Select a file to view its contents.</p>
+                <p className="text-sm text-text-muted">{t('skills.detail.selectFile')}</p>
               )}
             </div>
           </div>
@@ -189,6 +191,7 @@ function SkillDetailPanel({
 }
 
 export function SkillsRoute() {
+  const { t } = useI18n();
   const { skills, snapshot, storedToken, refreshAll } = useMissionControl();
   const [activeTab, setActiveTab] = useState<'installed' | 'catalog'>('installed');
   const [catalog, setCatalog] = useState<MissionControlSkillsCatalogSnapshot | null>(null);
@@ -273,8 +276,8 @@ export function SkillsRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Skills</span>
-            <h2 className="text-sm font-semibold text-text">Installed skills and Skills Hub catalog</h2>
+            <span className="eyebrow">{t('nav.skills')}</span>
+            <h2 className="text-sm font-semibold text-text">{t('skills.title')}</h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={skills.available ? 'positive' : 'warning'}>{skills.available ? 'installed live' : 'installed fallback'}</Badge>
@@ -311,8 +314,8 @@ export function SkillsRoute() {
         <Card padding="none">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <span className="eyebrow">Installed</span>
-              <h3 className="text-sm font-semibold text-text mt-0.5">Every installed skill</h3>
+              <span className="eyebrow">{t('skills.installed')}</span>
+              <h3 className="text-sm font-semibold text-text mt-0.5">{t('skills.everyInstalled')}</h3>
               <p className="text-xs text-text-subtle mt-1">
                 {skills.skills.length} skills · {enabled} enabled · {disabled} disabled
               </p>
@@ -364,8 +367,8 @@ export function SkillsRoute() {
         <Card padding="none">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <span className="eyebrow">Skills Hub</span>
-              <h3 className="text-sm font-semibold text-text mt-0.5">Discoverable skill catalog</h3>
+              <span className="eyebrow">{t('skills.hub')}</span>
+              <h3 className="text-sm font-semibold text-text mt-0.5">{t('skills.discoverableCatalog')}</h3>
               <p className="text-xs text-text-subtle mt-1">
                 {filteredCatalogSkills.length} matches · {displayedCatalogSkills.length} rendered · {catalogInstalledCount} installed match{catalogInstalledCount === 1 ? '' : 'es'}
               </p>
@@ -376,7 +379,7 @@ export function SkillsRoute() {
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search catalog"
+                  placeholder={t('skills.search')}
                   className="h-9 w-full sm:w-64 rounded-lg bg-surface border border-border px-9 text-sm text-text outline-none focus:border-accent"
                 />
               </div>
@@ -422,7 +425,7 @@ export function SkillsRoute() {
                       <p className="text-xs text-text-muted line-clamp-2">{skill.description || 'No description provided.'}</p>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
-                      {installed ? <Badge variant="positive">installed</Badge> : <Badge variant="default">available</Badge>}
+                      {installed ? <Badge variant="positive">{t('skills.installedBadge')}</Badge> : <Badge variant="default">{t('skills.availableBadge')}</Badge>}
                       <Badge variant={statusVariant(skill.trustLevel)}>{skill.trustLevel}</Badge>
                     </div>
                   </div>
@@ -449,7 +452,7 @@ export function SkillsRoute() {
             ) : null}
 
             {!catalogLoading && filteredCatalogSkills.length === 0 ? (
-              <div className="px-4 py-8 text-sm text-text-muted">No catalog skills match this filter.</div>
+              <div className="px-4 py-8 text-sm text-text-muted">{t('skills.noMatch')}</div>
             ) : null}
           </div>
         </Card>

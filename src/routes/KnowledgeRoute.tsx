@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, FileText, FolderTree, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -55,6 +56,7 @@ function MarkdownDetail({ content }: { content: string }) {
 }
 
 export function KnowledgeRoute() {
+  const { t } = useI18n();
   const { knowledge, storedToken } = useMissionControl();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isCompact, setIsCompact] = useState(false);
@@ -163,8 +165,8 @@ export function KnowledgeRoute() {
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">Knowledge</span>
-            <h2 className="text-sm font-semibold text-text">Hermes memory and linked files</h2>
+            <span className="eyebrow">{t('nav.knowledge')}</span>
+            <h2 className="text-sm font-semibold text-text">{t('knowledge.title')}</h2>
           </div>
           <Badge variant={knowledge.available ? 'positive' : 'warning'}>
             {knowledge.available ? 'synced' : 'fallback'}
@@ -188,8 +190,8 @@ export function KnowledgeRoute() {
         <Card padding="none" className="xl:col-span-1">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
             <div className="flex flex-col gap-0.5">
-              <span className="eyebrow">Files</span>
-              <h3 className="text-sm font-semibold text-text">Tap or click to open details</h3>
+              <span className="eyebrow">{t('knowledge.files')}</span>
+              <h3 className="text-sm font-semibold text-text">{t('knowledge.openDetails')}</h3>
             </div>
             <span className="text-xs text-text-subtle">{allItems.length} indexed</span>
           </div>
@@ -233,7 +235,7 @@ export function KnowledgeRoute() {
 
         <Card padding="none" className="xl:col-span-2 hidden xl:block">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle">
-            <span className="eyebrow">Detail</span>
+            <span className="eyebrow">{t('knowledge.detail')}</span>
             <h3 className="text-sm font-semibold text-text mt-0.5">{selectedItem.title}</h3>
             <p className="text-xs text-text-subtle mt-1">{selectedItem.path}</p>
           </div>
@@ -242,13 +244,13 @@ export function KnowledgeRoute() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
               {selectedItem.sourcePath ? (
                 <div className="rounded-lg border border-border-subtle bg-surface-raised/40 px-2.5 py-2">
-                  <p className="text-text-subtle uppercase tracking-wide mb-1">Source</p>
+                  <p className="text-text-subtle uppercase tracking-wide mb-1">{t('knowledge.source')}</p>
                   <p className="text-text-muted break-words">{selectedItem.sourcePath}</p>
                 </div>
               ) : null}
               {selectedItem.updatedAt ? (
                 <div className="rounded-lg border border-border-subtle bg-surface-raised/40 px-2.5 py-2">
-                  <p className="text-text-subtle uppercase tracking-wide mb-1">Updated</p>
+                  <p className="text-text-subtle uppercase tracking-wide mb-1">{t('knowledge.updatedLabel')}</p>
                   <p className="text-text-muted">{formatTimestamp(selectedItem.updatedAt)}</p>
                 </div>
               ) : null}
@@ -257,7 +259,7 @@ export function KnowledgeRoute() {
             <p className="text-sm text-text-muted">{selectedItem.excerpt || 'No excerpt available.'}</p>
 
             <Card variant="sunken" className="p-3 max-h-[460px] overflow-y-auto">
-              {contentLoading ? <p className="text-xs text-text-subtle mb-2">Loading full file…</p> : null}
+              {contentLoading ? <p className="text-xs text-text-subtle mb-2">{t('knowledge.loadingFull')}</p> : null}
               {contentError ? <p className="text-xs text-warning mb-2">{contentError}</p> : null}
               <MarkdownDetail content={markdownContent} />
             </Card>
@@ -275,13 +277,13 @@ export function KnowledgeRoute() {
           <div className="grid grid-cols-1 gap-2 text-xs">
             {selectedItem.sourcePath ? (
               <div className="rounded-lg border border-border-subtle bg-surface-raised/40 px-2.5 py-2">
-                <p className="text-text-subtle uppercase tracking-wide mb-1">Source</p>
+                <p className="text-text-subtle uppercase tracking-wide mb-1">{t('knowledge.source')}</p>
                 <p className="text-text-muted break-words">{selectedItem.sourcePath}</p>
               </div>
             ) : null}
             {selectedItem.updatedAt ? (
               <div className="rounded-lg border border-border-subtle bg-surface-raised/40 px-2.5 py-2">
-                <p className="text-text-subtle uppercase tracking-wide mb-1">Updated</p>
+                <p className="text-text-subtle uppercase tracking-wide mb-1">{t('knowledge.updatedLabel')}</p>
                 <p className="text-text-muted">{formatTimestamp(selectedItem.updatedAt)}</p>
               </div>
             ) : null}
@@ -290,7 +292,7 @@ export function KnowledgeRoute() {
           <p className="text-sm text-text-muted">{selectedItem.excerpt || 'No excerpt available.'}</p>
 
           <Card variant="sunken" className="p-3 max-h-[56vh] overflow-y-auto">
-            {contentLoading ? <p className="text-xs text-text-subtle mb-2">Loading full file…</p> : null}
+            {contentLoading ? <p className="text-xs text-text-subtle mb-2">{t('knowledge.loadingFull')}</p> : null}
             {contentError ? <p className="text-xs text-warning mb-2">{contentError}</p> : null}
             <MarkdownDetail content={markdownContent} />
           </Card>
