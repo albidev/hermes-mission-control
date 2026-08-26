@@ -20,6 +20,12 @@ export default defineConfig({
     host: true,
     port: 5174,
     strictPort: true,
+    // Runtime/worktree directories live below the repo root but are not app
+    // sources. Watching them turns cleanup and generated state into full-page
+    // reloads (especially when a nested worktree is removed).
+    watch: {
+      ignored: ['**/.worktrees/**', '**/.hermes/**', '**/dist/**'],
+    },
     allowedHosts: ALL_ALLOWED_HOSTS.length ? ALL_ALLOWED_HOSTS : true,
     proxy: {
       '/api/local': {
