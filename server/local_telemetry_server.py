@@ -285,8 +285,14 @@ def _sanitize_provider_usage(provider: str, payload: Any) -> Dict[str, Any]:
         if isinstance(credits, dict) and "remaining" in credits:
             sanitized["creditsRemaining"] = credits.get("remaining")
         codex_credits = usage.get("codexResetCredits")
-        if isinstance(codex_credits, dict) and "availableCount" in codex_credits:
-            sanitized["resetCreditsAvailable"] = codex_credits.get("availableCount")
+        if isinstance(codex_credits, dict):
+            available_count = codex_credits.get("availableCount")
+            if not isinstance(available_count, (int, float)):
+                reset_entries = codex_credits.get("credits")
+                if isinstance(reset_entries, list):
+                    available_count = sum(1 for entry in reset_entries if isinstance(entry, dict) and entry.get("status") == "available")
+            if isinstance(available_count, (int, float)):
+                sanitized["resetCreditsAvailable"] = available_count
     return sanitized
 
 

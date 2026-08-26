@@ -36,7 +36,7 @@ sanitize_provider() {
         pace: (.pace // null),
         openRouter: (if $provider == "openrouter" then (.usage.openRouterUsage // null | if . == null then null else {balance, totalCredits, totalUsage, keyUsageDaily, keyUsageWeekly, keyUsageMonthly, usedPercent} end) else null end),
         creditsRemaining: (if $provider == "codex" then (.credits.remaining // null) else null end),
-        resetCreditsAvailable: (if $provider == "codex" then (.usage.codexResetCredits.availableCount // null) else null end)
+        resetCreditsAvailable: (if $provider == "codex" then (.usage.codexResetCredits.availableCount // ([.usage.codexResetCredits.credits[]? | select(.status == "available")] | length) // null) else null end)
       }
     end
   ' <<<"$raw" | head -n 1 || printf '{"provider":"%s","available":false,"source":"cli","error":"Invalid CodexBar response."}' "$provider"

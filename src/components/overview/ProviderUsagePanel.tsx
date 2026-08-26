@@ -97,7 +97,9 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
           <UsageGauge label="Session" metric="session" window={provider.primary ?? undefined} />
           {provider.secondary || !provider.primary ? <UsageGauge label="Weekly" metric="weekly" window={provider.secondary ?? undefined} /> : null}
           {typeof provider.resetCreditsAvailable === 'number' ? (
-            <span className="text-[10px] text-text-subtle text-right">{provider.resetCreditsAvailable} reset credits</span>
+            <span className="text-[10px] text-text-subtle text-right">{t('provider.resetCreditsCount', { count: provider.resetCreditsAvailable })}</span>
+          ) : provider.provider === 'codex' ? (
+            <span className="text-[10px] text-text-subtle text-right">{t('provider.resetCredits')}</span>
           ) : provider.provider === 'ollama' ? (
             <span className="provider-card-spacer" aria-hidden="true" />
           ) : null}
