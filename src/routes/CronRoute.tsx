@@ -20,6 +20,7 @@ import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { useI18n } from '../lib/i18n';
 import { useMissionControl } from '../lib/mission-control-store';
+import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 import {
   createMissionControlCronJob,
   deleteMissionControlCronJob,
@@ -325,6 +326,8 @@ export function CronRoute() {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async (silent = false) => {
+    const startedAt = performance.now();
+    recordReloadDiagnostic('cron-refresh-start', { silent });
     if (!silent) setRefreshing(true);
     try {
       const next = await loadMissionControlCronJobs(storedToken || undefined);
@@ -333,6 +336,7 @@ export function CronRoute() {
     } catch (err) {
       setError(err instanceof Error ? err.message : t('cron.loadFailed'));
     } finally {
+      recordReloadDiagnostic('cron-refresh-end', { silent, durationMs: Math.round(performance.now() - startedAt) });
       setLoading(false);
       setRefreshing(false);
     }

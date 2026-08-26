@@ -108,6 +108,7 @@ export function installReloadDiagnostics(): () => void {
   recordReloadDiagnostic('boot', {
     previousBreadcrumbs: previous,
     previousBreadcrumbCount: previous.length,
+    wasDiscarded: Boolean((document as Document & { wasDiscarded?: boolean }).wasDiscarded),
   });
 
   const onError = (event: ErrorEvent) => {
@@ -141,6 +142,8 @@ export function installReloadDiagnostics(): () => void {
   const onVisibility = () => recordReloadDiagnostic('visibilitychange');
   const onOnline = () => recordReloadDiagnostic('online');
   const onOffline = () => recordReloadDiagnostic('offline');
+  const onFreeze = () => recordReloadDiagnostic('freeze');
+  const onResume = () => recordReloadDiagnostic('resume');
 
   window.addEventListener('error', onError);
   window.addEventListener('unhandledrejection', onUnhandledRejection);
@@ -150,6 +153,8 @@ export function installReloadDiagnostics(): () => void {
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
+  window.addEventListener('freeze', onFreeze);
+  window.addEventListener('resume', onResume);
 
   if (import.meta.hot) {
     import.meta.hot.on('vite:beforeFullReload', (details) => recordReloadDiagnostic('vite:beforeFullReload', { details }));
@@ -167,5 +172,7 @@ export function installReloadDiagnostics(): () => void {
     document.removeEventListener('visibilitychange', onVisibility);
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
+    window.removeEventListener('freeze', onFreeze);
+    window.removeEventListener('resume', onResume);
   };
 }

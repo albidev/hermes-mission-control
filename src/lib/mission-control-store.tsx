@@ -24,6 +24,7 @@ import {
   type MissionControlSnapshot,
   type MissionControlToolsSnapshot,
 } from './hermes-api';
+import { recordReloadDiagnostic } from './reload-diagnostics';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 export type ResolvedTheme = 'dark' | 'light';
@@ -351,6 +352,7 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       const includeReference = ticks % 4 === 0 || !tools.available || !skills.available || !knowledge.available;
       const includeSnapshot = ticks % 4 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
       const includeConfig = ticks % 4 === 0 || !config.available;
+      recordReloadDiagnostic('mc-refresh-poll', { ticks, includeReference, includeSnapshot, includeConfig });
       void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot });
       if (includeConfig) {
         void refreshConfig(storedToken || undefined).catch(() => {});
@@ -365,16 +367,34 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const refreshAfterWake = () => {
+    let lastRecoveryRefreshAt = 0;
+    const refreshAfterRecovery = (trigger: 'visibilitychange' | 'online') => {
       if (document.visibilityState !== 'visible') {
         return;
       }
-      void refreshAll(storedToken || undefined, { silent: true, includeReference: true, includeSnapshot: true });
+
+      const now = Date.now();
+      if (now - lastRecoveryRefreshAt < 5000) {
+        recordReloadDiagnostic('mc-refresh-after-recovery-skipped', { trigger, reason: 'debounced' });
+        return;
+      }
+      lastRecoveryRefreshAt = now;
+      recordReloadDiagnostic('mc-refresh-after-recovery', {
+        trigger,
+        includeReference: false,
+        includeSnapshot: false,
+        includeSessions: true,
+      });
+      void refreshAll(storedToken || undefined, {
+        silent: true,
+        includeReference: false,
+        includeSnapshot: false,
+        includeSessions: true,
+      });
     };
 
-    const refreshAfterOnline = () => {
-      void refreshAll(storedToken || undefined, { silent: true, includeReference: true, includeSnapshot: true });
-    };
+    const refreshAfterWake = () => refreshAfterRecovery('visibilitychange');
+    const refreshAfterOnline = () => refreshAfterRecovery('online');
 
     document.addEventListener('visibilitychange', refreshAfterWake);
     window.addEventListener('online', refreshAfterOnline);

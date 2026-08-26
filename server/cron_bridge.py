@@ -129,27 +129,33 @@ def _latest_execution(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def _enrich_job(core: Any, job: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_job(core: Any, job: Dict[str, Any], *, include_output: bool = True) -> Dict[str, Any]:
     enriched = dict(job)
     enriched["latest_execution"] = _latest_execution(enriched)
-    enriched["last_output"] = _read_latest_output(core, str(enriched.get("id", "")))
+    if include_output:
+        enriched["last_output"] = _read_latest_output(core, str(enriched.get("id", "")))
+    else:
+        # The list endpoint is polled frequently and the UI only needs output
+        # after opening a job detail. Avoid shipping up to 100 KB per job on
+        # every 15/30 second Mission Control refresh.
+        enriched.pop("last_output", None)
     return enriched
 
 
-def list_jobs(include_disabled: bool = True) -> list[Dict[str, Any]]:
+def list_jobs(include_disabled: bool = True, *, include_output: bool = True) -> list[Dict[str, Any]]:
     core = _load_core()
     try:
         jobs = core.list_jobs(include_disabled=include_disabled)
     except Exception as exc:
         raise CronBridgeError(500, f"Could not list cron jobs: {exc}") from exc
-    return [_enrich_job(core, job) for job in jobs if isinstance(job, dict)]
+    return [_enrich_job(core, job, include_output=include_output) for job in jobs if isinstance(job, dict)]
 
 
 def get_job(job_id: str) -> Dict[str, Any]:
     wanted = str(job_id or "").strip()
     if not wanted:
         raise CronBridgeError(400, "Cron job id is required")
-    for job in list_jobs(include_disabled=True):
+    for job in list_jobs(include_disabled=True, include_output=True):
         if str(job.get("id", "")) == wanted or str(job.get("name", "")) == wanted:
             return job
     raise CronBridgeError(404, f"Cron job '{wanted}' not found")

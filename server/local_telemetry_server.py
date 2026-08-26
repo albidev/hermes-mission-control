@@ -862,9 +862,9 @@ def _collect_model_info() -> Dict[str, Any]:
 
 
 def _collect_cron_jobs() -> list[Dict[str, Any]]:
-    """Return the core cron inventory, enriched with latest execution output."""
+    """Return the lightweight core cron inventory for frequent polling."""
     try:
-        return cron_bridge_mod.list_jobs(include_disabled=True)
+        return cron_bridge_mod.list_jobs(include_disabled=True, include_output=False)
     except CronBridgeError:
         # Keep the dashboard readable if the core is temporarily unavailable.
         # The raw file is still useful for diagnostics and does not mutate state.

@@ -39,7 +39,7 @@ class CronApiTests(unittest.TestCase):
             return handler
 
         self.fake_bridge = types.SimpleNamespace(
-            list_jobs=lambda include_disabled=True: [self.job],
+            list_jobs=lambda include_disabled=True, include_output=True: [self.job],
             get_job=record("get", self.job),
             create_job=record("create"),
             update_job=record("update"),
