@@ -10,3 +10,7 @@ __pycache__/
 
 # Push device subscriptions (local state, not source)
 server/push_subscriptions.json
+
+# Runtime state files
+server/last_chat.json
+server/whiteboard_state.json
