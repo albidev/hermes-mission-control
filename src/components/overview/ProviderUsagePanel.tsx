@@ -140,7 +140,7 @@ export function ProviderUsagePanel() {
             <Cloud size={15} className="text-sky-400" />
             <div className="flex flex-col gap-0.5">
               <span className="eyebrow">{t('overview.providerUsage')}</span>
-              <h2 className="text-sm font-semibold text-text">Cloud limits &amp; balances</h2>
+              <h2 className="text-sm font-semibold text-text">{t('ui.cloudLimitsBalances')}</h2>
             </div>
           </div>
           {refreshing ? <RefreshCw size={12} className="text-text-subtle animate-spin" /> : null}
@@ -161,7 +161,7 @@ export function ProviderUsagePanel() {
           <Cloud size={15} className="text-sky-400" />
           <div className="flex flex-col gap-0.5">
             <span className="eyebrow">{t('overview.providerUsage')}</span>
-            <h2 className="text-sm font-semibold text-text">Cloud limits &amp; balances</h2>
+            <h2 className="text-sm font-semibold text-text">{t('ui.cloudLimitsBalances')}</h2>
           </div>
         </div>
         <div className="flex items-center gap-2">

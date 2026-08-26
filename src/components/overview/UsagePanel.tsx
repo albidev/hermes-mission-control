@@ -58,7 +58,7 @@ export function UsagePanel() {
       <div className="px-3 pt-3 pb-2 border-b border-border-subtle flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
           <span className="eyebrow">{t('nav.usage')}</span>
-          <h2 className="text-sm font-semibold text-text">Token consumption &amp; cost estimate</h2>
+          <h2 className="text-sm font-semibold text-text">{t('ui.tokenConsumption')}</h2>
         </div>
         <Link to="/usage" className="pill pill-subtle pill-button text-xs flex items-center gap-1">
           Details <ArrowRight size={12} />

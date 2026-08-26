@@ -42,7 +42,7 @@ export function LanguageSwitcher({ showLabel = true, className = '' }: { showLab
           aria-pressed={locale === 'en'}
         >
           <BritishFlag />
-          <span>English</span>
+          <span>{t('lang.english')}</span>
         </button>
         <button
           type="button"
@@ -53,7 +53,7 @@ export function LanguageSwitcher({ showLabel = true, className = '' }: { showLab
           aria-pressed={locale === 'it'}
         >
           <ItalianFlag />
-          <span>Italiano</span>
+          <span>{t('lang.italian')}</span>
         </button>
       </div>
     </div>

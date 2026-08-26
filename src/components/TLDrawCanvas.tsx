@@ -625,14 +625,14 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
             <option value="json">JSON</option>
           </select>
           <span className="tldraw-canvas-sep" />
-          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title="Screenshot to chat" aria-label="Screenshot to chat">
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title={t('ui.screenshotToChat')} aria-label={t('ui.screenshotToChat')}>
             <Camera size={16} />
           </button>
-          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title="Send selection to chat" aria-label="Send selection to chat">
+          <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title={t('ui.sendSelectionToChat')} aria-label={t('ui.sendSelectionToChat')}>
             <Send size={16} />
           </button>
           {toastMessage ? <div className="tldraw-canvas-toast" role="status">{toastMessage}</div> : null}
-          <button type="button" className="chat-icon-button" onClick={clearBoard} title="Clear board" aria-label="Clear board">
+          <button type="button" className="chat-icon-button" onClick={clearBoard} title={t('ui.clearBoard')} aria-label={t('ui.clearBoard')}>
             <RotateCcw size={16} />
           </button>
         </div>
