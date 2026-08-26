@@ -574,14 +574,12 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const handleDrop = (event: DragEvent<HTMLElement>) => {
-  const { t } = useI18n();
     event.preventDefault();
     setIsDragging(false);
     addFiles(Array.from(event.dataTransfer.files ?? []));
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-  const { t } = useI18n();
     const files = Array.from(event.clipboardData.files ?? []);
     if (files.length) {
       event.preventDefault();
@@ -630,7 +628,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-  const { t } = useI18n();
     if (slashPopoverRef.current?.handleKey(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -646,7 +643,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const handleDrawerKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-  const { t } = useI18n();
     if (event.key !== 'Tab') return;
     const focusable = Array.from(
       event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'),
@@ -678,7 +674,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   // Desktop resize: drag the left-edge handle to change the drawer width.
   // The drawer is anchored right, so width = viewport width - cursor x.
   const startResize = (event: React.MouseEvent) => {
-  const { t } = useI18n();
     if (isExpanded) return; // expanded mode owns its own geometry
     event.preventDefault();
     resizingRef.current = true;
@@ -708,7 +703,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const startCanvasResize = (event: React.MouseEvent) => {
-  const { t } = useI18n();
     if (!isExpanded) return;
     event.preventDefault();
     canvasResizingRef.current = true;
@@ -722,7 +716,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       document.documentElement.style.setProperty('--mission-control-expanded-chat-right', `${width}px`);
     };
     const onUp = () => {
-  const { t } = useI18n();
       canvasResizingRef.current = false;
       if (pendingCanvasWidthRef.current != null) setCanvasWidth(pendingCanvasWidthRef.current);
       window.removeEventListener('mousemove', onMove);
