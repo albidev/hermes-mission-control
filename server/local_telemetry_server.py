@@ -908,7 +908,7 @@ def _collect_tools() -> Dict[str, Any]:
     tool_catalog: list[Dict[str, Any]] = []
     resolved: list[str] = []
 
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    project_root = _get_hermes_home() / "hermes-agent"
     tc_path = project_root / "hermes_cli" / "tools_config.py"
 
     try:
