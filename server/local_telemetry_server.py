@@ -1813,6 +1813,9 @@ class Handler(BaseHTTPRequestHandler):
                 author = (payload.get("author") or "mission-control")
                 self._json(200, kanban_bridge_mod.create_task(payload, board=board, author=author))
                 return
+            if sub == "boards":
+                self._json(200, kanban_bridge_mod.create_board(payload, switch=bool(payload.get("switch"))))
+                return
             if sub.startswith("tasks/") and sub.endswith("/comments"):
                 task_id = sub[len("tasks/"):-len("/comments")]
                 author = (payload.get("author") or "mission-control")

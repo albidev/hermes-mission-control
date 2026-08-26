@@ -8,6 +8,7 @@ import {
   loadKanbanTaskDetail,
   moveKanbanTask,
   createKanbanTask,
+  createKanbanBoard,
   addKanbanComment,
   type MissionControlKanbanBoard,
   type MissionControlKanbanBoardMeta,
@@ -66,7 +67,7 @@ function BoardColumn({
           <span className="text-[10px] text-text-subtle tabular-nums">{tasks.length}</span>
           <button
             type="button"
-            className="rounded p-0.5 text-text-subtle hover:text-text hover:bg-surface-sunken"
+            className="flex h-5 w-5 items-center justify-center rounded p-0 text-text-subtle hover:text-text hover:bg-surface-sunken"
             aria-label={`Add task to ${name}`}
             onClick={() => onAddTask(name)}
           >
@@ -430,6 +431,36 @@ export function KanbanRoute() {
   const [newTaskPriority, setNewTaskPriority] = useState(0);
   const [creating, setCreating] = useState(false);
 
+  const [newBoardOpen, setNewBoardOpen] = useState(false);
+  const [newBoardName, setNewBoardName] = useState('');
+  const [newBoardDesc, setNewBoardDesc] = useState('');
+  const [creatingBoard, setCreatingBoard] = useState(false);
+
+  const closeNewBoard = () => {
+    setNewBoardOpen(false);
+    setNewBoardName('');
+    setNewBoardDesc('');
+    setCreatingBoard(false);
+  };
+
+  const submitNewBoard = async () => {
+    const name = newBoardName.trim();
+    if (!name) return;
+    setCreatingBoard(true);
+    try {
+      await createKanbanBoard(storedToken || undefined, { name, description: newBoardDesc.trim() || undefined });
+      closeNewBoard();
+      // Reload boards list and jump to the new board (last created = current).
+      const { boards: list, current } = await loadKanbanBoards(storedToken || undefined);
+      setBoards(list);
+      setActiveBoard(current || '');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Create board failed.');
+    } finally {
+      setCreatingBoard(false);
+    }
+  };
+
   const closeNewTask = () => {
     setNewTaskStatus(null);
     setNewTaskTitle('');
@@ -474,6 +505,9 @@ export function KanbanRoute() {
         <div className="flex items-center gap-2">
           {error ? <span className="text-[10px] text-red-400 truncate max-w-[14rem]" role="alert">{error}</span> : null}
           {refreshing ? <RefreshCw size={12} className="text-text-subtle animate-spin" /> : null}
+          <Button size="sm" onClick={() => setNewBoardOpen(true)}>
+            <Plus size={13} className="mr-1" /> New
+          </Button>
           <span className="text-[10px] text-text-subtle hidden sm:inline">Live · 5s</span>
         </div>
       </div>
@@ -584,6 +618,60 @@ export function KanbanRoute() {
                   {creating ? 'Creating…' : 'Create'}
                 </Button>
               </div>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {newBoardOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="New board"
+          onClick={closeNewBoard}
+        >
+          <form
+            className="w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitNewBoard();
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-text">New board</h2>
+              <Button variant="ghost" size="sm" type="button" aria-label="Cancel new board" onClick={closeNewBoard}>
+                <X size={14} />
+              </Button>
+            </div>
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Name *</span>
+              <input
+                autoFocus
+                value={newBoardName}
+                onChange={(e) => setNewBoardName(e.target.value)}
+                placeholder="e.g. Home Renovation"
+                maxLength={80}
+                className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Description</span>
+              <textarea
+                value={newBoardDesc}
+                onChange={(e) => setNewBoardDesc(e.target.value)}
+                placeholder="What is this board for?"
+                rows={3}
+                className="mt-1 w-full resize-y rounded-lg border border-border-subtle bg-surface-sunken px-2.5 py-2 text-xs text-text placeholder:text-text-subtle focus:border-border focus:outline-none min-h-[4rem]"
+              />
+            </label>
+            <p className="mt-2 text-[10px] text-text-subtle">The new board becomes the active one for CLI and gateway too.</p>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Button variant="ghost" size="sm" type="button" onClick={closeNewBoard}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={!newBoardName.trim() || creatingBoard}>
+                {creatingBoard ? 'Creating…' : 'Create board'}
+              </Button>
             </div>
           </form>
         </div>

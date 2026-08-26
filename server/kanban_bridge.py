@@ -439,6 +439,30 @@ def switch_board(slug: str) -> Dict[str, Any]:
     return {"current": normed}
 
 
+def create_board(payload: Dict[str, Any], switch: bool = False) -> Dict[str, Any]:
+    kb = _kb()
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise KanbanError(400, "board name is required")
+    # Derive a slug from the name; kanban_db validates + normalizes it.
+    slug = (payload.get("slug") or "").strip() or kb._normalize_board_slug(
+        name.lower().replace(" ", "-")
+    )
+    try:
+        meta = kb.create_board(
+            slug,
+            name=name,
+            description=(payload.get("description") or "").strip() or None,
+        )
+        if switch:
+            kb.set_current_board(meta["slug"])
+        return {"board": dict(meta), "current": kb.get_current_board()}
+    except ValueError as exc:
+        raise KanbanError(400, str(exc))
+    except Exception as exc:
+        raise KanbanError(500, str(exc)[:240])
+
+
 def get_events(since: int = 0, limit: int = 200, board: Optional[str] = None) -> Dict[str, Any]:
     """Long-poll-friendly snapshot of new events since ``since``.
 

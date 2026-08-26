@@ -2510,3 +2510,10 @@ export function addKanbanComment(
   return kanbanPost(`/kanban/tasks/${encodeURIComponent(taskId)}/comments${qs}`, { body }, accessToken);
 }
 
+export function createKanbanBoard(
+  accessToken: string | undefined,
+  input: { name: string; description?: string; switch?: boolean },
+): Promise<{ board: MissionControlKanbanBoardMeta; current: string }> {
+  return kanbanPost('/kanban/boards', input, accessToken);
+}
+
