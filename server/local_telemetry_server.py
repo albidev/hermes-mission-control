@@ -1833,6 +1833,10 @@ class Handler(BaseHTTPRequestHandler):
                 slug = sub[len("boards/"):-len("/switch")]
                 self._json(200, kanban_bridge_mod.switch_board(slug))
                 return
+            if sub.startswith("boards/") and sub.endswith("/delete"):
+                slug = sub[len("boards/"):-len("/delete")]
+                self._json(200, kanban_bridge_mod.delete_board(slug, hard=bool(payload.get("hard"))))
+                return
             self._json(404, {"error": "not_found", "path": parsed.path})
         except KanbanBridgeError as exc:
             self._json(exc.status_code, {"error": "kanban_error", "detail": exc.message})

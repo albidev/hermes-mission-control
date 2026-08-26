@@ -439,6 +439,34 @@ def switch_board(slug: str) -> Dict[str, Any]:
     return {"current": normed}
 
 
+def delete_board(slug: str, hard: bool = False) -> Dict[str, Any]:
+    """Archive (default) or permanently delete a board.
+
+    Guards: the ``default`` board cannot be deleted, and the last remaining
+    board cannot be removed.
+    """
+    kb = _kb()
+    try:
+        normed = kb._normalize_board_slug(slug)
+    except ValueError as exc:
+        raise KanbanError(400, str(exc))
+    if not normed:
+        raise KanbanError(400, "invalid board slug")
+    if normed == kb.DEFAULT_BOARD:
+        raise KanbanError(409, "the default board cannot be deleted")
+    if not kb.board_exists(normed):
+        raise KanbanError(404, f"board {slug!r} does not exist")
+    live_boards = [b["slug"] for b in kb.list_boards(include_archived=False)]
+    if len([s for s in live_boards if s != normed]) == 0:
+        raise KanbanError(409, "cannot delete the last remaining board")
+    # If we are deleting the current board, move the pointer first.
+    was_current = kb.get_current_board() == normed
+    res = kb.remove_board(normed, archive=not hard)
+    if was_current:
+        kb.set_current_board(kb.DEFAULT_BOARD)
+    return {"result": dict(res), "current": kb.get_current_board()}
+
+
 def create_board(payload: Dict[str, Any], switch: bool = False) -> Dict[str, Any]:
     kb = _kb()
     name = (payload.get("name") or "").strip()

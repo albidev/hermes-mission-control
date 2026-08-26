@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Kanban as KanbanIcon, RefreshCw, Plus, X, MessageSquare, GitBranch } from 'lucide-react';
+import { Kanban as KanbanIcon, RefreshCw, Plus, X, MessageSquare, GitBranch, Trash2 } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import {
@@ -9,6 +9,7 @@ import {
   moveKanbanTask,
   createKanbanTask,
   createKanbanBoard,
+  deleteKanbanBoard,
   addKanbanComment,
   type MissionControlKanbanBoard,
   type MissionControlKanbanBoardMeta,
@@ -237,10 +238,12 @@ function BoardPicker({
   boards,
   activeBoard,
   onSelect,
+  onDeleteRequest,
 }: {
   boards: MissionControlKanbanBoardMeta[];
   activeBoard: string;
   onSelect: (slug: string) => void;
+  onDeleteRequest: (slug: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -294,22 +297,36 @@ function BoardPicker({
         >
           {boards.map((b) => {
             const selected = b.slug === activeBoard;
+            const deletable = b.slug !== 'default' && boards.filter((x) => !x.archived).length > 1;
             return (
               <li key={b.slug} role="option" aria-selected={selected}>
-                <button
-                  type="button"
-                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${selected ? 'bg-sky-400/10 text-text font-medium' : 'text-text-muted hover:bg-surface-sunken hover:text-text'}`}
-                  onClick={() => {
-                    onSelect(b.slug);
-                    setOpen(false);
-                  }}
-                >
-                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${b.is_current ? 'bg-emerald-400' : 'bg-transparent border border-border-subtle'}`} title={b.is_current ? 'Active board (CLI/gateway)' : undefined} />
-                  <span className="truncate flex-1">{b.name || b.slug}</span>
-                  {typeof b.total === 'number' ? (
-                    <span className="rounded-full bg-surface-sunken px-1.5 py-px text-[10px] tabular-nums text-text-subtle">{b.total}</span>
-                  ) : null}
-                </button>
+                <div className={`flex w-full items-center gap-2 rounded-lg px-2.5 transition-colors ${selected ? 'bg-sky-400/10' : 'hover:bg-surface-sunken'}`}>
+                  <button
+                    type="button"
+                    className={`flex flex-1 items-center gap-2 py-2 text-left text-xs ${selected ? 'text-text font-medium' : 'text-text-muted hover:text-text'}`}
+                    onClick={() => {
+                      onSelect(b.slug);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${b.is_current ? 'bg-emerald-400' : 'bg-transparent border border-border-subtle'}`} title={b.is_current ? 'Active board (CLI/gateway)' : undefined} />
+                    <span className="truncate flex-1">{b.name || b.slug}</span>
+                  </button>
+                  <span className="rounded-full bg-surface-sunken px-1.5 py-px text-[10px] tabular-nums text-text-subtle">{typeof b.total === 'number' ? b.total : ''}</span>
+                  <button
+                    type="button"
+                    className={`rounded p-1 text-text-subtle hover:bg-red-500/10 hover:text-red-400 disabled:pointer-events-none disabled:opacity-0 ${deletable ? '' : 'invisible'}`}
+                    aria-label={`Delete board ${b.name || b.slug}`}
+                    title={deletable ? 'Delete board' : 'The default board cannot be deleted'}
+                    disabled={!deletable}
+                    onClick={() => {
+                      setOpen(false);
+                      onDeleteRequest(b.slug);
+                    }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </li>
             );
           })}
@@ -436,6 +453,10 @@ export function KanbanRoute() {
   const [newBoardDesc, setNewBoardDesc] = useState('');
   const [creatingBoard, setCreatingBoard] = useState(false);
 
+  const [deleteTarget, setDeleteTarget] = useState<MissionControlKanbanBoardMeta | null>(null);
+  const [deleteHard, setDeleteHard] = useState(false);
+  const [deletingBoard, setDeletingBoard] = useState(false);
+
   const closeNewBoard = () => {
     setNewBoardOpen(false);
     setNewBoardName('');
@@ -458,6 +479,29 @@ export function KanbanRoute() {
       setError(e instanceof Error ? e.message : 'Create board failed.');
     } finally {
       setCreatingBoard(false);
+    }
+  };
+
+  const closeDeleteBoard = () => {
+    setDeleteTarget(null);
+    setDeleteHard(false);
+    setDeletingBoard(false);
+  };
+
+  const confirmDeleteBoard = async () => {
+    if (!deleteTarget) return;
+    setDeletingBoard(true);
+    try {
+      await deleteKanbanBoard(storedToken || undefined, deleteTarget.slug, deleteHard);
+      closeDeleteBoard();
+      const { boards: list, current } = await loadKanbanBoards(storedToken || undefined);
+      setBoards(list);
+      setActiveBoard((prev) => (list.some((b) => b.slug === prev) ? prev : current || ''));
+      await refresh(current || '');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed.');
+    } finally {
+      setDeletingBoard(false);
     }
   };
 
@@ -500,7 +544,11 @@ export function KanbanRoute() {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <KanbanIcon size={16} className="text-sky-400 shrink-0" />
-          <BoardPicker boards={boards} activeBoard={activeBoard} onSelect={setActiveBoard} />
+          <BoardPicker boards={boards} activeBoard={activeBoard} onSelect={setActiveBoard} onDeleteRequest={(slug) => {
+            const target = boards.find((b) => b.slug === slug) ?? null;
+            setDeleteHard(false);
+            setDeleteTarget(target);
+          }} />
         </div>
         <div className="flex items-center gap-2">
           {error ? <span className="text-[10px] text-red-400 truncate max-w-[14rem]" role="alert">{error}</span> : null}
@@ -671,6 +719,49 @@ export function KanbanRoute() {
               <Button variant="ghost" size="sm" type="button" onClick={closeNewBoard}>Cancel</Button>
               <Button type="submit" size="sm" disabled={!newBoardName.trim() || creatingBoard}>
                 {creatingBoard ? 'Creating…' : 'Create board'}
+              </Button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label={`Delete board ${deleteTarget.name || deleteTarget.slug}`}
+          onClick={closeDeleteBoard}
+        >
+          <form
+            className="w-full sm:max-w-sm rounded-t-xl sm:rounded-xl border border-border-subtle bg-surface p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void confirmDeleteBoard();
+            }}
+          >
+            <h2 className="text-sm font-semibold text-text">Delete board “{deleteTarget.name || deleteTarget.slug}”?</h2>
+            <p className="mt-1 text-xs text-text-muted">
+              {typeof deleteTarget.total === 'number' && deleteTarget.total > 0
+                ? `${deleteTarget.total} task${deleteTarget.total === 1 ? '' : 's'} on this board.`
+                : 'This board has no tasks.'}
+            </p>
+            <label className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-2.5">
+              <input
+                type="checkbox"
+                checked={deleteHard}
+                onChange={(e) => setDeleteHard(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 accent-red-500"
+              />
+              <span className="text-xs text-text-muted">
+                <span className="font-medium text-text">Permanently delete</span> — unchecked, the board is archived and can be restored later; checked, the board and its database are gone for good.
+              </span>
+            </label>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Button variant="ghost" size="sm" type="button" onClick={closeDeleteBoard}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={deletingBoard} className={deleteHard ? 'bg-red-500 hover:bg-red-600' : ''}>
+                {deletingBoard ? 'Deleting…' : deleteHard ? 'Delete permanently' : 'Archive board'}
               </Button>
             </div>
           </form>

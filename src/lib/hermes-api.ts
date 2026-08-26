@@ -2438,6 +2438,7 @@ export type MissionControlKanbanBoardMeta = {
   is_current?: boolean;
   total?: number;
   counts?: Record<string, number>;
+  archived?: boolean;
 };
 
 export async function loadKanbanBoard(accessToken?: string, board?: string): Promise<MissionControlKanbanBoard> {
@@ -2515,5 +2516,13 @@ export function createKanbanBoard(
   input: { name: string; description?: string; switch?: boolean },
 ): Promise<{ board: MissionControlKanbanBoardMeta; current: string }> {
   return kanbanPost('/kanban/boards', input, accessToken);
+}
+
+export function deleteKanbanBoard(
+  accessToken: string | undefined,
+  slug: string,
+  hard = false,
+): Promise<{ result: Record<string, unknown>; current: string }> {
+  return kanbanPost(`/kanban/boards/${encodeURIComponent(slug)}/delete`, { hard }, accessToken);
 }
 
