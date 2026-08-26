@@ -8,6 +8,7 @@ import {
   loadKanbanTaskDetail,
   loadKanbanTaskLog,
   moveKanbanTask,
+  archiveKanbanTask,
   createKanbanTask,
   createKanbanBoard,
   deleteKanbanBoard,
@@ -206,10 +207,14 @@ function BoardColumn({
 
 function TaskDrawer({
   taskId,
+  board,
   onClose,
+  onChanged,
 }: {
   taskId: string;
+  board?: string;
   onClose: () => void;
+  onChanged?: () => void;
 }) {
   const { storedToken } = useMissionControl();
   const [detail, setDetail] = useState<MissionControlKanbanTaskDetail | null>(null);
@@ -218,6 +223,28 @@ function TaskDrawer({
   const [logError, setLogError] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
   const [postingComment, setPostingComment] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+
+  const runAction = async (action: 'ready' | 'blocked' | 'done' | 'archive') => {
+    if (!detail || actionBusy) return;
+    if (action === 'archive' && !window.confirm('Archive this task?')) return;
+    setActionBusy(true);
+    try {
+      if (action === 'archive') {
+        await archiveKanbanTask(storedToken || undefined, taskId, board);
+        onClose();
+      } else {
+        await moveKanbanTask(storedToken || undefined, taskId, action, board);
+        const refreshed = await loadKanbanTaskDetail(storedToken || undefined, taskId, board);
+        setDetail(refreshed);
+      }
+      onChanged?.();
+    } catch (e) {
+      setLogError(e instanceof Error ? e.message : 'Task action failed.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -225,24 +252,24 @@ function TaskDrawer({
     setWorkerLog(null);
     setLogError(null);
     setLogLoading(true);
-    loadKanbanTaskDetail(storedToken || undefined, taskId)
+    loadKanbanTaskDetail(storedToken || undefined, taskId, board)
       .then((d) => { if (!cancelled) setDetail(d); })
       .catch(() => { if (!cancelled) setDetail(null); });
-    loadKanbanTaskLog(storedToken || undefined, taskId)
+    loadKanbanTaskLog(storedToken || undefined, taskId, board)
       .then((log) => { if (!cancelled) setWorkerLog(log); })
       .catch((e) => { if (!cancelled) setLogError(e instanceof Error ? e.message : 'Worker log unavailable.'); })
       .finally(() => { if (!cancelled) setLogLoading(false); });
     return () => { cancelled = true; };
-  }, [storedToken, taskId]);
+  }, [storedToken, taskId, board]);
 
   const postComment = async () => {
     const body = commentDraft.trim();
     if (!body) return;
     setPostingComment(true);
     try {
-      await addKanbanComment(storedToken || undefined, taskId, body);
+      await addKanbanComment(storedToken || undefined, taskId, body, board);
       setCommentDraft('');
-      const d = await loadKanbanTaskDetail(storedToken || undefined, taskId);
+      const d = await loadKanbanTaskDetail(storedToken || undefined, taskId, board);
       setDetail(d);
     } finally {
       setPostingComment(false);
@@ -278,6 +305,15 @@ function TaskDrawer({
               <Button variant="ghost" size="sm" aria-label="Close task" onClick={onClose}>
                 <X size={14} />
               </Button>
+            </div>
+
+            {/* Status actions */}
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-sunken p-2">
+              <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">Actions</span>
+              {detail.status !== 'ready' && detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('ready')}>Ready</Button> : null}
+              {detail.status !== 'blocked' && detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('blocked')}>Block</Button> : null}
+              {detail.status !== 'done' ? <Button size="sm" disabled={actionBusy} onClick={() => void runAction('done')}>Complete</Button> : null}
+              <Button variant="ghost" size="sm" disabled={actionBusy} onClick={() => void runAction('archive')}>Archive</Button>
             </div>
 
             {/* Body */}
@@ -1028,7 +1064,7 @@ export function KanbanRoute() {
       ) : null}
 
       {/* Task Drawer */}
-      {openTaskId ? <TaskDrawer taskId={openTaskId} onClose={() => setOpenTaskId(null)} /> : null}
+      {openTaskId ? <TaskDrawer taskId={openTaskId} board={activeBoard} onClose={() => setOpenTaskId(null)} onChanged={() => void refresh(activeBoard)} /> : null}
     </div>
   );
 }

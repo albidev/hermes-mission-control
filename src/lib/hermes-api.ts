@@ -2511,6 +2511,15 @@ export function moveKanbanTask(
   return kanbanPost(`/kanban/tasks/${encodeURIComponent(taskId)}${qs}`, { status }, accessToken);
 }
 
+export function archiveKanbanTask(
+  accessToken: string | undefined,
+  taskId: string,
+  board?: string,
+): Promise<{ ok: boolean }> {
+  const qs = board ? `?board=${encodeURIComponent(board)}` : '';
+  return kanbanPost(`/kanban/tasks/${encodeURIComponent(taskId)}/archive${qs}`, {}, accessToken);
+}
+
 export function createKanbanTask(
   accessToken: string | undefined,
   input: {
