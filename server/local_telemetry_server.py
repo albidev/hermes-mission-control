@@ -422,10 +422,22 @@ _KNOWLEDGE_SKIPPED_DIRS = {".git", ".obsidian", ".agents", "node_modules", "dist
 
 
 def _knowledge_vault_root() -> Path:
-    override = os.environ.get("HERMES_OBSIDIAN_VAULT") or os.environ.get("MISSION_CONTROL_VAULT_PATH")
+    """Canonical vault-path resolver.
+
+    Resolution order:
+    1. ``MISSION_CONTROL_VAULT_PATH`` (canonical).
+    2. ``HERMES_OBSIDIAN_VAULT`` (legacy alias, kept for compatibility).
+    3. Platform default: ``~/Documents/Hermes`` on macOS, ``~/wiki`` on Linux.
+
+    The same resolved path is used for scanning, display, fallback payloads,
+    and file reads.
+    """
+    override = os.environ.get("MISSION_CONTROL_VAULT_PATH") or os.environ.get("HERMES_OBSIDIAN_VAULT")
     if override:
         return Path(os.path.expanduser(override)).resolve()
-    return (Path.home() / "Documents" / "Hermes").resolve()
+    if platform.system().lower() == "darwin":
+        return (Path.home() / "Documents" / "Hermes").resolve()
+    return (Path.home() / "wiki").resolve()
 
 
 def _knowledge_core_root() -> Path:
@@ -440,16 +452,32 @@ def _path_is_within(path: Path, root: Path) -> bool:
         return False
 
 
+def _home_relative(path: Path) -> str:
+    """Render a path relative to the user's home directory (``~/...``)."""
+    try:
+        relative = path.resolve().relative_to(Path.home().resolve()).as_posix()
+    except ValueError:
+        return str(path.resolve())
+    return f"~/{relative}" if relative else "~"
+
+
 def _display_knowledge_path(path: Path) -> str:
+    """Home-relative display path for API responses (no absolute usernames).
+
+    The vault root is rendered from its real location (``~/Documents/Hermes``
+    on macOS, ``~/wiki`` on Linux, or wherever ``MISSION_CONTROL_VAULT_PATH``
+    points), so a configured vault never shows a fabricated macOS path.
+    """
     resolved = path.resolve()
     home_root = Path.home().resolve()
     vault_root = _knowledge_vault_root().resolve()
 
-    if resolved == vault_root:
-        return "~/Documents/Hermes"
     if _path_is_within(resolved, vault_root):
         relative = resolved.relative_to(vault_root).as_posix()
-        return f"~/Documents/Hermes/{relative}" if relative else "~/Documents/Hermes"
+        vault_display = _home_relative(vault_root)
+        if not relative or relative == ".":
+            return vault_display
+        return f"{vault_display}/{relative}"
     if _path_is_within(resolved, home_root):
         relative = resolved.relative_to(home_root).as_posix()
         return f"~/{relative}" if relative else "~"
@@ -619,7 +647,7 @@ def collect_knowledge_snapshot() -> Dict[str, Any]:
             "id": "knowledge-sharing",
             "title": "Knowledge Sharing",
             "path": "Knowledge Sharing.md",
-            "sourcePath": "~/Documents/Hermes/Knowledge Sharing.md",
+            "sourcePath": _display_knowledge_path(vault_root / "Knowledge Sharing.md"),
             "updatedAt": None,
             "excerpt": "Create shared vault notes to surface them here.",
             "highlights": [],
@@ -647,10 +675,11 @@ def _resolve_knowledge_request_path(requested_path: str) -> Path:
 
     vault_root = _knowledge_vault_root().resolve()
     core_root = _knowledge_core_root().resolve()
-    if raw == "~/Documents/Hermes":
+    vault_prefix = _display_knowledge_path(vault_root)
+    if raw == vault_prefix:
         candidate = vault_root
-    elif raw.startswith("~/Documents/Hermes/"):
-        candidate = vault_root / raw[len("~/Documents/Hermes/"):]
+    elif raw.startswith(vault_prefix + "/"):
+        candidate = vault_root / raw[len(vault_prefix) + 1:]
     elif raw == "~/.hermes":
         candidate = core_root
     elif raw.startswith("~/.hermes/"):
