@@ -55,7 +55,7 @@ type MissionControlContextValue = {
   storedToken: string;
   tokenDraft: string;
   setTokenDraft: (value: string) => void;
-  refreshAll: (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean; includeSessions?: boolean }) => Promise<void>;
+  refreshAll: (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean; includeSessions?: boolean; includeCron?: boolean }) => Promise<void>;
   unlock: (token: string) => Promise<void>;
   logout: () => void;
   actionResult: MissionControlActionResult | null;
@@ -214,11 +214,12 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const refreshAll = useCallback(async (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean; includeSessions?: boolean }) => {
+  const refreshAll = useCallback(async (token?: string, options?: { silent?: boolean; includeReference?: boolean; includeSnapshot?: boolean; includeSessions?: boolean; includeCron?: boolean }) => {
     const silent = options?.silent ?? false;
     const includeReference = options?.includeReference ?? true;
     const includeSnapshot = options?.includeSnapshot ?? !silent;
     const includeSessions = options?.includeSessions ?? !silent;
+    const includeCron = options?.includeCron ?? true;
     if (!silent) {
       setLoading(true);
     }
@@ -250,17 +251,19 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
           })
         : Promise.resolve();
 
-      const updateCron = loadMissionControlCron(token).then((cron) => {
-        setSnapshot((previous) => {
-          const nextCron = cron as MissionControlSnapshot['cron'];
-          const cronValue = nextCron.items.length === 0 && previous.cron.items.length > 0 ? previous.cron : nextCron;
-          return {
-            ...previous,
-            cron: cronValue,
-            queuedJobs: cronValue.queuedJobs,
-          };
-        });
-      });
+      const updateCron = includeCron
+        ? loadMissionControlCron(token).then((cron) => {
+            setSnapshot((previous) => {
+              const nextCron = cron as MissionControlSnapshot['cron'];
+              const cronValue = nextCron.items.length === 0 && previous.cron.items.length > 0 ? previous.cron : nextCron;
+              return {
+                ...previous,
+                cron: cronValue,
+                queuedJobs: cronValue.queuedJobs,
+              };
+            });
+          })
+        : Promise.resolve();
 
       const updateAlerts = loadMissionControlAlerts(token).then((alerts) => {
         setSnapshot((previous) => {
@@ -357,8 +360,8 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       const includeReference = ticks % 4 === 0 || !tools.available || !skills.available || !knowledge.available;
       const includeSnapshot = ticks % 4 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
       const includeConfig = ticks % 4 === 0 || !config.available;
-      recordReloadDiagnostic('mc-refresh-poll', { ticks, includeReference, includeSnapshot, includeConfig });
-      void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot });
+      recordReloadDiagnostic('mc-refresh-poll', { ticks, includeReference, includeSnapshot, includeConfig, includeCron: false });
+      void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot, includeCron: false });
       if (includeConfig) {
         void refreshConfig(storedToken || undefined).catch(() => {});
       }
