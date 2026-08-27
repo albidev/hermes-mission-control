@@ -4,7 +4,7 @@ Thanks for your interest in improving Mission Control.
 
 ## Scope
 
-Mission Control is intentionally a **satellite application**. It lives under `apps/mission-control/` and must not modify Hermes core files (`hermes_cli/`, `gateway/`, `pyproject.toml`, etc.). All backend needs are served by the telemetry sidecar on port `8765`.
+Mission Control is a **standalone satellite application** in its own repository (this repo). It must not modify Hermes core files (`hermes_cli/`, `gateway/`, `pyproject.toml`, etc.). All backend needs are served by the telemetry sidecar on port `8765`.
 
 ## Before you start
 
@@ -16,7 +16,6 @@ Mission Control is intentionally a **satellite application**. It lives under `ap
 ## Development
 
 ```bash
-cd apps/mission-control
 pnpm install
 pnpm dev:full
 ```

@@ -67,8 +67,9 @@ See [docs/kanban.md](docs/kanban.md) for the Kanban board architecture, supporte
 
 ## Quick start
 
+From the repository root:
+
 ```bash
-cd apps/mission-control
 pnpm install
 python3 -m pip install -r server/requirements.txt
 pnpm dev:full
@@ -87,7 +88,7 @@ pnpm dev             # port 5174
 
 ## Configuration
 
-Create `apps/mission-control/.env` from `.env.example`:
+Create `./.env` from `.env.example`:
 
 ```bash
 VITE_MISSION_CONTROL_LOCAL_API_BASE_URL=/api/local
@@ -97,6 +98,52 @@ MISSION_CONTROL_DEV_HOSTS=
 ```
 
 The bearer token is shared between the telemetry server and the UI. The telemetry server reads it from `.env` via the launcher script.
+
+Operational scripts (`scripts/run-dashboard-api.sh`, `scripts/smoke-upgrade.sh`,
+`scripts/reapply-core-mission-control-fixes.sh`) load configuration through
+`scripts/lib/env.sh`: they read `<repo-root>/.env` by default, or the file
+pointed to by `MISSION_CONTROL_ENV_FILE`, and otherwise fall back to the
+already-exported environment. No `launchctl` lookup is used, so the same
+scripts run identically on macOS and Linux.
+
+### Hermes home & active profile resolution
+
+Mission Control resolves all Hermes state (state DB, sessions, logs, skills,
+config, cache, vault-brain candidates) through the **same profile-aware
+Hermes home used by the running Hermes installation** — see
+`server/hermes_paths.py` (and the bash twin `resolve_hermes_home` in
+`scripts/lib/env.sh`). Precedence:
+
+1. `HERMES_HOME` set and already profile-shaped (`<root>/profiles/<name>`) → used verbatim.
+2. Sticky active profile (`<root>/active_profile` contains a name other than `default`) → `<root>/profiles/<name>`.
+3. `HERMES_HOME` set (non profile-shaped) → used verbatim.
+4. Platform default → `~/.hermes`.
+
+This mirrors the Hermes core launcher exactly, so Mission Control keeps
+reading the correct database, sessions, logs, skills, and configuration even
+when Hermes runs from a non-default home or a named profile.
+
+## Linux (systemd --user)
+
+On Linux the services are supervised by the systemd user session instead of
+macOS launchd. Example units live in [`systemd/`](systemd/README.md):
+
+- `hermes-dashboard-api.service` — dashboard API (`:9119`)
+- `hermes-mission-control-telemetry.service` — telemetry sidecar (`:8765`)
+- `hermes-mission-control.service` — Vite frontend (`:5174`)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/*.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-dashboard-api hermes-mission-control-telemetry hermes-mission-control
+# Optional: keep user units running after logout
+loginctl enable-linger "$USER"
+```
+
+`scripts/reapply-core-mission-control-fixes.sh` restarts the stack with
+`systemctl --user restart` on Linux (macOS keeps its `launchctl` path, isolated
+in `scripts/lib/restart-services.sh` and documented as macOS-only).
 
 ## Tailscale / LAN access
 

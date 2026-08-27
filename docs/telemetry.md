@@ -13,6 +13,39 @@ All data flows through `/api/local/*`. In development, Vite proxies those reques
 
 The sidecar does **not** hot-reload: restart it after any backend change.
 
+## Bind address and port
+
+The telemetry server reads its bind address and port from environment variables at startup:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MISSION_CONTROL_LOCAL_TELEMETRY_HOST` | `0.0.0.0` | Bind address (canonical name) |
+| `MISSION_CONTROL_LOCAL_TELEMETRY_PORT` | `8765` | Bind port (canonical name) |
+| `TELEMETRY_BIND_HOST` | — | Legacy alias for the host |
+| `TELEMETRY_BIND_PORT` | — | Legacy alias for the port |
+
+The canonical `MISSION_CONTROL_LOCAL_TELEMETRY_*` names take precedence over the legacy `TELEMETRY_BIND_*` aliases when both are set. An invalid port (non-integer or out of `1..65535`) aborts startup with a clear error instead of silently falling back to the default.
+
+On Linux systemd deployments, set the canonical pair in the service `EnvironmentFile` (see `.env.example`).
+
+## Hermes home and profile resolution
+
+The sidecar resolves every Hermes state path (state DB, sessions, logs,
+skills, config, cache, vault-brain candidates) through
+`server/hermes_paths.py`, which mirrors the Hermes core launcher:
+
+1. `HERMES_HOME` set and already profile-shaped (`<root>/profiles/<name>`) → used verbatim.
+2. Sticky active profile (`<root>/active_profile` contains a name other than `default`) → `<root>/profiles/<name>`.
+3. `HERMES_HOME` set (non profile-shaped) → used verbatim.
+4. Platform default → `~/.hermes`.
+
+The bash launchers (`scripts/run-local-telemetry.sh`,
+`scripts/run-dashboard-api.sh`) use the twin `resolve_hermes_home` from
+`scripts/lib/env.sh` with the same precedence, so the server process is
+launched with the same home the server itself resolves. This keeps Mission
+Control reading the correct Hermes state when Hermes runs from a non-default
+home or a named profile.
+
 ## Endpoints
 
 The telemetry server exposes a set of read-only `/api/local/*` endpoints. Representative routes:
@@ -26,8 +59,27 @@ The telemetry server exposes a set of read-only `/api/local/*` endpoints. Repres
 - `/api/local/cron/jobs`, `/api/local/config`, `/api/local/tools`, `/api/local/skills`
 - `/api/local/logs`
 - `/api/local/chat/last`, `/api/local/chat/whiteboard` — chat + tldraw bridge
+- `/api/local/knowledge`, `/api/local/knowledge/file` — vault knowledge (see below)
 
 The frontend consumes these through `src/lib/hermes-api.ts` (`loadProviderUsage`, etc.) and `src/lib/mission-control-store.tsx`.
+
+## Knowledge vault
+
+The Knowledge page scans a local Markdown vault and exposes it through `/api/local/knowledge` (snapshot) and `/api/local/knowledge/file` (single note content).
+
+### Vault path resolution
+
+The vault root is resolved by one canonical function (`_knowledge_vault_root()` in `server/local_telemetry_server.py`), used for scanning, display, fallback payloads, and file reads:
+
+1. `MISSION_CONTROL_VAULT_PATH` (canonical; supports `~` expansion);
+2. `HERMES_OBSIDIAN_VAULT` (legacy alias, kept for compatibility);
+3. platform default: `~/Documents/Hermes` on macOS, `~/wiki` on Linux.
+
+On Linux the default is `~/wiki`; set `MISSION_CONTROL_VAULT_PATH` in `.env` to point at an existing vault (e.g. `~/wiki`) when the default does not match your layout.
+
+### Path safety
+
+API responses never include absolute home paths: `sourcePath` and `vaultPath` are rendered home-relative (`~/wiki/notes.md`). When the vault is unavailable the fallback payload still reports a valid display path for the platform — it never fabricates a macOS path on Linux. File reads are restricted to the vault root and `~/.hermes` core files; anything outside returns 403.
 
 ## Web Push (optional)
 
@@ -98,7 +150,7 @@ scripts/update-provider-usage.sh        # writes ~/.hermes/cache/mission-control
 scripts/local/update-provider-usage.sh  # identical variant
 ```
 
-These read `MISSION_CONTROL_CACHE_DIR` (default `~/.hermes/cache`). A LaunchAgent (or cron) can run it every 60s so the dashboard always has a fresh cache without paying a CodexBar call per request.
+These read `MISSION_CONTROL_CACHE_DIR` (default `~/.hermes/cache`). A scheduler (macOS LaunchAgent, Linux systemd timer, or cron) can run it every 60s so the dashboard always has a fresh cache without paying a CodexBar call per request.
 
 ### Ollama requires the web source
 

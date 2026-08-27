@@ -1,0 +1,14 @@
+[Unit]
+Description=Hermes Mission Control Vite frontend (port 5174)
+After=network.target hermes-mission-control-telemetry.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/hermes-mission-control
+EnvironmentFile=-%h/Projects/hermes-mission-control/.env
+ExecStart=%h/.local/share/pnpm/vite --host 0.0.0.0
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

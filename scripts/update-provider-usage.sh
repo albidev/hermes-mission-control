@@ -2,7 +2,13 @@
 set -euo pipefail
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-OUTPUT_DIR="${MISSION_CONTROL_CACHE_DIR:-$HOME/.hermes/cache}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091 # path is runtime-computed via SCRIPT_DIR
+source "$SCRIPT_DIR/lib/env.sh"
+load_mission_control_env
+# Profile-aware cache dir — the telemetry server reads provider usage from
+# the same location via server/hermes_paths.py (issue #12).
+OUTPUT_DIR="${MISSION_CONTROL_CACHE_DIR:-$(resolve_hermes_home)/cache}"
 OUTPUT="$OUTPUT_DIR/mission-control-provider-usage.json"
 TMP="$OUTPUT.tmp.$$"
 mkdir -p "$OUTPUT_DIR"

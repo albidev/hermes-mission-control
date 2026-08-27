@@ -28,7 +28,15 @@ SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
-CLIENT_DIAGNOSTICS_LOG = Path.home() / ".hermes" / "logs" / "mission-control-client.log"
+from hermes_paths import (
+    display_home_path,
+    get_hermes_home as resolve_hermes_home,
+    hermes_cache_dir,
+    hermes_logs_dir,
+    hermes_skills_dir,
+)
+
+CLIENT_DIAGNOSTICS_LOG = hermes_logs_dir() / "mission-control-client.log"
 _CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
 
 import candidates as candidates_mod
@@ -303,7 +311,7 @@ def _sanitize_provider_usage(provider: str, payload: Any) -> Dict[str, Any]:
 
 
 def collect_provider_usage() -> Dict[str, Any]:
-    cache_path = Path.home() / ".hermes" / "cache" / "mission-control-provider-usage.json"
+    cache_path = hermes_cache_dir() / "mission-control-provider-usage.json"
     try:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
         if isinstance(cached, dict) and isinstance(cached.get("providers"), list):
@@ -423,14 +431,26 @@ _KNOWLEDGE_SKIPPED_DIRS = {".git", ".obsidian", ".agents", "node_modules", "dist
 
 
 def _knowledge_vault_root() -> Path:
-    override = os.environ.get("HERMES_OBSIDIAN_VAULT") or os.environ.get("MISSION_CONTROL_VAULT_PATH")
+    """Canonical vault-path resolver.
+
+    Resolution order:
+    1. ``MISSION_CONTROL_VAULT_PATH`` (canonical).
+    2. ``HERMES_OBSIDIAN_VAULT`` (legacy alias, kept for compatibility).
+    3. Platform default: ``~/Documents/Hermes`` on macOS, ``~/wiki`` on Linux.
+
+    The same resolved path is used for scanning, display, fallback payloads,
+    and file reads.
+    """
+    override = os.environ.get("MISSION_CONTROL_VAULT_PATH") or os.environ.get("HERMES_OBSIDIAN_VAULT")
     if override:
         return Path(os.path.expanduser(override)).resolve()
-    return (Path.home() / "Documents" / "Hermes").resolve()
+    if platform.system().lower() == "darwin":
+        return (Path.home() / "Documents" / "Hermes").resolve()
+    return (Path.home() / "wiki").resolve()
 
 
 def _knowledge_core_root() -> Path:
-    return (Path.home() / ".hermes").resolve()
+    return resolve_hermes_home().resolve()
 
 
 def _path_is_within(path: Path, root: Path) -> bool:
@@ -441,16 +461,32 @@ def _path_is_within(path: Path, root: Path) -> bool:
         return False
 
 
+def _home_relative(path: Path) -> str:
+    """Render a path relative to the user's home directory (``~/...``)."""
+    try:
+        relative = path.resolve().relative_to(Path.home().resolve()).as_posix()
+    except ValueError:
+        return str(path.resolve())
+    return f"~/{relative}" if relative else "~"
+
+
 def _display_knowledge_path(path: Path) -> str:
+    """Home-relative display path for API responses (no absolute usernames).
+
+    The vault root is rendered from its real location (``~/Documents/Hermes``
+    on macOS, ``~/wiki`` on Linux, or wherever ``MISSION_CONTROL_VAULT_PATH``
+    points), so a configured vault never shows a fabricated macOS path.
+    """
     resolved = path.resolve()
     home_root = Path.home().resolve()
     vault_root = _knowledge_vault_root().resolve()
 
-    if resolved == vault_root:
-        return "~/Documents/Hermes"
     if _path_is_within(resolved, vault_root):
         relative = resolved.relative_to(vault_root).as_posix()
-        return f"~/Documents/Hermes/{relative}" if relative else "~/Documents/Hermes"
+        vault_display = _home_relative(vault_root)
+        if not relative or relative == ".":
+            return vault_display
+        return f"{vault_display}/{relative}"
     if _path_is_within(resolved, home_root):
         relative = resolved.relative_to(home_root).as_posix()
         return f"~/{relative}" if relative else "~"
@@ -568,9 +604,9 @@ def collect_knowledge_snapshot() -> Dict[str, Any]:
     all_items: list[Dict[str, Any]] = []
 
     core_candidates = [
-        ("soul", "~/.hermes/SOUL.md", Path.home() / ".hermes" / "SOUL.md"),
-        ("user", "~/.hermes/USER.md", Path.home() / ".hermes" / "USER.md"),
-        ("agents", "~/.hermes/AGENTS.md", Path.home() / ".hermes" / "AGENTS.md"),
+        ("soul", display_home_path(resolve_hermes_home() / "SOUL.md"), resolve_hermes_home() / "SOUL.md"),
+        ("user", display_home_path(resolve_hermes_home() / "USER.md"), resolve_hermes_home() / "USER.md"),
+        ("agents", display_home_path(resolve_hermes_home() / "AGENTS.md"), resolve_hermes_home() / "AGENTS.md"),
     ]
     for section_id, title, file_path in core_candidates:
         items: list[Dict[str, Any]] = []
@@ -620,7 +656,7 @@ def collect_knowledge_snapshot() -> Dict[str, Any]:
             "id": "knowledge-sharing",
             "title": "Knowledge Sharing",
             "path": "Knowledge Sharing.md",
-            "sourcePath": "~/Documents/Hermes/Knowledge Sharing.md",
+            "sourcePath": _display_knowledge_path(vault_root / "Knowledge Sharing.md"),
             "updatedAt": None,
             "excerpt": "Create shared vault notes to surface them here.",
             "highlights": [],
@@ -648,10 +684,11 @@ def _resolve_knowledge_request_path(requested_path: str) -> Path:
 
     vault_root = _knowledge_vault_root().resolve()
     core_root = _knowledge_core_root().resolve()
-    if raw == "~/Documents/Hermes":
+    vault_prefix = _display_knowledge_path(vault_root)
+    if raw == vault_prefix:
         candidate = vault_root
-    elif raw.startswith("~/Documents/Hermes/"):
-        candidate = vault_root / raw[len("~/Documents/Hermes/"):]
+    elif raw.startswith(vault_prefix + "/"):
+        candidate = vault_root / raw[len(vault_prefix) + 1:]
     elif raw == "~/.hermes":
         candidate = core_root
     elif raw.startswith("~/.hermes/"):
@@ -720,7 +757,8 @@ def _parse_float(value: str | None, default: float, minimum: float | None = None
 
 
 def _get_hermes_home() -> Path:
-    return Path.home() / '.hermes'
+    """Profile-aware Hermes home — see server/hermes_paths.py (issue #12)."""
+    return resolve_hermes_home()
 
 
 def _read_runtime_status() -> Optional[Dict[str, Any]]:
@@ -1035,7 +1073,7 @@ def _find_skill_md_files(skills_dir: Path) -> list[Path]:
 
 
 def _collect_skills() -> Dict[str, Any]:
-    """Scan ~/.hermes/skills/ to build an installed skills snapshot.
+    """Scan the profile-aware Hermes skills dir for an installed snapshot.
 
     Recursively discovers all SKILL.md files, parses their YAML frontmatter
     to extract name, description, tags, and computes category from the
@@ -1044,7 +1082,7 @@ def _collect_skills() -> Dict[str, Any]:
     Reads skills.disabled (and skills.platform_disabled for the local
     platform) from config.yaml to determine each skill's enabled state.
     """
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
 
     # Read disabled skill names from config.yaml
     disabled_names: set[str] = set()
@@ -1219,8 +1257,8 @@ _SKILL_FILE_READ_LIMIT = 200_000  # 200 KB max for a single file read
 
 
 def _is_within_skills_dir(path: Path) -> bool:
-    """Check that a resolved path is inside ~/.hermes/skills/."""
-    skills_root = (Path.home() / ".hermes" / "skills").resolve()
+    """Check that a resolved path is inside the profile-aware skills dir."""
+    skills_root = hermes_skills_dir().resolve()
     try:
         path.resolve().relative_to(skills_root)
         return True
@@ -1231,11 +1269,11 @@ def _is_within_skills_dir(path: Path) -> bool:
 def _collect_skill_detail(skill_name: str) -> Dict[str, Any]:
     """Return the SKILL.md content and a file listing for a named skill.
 
-    Searches ~/.hermes/skills/ for a SKILL.md whose frontmatter ``name``
+    Searches the Hermes skills dir for a SKILL.md whose frontmatter ``name``
     matches *skill_name* (case-insensitive).  Falls back to matching the
     leaf directory name.
     """
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
     if not skills_dir.exists():
         return {"success": False, "error": "skills_directory_not_found"}
 
@@ -1296,14 +1334,14 @@ def _collect_skill_detail(skill_name: str) -> Dict[str, Any]:
 
 
 def _read_skill_file(file_path_str: str) -> Dict[str, Any]:
-    """Read a single file from inside ~/.hermes/skills/.
+    """Read a single file from inside the Hermes skills dir.
 
     *file_path_str* must be an absolute path or a path relative to the
     skills directory.  Directory-traversal is blocked.
     """
     candidate = Path(file_path_str)
     if not candidate.is_absolute():
-        candidate = Path.home() / ".hermes" / "skills" / candidate
+        candidate = hermes_skills_dir() / candidate
 
     resolved = candidate.resolve()
     if not _is_within_skills_dir(resolved):
@@ -1329,7 +1367,7 @@ def _read_skill_file(file_path_str: str) -> Dict[str, Any]:
 
 def _collect_skill_files_recursive(skill_name: str) -> Dict[str, Any]:
     """Return all files with their contents for a named skill (recursive)."""
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
     if not skills_dir.exists():
         raise FileNotFoundError("Skills directory not found")
 
@@ -1384,8 +1422,8 @@ def _collect_skill_files_recursive(skill_name: str) -> Dict[str, Any]:
 
 
 def _collect_logs(max_files: int = 10, max_lines: int = 160) -> Dict[str, Any]:
-    """Read latest log files from ~/.hermes/logs/."""
-    logs_dir = Path.home() / ".hermes" / "logs"
+    """Read latest log files from the profile-aware Hermes logs dir."""
+    logs_dir = hermes_logs_dir()
     files_list: list[Dict[str, Any]] = []
     total_entries = 0
 
@@ -2327,9 +2365,34 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+def _resolve_telemetry_bind() -> tuple[str, int]:
+    """Resolve the telemetry bind address and port from environment variables.
+
+    Canonical names: MISSION_CONTROL_LOCAL_TELEMETRY_HOST / _PORT.
+    Legacy aliases (documented in .env.example): TELEMETRY_BIND_HOST / _PORT.
+    Canonical names win over the legacy aliases when both are set.
+    An invalid port aborts startup with a clear error instead of silently
+    falling back to the default.
+    """
+    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST") or os.getenv("TELEMETRY_BIND_HOST") or "0.0.0.0"
+    port_raw = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT") or os.getenv("TELEMETRY_BIND_PORT") or "8765"
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError):
+        raise SystemExit(
+            f"[mission-control-local-telemetry] invalid telemetry port {port_raw!r}: "
+            "expected an integer (MISSION_CONTROL_LOCAL_TELEMETRY_PORT / TELEMETRY_BIND_PORT)"
+        )
+    if not 0 < port < 65536:
+        raise SystemExit(
+            f"[mission-control-local-telemetry] invalid telemetry port {port}: "
+            "must be between 1 and 65535"
+        )
+    return host, port
+
+
 def main() -> None:
-    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST", "0.0.0.0")
-    port = int(os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT", "8765"))
+    host, port = _resolve_telemetry_bind()
 
     sampler = threading.Thread(target=_cpu_sampler, name="mc-cpu-sampler", daemon=True)
     sampler.start()

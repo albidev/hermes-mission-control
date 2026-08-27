@@ -36,7 +36,9 @@ def _kb():
     if _kanban_db is None:
         with _import_lock:
             if _kanban_db is None:
-                core_root = Path.home() / ".hermes" / "hermes-agent"
+                from hermes_paths import hermes_core_dir
+
+                core_root = hermes_core_dir()
                 if str(core_root) not in sys.path:
                     sys.path.insert(0, str(core_root))
                 try:
