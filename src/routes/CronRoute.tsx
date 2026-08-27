@@ -312,6 +312,8 @@ function Metric({ label, value, icon: Icon }: { label: string; value: string; ic
   return <Card className="p-4"><div className="flex items-center justify-between text-xs text-text-muted"><span>{label}</span><Icon className="h-4 w-4 text-text-subtle" /></div><p className="mt-2 text-lg font-semibold text-text">{value}</p></Card>;
 }
 
+const CRON_POLLING_ENABLED = false; // Temporary regression isolation; do not disable Hermes cron jobs.
+
 export function CronRoute() {
   const { storedToken } = useMissionControl();
   const { t } = useI18n();
@@ -344,6 +346,7 @@ export function CronRoute() {
 
   useEffect(() => {
     void refresh();
+    if (!CRON_POLLING_ENABLED) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh(true);
     }, 30_000);
