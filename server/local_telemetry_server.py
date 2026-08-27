@@ -44,6 +44,7 @@ from push_server import (
     add_subscription,
     list_subscriptions,
     load_vapid_public_key,
+    push_status,
     remove_subscription,
     send_push,
     start_gateway_watcher,
@@ -1579,10 +1580,20 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         if parsed.path == "/health":
-            self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
+            self._json(200, {
+                "ok": True,
+                "service": "mission-control-local-telemetry",
+                "source": "local-psutil",
+                "push": push_status(),
+            })
             return
         if parsed.path == "/api/local/health":
-            self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
+            self._json(200, {
+                "ok": True,
+                "service": "mission-control-local-telemetry",
+                "source": "local-psutil",
+                "push": push_status(),
+            })
             return
         if parsed.path == "/api/local/system":
             if not _is_authorized(self):
@@ -1770,9 +1781,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             public_key = load_vapid_public_key()
             if not public_key:
-                self._json(200, {'publicKey': None, 'enabled': False})
+                self._json(200, {'publicKey': None, 'enabled': False, 'status': push_status()})
                 return
-            self._json(200, {'publicKey': public_key, 'enabled': True})
+            self._json(200, {'publicKey': public_key, 'enabled': True, 'status': push_status()})
             return
         if parsed.path == '/api/local/push/subscriptions':
             if not _is_authorized(self):
@@ -2187,7 +2198,7 @@ class Handler(BaseHTTPRequestHandler):
             text = data.get('body', '')
             result = send_push(str(title), str(text))
             if result.get('disabled'):
-                self._json(200, {'success': False, 'disabled': True, 'detail': 'Push not configured (missing VAPID keys).'})
+                self._json(200, {'success': False, 'disabled': True, **result})
                 return
             self._json(200, {'success': True, **result})
             return

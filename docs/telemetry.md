@@ -29,6 +29,39 @@ The telemetry server exposes a set of read-only `/api/local/*` endpoints. Repres
 
 The frontend consumes these through `src/lib/hermes-api.ts` (`loadProviderUsage`, etc.) and `src/lib/mission-control-store.tsx`.
 
+## Web Push (optional)
+
+Web Push lets the browser deliver notifications while the app is in the
+background or closed. It is **opt-in**: the base install (`server/requirements.txt`)
+does not include the required packages, and the sidecar runs fine without them.
+
+Enable it with:
+
+```bash
+python3 -m pip install -r server/requirements-push.txt   # pywebpush + websockets
+```
+
+then set `MISSION_CONTROL_VAPID_PUBLIC_KEY`, `MISSION_CONTROL_VAPID_PRIVATE_KEY`
+and `MISSION_CONTROL_VAPID_CONTACT` (a `mailto:` or `https:` sender identity —
+**required**; push stays disabled without it) in the environment file. See
+`.env.example` for the exact names.
+
+The sidecar reports the push state on every health probe:
+
+```json
+{"ok": true, "service": "mission-control-local-telemetry", "source": "local-psutil",
+ "push": {"enabled": false, "reason": "vapid_not_configured",
+          "missingConfig": ["MISSION_CONTROL_VAPID_CONTACT"]}}
+```
+
+- `reason: "vapid_not_configured"` — keys or contact missing (`missingConfig` lists them): intentional disablement.
+- `reason: "missing_dependency"` — the optional packages are not installed in the interpreter running the sidecar (`missingDependencies` lists them).
+- `reason: "ok"` — configured and importable; per-subscription delivery failures are still possible and are counted in `send_push`'s `failed` field.
+
+Related endpoints: `/api/local/push/vapid-public-key` (serves the public key to
+the client), `/api/local/push/subscriptions` (store/list/delete), and
+`/api/local/push/send` (test delivery — returns the same `reason` when disabled).
+
 ## Provider usage (CodexBar)
 
 The **Provider usage** overview card shows live cloud limits and balances for Codex, Ollama Cloud, and OpenRouter. The numbers come from [CodexBar](https://github.com/steipete/codexbar), a macOS menu-bar CLI that reads each provider's usage/credits.
