@@ -23,6 +23,11 @@ export default defineConfig({
     // Runtime/worktree directories live below the repo root but are not app
     // sources. Watching them turns cleanup and generated state into full-page
     // reloads (especially when a nested worktree is removed).
+    // Mission Control is also served to iOS through Tailscale Funnel. Vite's
+    // HMR WebSocket is not reliable across mobile sleep/network transitions
+    // and can reset the whole React tree. The live app is refreshed by launchd
+    // when source/config changes, so keep the remote surface stable.
+    hmr: false,
     watch: {
       ignored: ['**/.worktrees/**', '**/.hermes/**', '**/dist/**'],
     },
