@@ -367,48 +367,6 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(interval);
   }, [authRequired, config.available, knowledge.available, refreshAll, refreshConfig, skills.available, snapshot.activeModel, storedToken, tools.available]);
 
-  useEffect(() => {
-    if (authRequired || typeof document === 'undefined' || typeof window === 'undefined') {
-      return;
-    }
-
-    let lastRecoveryRefreshAt = 0;
-    const refreshAfterRecovery = (trigger: 'visibilitychange' | 'online') => {
-      if (document.visibilityState !== 'visible') {
-        return;
-      }
-
-      const now = Date.now();
-      if (now - lastRecoveryRefreshAt < 5000) {
-        recordReloadDiagnostic('mc-refresh-after-recovery-skipped', { trigger, reason: 'debounced' });
-        return;
-      }
-      lastRecoveryRefreshAt = now;
-      recordReloadDiagnostic('mc-refresh-after-recovery', {
-        trigger,
-        includeReference: false,
-        includeSnapshot: false,
-        includeSessions: true,
-      });
-      void refreshAll(storedToken || undefined, {
-        silent: true,
-        includeReference: false,
-        includeSnapshot: false,
-        includeSessions: true,
-      });
-    };
-
-    const refreshAfterWake = () => refreshAfterRecovery('visibilitychange');
-    const refreshAfterOnline = () => refreshAfterRecovery('online');
-
-    document.addEventListener('visibilitychange', refreshAfterWake);
-    window.addEventListener('online', refreshAfterOnline);
-
-    return () => {
-      document.removeEventListener('visibilitychange', refreshAfterWake);
-      window.removeEventListener('online', refreshAfterOnline);
-    };
-  }, [authRequired, refreshAll, storedToken]);
 
   const unlock = useCallback(async (token: string) => {
     const nextToken = token.trim();

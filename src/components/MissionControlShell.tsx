@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bot,
@@ -290,7 +290,9 @@ export function MissionControlShell() {
           </header>
 
           <section className={`route-stage ${isOverviewRoute ? 'is-overview' : ''}`}>
-            <Outlet />
+            <Suspense fallback={<div className="route-loading" role="status">Loading page…</div>}>
+              <Outlet />
+            </Suspense>
           </section>
 
           {authRequired ? (
