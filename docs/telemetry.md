@@ -9,7 +9,7 @@ Mission Control is a local-first dashboard: all of its data comes from a small l
 | Telemetry server | `server/local_telemetry_server.py` | `8765` | Python stdlib + psutil |
 | Frontend | `src/` | `5174` | React + Vite + TypeScript + Tailwind |
 
-All data flows through `/api/local/*`. In development, Vite proxies those requests to the telemetry server. The telemetry server binds to `0.0.0.0` and requires a bearer token on every request (see [`SECURITY.md`](../SECURITY.md)).
+All data flows through `/api/local/*`. In development, Vite proxies those requests to the telemetry server. The telemetry server binds to `127.0.0.1` (loopback) by default and requires a bearer token on every request (see [`SECURITY.md`](../SECURITY.md)).
 
 The sidecar does **not** hot-reload: restart it after any backend change.
 
@@ -19,14 +19,51 @@ The telemetry server reads its bind address and port from environment variables 
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MISSION_CONTROL_LOCAL_TELEMETRY_HOST` | `0.0.0.0` | Bind address (canonical name) |
+| `MISSION_CONTROL_LOCAL_TELEMETRY_HOST` | `127.0.0.1` | Bind address (canonical name) |
 | `MISSION_CONTROL_LOCAL_TELEMETRY_PORT` | `8765` | Bind port (canonical name) |
 | `TELEMETRY_BIND_HOST` | — | Legacy alias for the host |
 | `TELEMETRY_BIND_PORT` | — | Legacy alias for the port |
 
 The canonical `MISSION_CONTROL_LOCAL_TELEMETRY_*` names take precedence over the legacy `TELEMETRY_BIND_*` aliases when both are set. An invalid port (non-integer or out of `1..65535`) aborts startup with a clear error instead of silently falling back to the default.
 
+### Security implications of the bind address
+
+Mission Control is a **local operator dashboard**: it defaults to loopback so it is unreachable from the network unless you explicitly opt in. This matters on Linux hosts with LAN interfaces, containers, VPNs, or Tailscale peers — `0.0.0.0` would expose the dashboard (and its data endpoints) to every interface the machine has.
+
+- Local-only operation: leave `MISSION_CONTROL_LOCAL_TELEMETRY_HOST` unset (or set it to `127.0.0.1`). The server listens on loopback only.
+- Tailscale/LAN exposure: set `MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0` (or the legacy `TELEMETRY_BIND_HOST`) explicitly. This is the opt-in signal. The dashboard is still protected by the bearer token, but the token is the only boundary between your network peers and the data.
+- A reverse proxy (Caddy, nginx, `tailscale serve`) can expose the dashboard without changing the bind: keep the telemetry server on loopback and proxy to it.
+
 On Linux systemd deployments, set the canonical pair in the service `EnvironmentFile` (see `.env.example`).
+
+## CORS origin enforcement
+
+Browsers enforce the same-origin policy: a page served from one origin cannot read responses from another unless the server grants it via CORS headers. The telemetry server's behavior depends on `MISSION_CONTROL_ALLOWED_ORIGIN`:
+
+| Setting | Behavior |
+|---------|----------|
+| Unset (dev default) | Incoming `Origin` is mirrored back (`Access-Control-Allow-Origin: <origin>`), so browser sidecars work across Tailscale/LAN without extra configuration. |
+| Set to `http://host:port` | **Only that exact origin** receives CORS headers. Any other `Origin` gets none, so browsers block the cross-origin response. |
+
+Examples:
+
+```bash
+# Dev / Tailscale: mirror whatever origin the browser sends
+MISSION_CONTROL_ALLOWED_ORIGIN=
+
+# Hardened: only this exact frontend origin may read responses
+MISSION_CONTROL_ALLOWED_ORIGIN=http://100.84.148.17:5174
+```
+
+The comparison is exact — scheme, host, and port must all match. Requests without an `Origin` header (curl, same-origin fetches, non-browser clients) are not subject to CORS and pass through as usual; CORS never protects data without authentication, it only tells the browser which origins may read the response.
+
+### Vite dev server: `host: true`
+
+The Vite dev server (`vite.config.ts`) uses `host: true`, which makes it listen on **all interfaces** — the same exposure surface as the telemetry server's old `0.0.0.0` default. It is a dev tool, so it does not have a loopback default, but on a shared/LAN host you should treat `5174` as network-visible:
+
+- Vite filters incoming requests by `Host` header via `allowedHosts` (default `localhost,127.0.0.1`, extended with `MISSION_CONTROL_DEV_HOSTS`). A peer whose address is not listed gets rejected at the Vite layer ("due to access control checks") before any request reaches the backend.
+- `host: true` is required for Tailscale/LAN access and for the bundled systemd unit (`vite --host 0.0.0.0`). For local-only work, run plain `pnpm dev` (loopback) or remove `--host` from the unit.
+- The Vite dev server is a development surface: for production, serve the built `dist/` behind a static host or reverse proxy instead of exposing the dev server.
 
 ## Hermes home and profile resolution
 

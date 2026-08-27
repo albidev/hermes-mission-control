@@ -48,8 +48,10 @@ class LocalTelemetryAuthTests(unittest.TestCase):
         # Isolate knowledge tests from any vault override on the host.
         os.environ.pop("MISSION_CONTROL_VAULT_PATH", None)
         os.environ.pop("HERMES_OBSIDIAN_VAULT", None)
-        # The profile-aware core root (issue #12) honors HERMES_HOME, which the
-        # dispatcher exports — drop it so Path.home() mocks control resolution.
+        # The profile-aware core scan (hermes_paths) reads HERMES_HOME before
+        # falling back to Path.home; tests that patch Path.home (e.g. the
+        # "no fabricated macOS path" check) need it unset so the patched home
+        # actually takes effect.
         os.environ.pop("HERMES_HOME", None)
 
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:

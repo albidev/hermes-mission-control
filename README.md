@@ -147,7 +147,13 @@ in `scripts/lib/restart-services.sh` and documented as macOS-only).
 
 ## Tailscale / LAN access
 
-Vite listens on all interfaces (`host: true`) and `allowedHosts` is read from `MISSION_CONTROL_DEV_HOSTS`. The telemetry server binds to `0.0.0.0`. Both accept Tailscale peer IPs.
+By default the telemetry server binds to loopback (`127.0.0.1`) and Vite serves locally. To expose Mission Control to Tailscale peers or your LAN you must opt in explicitly:
+
+- Set `MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0` (telemetry sidecar) — see `.env.example` and `docs/telemetry.md`.
+- List the peer addresses in `MISSION_CONTROL_DEV_HOSTS` (Vite `allowedHosts`, e.g. `100.84.148.17,192.168.1.63`).
+- Optionally harden CORS with `MISSION_CONTROL_ALLOWED_ORIGIN=http://<peer>:5174` so only that origin can read responses.
+
+Both processes accept Tailscale peer IPs once configured. A reverse proxy (`tailscale serve`, Caddy, nginx) is the recommended alternative: it exposes the dashboard without widening the telemetry bind.
 
 ## Building
 

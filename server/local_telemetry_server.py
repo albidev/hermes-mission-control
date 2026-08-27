@@ -593,6 +593,8 @@ def _display_knowledge_path(path: Path) -> str:
         if not relative or relative == ".":
             return vault_display
         return f"{vault_display}/{relative}"
+    if _path_is_within(resolved, core_root):
+        return display_home_path(resolved)
     if _path_is_within(resolved, home_root):
         relative = resolved.relative_to(home_root).as_posix()
         return f"~/{relative}" if relative else "~"
@@ -791,11 +793,12 @@ def _resolve_knowledge_request_path(requested_path: str) -> Path:
     vault_root = _knowledge_vault_root().resolve()
     core_root = _knowledge_core_root().resolve()
     vault_prefix = _display_knowledge_path(vault_root)
+    core_display = display_home_path(resolve_hermes_home())
     if raw == vault_prefix:
         candidate = vault_root
     elif raw.startswith(vault_prefix + "/"):
         candidate = vault_root / raw[len(vault_prefix) + 1:]
-    elif raw == "~/.hermes":
+    elif raw == core_display:
         candidate = core_root
     elif raw.startswith("~/.hermes/"):
         candidate = core_root / raw[len("~/.hermes/"):]
@@ -1590,12 +1593,20 @@ class Handler(BaseHTTPRequestHandler):
     def _cors_headers(self) -> Dict[str, str]:
         configured_origin = (os.getenv("MISSION_CONTROL_ALLOWED_ORIGIN") or "").strip()
         request_origin = (self.headers.get("Origin") or "").strip()
-        if configured_origin and request_origin and request_origin == configured_origin:
-            return {
-                "Access-Control-Allow-Origin": request_origin,
-                "Vary": "Origin",
-            }
-        # Dev mode: mirror the incoming origin so browser sidecars work without explicit config.
+        if configured_origin:
+            # Explicit allow-list mode: only the exact configured origin is
+            # accepted. Any other Origin gets no CORS headers, so browsers
+            # block the cross-origin response. Requests without an Origin
+            # header (curl, same-origin fetches, non-browser clients) are not
+            # subject to CORS and pass through untouched.
+            if request_origin and request_origin == configured_origin:
+                return {
+                    "Access-Control-Allow-Origin": request_origin,
+                    "Vary": "Origin",
+                }
+            return {}
+        # Dev mode (no explicit configuration): mirror the incoming origin so
+        # browser sidecars work across Tailscale/LAN without extra config.
         if request_origin:
             return {
                 "Access-Control-Allow-Origin": request_origin,
@@ -2478,8 +2489,13 @@ def _resolve_telemetry_bind() -> tuple[str, int]:
     Canonical names win over the legacy aliases when both are set.
     An invalid port aborts startup with a clear error instead of silently
     falling back to the default.
+
+    The default bind is loopback (``127.0.0.1``): Mission Control is a
+    local operator dashboard and must not listen on all interfaces unless
+    the operator explicitly opts in (Tailscale/LAN exposure) by setting
+    ``MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0`` (or the legacy alias).
     """
-    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST") or os.getenv("TELEMETRY_BIND_HOST") or "0.0.0.0"
+    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST") or os.getenv("TELEMETRY_BIND_HOST") or "127.0.0.1"
     port_raw = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT") or os.getenv("TELEMETRY_BIND_PORT") or "8765"
     try:
         port = int(port_raw)
