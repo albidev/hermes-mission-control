@@ -67,8 +67,9 @@ See [docs/kanban.md](docs/kanban.md) for the Kanban board architecture, supporte
 
 ## Quick start
 
+From the repository root:
+
 ```bash
-cd apps/mission-control
 pnpm install
 python3 -m pip install -r server/requirements.txt
 pnpm dev:full
@@ -87,7 +88,7 @@ pnpm dev             # port 5174
 
 ## Configuration
 
-Create `apps/mission-control/.env` from `.env.example`:
+Create `./.env` from `.env.example`:
 
 ```bash
 VITE_MISSION_CONTROL_LOCAL_API_BASE_URL=/api/local

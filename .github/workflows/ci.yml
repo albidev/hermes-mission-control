@@ -10,6 +10,13 @@ permissions:
   contents: read
 
 jobs:
+  paths:
+    name: Documented paths check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-documented-paths.sh
+
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest

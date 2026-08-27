@@ -25,7 +25,7 @@ else
 fi
 
 # hermes_state.py lives in the core dir, not on the default sys.path when the
-# server runs with cwd=apps/mission-control. Export the core dir so the
+# server runs with cwd=<repo-root>. Export the core dir so the
 # telemetry server can open state.db (otherwise it falls back to the stale
 # sessions.json index and shows ~11 sessions instead of the real count).
 export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$HOME/.hermes/hermes-agent"

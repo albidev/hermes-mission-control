@@ -6,12 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/restart-services.sh"
 load_mission_control_env
-DEFAULT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-HERMES_ROOT="${1:-${HERMES_ROOT:-$DEFAULT_ROOT}}"
+MC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_HERMES_ROOT="${HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
+HERMES_ROOT="${1:-$DEFAULT_HERMES_ROOT}"
 
 WEB_SERVER="$HERMES_ROOT/hermes_cli/web_server.py"
-VITE_CONFIG="$HERMES_ROOT/apps/mission-control/vite.config.ts"
-SMOKE_SCRIPT="$HERMES_ROOT/apps/mission-control/scripts/smoke-upgrade.sh"
+VITE_CONFIG="$MC_ROOT/vite.config.ts"
+SMOKE_SCRIPT="$MC_ROOT/scripts/smoke-upgrade.sh"
 
 log() { echo "[mission-control-align] $*"; }
 fail() { echo "[mission-control-align][FAIL] $*" >&2; exit 1; }
