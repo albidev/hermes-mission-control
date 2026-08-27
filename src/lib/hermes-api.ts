@@ -30,6 +30,7 @@ export type MissionControlMachineStatus = {
     fanCount: number | null;
     thermalPressure: number | null;
     thermalLevel: string | null;
+    levelSource: string | null;
     source: string | null;
     error: string | null;
   };
@@ -482,6 +483,7 @@ const fallbackMachine: MissionControlMachineStatus = {
     fanCount: null,
     thermalPressure: null,
     thermalLevel: null,
+    levelSource: null,
     source: null,
     error: null,
   },
@@ -813,6 +815,7 @@ function normalizeMachineStatus(input: Partial<MissionControlMachineStatus> | un
       fanCount: input.thermal?.fanCount ?? fallbackMachine.thermal.fanCount,
       thermalPressure: input.thermal?.thermalPressure ?? fallbackMachine.thermal.thermalPressure,
       thermalLevel: input.thermal?.thermalLevel ?? fallbackMachine.thermal.thermalLevel,
+      levelSource: input.thermal?.levelSource ?? fallbackMachine.thermal.levelSource,
       source: input.thermal?.source ?? fallbackMachine.thermal.source,
       error: input.thermal?.error ?? fallbackMachine.thermal.error,
     },

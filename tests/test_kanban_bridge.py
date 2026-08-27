@@ -44,7 +44,7 @@ _skip_reason = (
 class KanbanBridgeTest(unittest.TestCase):
     def setUp(self):
         # Point hermes at an isolated home BEFORE connecting, and restore the
-        # previous HERMES_HOME afterwards. kanban_db resolves its DB path from
+        # previous env afterwards. kanban_db resolves its DB path from
         # HERMES_HOME on every connect(), and Mission Control's path resolver
         # honors it — leaking a temp home here would poison later test modules
         # (issue #12).

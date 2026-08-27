@@ -70,6 +70,7 @@ function HealthMetric({
   bar,
   barVariant = 'default',
   level,
+  caption,
 }: {
   icon: React.ElementType;
   label: string;
@@ -78,6 +79,7 @@ function HealthMetric({
   bar?: number | null;
   barVariant?: 'default' | 'positive' | 'warning' | 'negative';
   level?: string | null;
+  caption?: string | null;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -94,6 +96,9 @@ function HealthMetric({
         <LevelMeter level={level} />
       ) : bar !== undefined ? (
         <MiniBar value={bar} variant={barVariant} />
+      ) : null}
+      {caption ? (
+        <span className="text-[10px] text-text-muted">{caption}</span>
       ) : null}
     </div>
   );
@@ -215,13 +220,39 @@ export function SystemHealthPanel({
           />
         )}
 
-        {/* Thermal — discrete level meter */}
-        <HealthMetric
-          icon={Thermometer}
-          label="Thermal"
-          value={machine.thermal.thermalLevel ?? '—'}
-          level={machine.thermal.thermalLevel ?? null}
-        />
+        {/* Thermal — unavailable (no sensor) is distinct from a nominal value */}
+        {machine.thermal.source === 'unavailable' ? (
+          <HealthMetric
+            icon={Thermometer}
+            label="Thermal"
+            value="Unavailable"
+            caption={machine.thermal.error ?? 'No thermal sensor detected on this host'}
+          />
+        ) : machine.thermal.thermalPressure !== null ? (
+          <HealthMetric
+            icon={Thermometer}
+            label="Thermal"
+            value={`${machine.thermal.thermalPressure.toFixed(1)}°C`}
+            bar={machine.thermal.thermalPressure}
+            barVariant={
+              machine.thermal.thermalPressure > 85 ? 'negative' :
+              machine.thermal.thermalPressure > 75 ? 'warning' :
+              'positive'
+            }
+            caption={
+              machine.thermal.source === 'sysfs-thermal' ? 'sysfs thermal zone' :
+              machine.thermal.source === 'lm-sensors' ? 'lm-sensors' :
+              machine.thermal.source ?? undefined
+            }
+          />
+        ) : (
+          <HealthMetric
+            icon={Thermometer}
+            label="Thermal"
+            value={machine.thermal.thermalLevel ?? '—'}
+            level={machine.thermal.thermalLevel ?? null}
+          />
+        )}
       </div>
     </Card>
   );
