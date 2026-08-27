@@ -59,8 +59,27 @@ The telemetry server exposes a set of read-only `/api/local/*` endpoints. Repres
 - `/api/local/cron/jobs`, `/api/local/config`, `/api/local/tools`, `/api/local/skills`
 - `/api/local/logs`
 - `/api/local/chat/last`, `/api/local/chat/whiteboard` — chat + tldraw bridge
+- `/api/local/knowledge`, `/api/local/knowledge/file` — vault knowledge (see below)
 
 The frontend consumes these through `src/lib/hermes-api.ts` (`loadProviderUsage`, etc.) and `src/lib/mission-control-store.tsx`.
+
+## Knowledge vault
+
+The Knowledge page scans a local Markdown vault and exposes it through `/api/local/knowledge` (snapshot) and `/api/local/knowledge/file` (single note content).
+
+### Vault path resolution
+
+The vault root is resolved by one canonical function (`_knowledge_vault_root()` in `server/local_telemetry_server.py`), used for scanning, display, fallback payloads, and file reads:
+
+1. `MISSION_CONTROL_VAULT_PATH` (canonical; supports `~` expansion);
+2. `HERMES_OBSIDIAN_VAULT` (legacy alias, kept for compatibility);
+3. platform default: `~/Documents/Hermes` on macOS, `~/wiki` on Linux.
+
+On Linux the default is `~/wiki`; set `MISSION_CONTROL_VAULT_PATH` in `.env` to point at an existing vault (e.g. `~/wiki`) when the default does not match your layout.
+
+### Path safety
+
+API responses never include absolute home paths: `sourcePath` and `vaultPath` are rendered home-relative (`~/wiki/notes.md`). When the vault is unavailable the fallback payload still reports a valid display path for the platform — it never fabricates a macOS path on Linux. File reads are restricted to the vault root and `~/.hermes` core files; anything outside returns 403.
 
 ## Provider usage (CodexBar)
 
