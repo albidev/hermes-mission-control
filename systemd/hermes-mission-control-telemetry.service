@@ -6,6 +6,11 @@ After=network.target hermes-dashboard-api.service
 Wants=network.target
 PartOf=mission-control.target
 
+# Bound the restart rate so a missing dependency (e.g. core checkout or
+# psutil) fails the unit visibly instead of looping.
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
 [Service]
 Type=simple
 WorkingDirectory=%h/Projects/hermes-mission-control
@@ -15,12 +20,9 @@ EnvironmentFile=-%h/Projects/hermes-mission-control/.env
 Environment=PYTHONPATH=%h/.hermes/hermes-agent:%h/Projects/hermes-mission-control/server
 ExecStart=%h/.hermes/hermes-agent/venv/bin/python %h/Projects/hermes-mission-control/server/local_telemetry_server.py
 
-# Restart on unexpected exit, with a bounded rate so a missing dependency
-# (e.g. core checkout or psutil) fails the unit visibly instead of looping.
+# Restart on unexpected exit.
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=5min
-StartLimitBurst=10
 
 [Install]
 WantedBy=mission-control.target

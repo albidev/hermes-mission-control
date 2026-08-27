@@ -7,6 +7,11 @@ After=network.target hermes-dashboard-api.service hermes-mission-control-telemet
 Wants=hermes-dashboard-api.service hermes-mission-control-telemetry.service
 PartOf=mission-control.target
 
+# Bound the restart rate. A port conflict or missing node_modules fails the
+# unit visibly instead of looping forever.
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
 [Service]
 Type=simple
 WorkingDirectory=%h/Projects/hermes-mission-control
@@ -15,12 +20,9 @@ EnvironmentFile=-%h/Projects/hermes-mission-control/.env
 # frontend. For a local-only Linux box remove it so Vite binds loopback only.
 ExecStart=%h/.local/share/pnpm/vite --host 0.0.0.0
 
-# Restart on unexpected exit, with a bounded rate. A port conflict or missing
-# node_modules fails the unit visibly instead of looping forever.
+# Restart on unexpected exit.
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=5min
-StartLimitBurst=10
 
 [Install]
 WantedBy=mission-control.target
