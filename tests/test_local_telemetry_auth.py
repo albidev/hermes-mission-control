@@ -40,6 +40,7 @@ class LocalTelemetryAuthTests(unittest.TestCase):
             "MISSION_CONTROL_READ_ONLY": os.environ.get("MISSION_CONTROL_READ_ONLY"),
             "MISSION_CONTROL_VAULT_PATH": os.environ.get("MISSION_CONTROL_VAULT_PATH"),
             "HERMES_OBSIDIAN_VAULT": os.environ.get("HERMES_OBSIDIAN_VAULT"),
+            "HERMES_HOME": os.environ.get("HERMES_HOME"),
         }
         os.environ["MISSION_CONTROL_TOKEN"] = "phase1-secret"
         os.environ.pop("API_SERVER_KEY", None)
@@ -47,6 +48,9 @@ class LocalTelemetryAuthTests(unittest.TestCase):
         # Isolate knowledge tests from any vault override on the host.
         os.environ.pop("MISSION_CONTROL_VAULT_PATH", None)
         os.environ.pop("HERMES_OBSIDIAN_VAULT", None)
+        # The profile-aware core root (issue #12) honors HERMES_HOME, which the
+        # dispatcher exports — drop it so Path.home() mocks control resolution.
+        os.environ.pop("HERMES_HOME", None)
 
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
             sock.bind(("127.0.0.1", 0))
