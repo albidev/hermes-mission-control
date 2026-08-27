@@ -2948,6 +2948,120 @@
 
 .chat-reasoning-copy p:last-child { margin-bottom: 0; }
 
+/* One Markdown treatment for prose surfaces. Tailwind Preflight removes the
+   browser's list/heading defaults, so these rules keep reasoning and event
+   bubbles readable instead of rendering valid HTML as visually-flat text. */
+.chat-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown > :first-child { margin-top: 0; }
+.chat-markdown > :last-child { margin-bottom: 0; }
+
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown blockquote,
+.chat-markdown pre,
+.chat-markdown table,
+.chat-markdown hr {
+  margin: 0 0 0.65rem;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3 {
+  margin: 0.85rem 0 0.4rem;
+  color: var(--color-text);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.chat-markdown h1 { font-size: 1.15rem; }
+.chat-markdown h2 { font-size: 1rem; }
+.chat-markdown h3 { font-size: 0.9rem; }
+
+.chat-markdown ul,
+.chat-markdown ol {
+  padding-left: 1.35rem;
+}
+
+.chat-markdown ul { list-style: disc; }
+.chat-markdown ol { list-style: decimal; }
+.chat-markdown li { margin: 0.2rem 0; }
+.chat-markdown li > p { margin-bottom: 0.25rem; }
+
+.chat-markdown blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+  padding-left: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.chat-markdown a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.chat-markdown :not(pre) > code {
+  border-radius: var(--radius-sm);
+  padding: 0.0625rem 0.25rem;
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+  font: 0.85em ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.chat-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.75rem;
+  background: var(--color-surface-sunken);
+  white-space: pre-wrap;
+}
+
+.chat-markdown pre code {
+  padding: 0;
+  background: transparent;
+  font: inherit;
+}
+
+.chat-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid var(--color-border);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+.chat-markdown th {
+  color: var(--color-text);
+  background: var(--color-surface-sunken);
+  font-weight: 750;
+}
+
+.chat-markdown.is-streaming {
+  min-height: 1.35em;
+}
+
+.chat-message-user .chat-markdown :not(pre) > code {
+  color: white;
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .chat-message-tool {
   align-self: stretch;
   width: 100%;

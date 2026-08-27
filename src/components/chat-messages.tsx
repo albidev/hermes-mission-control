@@ -30,6 +30,22 @@ export function formatToolDuration(durationS: number | undefined): string | null
   return `${durationS.toFixed(durationS < 10 ? 1 : 0)}s`;
 }
 
+export function ChatMarkdown({
+  text,
+  placeholder,
+  streaming = false,
+}: {
+  text: string;
+  placeholder: string;
+  streaming?: boolean;
+}) {
+  return (
+    <div className={`chat-markdown${streaming ? ' is-streaming' : ''}`}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{text || placeholder}</ReactMarkdown>
+    </div>
+  );
+}
+
 export function ToolMessage({ message }: { message: ChatMessage }) {
   const { t } = useI18n();
   const running = message.status === 'streaming';
@@ -127,20 +143,20 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
                 <ChevronDown size={14} className="chat-reasoning-chevron" />
               </summary>
               <div className="chat-reasoning-copy">
-                {message.status === 'streaming' ? (
-                  <div className="chat-streaming-copy">{message.text || 'Working through the request…'}</div>
-                ) : (
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || ''}</ReactMarkdown>
-                )}
+                <ChatMarkdown
+                  text={message.text}
+                  placeholder="Working through the request…"
+                  streaming={message.status === 'streaming'}
+                />
               </div>
             </details>
           ) : (
             <div className={`chat-message-body chat-${visualKind}-body`}>
-              {message.status === 'streaming' ? (
-                <div className="chat-streaming-copy">{message.text || '...'}</div>
-              ) : (
-                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || ''}</ReactMarkdown>
-              )}
+              <ChatMarkdown
+                text={message.text}
+                placeholder="..."
+                streaming={message.status === 'streaming'}
+              />
             </div>
           )}
         </>
