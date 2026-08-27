@@ -26,6 +26,23 @@ if _CORE_AVAILABLE:
         sys.path.insert(0, str(CORE_ROOT))
         sys.path.insert(0, str(SERVER_DIR))
         # Point hermes at an isolated home BEFORE importing the bridge.
+        # Kanban workers inherit explicit board pins so their own task tools
+        # cannot escape the assigned board. Those pins have higher precedence
+        # than HERMES_HOME; if they leak into this test process, the fixtures
+        # are written to the real board instead of the temporary test DB.
+        # Clear every worker-specific pin before setting the isolated home.
+        for _name in (
+            "HERMES_KANBAN_DB",
+            "HERMES_KANBAN_BOARD",
+            "HERMES_KANBAN_WORKSPACES_ROOT",
+            "HERMES_KANBAN_HOME",
+            "HERMES_KANBAN_TASK",
+            "HERMES_KANBAN_RUN_ID",
+            "HERMES_KANBAN_CLAIM_LOCK",
+            "HERMES_KANBAN_WORKSPACE",
+            "HERMES_KANBAN_BRANCH",
+        ):
+            os.environ.pop(_name, None)
         os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="mc-kanban-test-")
         # Probe: hermes_constants uses `str | object` unions and fails with
         # TypeError on Python < 3.10 — sometimes lazily (inside connect()).
