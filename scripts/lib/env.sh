@@ -2,7 +2,7 @@
 #
 # env.sh — shared environment loader for Mission Control operational scripts.
 #
-# Loads configuration from an explicit env file (default: <repo-root>/.env,
+# Loads configuration from an explicit env file (default: ~/.hermes/mission-control.env,
 # override with $MISSION_CONTROL_ENV_FILE) and falls back to the already
 # exported environment. Platform-neutral: no launchctl, no macOS-only tools.
 #
@@ -24,7 +24,7 @@ mc_repo_root() {
 }
 
 # Echo the path of the env file to load, or nothing if none exists.
-# Priority: $MISSION_CONTROL_ENV_FILE, then <repo-root>/.env.
+# Priority: $MISSION_CONTROL_ENV_FILE, then ~/.hermes/mission-control.env.
 mc_env_file() {
   if [[ -n "${MISSION_CONTROL_ENV_FILE:-}" ]]; then
     if [[ -f "$MISSION_CONTROL_ENV_FILE" ]]; then
@@ -35,7 +35,7 @@ mc_env_file() {
     return
   fi
   local default_env
-  default_env="$(mc_repo_root)/.env"
+  default_env="$HOME/.hermes/mission-control.env"
   if [[ -f "$default_env" ]]; then
     printf '%s' "$default_env"
   fi
@@ -79,7 +79,7 @@ load_mission_control_env() {
   env_file="$(mc_env_file)"
   if [[ -z "$env_file" ]]; then
     echo "[mission-control-env] No env file found; using exported environment only" >&2
-    echo "[mission-control-env] Set MISSION_CONTROL_ENV_FILE or create $(mc_repo_root)/.env to configure" >&2
+    echo "[mission-control-env] Set MISSION_CONTROL_ENV_FILE or create $HOME/.hermes/mission-control.env to configure" >&2
     return 0
   fi
   # shellcheck disable=SC1090 # dynamic path from mc_env_file()

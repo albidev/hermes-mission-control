@@ -32,12 +32,18 @@ from hermes_paths import (
     display_home_path,
     get_hermes_home as resolve_hermes_home,
     hermes_cache_dir,
+    hermes_core_dir,
     hermes_logs_dir,
     hermes_skills_dir,
+    hermes_root,
+    hermes_vault_dir,
 )
 
-CLIENT_DIAGNOSTICS_LOG = Path.home() / ".hermes" / "logs" / "mission-control-client.log"
 _CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
+
+
+def _client_diagnostics_log() -> Path:
+    return hermes_logs_dir() / "mission-control-client.log"
 
 import candidates as candidates_mod
 
@@ -242,7 +248,7 @@ def _collect_linux_thermal_snapshot() -> Dict[str, Any]:
                 return {
                     "fanRpm": None,
                     "fanCount": None,
-                    "thermalPressure": round(min(temps), 1),
+                    "thermalPressure": round(max(temps), 1),
                     "thermalLevel": None,
                     "levelSource": None,
                     "source": "sysfs-thermal",
@@ -280,7 +286,7 @@ def _collect_linux_thermal_snapshot() -> Dict[str, Any]:
     return {
         "fanRpm": None,
         "fanCount": None,
-        "thermalPressure": round(min(temps), 1),
+        "thermalPressure": round(max(temps), 1),
         "thermalLevel": None,
         "levelSource": None,
         "source": "lm-sensors",
@@ -425,7 +431,7 @@ def _sanitize_provider_usage(provider: str, payload: Any) -> Dict[str, Any]:
 
 
 def collect_provider_usage() -> Dict[str, Any]:
-    cache_path = Path.home() / ".hermes" / "cache" / "mission-control-provider-usage.json"
+    cache_path = hermes_cache_dir() / "mission-control-provider-usage.json"
     try:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
         if isinstance(cached, dict) and isinstance(cached.get("providers"), list):
@@ -523,9 +529,10 @@ def _append_client_diagnostic(payload: Dict[str, Any]) -> None:
     """Persist browser reload breadcrumbs without ever recording its auth token."""
     safe_payload = {key: value for key, value in payload.items() if key != "_accessToken"}
     line = json.dumps(safe_payload, ensure_ascii=False, separators=(",", ":"))
+    diagnostics_log = _client_diagnostics_log()
     with _CLIENT_DIAGNOSTICS_LOCK:
-        CLIENT_DIAGNOSTICS_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with CLIENT_DIAGNOSTICS_LOG.open("a", encoding="utf-8") as handle:
+        diagnostics_log.parent.mkdir(parents=True, exist_ok=True)
+        with diagnostics_log.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
 
 
@@ -555,16 +562,11 @@ def _knowledge_vault_root() -> Path:
     The same resolved path is used for scanning, display, fallback payloads,
     and file reads.
     """
-    override = os.environ.get("MISSION_CONTROL_VAULT_PATH") or os.environ.get("HERMES_OBSIDIAN_VAULT")
-    if override:
-        return Path(os.path.expanduser(override)).resolve()
-    if platform.system().lower() == "darwin":
-        return (Path.home() / "Documents" / "Hermes").resolve()
-    return (Path.home() / "wiki").resolve()
+    return hermes_vault_dir()
 
 
 def _knowledge_core_root() -> Path:
-    return (Path.home() / ".hermes").resolve()
+    return resolve_hermes_home().resolve()
 
 
 def _path_is_within(path: Path, root: Path) -> bool:
@@ -720,10 +722,11 @@ def collect_knowledge_snapshot() -> Dict[str, Any]:
     sections: list[Dict[str, Any]] = []
     all_items: list[Dict[str, Any]] = []
 
+    core_root = _knowledge_core_root()
     core_candidates = [
-        ("soul", "~/.hermes/SOUL.md", Path.home() / ".hermes" / "SOUL.md"),
-        ("user", "~/.hermes/USER.md", Path.home() / ".hermes" / "USER.md"),
-        ("agents", "~/.hermes/AGENTS.md", Path.home() / ".hermes" / "AGENTS.md"),
+        ("soul", display_home_path(core_root / "SOUL.md"), core_root / "SOUL.md"),
+        ("user", display_home_path(core_root / "USER.md"), core_root / "USER.md"),
+        ("agents", display_home_path(core_root / "AGENTS.md"), core_root / "AGENTS.md"),
     ]
     for section_id, title, file_path in core_candidates:
         items: list[Dict[str, Any]] = []
@@ -802,15 +805,21 @@ def _resolve_knowledge_request_path(requested_path: str) -> Path:
     vault_root = _knowledge_vault_root().resolve()
     core_root = _knowledge_core_root().resolve()
     vault_prefix = _display_knowledge_path(vault_root)
-    core_display = display_home_path(resolve_hermes_home())
+    core_home = resolve_hermes_home()
+    core_display = display_home_path(core_home)
+    root_display = display_home_path(hermes_root())
     if raw == vault_prefix:
         candidate = vault_root
     elif raw.startswith(vault_prefix + "/"):
         candidate = vault_root / raw[len(vault_prefix) + 1:]
     elif raw == core_display:
         candidate = core_root
-    elif raw.startswith("~/.hermes/"):
-        candidate = core_root / raw[len("~/.hermes/"):]
+    elif raw.startswith(core_display + "/"):
+        candidate = core_home / raw[len(core_display) + 1:]
+    elif raw == root_display:
+        candidate = hermes_root()
+    elif raw.startswith(root_display + "/"):
+        candidate = hermes_root() / raw[len(root_display) + 1:]
     elif raw.startswith("~/"):
         candidate = Path.home() / raw[2:]
     else:
@@ -875,7 +884,7 @@ def _parse_float(value: str | None, default: float, minimum: float | None = None
 
 
 def _get_hermes_home() -> Path:
-    return Path.home() / '.hermes'
+    return resolve_hermes_home()
 
 
 def _read_runtime_status() -> Optional[Dict[str, Any]]:
@@ -1092,7 +1101,7 @@ def _collect_tools() -> Dict[str, Any]:
     tool_catalog: list[Dict[str, Any]] = []
     resolved: list[str] = []
 
-    project_root = _get_hermes_home() / "hermes-agent"
+    project_root = hermes_core_dir()
     tc_path = project_root / "hermes_cli" / "tools_config.py"
 
     try:
@@ -1199,7 +1208,7 @@ def _collect_skills() -> Dict[str, Any]:
     Reads skills.disabled (and skills.platform_disabled for the local
     platform) from config.yaml to determine each skill's enabled state.
     """
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
 
     # Read disabled skill names from config.yaml
     disabled_names: set[str] = set()
@@ -1374,8 +1383,8 @@ _SKILL_FILE_READ_LIMIT = 200_000  # 200 KB max for a single file read
 
 
 def _is_within_skills_dir(path: Path) -> bool:
-    """Check that a resolved path is inside ~/.hermes/skills/."""
-    skills_root = (Path.home() / ".hermes" / "skills").resolve()
+    """Check that a resolved path is inside the active Hermes skills directory."""
+    skills_root = hermes_skills_dir().resolve()
     try:
         path.resolve().relative_to(skills_root)
         return True
@@ -1390,7 +1399,7 @@ def _collect_skill_detail(skill_name: str) -> Dict[str, Any]:
     matches *skill_name* (case-insensitive).  Falls back to matching the
     leaf directory name.
     """
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
     if not skills_dir.exists():
         return {"success": False, "error": "skills_directory_not_found"}
 
@@ -1458,7 +1467,7 @@ def _read_skill_file(file_path_str: str) -> Dict[str, Any]:
     """
     candidate = Path(file_path_str)
     if not candidate.is_absolute():
-        candidate = Path.home() / ".hermes" / "skills" / candidate
+        candidate = hermes_skills_dir() / candidate
 
     resolved = candidate.resolve()
     if not _is_within_skills_dir(resolved):
@@ -1484,7 +1493,7 @@ def _read_skill_file(file_path_str: str) -> Dict[str, Any]:
 
 def _collect_skill_files_recursive(skill_name: str) -> Dict[str, Any]:
     """Return all files with their contents for a named skill (recursive)."""
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
     if not skills_dir.exists():
         raise FileNotFoundError("Skills directory not found")
 
@@ -1539,8 +1548,8 @@ def _collect_skill_files_recursive(skill_name: str) -> Dict[str, Any]:
 
 
 def _collect_logs(max_files: int = 10, max_lines: int = 160) -> Dict[str, Any]:
-    """Read latest log files from ~/.hermes/logs/."""
-    logs_dir = Path.home() / ".hermes" / "logs"
+    """Read latest log files from the active Hermes logs directory."""
+    logs_dir = hermes_logs_dir()
     files_list: list[Dict[str, Any]] = []
     total_entries = 0
 

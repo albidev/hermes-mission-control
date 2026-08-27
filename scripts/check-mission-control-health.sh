@@ -113,8 +113,9 @@ unauth_status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/api/local/sy
 [[ "$unauth_status" == "401" ]] || fail "unauthenticated /api/local/system returned HTTP $unauth_status (expected 401 — token gate not active?)"
 ok "unauthenticated request rejected with 401"
 
-# 4. Authenticated API request succeeds (token accepted).
-auth_status="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/local/system")"
+# 4. Authenticated API request succeeds (token accepted). Feed the header via
+# stdin so the secret never appears in the curl process arguments.
+auth_status="$(printf 'header = \"Authorization: %s %s\"\n' Bearer "$TOKEN" | curl -sS -o /dev/null -w '%{http_code}' --config - "$BASE_URL/api/local/system")"
 [[ "$auth_status" == "200" ]] || fail "authenticated /api/local/system returned HTTP $auth_status (expected 200 — check MISSION_CONTROL_TOKEN in the environment file)"
 ok "authenticated request returns 200"
 

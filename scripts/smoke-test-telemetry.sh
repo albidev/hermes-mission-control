@@ -71,7 +71,7 @@ health_status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/health")"
 unauth_status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/api/local/system")"
 [[ "$unauth_status" == "401" ]] || { echo "unauthenticated request was not rejected: HTTP $unauth_status" >&2; exit 1; }
 
-auth_status="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/local/system")"
+auth_status="$(printf 'header = \"Authorization: %s %s\"\n' Bearer "$TOKEN" | curl -sS -o /dev/null -w '%{http_code}' --config - "$BASE_URL/api/local/system")"
 [[ "$auth_status" == "200" ]] || { echo "authenticated request failed: HTTP $auth_status" >&2; exit 1; }
 
 echo "Telemetry smoke test passed ($BASE_URL)"

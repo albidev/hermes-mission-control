@@ -32,6 +32,7 @@ from the running installation.
 from __future__ import annotations
 
 import os
+import platform
 from pathlib import Path
 
 _HERMES_DIR_NAME = ".hermes"
@@ -181,3 +182,18 @@ def hermes_config_path() -> Path:
 def hermes_vault_brain_dir() -> Path:
     """Nightly-brain candidate store (``<home>/vault-brain``)."""
     return get_hermes_home() / "vault-brain"
+
+
+def hermes_vault_dir() -> Path:
+    """Return the configured Obsidian vault directory.
+
+    ``MISSION_CONTROL_VAULT_PATH`` is canonical; the older
+    ``HERMES_OBSIDIAN_VAULT`` name remains supported. Without an override,
+    use the platform-native default used by Mission Control knowledge views.
+    """
+    override = os.environ.get("MISSION_CONTROL_VAULT_PATH") or os.environ.get("HERMES_OBSIDIAN_VAULT")
+    if override:
+        return Path(os.path.expanduser(override)).resolve()
+    if platform.system().lower() == "darwin":
+        return (_user_home() / "Documents" / "Hermes").resolve()
+    return (_user_home() / "wiki").resolve()

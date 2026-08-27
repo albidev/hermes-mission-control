@@ -34,7 +34,8 @@ Mission Control is a **local operator dashboard**: it defaults to loopback so it
 - Tailscale/LAN exposure: set `MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0` (or the legacy `TELEMETRY_BIND_HOST`) explicitly. This is the opt-in signal. The dashboard is still protected by the bearer token, but the token is the only boundary between your network peers and the data.
 - A reverse proxy (Caddy, nginx, `tailscale serve`) can expose the dashboard without changing the bind: keep the telemetry server on loopback and proxy to it.
 
-On Linux systemd deployments, set the canonical pair in the service `EnvironmentFile` (see `.env.example`).
+On Linux systemd deployments, set the canonical pair in the external
+`~/.hermes/mission-control.env` file (see `.env.example` for the variable list).
 
 ## CORS origin enforcement
 
@@ -138,7 +139,9 @@ The vault root is resolved by one canonical function (`_knowledge_vault_root()` 
 2. `HERMES_OBSIDIAN_VAULT` (legacy alias, kept for compatibility);
 3. platform default: `~/Documents/Hermes` on macOS, `~/wiki` on Linux.
 
-On Linux the default is `~/wiki`; set `MISSION_CONTROL_VAULT_PATH` in `.env` to point at an existing vault (e.g. `~/wiki`) when the default does not match your layout.
+On Linux the default is `~/wiki`; set `MISSION_CONTROL_VAULT_PATH` in the
+external `~/.hermes/mission-control.env` file (or export it) to point at an
+existing vault when the default does not match your layout.
 
 ### Path safety
 

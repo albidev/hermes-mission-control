@@ -82,7 +82,12 @@
   "health.ram": "RAM",
   "health.disk": "Disk",
   "health.fan": "Fan",
+  "health.fanCount": "Fan ×{count}",
   "health.thermal": "Thermal",
+  "health.unavailable": "Unavailable",
+  "health.noSensor": "No thermal sensor detected on this host",
+  "health.thermalSysfs": "sysfs thermal zone",
+  "health.thermalLmSensors": "lm-sensors",
 
   "usage.eyebrow": "Usage",
   "usage.title": "Token consumption & cost estimate",

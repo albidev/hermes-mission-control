@@ -14,11 +14,9 @@ StartLimitBurst=10
 [Service]
 Type=simple
 WorkingDirectory=%h/Projects/hermes-mission-control
-EnvironmentFile=-%h/Projects/hermes-mission-control/.env
-# The server imports modules from the Hermes core checkout (hermes_state,
-# hermes_constants, ...) and from its own server/ directory.
-Environment=PYTHONPATH=%h/.hermes/hermes-agent:%h/Projects/hermes-mission-control/server
-ExecStart=%h/.hermes/hermes-agent/venv/bin/python %h/Projects/hermes-mission-control/server/local_telemetry_server.py
+EnvironmentFile=-%h/.hermes/mission-control.env
+# The wrapper resolves HERMES_HOME, the active profile, PYTHONPATH, and Python.
+ExecStart=%h/Projects/hermes-mission-control/scripts/run-local-telemetry.sh
 
 # Restart on unexpected exit.
 Restart=on-failure

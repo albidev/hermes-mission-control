@@ -88,11 +88,10 @@ systemctl --user daemon-reload
 ```
 
 If your checkout lives somewhere other than `~/Projects/hermes-mission-control`,
-edit the copied units: `WorkingDirectory`, `ExecStart` paths, and
-`EnvironmentFile` (three units under `~/.config/systemd/user/`). The Hermes
-core path default is `~/.hermes/hermes-agent` with a `venv` inside it; if
-your core checkout differs, adjust `WorkingDirectory`/`ExecStart` in
-`hermes-dashboard-api.service` and `hermes-mission-control-telemetry.service`.
+edit the copied units: `WorkingDirectory` and the repository prefix in the
+`ExecStart` wrapper paths. Keep `EnvironmentFile` pointed at the external
+`~/.hermes/mission-control.env` file. The dashboard and telemetry wrappers
+resolve `HERMES_HOME` and the active profile before starting the core.
 
 Make sure the units parse:
 

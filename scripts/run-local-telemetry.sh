@@ -34,7 +34,7 @@ export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$HERMES_ROOT/hermes-agent"
 # The server resolves Hermes state through the same profile-aware home.
 export HERMES_HOME="${HERMES_HOME:-$HERMES_ROOT}"
 
-# Curate (BDH candidate curation) — opt-in via .env (gitignored). The public
+# Curate (BDH candidate curation) — opt-in via the external env file. The public
 # repo default stays OFF (MC_ENABLE_BDH_CURATOR unset → disabled).
 [ -n "${MC_ENABLE_BDH_CURATOR:-}" ] && export MC_ENABLE_BDH_CURATOR
 

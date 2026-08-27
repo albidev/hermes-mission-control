@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Configuration:
 #   - Token/config is loaded from an explicit env file (see scripts/lib/env.sh).
-#     Default: <repo-root>/.env, override with $MISSION_CONTROL_ENV_FILE.
+#     Default: ~/.hermes/mission-control.env, override with $MISSION_CONTROL_ENV_FILE.
 #     No launchctl lookup — works identically on Linux and macOS.
 #   - The dashboard must run from the Hermes core checkout. The core is
 #     resolved profile-aware: $HERMES_HOME, then the sticky active profile,

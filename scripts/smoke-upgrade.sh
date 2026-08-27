@@ -33,7 +33,8 @@ request() {
   for _ in {1..15}; do
     : > "$tmp"
     if [[ -n "$TOKEN" ]]; then
-      code=$(curl -sS -m 8 -H "Authorization: Bearer ${TOKEN}" -o "$tmp" -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+      # Feed the secret through curl's stdin-backed config, not argv.
+      code=$(printf 'header = "Authorization: %s %s"\n' Bearer "$TOKEN" | curl -sS -m 8 --config - -o "$tmp" -w "%{http_code}" "$url" 2>/dev/null || echo "000")
     else
       code=$(curl -sS -m 8 -o "$tmp" -w "%{http_code}" "$url" 2>/dev/null || echo "000")
     fi

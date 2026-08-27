@@ -16,12 +16,20 @@ This module is standalone so it can later be extracted into a sidecar/plugin.
 from __future__ import annotations
 
 import os
+import sys
 import re
 import shutil
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+SERVER_DIR = Path(__file__).resolve().parent
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
+
+from hermes_paths import hermes_vault_dir
 
 
 def _vault_brain_dir() -> Path:
@@ -265,7 +273,7 @@ def promote_ready() -> List[Dict[str, Any]]:
         m = mapping.get(vault_id) or {}
         if m.get("vault_dir"):
             return Path(os.path.expanduser(str(m["vault_dir"])))
-        return Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
+        return Path(os.environ.get("VB_VAULT", str(hermes_vault_dir())))
 
     # build [(candidates_dir, vault_dir)]
     targets = [(str(_candidates_dir(None)), vault_target("core"))]
@@ -339,7 +347,7 @@ def vault_dir_for(vault_id: str) -> Path:
     m = mapping.get(vault_id) or {}
     if m.get("vault_dir"):
         return Path(os.path.expanduser(str(m["vault_dir"])))
-    return Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
+    return Path(os.environ.get("VB_VAULT", str(hermes_vault_dir())))
 
 
 def rejection_feedback() -> str:

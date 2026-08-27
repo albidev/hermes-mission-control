@@ -13,9 +13,10 @@ StartLimitBurst=10
 [Service]
 Type=simple
 # Paths shown are the default install; adjust for your checkout/core.
-WorkingDirectory=%h/.hermes/hermes-agent
-EnvironmentFile=-%h/Projects/hermes-mission-control/.env
-ExecStart=%h/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main dashboard --host 127.0.0.1 --port 9119 --no-open
+WorkingDirectory=%h/Projects/hermes-mission-control
+EnvironmentFile=-%h/.hermes/mission-control.env
+# The wrapper resolves HERMES_HOME and the active profile before starting core.
+ExecStart=%h/Projects/hermes-mission-control/scripts/run-dashboard-api.sh
 
 # Restart on unexpected exit (crashes, OOM).
 Restart=on-failure

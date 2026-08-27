@@ -79,8 +79,8 @@ class LinuxThermalSysfsTests(unittest.TestCase):
         result = local_telemetry_server._collect_linux_thermal_snapshot()
 
         self.assertEqual(result["source"], "sysfs-thermal")
-        # Lowest zone temperature is reported (52.0°C), not the average.
-        self.assertEqual(result["thermalPressure"], 52.0)
+        # The hottest zone is reported (58.0°C), not the average or coolest zone.
+        self.assertEqual(result["thermalPressure"], 58.0)
         self.assertIsNone(result["thermalLevel"])
         self.assertIsNone(result["error"])
 
@@ -128,6 +128,27 @@ class LinuxThermalSysfsTests(unittest.TestCase):
 
         self.assertEqual(result["source"], "lm-sensors")
         self.assertEqual(result["thermalPressure"], 54.0)
+        self.assertIsNone(result["error"])
+
+    def test_lm_sensors_reports_hottest_input(self):
+        def _fake_sensors(*args, **kwargs):
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "coretemp-isa-0000\n"
+                    "  Package id 0:\n"
+                    "    temp1_input: 48.000\n"
+                    "    temp2_input: 67.500\n"
+                ),
+                stderr="",
+            )
+
+        local_telemetry_server.subprocess.run = _fake_sensors
+
+        result = local_telemetry_server._collect_linux_thermal_snapshot()
+
+        self.assertEqual(result["source"], "lm-sensors")
+        self.assertEqual(result["thermalPressure"], 67.5)
         self.assertIsNone(result["error"])
 
     def test_no_sensors_returns_unavailable(self):
