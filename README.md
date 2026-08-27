@@ -106,6 +106,23 @@ pointed to by `MISSION_CONTROL_ENV_FILE`, and otherwise fall back to the
 already-exported environment. No `launchctl` lookup is used, so the same
 scripts run identically on macOS and Linux.
 
+### Hermes home & active profile resolution
+
+Mission Control resolves all Hermes state (state DB, sessions, logs, skills,
+config, cache, vault-brain candidates) through the **same profile-aware
+Hermes home used by the running Hermes installation** — see
+`server/hermes_paths.py` (and the bash twin `resolve_hermes_home` in
+`scripts/lib/env.sh`). Precedence:
+
+1. `HERMES_HOME` set and already profile-shaped (`<root>/profiles/<name>`) → used verbatim.
+2. Sticky active profile (`<root>/active_profile` contains a name other than `default`) → `<root>/profiles/<name>`.
+3. `HERMES_HOME` set (non profile-shaped) → used verbatim.
+4. Platform default → `~/.hermes`.
+
+This mirrors the Hermes core launcher exactly, so Mission Control keeps
+reading the correct database, sessions, logs, skills, and configuration even
+when Hermes runs from a non-default home or a named profile.
+
 ## Linux (systemd --user)
 
 On Linux the services are supervised by the systemd user session instead of

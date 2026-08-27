@@ -41,6 +41,37 @@ mc_env_file() {
   fi
 }
 
+# Resolve the profile-aware Hermes home (mirrors server/hermes_paths.py and
+# the Hermes core launcher, issue #12).
+#
+# Precedence:
+#   1. $HERMES_HOME already profile-shaped (<root>/profiles/<name>) -> verbatim
+#   2. Sticky active profile (<root>/active_profile != default) -> <root>/profiles/<name>
+#   3. $HERMES_HOME set (non profile-shaped) -> verbatim
+#   4. Platform default -> ~/.hermes
+#
+# The function always prints a path and never fails; callers that need the
+# directory to exist should check it themselves.
+resolve_hermes_home() {
+  local env_home="${HERMES_HOME:-}"
+  if [[ -n "$env_home" ]]; then
+    if [[ "$(basename "$(dirname "$env_home")")" == "profiles" ]]; then
+      printf '%s' "$env_home"
+      return
+    fi
+  fi
+  local root="${HERMES_HOME:-$HOME/.hermes}"
+  local active=""
+  if [[ -f "$root/active_profile" ]]; then
+    active="$(tr -d '[:space:]' < "$root/active_profile" 2>/dev/null || true)"
+  fi
+  if [[ -n "$active" && "$active" != "default" ]]; then
+    printf '%s' "$root/profiles/$active"
+    return
+  fi
+  printf '%s' "$root"
+}
+
 # Load environment variables from the env file (if any), exporting them.
 # Never errors; falls back to the already-exported environment.
 load_mission_control_env() {

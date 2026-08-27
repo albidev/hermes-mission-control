@@ -8,7 +8,6 @@ payload, enriches read results with output, and exposes a small action API.
 from __future__ import annotations
 
 import importlib
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -80,8 +79,10 @@ def _load_core():
     if _core_module is not None:
         return _core_module
 
-    hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")).expanduser()
-    core_root = hermes_home / "hermes-agent"
+    from hermes_paths import hermes_core_dir, get_hermes_home
+
+    hermes_home = get_hermes_home()
+    core_root = hermes_core_dir()
     if str(core_root) not in sys.path:
         sys.path.insert(0, str(core_root))
     try:

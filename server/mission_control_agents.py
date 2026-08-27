@@ -17,7 +17,9 @@ _SCHEMA_VERSION = "1"
 
 
 def _sessions_dir() -> Path:
-    return (Path.home() / ".hermes" / "sessions").resolve()
+    from hermes_paths import hermes_sessions_dir
+
+    return hermes_sessions_dir().resolve()
 
 
 def _safe_read_json(path: Path) -> dict[str, Any] | None:
@@ -76,8 +78,9 @@ def _parse_timestamp(value: Any) -> float | None:
 def _redact_home_path(value: str | None) -> str:
     if not value:
         return ""
-    home = str(Path.home())
-    return value.replace(home, "~")
+    from hermes_paths import display_home_path
+
+    return display_home_path(value)
 
 
 def _normalize_text(value: Any) -> str:

@@ -7,7 +7,9 @@ source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/restart-services.sh"
 load_mission_control_env
 MC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEFAULT_HERMES_ROOT="${HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
+# Profile-aware core checkout: positional arg wins, else HERMES_ROOT env,
+# else <resolved hermes home>/hermes-agent (issue #12).
+DEFAULT_HERMES_ROOT="${HERMES_ROOT:-$(resolve_hermes_home)/hermes-agent}"
 HERMES_ROOT="${1:-$DEFAULT_HERMES_ROOT}"
 
 WEB_SERVER="$HERMES_ROOT/hermes_cli/web_server.py"

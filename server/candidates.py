@@ -2,7 +2,8 @@
 """Candidate management for the nightly brain approval flow.
 
 Candidates are YAML-frontmatter .md files written by vault-brain-v2.py into
-~/.hermes/vault-brain/candidates/. Each has a status:
+<hermes-home>/vault-brain/candidates/ (default ~/.hermes/vault-brain/candidates/,
+profile-aware via server/hermes_paths.py). Each has a status:
   pending      -> awaiting human review in Mission Control
   approved     -> human approved; enters quarantine (quarantine_until set)
   quarantined  -> approved + quarantine elapsed; ready to promote
@@ -22,9 +23,24 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-DEFAULT_CANDIDATES_DIR = Path.home() / ".hermes" / "vault-brain" / "candidates"
+
+def _vault_brain_dir() -> Path:
+    from hermes_paths import hermes_vault_brain_dir
+
+    return hermes_vault_brain_dir()
+
+
+def _default_candidates_dir() -> Path:
+    return _vault_brain_dir() / "candidates"
+
+
+def _vaults_file() -> Path:
+    return _vault_brain_dir() / "curate-vaults.yaml"
+
+
+DEFAULT_CANDIDATES_DIR = _default_candidates_dir()
 DEFAULT_QUARANTINE_DAYS = float(os.environ.get("VB_QUARANTINE_DAYS", "1"))
-VAULTS_FILE = Path.home() / ".hermes" / "vault-brain" / "curate-vaults.yaml"
+VAULTS_FILE = _vaults_file()
 
 
 def _load_vaults() -> Dict[str, Dict[str, str]]:

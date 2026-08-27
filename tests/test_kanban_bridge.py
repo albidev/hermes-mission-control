@@ -25,8 +25,6 @@ if _CORE_AVAILABLE:
     try:
         sys.path.insert(0, str(CORE_ROOT))
         sys.path.insert(0, str(SERVER_DIR))
-        # Point hermes at an isolated home BEFORE importing the bridge.
-        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="mc-kanban-test-")
         # Probe: hermes_constants uses `str | object` unions and fails with
         # TypeError on Python < 3.10 — sometimes lazily (inside connect()).
         # Import it directly here so the incompatibility is caught up front.
@@ -45,6 +43,13 @@ _skip_reason = (
 @unittest.skipUnless(_CORE_AVAILABLE, _skip_reason)
 class KanbanBridgeTest(unittest.TestCase):
     def setUp(self):
+        # Point hermes at an isolated home BEFORE connecting, and restore the
+        # previous HERMES_HOME afterwards. kanban_db resolves its DB path from
+        # HERMES_HOME on every connect(), and Mission Control's path resolver
+        # honors it — leaking a temp home here would poison later test modules
+        # (issue #12).
+        self._hermes_home_backup = os.environ.get("HERMES_HOME")
+        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="mc-kanban-test-")
         # Fresh DB per test: connect auto-inits the schema.
         self.conn = kanban_db.connect()
         try:
@@ -58,6 +63,10 @@ class KanbanBridgeTest(unittest.TestCase):
             self.conn.close()
         except Exception:
             pass
+        if self._hermes_home_backup is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = self._hermes_home_backup
 
     def _make_task(self, title="Task", **kwargs):
         return kanban_db.create_task(self.conn, title=title, **kwargs)

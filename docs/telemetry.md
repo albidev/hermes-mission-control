@@ -28,6 +28,24 @@ The canonical `MISSION_CONTROL_LOCAL_TELEMETRY_*` names take precedence over the
 
 On Linux systemd deployments, set the canonical pair in the service `EnvironmentFile` (see `.env.example`).
 
+## Hermes home and profile resolution
+
+The sidecar resolves every Hermes state path (state DB, sessions, logs,
+skills, config, cache, vault-brain candidates) through
+`server/hermes_paths.py`, which mirrors the Hermes core launcher:
+
+1. `HERMES_HOME` set and already profile-shaped (`<root>/profiles/<name>`) → used verbatim.
+2. Sticky active profile (`<root>/active_profile` contains a name other than `default`) → `<root>/profiles/<name>`.
+3. `HERMES_HOME` set (non profile-shaped) → used verbatim.
+4. Platform default → `~/.hermes`.
+
+The bash launchers (`scripts/run-local-telemetry.sh`,
+`scripts/run-dashboard-api.sh`) use the twin `resolve_hermes_home` from
+`scripts/lib/env.sh` with the same precedence, so the server process is
+launched with the same home the server itself resolves. This keeps Mission
+Control reading the correct Hermes state when Hermes runs from a non-default
+home or a named profile.
+
 ## Endpoints
 
 The telemetry server exposes a set of read-only `/api/local/*` endpoints. Representative routes:
