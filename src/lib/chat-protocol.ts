@@ -136,6 +136,20 @@ export type ReconnectState = {
 
 const STREAM_CHARS = 72;
 
+export class ConnectionAttemptGate {
+  private active = false;
+
+  tryAcquire(): boolean {
+    if (this.active) return false;
+    this.active = true;
+    return true;
+  }
+
+  release(): void {
+    this.active = false;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -348,6 +362,11 @@ export function extractSessionKey(result: unknown): string | null {
   return null;
 }
 
+export function extractSessionRunning(result: unknown): boolean {
+  if (!isRecord(result)) return false;
+  return result.running === true || result.status === 'streaming';
+}
+
 export function parseSlash(command: string): { name: string; arg: string } {
   const normalized = command.trim().replace(/^\/+/, '');
   const match = normalized.match(/^(\S+)(?:\s+([\s\S]*))?$/);
@@ -514,6 +533,26 @@ export function eventActivity(event: GatewayEvent): ChatActivity | null {
 export function extractTranscript(result: unknown): GatewayTranscriptMessage[] {
   if (!isRecord(result) || !Array.isArray(result.messages)) return [];
   return result.messages.filter(isRecord) as GatewayTranscriptMessage[];
+}
+
+export type PendingPromptFingerprint = {
+  text: string;
+  baselineUserCount: number;
+};
+
+export function pendingPromptWasPersisted(
+  pending: PendingPromptFingerprint,
+  transcript: GatewayTranscriptMessage[],
+): boolean {
+  const baseline = Math.max(0, Math.floor(pending.baselineUserCount));
+  const userMessages = transcript.filter((message) => message.role === 'user');
+  if (userMessages.length <= baseline) return false;
+  const expected = pending.text.trim();
+  if (!expected) return false;
+  return userMessages.slice(baseline).some((message) => {
+    const actual = textFromContent(message.text) || textFromContent(message.content);
+    return actual.trim() === expected;
+  });
 }
 
 export function extractInflightAssistant(result: unknown): string {

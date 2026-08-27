@@ -8,6 +8,7 @@ import {
   extractSessionKey,
   extractTranscript,
   extractInjectedSessionToken,
+  extractSessionRunning,
   extractSessionModel,
   eventActivity,
   isResponseFor,
@@ -18,7 +19,11 @@ import {
   parseGatewayFrame,
   parseSlash,
   shouldCloseBackendSessionForNewChat,
+  pendingPromptWasPersisted,
+  ConnectionAttemptGate,
 } from '../src/lib/chat-protocol.ts';
+
+import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit } from '../src/lib/chat-outbox.ts';
 
 function assertEqual<T>(actual: T, expected: T) {
   if (actual !== expected) {
@@ -72,6 +77,9 @@ assertEqual(extractSessionId({ session_id: '' }), null);
 assertEqual(extractSessionKey({ stored_session_id: 'stored-abc' }), 'stored-abc');
 assertEqual(extractSessionKey({ session_key: 'stored-def' }), 'stored-def');
 assertEqual(extractSessionKey({ resumed: 'stored-ghi' }), 'stored-ghi');
+assertEqual(extractSessionRunning({ running: true }), true);
+assertEqual(extractSessionRunning({ status: 'streaming' }), true);
+assertEqual(extractSessionRunning({ running: false, status: 'idle' }), false);
 assertEqual(extractInjectedSessionToken('<script>window.__HERMES_SESSION_TOKEN__ = "gateway-token";</script>'), 'gateway-token');
 assertEqual(extractInjectedSessionToken('<html>no token</html>'), null);
 assertDeepEqual(parseSlash('/model deepseek-v4-flash'), { name: 'model', arg: 'deepseek-v4-flash' });
@@ -250,5 +258,52 @@ assertEqual(turnBoundary.some((message) => message.kind === 'assistant' && !mess
 assertEqual(nextReconnectDelay({ attempts: 0 }), 500);
 assertEqual(nextReconnectDelay({ attempts: 4 }), 8000);
 assertEqual(nextReconnectDelay({ attempts: 20 }), 8000);
+
+const connectionGate = new ConnectionAttemptGate();
+assertEqual(connectionGate.tryAcquire(), true);
+assertEqual(connectionGate.tryAcquire(), false);
+connectionGate.release();
+assertEqual(connectionGate.tryAcquire(), true);
+connectionGate.release();
+
+assertEqual(pendingPromptWasPersisted(
+  { text: 'new prompt', baselineUserCount: 1 },
+  [
+    { role: 'user', text: 'old prompt' },
+    { role: 'user', text: 'new prompt' },
+  ],
+), true);
+assertEqual(pendingPromptWasPersisted(
+  { text: 'new prompt', baselineUserCount: 2 },
+  [
+    { role: 'user', text: 'old prompt' },
+    { role: 'user', text: 'new prompt' },
+  ],
+), false);
+
+const outboxStorage = new Map<string, string>();
+const testWindow = {
+  localStorage: {
+    getItem: (key: string) => outboxStorage.get(key) ?? null,
+    setItem: (key: string, value: string) => { outboxStorage.set(key, value); },
+    removeItem: (key: string) => { outboxStorage.delete(key); },
+  },
+};
+const globalWithWindow = globalThis as unknown as { window?: typeof testWindow };
+const previousWindow = globalWithWindow.window;
+globalWithWindow.window = testWindow;
+const pendingOutbox = {
+  text: 'replay me',
+  displayText: 'replay me',
+  attachments: [],
+  baselineUserCount: 3,
+  sessionKey: 'stored-session',
+};
+persistPendingChatSubmit(pendingOutbox);
+assertDeepEqual(readPendingChatSubmit(), pendingOutbox);
+clearPendingChatSubmit();
+assertEqual(readPendingChatSubmit(), null);
+if (previousWindow) globalWithWindow.window = previousWindow;
+else delete globalWithWindow.window;
 
 console.log('chat protocol tests passed');
