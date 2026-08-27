@@ -64,11 +64,16 @@ class PushStatusTest(unittest.TestCase):
 
     def test_full_config_reports_ok(self) -> None:
         import os
+        from unittest import mock
 
         os.environ["MISSION_CONTROL_VAPID_PRIVATE_KEY"] = _VAPID_PRIVATE
         os.environ["MISSION_CONTROL_VAPID_PUBLIC_KEY"] = _VAPID_PUBLIC
         os.environ["MISSION_CONTROL_VAPID_CONTACT"] = _VAPID_CONTACT
-        status = push_server.push_status()
+        # Simulate the optional packages being installed: this test asserts the
+        # config path only. Without the mock, a bare install (no pywebpush /
+        # websockets) correctly reports missing_dependency instead.
+        with mock.patch.object(push_server, "_missing_push_dependencies", return_value=[]):
+            status = push_server.push_status()
         self.assertTrue(status["enabled"])
         self.assertEqual(status["reason"], "ok")
 
