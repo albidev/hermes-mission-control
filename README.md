@@ -126,20 +126,29 @@ when Hermes runs from a non-default home or a named profile.
 ## Linux (systemd --user)
 
 On Linux the services are supervised by the systemd user session instead of
-macOS launchd. Example units live in [`systemd/`](systemd/README.md):
+macOS launchd. Example units live in [`systemd/`](systemd/README.md) and the
+full walkthrough (clean checkout, secrets, operations, health checks) is in
+[`docs/runbooks/linux-deployment.md`](docs/runbooks/linux-deployment.md):
 
 - `hermes-dashboard-api.service` — dashboard API (`:9119`)
 - `hermes-mission-control-telemetry.service` — telemetry sidecar (`:8765`)
 - `hermes-mission-control.service` — Vite frontend (`:5174`)
+- `mission-control.target` — group target for the three services
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp systemd/*.service ~/.config/systemd/user/
+cp systemd/*.service systemd/*.target ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now hermes-dashboard-api hermes-mission-control-telemetry hermes-mission-control
+systemctl --user enable mission-control.target
+systemctl --user start mission-control.target
 # Optional: keep user units running after logout
 loginctl enable-linger "$USER"
 ```
+
+Secrets and environment values live in `~/.hermes/mission-control.env`
+(outside the repository; see the runbook for a template). Services restart on
+failure with a bounded rate and fail visibly when dependencies are missing.
+Health checks: `scripts/check-mission-control-health.sh`.
 
 `scripts/reapply-core-mission-control-fixes.sh` restarts the stack with
 `systemctl --user restart` on Linux (macOS keeps its `launchctl` path, isolated

@@ -1,15 +1,26 @@
 [Unit]
 Description=Hermes Mission Control telemetry server (port 8765)
-After=network.target
+# Reads Hermes state (state.db, sessions) via the core checkout, so it must
+# start after the dashboard API is up. The frontend unit starts after this one.
+After=network.target hermes-dashboard-api.service
+Wants=network.target
+PartOf=mission-control.target
 
 [Service]
 Type=simple
 WorkingDirectory=%h/Projects/hermes-mission-control
 EnvironmentFile=-%h/Projects/hermes-mission-control/.env
-Environment=PYTHONPATH=%h/.hermes/hermes-agent
+# The server imports modules from the Hermes core checkout (hermes_state,
+# hermes_constants, ...) and from its own server/ directory.
+Environment=PYTHONPATH=%h/.hermes/hermes-agent:%h/Projects/hermes-mission-control/server
 ExecStart=%h/.hermes/hermes-agent/venv/bin/python %h/Projects/hermes-mission-control/server/local_telemetry_server.py
+
+# Restart on unexpected exit, with a bounded rate so a missing dependency
+# (e.g. core checkout or psutil) fails the unit visibly instead of looping.
 Restart=on-failure
 RestartSec=5
+StartLimitIntervalSec=5min
+StartLimitBurst=10
 
 [Install]
-WantedBy=default.target
+WantedBy=mission-control.target

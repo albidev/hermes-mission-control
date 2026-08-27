@@ -28,6 +28,14 @@ SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
+from hermes_paths import (
+    display_home_path,
+    get_hermes_home as resolve_hermes_home,
+    hermes_cache_dir,
+    hermes_logs_dir,
+    hermes_skills_dir,
+)
+
 CLIENT_DIAGNOSTICS_LOG = Path.home() / ".hermes" / "logs" / "mission-control-client.log"
 _CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
 
@@ -586,6 +594,7 @@ def _display_knowledge_path(path: Path) -> str:
     resolved = path.resolve()
     home_root = Path.home().resolve()
     vault_root = _knowledge_vault_root().resolve()
+    core_root = _knowledge_core_root().resolve()
 
     if _path_is_within(resolved, vault_root):
         relative = resolved.relative_to(vault_root).as_posix()
