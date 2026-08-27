@@ -38,6 +38,7 @@ import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServ
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
 import { interactionTitle } from './chat-interactions';
+import { recordReloadDiagnostic } from './reload-diagnostics';
 
 // Backward-compatible re-export for ChatDrawer consumers during the gateway split.
 export { interactionTitle };
@@ -348,12 +349,20 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         setRunning(Boolean(inflight));
         return resolvedSessionId;
       } catch (err) {
-        if (requestedSessionIdRef.current === existingKey) {
-          throw new Error(`Session ${existingKey} could not be recovered from the gateway.`);
-        }
-        // A stale/deleted stored session is a normal recovery path: silently
-        // fall back to a fresh chat instead of turning the header into an error
-        // banner. Transport failures still surface through the actual RPC error.
+        recordReloadDiagnostic('chat-session-resume-fallback', {
+          reason: 'requested-session-unavailable',
+          requested: existingKey,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // A stale/deleted requested session is a normal recovery path: discard
+        // the invalid pointer and start a fresh chat. Do not surface a misleading
+        // error for an ID that is no longer present in the gateway.
+        requestedSessionIdRef.current = null;
+        previewModeRef.current = false;
+        setPreviewMode(false);
+        setError(null);
+        // Transport failures still fall through to the fresh-session attempt;
+        // if that fails, the actual creation error is surfaced to the user.
       }
     }
 
