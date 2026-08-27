@@ -13,6 +13,21 @@ All data flows through `/api/local/*`. In development, Vite proxies those reques
 
 The sidecar does **not** hot-reload: restart it after any backend change.
 
+## Bind address and port
+
+The telemetry server reads its bind address and port from environment variables at startup:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MISSION_CONTROL_LOCAL_TELEMETRY_HOST` | `0.0.0.0` | Bind address (canonical name) |
+| `MISSION_CONTROL_LOCAL_TELEMETRY_PORT` | `8765` | Bind port (canonical name) |
+| `TELEMETRY_BIND_HOST` | — | Legacy alias for the host |
+| `TELEMETRY_BIND_PORT` | — | Legacy alias for the port |
+
+The canonical `MISSION_CONTROL_LOCAL_TELEMETRY_*` names take precedence over the legacy `TELEMETRY_BIND_*` aliases when both are set. An invalid port (non-integer or out of `1..65535`) aborts startup with a clear error instead of silently falling back to the default.
+
+On Linux systemd deployments, set the canonical pair in the service `EnvironmentFile` (see `.env.example`).
+
 ## Endpoints
 
 The telemetry server exposes a set of read-only `/api/local/*` endpoints. Representative routes:
