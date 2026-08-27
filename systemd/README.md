@@ -17,6 +17,13 @@ LaunchAgents used on the reference setup.
    Point `Environment`/`WorkingDirectory`/`ExecStart` at your checkout and
    Hermes core as needed (paths shown are the default install).
 
+   The telemetry unit inherits the loopback default (`127.0.0.1:8765`) unless
+   you set `MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0` in the env file.
+   The Vite unit passes `--host 0.0.0.0` explicitly — remove it for a
+   local-only box. If you harden CORS, add
+   `MISSION_CONTROL_ALLOWED_ORIGIN=http://<host>:5174` to the env file so only
+   that origin can read telemetry responses (see `docs/telemetry.md`).
+
 3. Reload and enable:
 
    ```bash

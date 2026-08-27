@@ -49,7 +49,7 @@ class TelemetryBindResolutionTests(unittest.TestCase):
 
     def test_defaults_when_unset(self):
         self.assertEqual(
-            local_telemetry_server._resolve_telemetry_bind(), ("0.0.0.0", 8765)
+            local_telemetry_server._resolve_telemetry_bind(), ("127.0.0.1", 8765)
         )
 
     def test_canonical_names_are_applied(self):
