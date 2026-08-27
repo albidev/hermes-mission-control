@@ -516,7 +516,10 @@ const fallbackAlerts: MissionControlAlertsSnapshot = {
 
 const fallbackKnowledge: MissionControlKnowledgeSnapshot = {
   available: false,
-  vaultPath: '~/Documents/Hermes',
+  // Platform-neutral placeholder: the real vault path always comes from the
+  // telemetry server (MISSION_CONTROL_VAULT_PATH or the platform default).
+  // Do not fabricate a macOS-style path here.
+  vaultPath: '~/wiki',
   title: 'Knowledge Sharing',
   path: 'Knowledge Sharing.md',
   updatedAt: null,
@@ -771,7 +774,8 @@ export function buildHeaders(accessToken?: string): Record<string, string> {
 
 function redactHomePath(value: string | undefined | null): string | undefined | null {
   if (!value) return value;
-  return value.replace(/^\/Users\/[^/]+/, '~');
+  // macOS: /Users/<name>, Linux: /home/<name>
+  return value.replace(/^\/(Users|home)\/[^/]+/, '~');
 }
 
 function normalizeMachineStatus(input: Partial<MissionControlMachineStatus> | undefined): MissionControlMachineStatus {
