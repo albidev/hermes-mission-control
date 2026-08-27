@@ -169,33 +169,142 @@ def collect_system_snapshot() -> Dict[str, Any]:
     }
 
 
-def collect_thermal_snapshot() -> Dict[str, Any]:
-    """Read thermal pressure via powermetrics (needs sudo NOPASSWD).
+_THERMAL_LEVEL_INDEX = {
+    "nominal": 0.0,
+    "low": 25.0,
+    "moderate": 50.0,
+    "heavy": 75.0,
+    "extreme": 100.0,
+}
 
-    On macOS 26 (Apple Silicon) powermetrics no longer exposes the `smc`/`fan`
-    samplers, and ioreg/AppleSMC does not publish fan RPM on M-series. The only
-    readable surface is thermal pressure as a textual level:
 
-        **** Thermal pressure ****
-        Current pressure level: Nominal
+def _thermal_unavailable(error: Optional[str]) -> Dict[str, Any]:
+    """Structured 'no usable thermal sensor' payload.
 
-    Levels map to a normalised 0-100 index so the UI can render a bar:
-    Nominal=0, Low=25, Moderate=50, Heavy=75, Extreme=100. Returns nulls when
-    powermetrics/sudo is unavailable so the UI degrades to "—".
+    ``unavailable`` is distinct from ``None`` so the frontend can tell
+    "sensor missing" from "value is zero/nominal". The API still exposes
+    ``error`` for diagnostics, but a missing sensor is a normal state on
+    hosts without thermal hardware (containers, VMs, some desktops), not
+    a backend failure.
     """
+    return {
+        "fanRpm": None,
+        "fanCount": None,
+        "thermalPressure": None,
+        "thermalLevel": None,
+        "levelSource": None,
+        "source": "unavailable",
+        "error": error,
+    }
+
+
+def _collect_linux_thermal_snapshot() -> Dict[str, Any]:
+    """Collect thermal state from sysfs and, optionally, lm-sensors.
+
+    Fallback order:
+
+    1. ``/sys/class/thermal`` — kernel thermal zones. Purely passive
+       reads, no privileges needed. Works for CPU packages/cores on most
+       x86 and many ARM Linux hosts.
+    2. ``sensors`` (lm-sensors) — a user-space fallback when sysfs has no
+       ``thermal_zone`` entries but lm-sensors is installed. Executed
+       without sudo; if it is missing or fails, the result stays
+       ``unavailable``.
+    3. Unavailable — structured ``unavailable`` state, never an error.
+    """
+    thermal_zones_dir = Path("/sys/class/thermal")
+
+    if thermal_zones_dir.is_dir():
+        zones = sorted(thermal_zones_dir.glob("thermal_zone*"))
+        if zones:
+            temps: list[float] = []
+            for zone in zones:
+                temp_path = zone / "temp"
+                if not temp_path.is_file():
+                    continue
+                try:
+                    temp_milli = float(temp_path.read_text(encoding="utf-8", errors="replace").strip())
+                except (OSError, ValueError):
+                    continue
+                if temp_milli <= 0:
+                    continue
+                temps.append(temp_milli / 1000.0)
+            if temps:
+                return {
+                    "fanRpm": None,
+                    "fanCount": None,
+                    "thermalPressure": round(min(temps), 1),
+                    "thermalLevel": None,
+                    "levelSource": None,
+                    "source": "sysfs-thermal",
+                    "error": None,
+                }
+
+    # lm-sensors fallback: `sensors` parses every chip the kernel knows
+    # about. No sudo, no config: missing binary == unavailable.
+    try:
+        proc = subprocess.run(
+            ["sensors", "-u"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except FileNotFoundError:
+        return _thermal_unavailable("no thermal sensor available (sysfs empty, lm-sensors not installed)")
+    except subprocess.TimeoutExpired:
+        return _thermal_unavailable("sensors timed out")
+    except Exception as exc:  # noqa: BLE001 - telemetry must never crash on a bad read
+        return _thermal_unavailable(str(exc))
+
+    if proc.returncode != 0:
+        return _thermal_unavailable((proc.stderr or "").strip() or f"sensors exited {proc.returncode}")
+
+    temps: list[float] = []
+    for line in (proc.stdout or "").splitlines():
+        # `sensors -u` emits "tempN_input: 52.000" per sensor.
+        m = re.match(r"\s*temp\d+_input:\s*([+-]?\d+(?:\.\d+)?)", line)
+        if m:
+            temps.append(float(m.group(1)))
+    if not temps:
+        return _thermal_unavailable("sensors reported no temperature inputs")
+
+    return {
+        "fanRpm": None,
+        "fanCount": None,
+        "thermalPressure": round(min(temps), 1),
+        "thermalLevel": None,
+        "levelSource": None,
+        "source": "lm-sensors",
+        "error": None,
+    }
+
+
+def collect_thermal_snapshot() -> Dict[str, Any]:
+    """Read thermal pressure from the host platform.
+
+    **macOS (unchanged, isolated):** ``powermetrics`` needs passwordless
+    sudo. On macOS 26 / Apple Silicon the ``smc``/``fan`` samplers are
+    gone, so the only readable surface is thermal pressure as a textual
+    level (``Nominal``/``Low``/``Moderate``/``Heavy``/``Extreme``),
+    mapped to a normalised 0-100 index for the UI bar. Returns nulls
+    when powermetrics/sudo is unavailable so the UI degrades to "—".
+
+    **Linux:** sysfs thermal zones first, then lm-sensors, then a
+    structured ``unavailable`` state (see :func:`_collect_linux_thermal_snapshot`).
+    Never requires interactive or passwordless sudo.
+
+    The result includes ``source`` identifying the telemetry source and
+    ``levelSource`` identifying which backend produced ``thermalLevel``.
+    """
+    if platform.system() == "Linux":
+        return _collect_linux_thermal_snapshot()
+
     thermal_pressure: Optional[float] = None
     thermal_level: Optional[str] = None
+    level_source: Optional[str] = None
     fan_rpm: Optional[float] = None
     fan_count: Optional[int] = None
     error: Optional[str] = None
-
-    _LEVEL_INDEX = {
-        "nominal": 0.0,
-        "low": 25.0,
-        "moderate": 50.0,
-        "heavy": 75.0,
-        "extreme": 100.0,
-    }
 
     try:
         proc = subprocess.run(
@@ -214,8 +323,9 @@ def collect_thermal_snapshot() -> Dict[str, Any]:
             if m:
                 level = m.group(1).strip().lower()
                 thermal_level = level
-                if level in _LEVEL_INDEX:
-                    thermal_pressure = _LEVEL_INDEX[level]
+                level_source = "powermetrics"
+                if level in _THERMAL_LEVEL_INDEX:
+                    thermal_pressure = _THERMAL_LEVEL_INDEX[level]
                 else:
                     error = f"unknown thermal level: {level}"
     except subprocess.TimeoutExpired:
@@ -225,11 +335,15 @@ def collect_thermal_snapshot() -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - telemetry must never crash on a bad read
         error = str(exc)
 
+    if error is not None and thermal_level is None:
+        return _thermal_unavailable(error)
+
     result: Dict[str, Any] = {
         "fanRpm": fan_rpm,
         "fanCount": fan_count,
         "thermalPressure": thermal_pressure,
         "thermalLevel": thermal_level,
+        "levelSource": level_source,
         "source": "powermetrics" if (thermal_pressure is not None or fan_rpm is not None) else None,
         "error": error,
     }

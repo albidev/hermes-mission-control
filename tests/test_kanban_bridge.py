@@ -44,12 +44,25 @@ _skip_reason = (
 class KanbanBridgeTest(unittest.TestCase):
     def setUp(self):
         # Point hermes at an isolated home BEFORE connecting, and restore the
-        # previous HERMES_HOME afterwards. kanban_db resolves its DB path from
+        # previous env afterwards. kanban_db resolves its DB path from
         # HERMES_HOME on every connect(), and Mission Control's path resolver
         # honors it — leaking a temp home here would poison later test modules
-        # (issue #12).
-        self._hermes_home_backup = os.environ.get("HERMES_HOME")
-        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="mc-kanban-test-")
+        # (issue #12). The dispatcher/worker environment also exports
+        # HERMES_KANBAN_DB / HERMES_KANBAN_BOARD / HERMES_KANBAN_HOME, which
+        # take precedence over HERMES_HOME in the core resolver — clear them
+        # too, or the tests silently read/write the live board instead of the
+        # temp home.
+        self._env_backup = {
+            "HERMES_HOME": os.environ.get("HERMES_HOME"),
+            "HERMES_KANBAN_DB": os.environ.get("HERMES_KANBAN_DB"),
+            "HERMES_KANBAN_HOME": os.environ.get("HERMES_KANBAN_HOME"),
+            "HERMES_KANBAN_BOARD": os.environ.get("HERMES_KANBAN_BOARD"),
+        }
+        tmp_home = tempfile.mkdtemp(prefix="mc-kanban-test-")
+        os.environ["HERMES_HOME"] = tmp_home
+        os.environ["HERMES_KANBAN_HOME"] = tmp_home
+        os.environ.pop("HERMES_KANBAN_DB", None)
+        os.environ.pop("HERMES_KANBAN_BOARD", None)
         # Fresh DB per test: connect auto-inits the schema.
         self.conn = kanban_db.connect()
         try:
@@ -63,10 +76,11 @@ class KanbanBridgeTest(unittest.TestCase):
             self.conn.close()
         except Exception:
             pass
-        if self._hermes_home_backup is None:
-            os.environ.pop("HERMES_HOME", None)
-        else:
-            os.environ["HERMES_HOME"] = self._hermes_home_backup
+        for key, value in self._env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     def _make_task(self, title="Task", **kwargs):
         return kanban_db.create_task(self.conn, title=title, **kwargs)

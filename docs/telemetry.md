@@ -63,6 +63,32 @@ The telemetry server exposes a set of read-only `/api/local/*` endpoints. Repres
 
 The frontend consumes these through `src/lib/hermes-api.ts` (`loadProviderUsage`, etc.) and `src/lib/mission-control-store.tsx`.
 
+## Thermal telemetry
+
+`/api/local/system` includes a `thermal` object produced by `collect_thermal_snapshot()`. The backend is platform-specific and never requires interactive or passwordless sudo for normal operation.
+
+### Linux
+
+Fallback order in `_collect_linux_thermal_snapshot()`:
+
+1. **`/sys/class/thermal`** — kernel thermal zones (`thermal_zone*`). Purely passive sysfs reads, no privileges. The lowest zone temperature (in °C) is reported as `thermalPressure`.
+2. **`lm-sensors`** — when sysfs has no usable zone, the `sensors -u` binary is invoked without sudo. The lowest `temp*_input` value is reported.
+3. **Unavailable** — no supported sensor at all → a structured `unavailable` state (`source: "unavailable"`), never a backend failure.
+
+| Field | Meaning |
+|-------|---------|
+| `thermalPressure` | Lowest temperature in °C (Linux), or 0–100 pressure index (macOS). `null` when unavailable. |
+| `thermalLevel` | Text level (macOS only: `nominal`…`extreme`). `null` on Linux. |
+| `levelSource` | Backend that produced `thermalLevel` (`powermetrics`), `null` otherwise. |
+| `source` | `sysfs-thermal`, `lm-sensors`, `powermetrics`, `unavailable`, or `null` when no data was read. |
+| `error` | Diagnostic message; `null` on success. A missing sensor sets `source: "unavailable"` with an explanatory `error` — this is a normal state on hosts without thermal hardware, not a failure. |
+
+The Overview UI distinguishes the states: `source === 'unavailable'` renders "Unavailable" (with the diagnostic as a caption), a numeric `thermalPressure` renders °C with a threshold bar, and macOS falls back to the discrete level meter.
+
+### macOS (unchanged)
+
+`powermetrics` needs passwordless sudo and on macOS 26 / Apple Silicon only exposes thermal pressure as a text level (`Nominal`/`Low`/`Moderate`/`Heavy`/`Extreme`), mapped to a normalised 0–100 index. Returns nulls when powermetrics/sudo is unavailable.
+
 ## Knowledge vault
 
 The Knowledge page scans a local Markdown vault and exposes it through `/api/local/knowledge` (snapshot) and `/api/local/knowledge/file` (single note content).
