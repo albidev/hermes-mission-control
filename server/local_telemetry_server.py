@@ -2316,9 +2316,34 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+def _resolve_telemetry_bind() -> tuple[str, int]:
+    """Resolve the telemetry bind address and port from environment variables.
+
+    Canonical names: MISSION_CONTROL_LOCAL_TELEMETRY_HOST / _PORT.
+    Legacy aliases (documented in .env.example): TELEMETRY_BIND_HOST / _PORT.
+    Canonical names win over the legacy aliases when both are set.
+    An invalid port aborts startup with a clear error instead of silently
+    falling back to the default.
+    """
+    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST") or os.getenv("TELEMETRY_BIND_HOST") or "0.0.0.0"
+    port_raw = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT") or os.getenv("TELEMETRY_BIND_PORT") or "8765"
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError):
+        raise SystemExit(
+            f"[mission-control-local-telemetry] invalid telemetry port {port_raw!r}: "
+            "expected an integer (MISSION_CONTROL_LOCAL_TELEMETRY_PORT / TELEMETRY_BIND_PORT)"
+        )
+    if not 0 < port < 65536:
+        raise SystemExit(
+            f"[mission-control-local-telemetry] invalid telemetry port {port}: "
+            "must be between 1 and 65535"
+        )
+    return host, port
+
+
 def main() -> None:
-    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST", "0.0.0.0")
-    port = int(os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT", "8765"))
+    host, port = _resolve_telemetry_bind()
 
     sampler = threading.Thread(target=_cpu_sampler, name="mc-cpu-sampler", daemon=True)
     sampler.start()
