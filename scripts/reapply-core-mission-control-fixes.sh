@@ -2,6 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091 # paths are runtime-computed via SCRIPT_DIR
+source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/restart-services.sh"
+load_mission_control_env
 DEFAULT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HERMES_ROOT="${1:-${HERMES_ROOT:-$DEFAULT_ROOT}}"
 
@@ -147,12 +151,7 @@ bash -n "$SMOKE_SCRIPT" "$SCRIPT_DIR/run-dashboard-api.sh" "$SCRIPT_DIR/run-loca
 
 restart_job() {
   local label="$1"
-  if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
-    log "Restarting $label"
-    launchctl kickstart -k "gui/$(id -u)/$label"
-  else
-    log "LaunchAgent $label not loaded; skipping restart"
-  fi
+  mc_restart_service "$label"
 }
 
 restart_job ai.hermes.dashboard-api

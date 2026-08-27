@@ -65,7 +65,7 @@ scripts/update-provider-usage.sh        # writes ~/.hermes/cache/mission-control
 scripts/local/update-provider-usage.sh  # identical variant
 ```
 
-These read `MISSION_CONTROL_CACHE_DIR` (default `~/.hermes/cache`). A LaunchAgent (or cron) can run it every 60s so the dashboard always has a fresh cache without paying a CodexBar call per request.
+These read `MISSION_CONTROL_CACHE_DIR` (default `~/.hermes/cache`). A scheduler (macOS LaunchAgent, Linux systemd timer, or cron) can run it every 60s so the dashboard always has a fresh cache without paying a CodexBar call per request.
 
 ### Ollama requires the web source
 

@@ -98,6 +98,35 @@ MISSION_CONTROL_DEV_HOSTS=
 
 The bearer token is shared between the telemetry server and the UI. The telemetry server reads it from `.env` via the launcher script.
 
+Operational scripts (`scripts/run-dashboard-api.sh`, `scripts/smoke-upgrade.sh`,
+`scripts/reapply-core-mission-control-fixes.sh`) load configuration through
+`scripts/lib/env.sh`: they read `<repo-root>/.env` by default, or the file
+pointed to by `MISSION_CONTROL_ENV_FILE`, and otherwise fall back to the
+already-exported environment. No `launchctl` lookup is used, so the same
+scripts run identically on macOS and Linux.
+
+## Linux (systemd --user)
+
+On Linux the services are supervised by the systemd user session instead of
+macOS launchd. Example units live in [`systemd/`](systemd/README.md):
+
+- `hermes-dashboard-api.service` — dashboard API (`:9119`)
+- `hermes-mission-control-telemetry.service` — telemetry sidecar (`:8765`)
+- `hermes-mission-control.service` — Vite frontend (`:5174`)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/*.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-dashboard-api hermes-mission-control-telemetry hermes-mission-control
+# Optional: keep user units running after logout
+loginctl enable-linger "$USER"
+```
+
+`scripts/reapply-core-mission-control-fixes.sh` restarts the stack with
+`systemctl --user restart` on Linux (macOS keeps its `launchctl` path, isolated
+in `scripts/lib/restart-services.sh` and documented as macOS-only).
+
 ## Tailscale / LAN access
 
 Vite listens on all interfaces (`host: true`) and `allowedHosts` is read from `MISSION_CONTROL_DEV_HOSTS`. The telemetry server binds to `0.0.0.0`. Both accept Tailscale peer IPs.
