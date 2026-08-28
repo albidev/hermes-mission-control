@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +14,21 @@ _TRACE_MODE_NATIVE = "native"
 _TRACE_MODE_TRANSCRIPT = "transcript"
 _TRACE_MODE_UNAVAILABLE = "unavailable"
 _SKILL_TOOL_NAMES = {"skill_view", "skills_list", "skill_manage"}
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
+
+_CONVERSATION_ORIGINS = {"tui", "discord", "telegram", "mission-control"}
+_AUTOMATION_ORIGINS = {"cron", "kanban"}
+_SYSTEM_ORIGINS = {"cli", "system", "test", "smoke"}
+_ORIGIN_LABELS = {
+    "tui": "TUI",
+    "discord": "Discord",
+    "telegram": "Telegram",
+    "mission-control": "Mission Control",
+    "cron": "Cron",
+    "kanban": "Kanban",
+    "cli": "CLI",
+    "system": "System",
+}
 
 
 def _sessions_dir() -> Path:
@@ -295,6 +310,25 @@ def _session_chat_type(index_entry: dict[str, Any] | None, platform: str) -> str
     return "unknown"
 
 
+def _classify_session_origin(source: str, platform: str, index_entry: dict[str, Any] | None = None) -> dict[str, Any]:
+    explicit_category = (index_entry or {}).get("category")
+    category = explicit_category if explicit_category in {"conversation", "automation", "system", "unknown"} else None
+    origin = (source or platform or "").strip().lower()
+    if category is None:
+        if origin in _CONVERSATION_ORIGINS:
+            category = "conversation"
+        elif origin in _AUTOMATION_ORIGINS:
+            category = "automation"
+        elif origin in _SYSTEM_ORIGINS:
+            category = "system"
+        else:
+            category = "unknown"
+    label = _normalize_text((index_entry or {}).get("origin_label")) or _ORIGIN_LABELS.get(origin) or (origin if origin else "Unknown")
+    explicit_resumable = (index_entry or {}).get("is_resumable")
+    resumable = explicit_resumable if isinstance(explicit_resumable, bool) else category == "conversation"
+    return {"category": category, "originLabel": label, "isResumable": resumable}
+
+
 def _build_session_item(
     session_id: str,
     index_entry: dict[str, Any] | None,
@@ -337,6 +371,7 @@ def _build_session_item(
     status = "live" if _is_live(last_active_at, ended_at, live_window_seconds) else ("ended" if ended_at is not None else "idle")
     agent_id = _build_agent_key(source, model)
     trace_mode = _trace_mode_for_artifacts(session_id, db_row)
+    origin = _classify_session_origin(source, platform, index_entry)
     return {
         "sessionId": session_id,
         "agentId": agent_id,
@@ -350,6 +385,7 @@ def _build_session_item(
         "lastActiveAt": last_active_at,
         "endedAt": ended_at,
         "status": status,
+        **origin,
         "messageCount": message_count,
         "traceMode": trace_mode,
         "preview": preview,
@@ -365,7 +401,94 @@ def _build_session_item(
     }
 
 
-def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = None, offset: int = 0, session_id: str | None = None) -> list[dict[str, Any]]:
+def _build_session_facets(items: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    facets = {
+        "status": {"live": 0, "idle": 0, "ended": 0},
+        "category": {"conversation": 0, "automation": 0, "system": 0, "unknown": 0},
+        "origin": {},
+        "model": {},
+    }
+    for item in items:
+        status = item.get("status")
+        if status in facets["status"]:
+            facets["status"][status] += 1
+        category = item.get("category")
+        if category in facets["category"]:
+            facets["category"][category] += 1
+        origin = str(item.get("source") or "unknown")
+        facets["origin"][origin] = facets["origin"].get(origin, 0) + 1
+        model = str(item.get("model") or "").strip()
+        if model:
+            facets["model"][model] = facets["model"].get(model, 0) + 1
+    return facets
+
+
+def _session_matches_filters(item: dict[str, Any], filters: dict[str, str] | None) -> bool:
+    if not filters:
+        return True
+
+    category = str(filters.get("category") or "all").strip().lower()
+    status = str(filters.get("status") or "all").strip().lower()
+    origin = str(filters.get("origin") or "").strip().lower()
+    model = str(filters.get("model") or "").strip()
+    query = str(filters.get("query") or "").strip().lower()
+    tab = str(filters.get("tab") or "all").strip().lower()
+
+    if tab == "live":
+        status = "live"
+    elif tab in {"conversation", "automation", "system", "unknown"}:
+        category = tab
+
+    if category != "all" and str(item.get("category") or "").lower() != category:
+        return False
+    if status != "all" and str(item.get("status") or "").lower() != status:
+        return False
+    if origin and str(item.get("source") or "").strip().lower() != origin:
+        return False
+    if model and str(item.get("model") or "").strip() != model:
+        return False
+    if query:
+        haystack = " ".join(
+            str(item.get(field) or "")
+            for field in (
+                "sessionId",
+                "title",
+                "preview",
+                "source",
+                "platform",
+                "chatType",
+                "displayName",
+                "model",
+                "originLabel",
+            )
+        ).lower()
+        if query not in haystack:
+            return False
+    return True
+
+
+def _build_session_tab_counts(items: list[dict[str, Any]], filters: dict[str, str] | None) -> dict[str, int]:
+    """Count every top-level view using the same non-tab filters as the list."""
+    base_filters = dict(filters or {})
+    base_filters.pop("tab", None)
+    base_filters.pop("category", None)
+    return {
+        "all": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "all"})),
+        "live": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "live"})),
+        "conversation": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "conversation"})),
+        "automation": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "automation"})),
+        "system": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "system"})),
+    }
+
+
+def _collect_agent_sessions(
+    live_window_seconds: int = 300,
+    limit: int | None = None,
+    offset: int = 0,
+    session_id: str | None = None,
+    include_recent_messages: bool = True,
+    filters: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     index_map = _read_gateway_sessions_index()
     # _iter_db_session_ids already returns ids ordered by last_active (recency).
     # Preserve that order, but put index-only sessions first. Those entries are
@@ -387,16 +510,19 @@ def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = 
         # Narrow to a single session for the chat drawer preview. Keep the
         # recency ordering contract; the id either exists or yields nothing.
         ordered_ids = [sid for sid in ordered_ids if sid == session_id]
-    if offset:
-        ordered_ids = ordered_ids[offset:]
-    if limit is not None:
-        ordered_ids = ordered_ids[:limit]
+    # With filters, pagination must happen after item classification. Without
+    # filters retain the cheap id-level window used by existing consumers.
+    if not filters:
+        if offset:
+            ordered_ids = ordered_ids[offset:]
+        if limit is not None:
+            ordered_ids = ordered_ids[:limit]
     db = _try_get_session_db()
     try:
         items: list[dict[str, Any]] = []
         for session_id in ordered_ids:
             db_row = _get_db_rich_row(db, session_id)
-            recent_messages = _recent_chat_messages(db, session_id)
+            recent_messages = _recent_chat_messages(db, session_id) if include_recent_messages else []
             item = _build_session_item(
                 session_id,
                 index_map.get(session_id),
@@ -405,42 +531,125 @@ def _collect_agent_sessions(live_window_seconds: int = 300, limit: int | None = 
                 live_window_seconds,
                 recent_messages,
             )
-            items.append(item)
+            if _session_matches_filters(item, filters):
+                items.append(item)
         # Items already follow the ordered_ids sequence (recency first). Do NOT
         # re-sort here — the client may also re-sort, but the page boundaries
         # must stay contiguous, which requires a stable single ordering.
+        if filters:
+            if offset:
+                items = items[offset:]
+            if limit is not None:
+                items = items[:limit]
         return items
     finally:
         _close_session_db(db)
 
 
-def load_agents_sessions_snapshot(limit: int = 100, live_window_seconds: int = 300, offset: int = 0, session_id: str | None = None) -> dict[str, Any]:
+def _load_agents_sessions_snapshot_uncached(
+    limit: int = 100,
+    live_window_seconds: int = 300,
+    offset: int = 0,
+    session_id: str | None = None,
+    include_facets: bool = True,
+    filters: dict[str, str] | None = None,
+) -> dict[str, Any]:
     clamped_limit = max(1, min(limit, 500))
-    # Stats come from lightweight counts (single DB query), NOT from materialising
-    # every session item — otherwise a limit=50 request still pays the full N+1.
-    visible_items = _collect_agent_sessions(live_window_seconds=live_window_seconds, limit=clamped_limit, offset=offset, session_id=session_id)
-    live_sessions = [item for item in visible_items if item.get("status") == "live"]
-    db = _try_get_session_db()
-    total_sessions = 0
-    try:
-        if db is not None:
-            total_sessions = len(db.list_sessions_rich(limit=2000, compact_rows=True))
-    except Exception:
-        total_sessions = 0
-    finally:
-        _close_session_db(db)
+    visible_items = _collect_agent_sessions(
+        live_window_seconds=live_window_seconds,
+        limit=clamped_limit,
+        offset=offset,
+        session_id=session_id,
+        filters=filters,
+    )
+    if include_facets and not session_id:
+        # Facets are collected without recent message previews. This keeps the
+        # global counts correct without loading conversation content for every
+        # historical session on each request.
+        all_items = _collect_agent_sessions(
+            live_window_seconds=live_window_seconds,
+            include_recent_messages=False,
+        )
+    else:
+        all_items = visible_items
+    if filters and not session_id:
+        filtered_items = _collect_agent_sessions(
+            live_window_seconds=live_window_seconds,
+            include_recent_messages=False,
+            filters=filters,
+        )
+    else:
+        filtered_items = all_items
+    facets = _build_session_facets(all_items)
+    filtered_total = len(filtered_items)
+    tab_counts = _build_session_tab_counts(all_items, filters)
     return {
         "success": True,
         "schemaVersion": _SCHEMA_VERSION,
         "available": True,
         "items": visible_items,
         "offset": offset,
-        "stats": {
-            "totalSessions": total_sessions,
-            "liveSessions": len(live_sessions),
-            "activeAgents": len({item["agentId"] for item in live_sessions}),
+        "pagination": {
+            "total": filtered_total,
+            "offset": offset,
+            "limit": clamped_limit,
+            "hasMore": offset + len(visible_items) < filtered_total,
         },
+        "stats": {
+            "totalSessions": len(all_items),
+            "liveSessions": facets["status"]["live"],
+            "activeAgents": len({item["agentId"] for item in all_items if item.get("status") == "live"}),
+        },
+        "facets": facets,
+        "tabCounts": tab_counts,
     }
+
+
+_SESSION_SNAPSHOT_CACHE_TTL_SECONDS = 3.0
+_SESSION_SNAPSHOT_CACHE_LOCK = threading.Lock()
+_SESSION_SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+
+
+def load_agents_sessions_snapshot(
+    limit: int = 100,
+    live_window_seconds: int = 300,
+    offset: int = 0,
+    session_id: str | None = None,
+    include_facets: bool = True,
+    filters: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Return a short-lived, coalesced snapshot for polling clients.
+
+    Mission Control has several consumers polling the same endpoint. Serialize
+    identical snapshot work and reuse it briefly so concurrent browser tabs do
+    not multiply the SessionDB scan.
+    """
+    cache_key = (
+        limit,
+        live_window_seconds,
+        offset,
+        session_id,
+        include_facets,
+        tuple(sorted((filters or {}).items())),
+    )
+    now = time.monotonic()
+    with _SESSION_SNAPSHOT_CACHE_LOCK:
+        cached = _SESSION_SNAPSHOT_CACHE.get(cache_key)
+        if cached and now - cached[0] < _SESSION_SNAPSHOT_CACHE_TTL_SECONDS:
+            return cached[1]
+        payload = _load_agents_sessions_snapshot_uncached(
+            limit=limit,
+            live_window_seconds=live_window_seconds,
+            offset=offset,
+            session_id=session_id,
+            include_facets=include_facets,
+            filters=filters,
+        )
+        _SESSION_SNAPSHOT_CACHE[cache_key] = (time.monotonic(), payload)
+        if len(_SESSION_SNAPSHOT_CACHE) > 64:
+            oldest_key = min(_SESSION_SNAPSHOT_CACHE, key=lambda key: _SESSION_SNAPSHOT_CACHE[key][0])
+            del _SESSION_SNAPSHOT_CACHE[oldest_key]
+        return payload
 
 
 def _query_db_token_aggregates() -> dict[str, Any] | None:
@@ -638,7 +847,7 @@ def load_sessions_usage(live_window_seconds: int = 300) -> dict[str, Any]:
 
 
 def load_agents_snapshot(live_window_seconds: int = 300) -> dict[str, Any]:
-    sessions_snapshot = load_agents_sessions_snapshot(limit=10000, live_window_seconds=live_window_seconds)
+    sessions_snapshot = load_agents_sessions_snapshot(limit=10000, live_window_seconds=live_window_seconds, include_facets=False)
     groups: dict[str, dict[str, Any]] = {}
     for item in sessions_snapshot["items"]:
         agent_id = item["agentId"]

@@ -10,9 +10,10 @@ type ModalProps = {
   children: ReactNode;
   footer?: ReactNode;
   className?: string;
+  borderless?: boolean;
 };
 
-export function Modal({ open, title, subtitle, onClose, children, footer, className }: ModalProps) {
+export function Modal({ open, title, subtitle, onClose, children, footer, className, borderless = false }: ModalProps) {
   const { t } = useI18n();
   useEffect(() => {
     if (!open || typeof window === 'undefined') {
@@ -55,7 +56,8 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
         className={[
           'w-full h-[92vh] sm:h-auto sm:max-h-[88vh] sm:w-[min(920px,92vw)]',
           'mobile-modal',
-          'rounded-t-2xl sm:rounded-2xl border border-border bg-surface shadow-2xl',
+          'rounded-t-2xl sm:rounded-2xl bg-surface shadow-2xl',
+          borderless ? '!border-0' : 'border border-border',
           'flex flex-col overflow-hidden',
           className,
         ].join(' ')}
@@ -64,14 +66,14 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
         aria-labelledby="modal-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="px-4 py-3 border-b border-border-subtle flex items-start justify-between gap-3 sticky top-0 bg-surface z-10">
+        <div className={`px-4 py-3 flex items-start justify-between gap-3 sticky top-0 bg-surface z-10 ${borderless ? '!border-b-0' : 'border-b border-border-subtle'}`}>
           <div className="min-w-0">
             <p className="eyebrow">{t('modal.detailView')}</p>
             <h3 id="modal-title" className="text-sm font-semibold text-text break-words">{title}</h3>
             {subtitle ? <p className="text-xs text-text-subtle break-words mt-0.5">{subtitle}</p> : null}
           </div>
           <button
-            className="inline-flex items-center justify-center rounded-lg h-8 w-8 border border-border-subtle bg-surface-raised text-text-muted hover:text-text hover:bg-surface"
+            className={`inline-flex items-center justify-center rounded-lg h-8 w-8 bg-surface-raised text-text-muted hover:text-text hover:bg-surface ${borderless ? '!border-0' : 'border border-border-subtle'}`}
             type="button"
             onClick={onClose}
             aria-label={t('modal.closeDialog')}
@@ -82,7 +84,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
 
         <div className="flex-1 overflow-y-auto p-4">{children}</div>
 
-        {footer ? <div className="modal-footer px-4 py-3 border-t border-border-subtle bg-surface-raised/40">{footer}</div> : null}
+        {footer ? <div className={`modal-footer px-4 py-3 bg-surface-raised/40 ${borderless ? '!border-t-0' : 'border-t border-border-subtle'}`}>{footer}</div> : null}
       </section>
     </div>,
     document.body,

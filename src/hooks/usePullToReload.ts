@@ -44,7 +44,9 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
   }, []);
 
   const getTarget = useCallback((): HTMLElement | Window => {
-    if (containerRef?.current) return containerRef.current;
+    if (containerRef?.current) {
+      return containerRef.current.closest<HTMLElement>('.route-stage') ?? containerRef.current;
+    }
     return window;
   }, [containerRef]);
 
