@@ -406,6 +406,7 @@ def _build_session_facets(items: list[dict[str, Any]]) -> dict[str, dict[str, in
         "status": {"live": 0, "idle": 0, "ended": 0},
         "category": {"conversation": 0, "automation": 0, "system": 0, "unknown": 0},
         "origin": {},
+        "model": {},
     }
     for item in items:
         status = item.get("status")
@@ -416,6 +417,9 @@ def _build_session_facets(items: list[dict[str, Any]]) -> dict[str, dict[str, in
             facets["category"][category] += 1
         origin = str(item.get("source") or "unknown")
         facets["origin"][origin] = facets["origin"].get(origin, 0) + 1
+        model = str(item.get("model") or "").strip()
+        if model:
+            facets["model"][model] = facets["model"].get(model, 0) + 1
     return facets
 
 
@@ -428,6 +432,12 @@ def _session_matches_filters(item: dict[str, Any], filters: dict[str, str] | Non
     origin = str(filters.get("origin") or "").strip().lower()
     model = str(filters.get("model") or "").strip()
     query = str(filters.get("query") or "").strip().lower()
+    tab = str(filters.get("tab") or "all").strip().lower()
+
+    if tab == "live":
+        status = "live"
+    elif tab in {"conversation", "automation", "system", "unknown"}:
+        category = tab
 
     if category != "all" and str(item.get("category") or "").lower() != category:
         return False
@@ -455,6 +465,20 @@ def _session_matches_filters(item: dict[str, Any], filters: dict[str, str] | Non
         if query not in haystack:
             return False
     return True
+
+
+def _build_session_tab_counts(items: list[dict[str, Any]], filters: dict[str, str] | None) -> dict[str, int]:
+    """Count every top-level view using the same non-tab filters as the list."""
+    base_filters = dict(filters or {})
+    base_filters.pop("tab", None)
+    base_filters.pop("category", None)
+    return {
+        "all": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "all"})),
+        "live": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "live"})),
+        "conversation": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "conversation"})),
+        "automation": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "automation"})),
+        "system": sum(1 for item in items if _session_matches_filters(item, {**base_filters, "tab": "system"})),
+    }
 
 
 def _collect_agent_sessions(
@@ -558,6 +582,7 @@ def _load_agents_sessions_snapshot_uncached(
         filtered_items = all_items
     facets = _build_session_facets(all_items)
     filtered_total = len(filtered_items)
+    tab_counts = _build_session_tab_counts(all_items, filters)
     return {
         "success": True,
         "schemaVersion": _SCHEMA_VERSION,
@@ -576,6 +601,7 @@ def _load_agents_sessions_snapshot_uncached(
             "activeAgents": len({item["agentId"] for item in all_items if item.get("status") == "live"}),
         },
         "facets": facets,
+        "tabCounts": tab_counts,
     }
 
 

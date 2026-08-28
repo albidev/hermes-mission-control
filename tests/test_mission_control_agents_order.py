@@ -67,6 +67,17 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(facets["status"], {"live": 1, "idle": 1, "ended": 1})
         self.assertEqual(facets["category"], {"conversation": 1, "automation": 2, "system": 0, "unknown": 0})
         self.assertEqual(facets["origin"], {"tui": 1, "cron": 1, "kanban": 1})
+        self.assertEqual(facets["model"], {})
+
+    def test_session_tab_counts_apply_shared_filters_without_tab_leaking(self):
+        items = [
+            {"status": "live", "category": "conversation", "source": "tui", "model": "model-a", "title": "alpha"},
+            {"status": "ended", "category": "conversation", "source": "discord", "model": "model-a", "title": "alpha"},
+            {"status": "ended", "category": "automation", "source": "cron", "model": "model-a", "title": "alpha"},
+            {"status": "live", "category": "system", "source": "system", "model": "model-b", "title": "beta"},
+        ]
+        counts = mission_control_agents._build_session_tab_counts(items, {"query": "alpha", "model": "model-a"})
+        self.assertEqual(counts, {"all": 3, "live": 1, "conversation": 2, "automation": 1, "system": 0})
 
     def test_filtered_snapshot_applies_filter_before_offset_and_limit(self):
         index = {
@@ -90,6 +101,7 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(snapshot["pagination"], {"total": 2, "offset": 1, "limit": 1, "hasMore": False})
         self.assertEqual(snapshot["stats"]["totalSessions"], 3)
         self.assertEqual(snapshot["facets"]["category"]["system"], 2)
+        self.assertEqual(snapshot["tabCounts"], {"all": 3, "live": 0, "conversation": 1, "automation": 0, "system": 2})
 
     def test_identical_snapshot_requests_use_short_cache(self):
         payload = {"success": True, "items": [], "pagination": {"total": 0}}

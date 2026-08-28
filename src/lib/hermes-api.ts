@@ -446,7 +446,9 @@ export type MissionControlAgentsSessionsSnapshot = {
     status: Record<MissionControlAgentSessionStatus, number>;
     category: Record<'conversation' | 'automation' | 'system' | 'unknown', number>;
     origin: Record<string, number>;
+    model: Record<string, number>;
   };
+  tabCounts: Record<'all' | 'live' | 'conversation' | 'automation' | 'system', number>;
   pagination: {
     total: number;
     offset: number;
@@ -972,13 +974,13 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
   };
 }
 
-function normalizeFacetCounts(input: Record<string, unknown> | undefined, keys: string[], fallbackItems: MissionControlAgentSessionItem[], field: 'status' | 'category' | 'source'): Record<string, number> {
+function normalizeFacetCounts(input: Record<string, unknown> | undefined, keys: string[], fallbackItems: MissionControlAgentSessionItem[], field: 'status' | 'category' | 'source' | 'model'): Record<string, number> {
   if (input) {
     return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, readNumber(value, 0)]));
   }
   const counts: Record<string, number> = Object.fromEntries(keys.map((key) => [key, 0]));
   for (const item of fallbackItems) {
-    const key = field === 'status' ? item.status : field === 'category' ? item.category : item.source;
+    const key = field === 'status' ? item.status : field === 'category' ? item.category : field === 'model' ? item.model : item.source;
     counts[key] = (counts[key] ?? 0) + 1;
   }
   return counts;
@@ -1000,6 +1002,14 @@ function normalizeAgentSessionsSnapshot(input: OfficialMissionControlAgentSessio
       status: normalizeFacetCounts(input?.facets?.status, ['live', 'idle', 'ended'], items, 'status') as Record<MissionControlAgentSessionStatus, number>,
       category: normalizeFacetCounts(input?.facets?.category, ['conversation', 'automation', 'system', 'unknown'], items, 'category') as Record<'conversation' | 'automation' | 'system' | 'unknown', number>,
       origin: normalizeFacetCounts(input?.facets?.origin, [], items, 'source'),
+      model: normalizeFacetCounts(input?.facets?.model, [], items, 'model'),
+    },
+    tabCounts: {
+      all: readNumber(input?.tabCounts?.all, readNumber(input?.stats?.totalSessions, items.length)),
+      live: readNumber(input?.tabCounts?.live, readNumber(input?.stats?.liveSessions, items.filter((item) => item.status === 'live').length)),
+      conversation: readNumber(input?.tabCounts?.conversation, readNumber(input?.facets?.category?.conversation, items.filter((item) => item.category === 'conversation').length)),
+      automation: readNumber(input?.tabCounts?.automation, readNumber(input?.facets?.category?.automation, items.filter((item) => item.category === 'automation').length)),
+      system: readNumber(input?.tabCounts?.system, readNumber(input?.facets?.category?.system, items.filter((item) => item.category === 'system').length)),
     },
     pagination: {
       total: readNumber(input?.pagination?.total, items.length),
@@ -1446,7 +1456,9 @@ type OfficialMissionControlAgentSessionsPayload = {
     status?: Record<string, unknown>;
     category?: Record<string, unknown>;
     origin?: Record<string, unknown>;
+    model?: Record<string, unknown>;
   };
+  tabCounts?: Record<string, unknown>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1562,6 +1574,7 @@ export type MissionControlAgentSessionFilters = {
   category?: string;
   origin?: string;
   model?: string;
+  tab?: string;
 };
 
 async function fetchMissionControlAgentSessions(

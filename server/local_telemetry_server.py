@@ -398,7 +398,7 @@ def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool =
 
 def _session_filter_params(params: dict[str, list[str]]) -> Optional[dict[str, str]]:
     filters = {}
-    for key in ("query", "status", "category", "origin", "model"):
+    for key in ("query", "status", "category", "origin", "model", "tab"):
         value = (params.get(key) or [""])[0].strip()
         if value and value.lower() != "all":
             filters[key] = value

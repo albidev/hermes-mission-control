@@ -11,7 +11,7 @@ test('session details use the shared modal instead of a desktop side panel', () 
 });
 
 test('session page surfaces do not render the bright default card border', () => {
-  assert.match(source, /<Card padding="none" className="min-w-0 !border-0">/);
+  assert.match(source, /<Card padding="none" className="min-w-0 !border-0"[\s\S]*id="sessions-results"/);
   assert.doesNotMatch(source, /Select a session/);
 });
 
@@ -26,9 +26,9 @@ test('session rows and detail surfaces are fully borderless', () => {
 
 test('session actions use shared full-size buttons', () => {
   assert.match(source, /import \{ Button \} from ['"]\.\.\/components\/ui\/Button['"];?/);
-  assert.match(source, /label="Resume"/);
-  assert.match(source, /label="Trace"/);
-  assert.match(source, /label="Inspect"/);
+  assert.match(source, /t\('sessions\.resumeChat'\)/);
+  assert.match(source, /t\('sessions\.trace'\)/);
+  assert.match(source, /t\('sessions\.searchAction'\)/);
   assert.match(source, /size="sm"/);
 });
 
@@ -47,7 +47,7 @@ test('mobile sessions layout avoids nested scrolling and an oversized filter hea
 test('session loading has a bounded failure state and a centered mobile refresh icon', () => {
   assert.match(source, /SESSION_LOAD_TIMEOUT_MS/);
   assert.match(source, /loadError/);
-  assert.match(source, /Unable to load sessions/);
+  assert.match(source, /t\('sessions\.unableToLoad'\)/);
   assert.match(source, /justify-center/);
 });
 
@@ -69,6 +69,22 @@ test('tab changes expose loading state, reset stale totals, and expand filtered 
 test('active tab count uses the filtered result total instead of global facets', () => {
   assert.match(source, /if \(value === tab\) return loading \? null : filteredTotal/);
   assert.match(source, /tabCount\(value\) === null \? '…' : tabCount\(value\)/);
+});
+
+test('session view state is deep-linkable and model options use global facets', () => {
+  assert.match(source, /useSearchParams/);
+  assert.match(source, /setSearchParams/);
+  assert.match(source, /SESSION_VIEW_QUERY_KEYS/);
+  assert.match(source, /facets\?\.model/);
+});
+
+test('session controls expose tab and accordion semantics and use translated copy', () => {
+  assert.match(source, /role="tablist"/);
+  assert.match(source, /role="tab"/);
+  assert.match(source, /aria-selected=\{tab === value\}/);
+  assert.match(source, /aria-expanded=\{!collapsed\}/);
+  assert.match(source, /t\('sessions\.loading'\)/);
+  assert.doesNotMatch(source, /Loading sessions…/);
 });
 
 console.log('sessions UI contract tests passed');
