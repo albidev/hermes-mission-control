@@ -56,6 +56,7 @@
   "overview.notYetSynced": "Not yet synced",
   "overview.refresh": "Refresh",
   "overview.noActiveSession": "No active session",
+  "overview.liveSessionsTitle": "Live sessions ({count})",
   "overview.allSessions": "All sessions",
   "overview.noPreview": "No preview available.",
   "overview.noActiveSessions": "No active sessions right now.",

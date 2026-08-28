@@ -43,6 +43,7 @@ export type MissionControlSessionItem = {
   title: string;
   startedAt: number;
   endedAt: number | null;
+  status: MissionControlAgentSessionStatus;
   messageCount: number;
   preview: string;
   lastActive: number;
@@ -833,6 +834,9 @@ function normalizeMachineStatus(input: Partial<MissionControlMachineStatus> | un
 }
 
 function normalizeSessionItem(input: Partial<MissionControlSessionItem> | undefined): MissionControlSessionItem {
+  const status = input?.status === 'live' || input?.status === 'idle' || input?.status === 'ended'
+    ? input.status
+    : input?.endedAt === null || input?.endedAt === undefined ? 'idle' : 'ended';
   return {
     id: input?.id ?? 'unknown-session',
     source: input?.source ?? 'unknown',
@@ -840,6 +844,7 @@ function normalizeSessionItem(input: Partial<MissionControlSessionItem> | undefi
     title: input?.title ?? 'Untitled session',
     startedAt: Number(input?.startedAt ?? 0),
     endedAt: input?.endedAt === null || input?.endedAt === undefined ? null : Number(input.endedAt),
+    status,
     messageCount: Number(input?.messageCount ?? 0),
     preview: input?.preview ?? '',
     lastActive: Number(input?.lastActive ?? 0),
@@ -1047,6 +1052,7 @@ function normalizeTraceSessionRef(input: Record<string, unknown> | null | undefi
     title: readString(input.title, 'Untitled session'),
     startedAt: input.startedAt === null || input.startedAt === undefined ? 0 : readNumber(input.startedAt, 0),
     endedAt: null,
+    status: 'idle',
     messageCount: 0,
     preview: '',
     lastActive: input.lastActiveAt === null || input.lastActiveAt === undefined ? 0 : readNumber(input.lastActiveAt, 0),
@@ -1767,6 +1773,7 @@ function normalizeOfficialSessionItem(input: Record<string, unknown>): MissionCo
     title: readString(input.title, 'Untitled session'),
     startedAt: readNumber(input.started_at),
     endedAt: input.ended_at === null ? null : readNumber(input.ended_at),
+    status: readBoolean(input.is_active, false) ? 'live' : undefined,
     messageCount: readNumber(input.message_count),
     preview: readString(input.preview),
     lastActive: readNumber(input.last_active, readNumber(input.started_at)),
@@ -2079,6 +2086,7 @@ export async function loadMissionControlSessions(accessToken?: string): Promise<
           title: item.title,
           startedAt: item.startedAt ?? 0,
           endedAt: item.endedAt,
+          status: item.status,
           messageCount: item.messageCount,
           preview: item.preview,
           lastActive: item.lastActiveAt ?? item.startedAt ?? 0,
