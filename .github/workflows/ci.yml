@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, feat/linux-port]
+    branches: [main, develop, feat/linux-port, fix/linux-configurable-ports]
   pull_request:
     branches: [main, develop, feat/linux-port]
   workflow_dispatch:
