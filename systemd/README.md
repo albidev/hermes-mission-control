@@ -7,7 +7,7 @@ that groups them.
 
 | Unit | What it runs | Port |
 |------|--------------|------|
-| `hermes-dashboard-api.service` | Hermes core dashboard backend | `127.0.0.1:9119` |
+| `hermes-dashboard-api.service` | Hermes core dashboard backend | `127.0.0.1:9119` (configurable) |
 | `hermes-mission-control-telemetry.service` | Telemetry sidecar | `127.0.0.1:8765` |
 | `hermes-mission-control.service` | Vite frontend dev server | `0.0.0.0:5174` |
 | `mission-control.target` | Group target for the three services | — |
@@ -34,6 +34,28 @@ The units read configuration through `EnvironmentFile=`, defaulting to
 elsewhere). Secrets and environment values live in that file — outside the
 repository, never committed. See the runbook section "Environment file" for
 a template.
+
+### Dashboard API host and port
+
+The dashboard API launcher and the Vite proxy share these variables:
+
+```bash
+MISSION_CONTROL_DASHBOARD_HOST=127.0.0.1
+MISSION_CONTROL_DASHBOARD_PORT=9119
+```
+
+Empty values use the defaults above. The port must be an integer from 1 to
+65535. To override the proxy target explicitly, set `HERMES_DASHBOARD_URL`;
+it takes precedence over the host/port pair. For example, a dedicated Linux
+deployment can use:
+
+```bash
+MISSION_CONTROL_DASHBOARD_PORT=6002
+HERMES_DASHBOARD_URL=http://127.0.0.1:6002
+```
+
+The frontend and telemetry ports remain independently configurable through
+`MISSION_CONTROL_LOCAL_TELEMETRY_PORT` and the Vite service command line.
 
 The telemetry unit inherits the loopback default (`127.0.0.1:8765`) unless
 you set `MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0` in the env file. The

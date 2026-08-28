@@ -29,4 +29,11 @@ cd "$HERMES_AGENT_DIR"
 export MISSION_CONTROL_TOKEN="${MISSION_CONTROL_TOKEN:-}"
 export API_SERVER_KEY="${API_SERVER_KEY:-}"
 
-exec ./venv/bin/python -m hermes_cli.main dashboard --host 127.0.0.1 --port 9119 --no-open
+DASHBOARD_HOST="${MISSION_CONTROL_DASHBOARD_HOST:-127.0.0.1}"
+DASHBOARD_PORT="${MISSION_CONTROL_DASHBOARD_PORT:-9119}"
+if [[ ! "$DASHBOARD_PORT" =~ ^[0-9]+$ ]] || (( 10#$DASHBOARD_PORT < 1 || 10#$DASHBOARD_PORT > 65535 )); then
+  echo "[run-dashboard-api][FAIL] invalid dashboard port: $DASHBOARD_PORT" >&2
+  exit 1
+fi
+
+exec ./venv/bin/python -m hermes_cli.main dashboard --host "$DASHBOARD_HOST" --port "$DASHBOARD_PORT" --no-open

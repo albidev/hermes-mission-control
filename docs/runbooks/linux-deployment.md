@@ -10,7 +10,7 @@ It covers the three services plus the stack target:
 
 | Unit | What it runs | Port |
 |------|--------------|------|
-| `hermes-dashboard-api.service` | Hermes core dashboard backend (`hermes_cli.main dashboard`) | `127.0.0.1:9119` |
+| `hermes-dashboard-api.service` | Hermes core dashboard backend (`hermes_cli.main dashboard`) | `127.0.0.1:9119` by default |
 | `hermes-mission-control-telemetry.service` | Mission Control telemetry sidecar | `127.0.0.1:8765` |
 | `hermes-mission-control.service` | Vite frontend dev server | `0.0.0.0:5174` |
 | `mission-control.target` | Group target for the three services above | — |
@@ -65,6 +65,12 @@ cat > ~/.hermes/mission-control.env <<'EOF'
 # Required: shared bearer token for the telemetry sidecar and the UI.
 # Generate with: openssl rand -base64 32
 MISSION_CONTROL_TOKEN=replace_with_a_random_token
+
+# Dashboard API endpoint shared by the launcher and Vite proxy.
+MISSION_CONTROL_DASHBOARD_HOST=127.0.0.1
+MISSION_CONTROL_DASHBOARD_PORT=9119
+# Optional explicit proxy URL; takes precedence over the host/port pair.
+# HERMES_DASHBOARD_URL=http://127.0.0.1:9119
 
 # Optional: expose the telemetry sidecar beyond loopback (default is
 # loopback-only). See .env.example and docs/telemetry.md for the full list.
