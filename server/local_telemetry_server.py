@@ -396,6 +396,15 @@ def _is_authorized(handler: BaseHTTPRequestHandler, *, allow_query_token: bool =
     return hmac.compare_digest(candidate, expected)
 
 
+def _session_filter_params(params: dict[str, list[str]]) -> Optional[dict[str, str]]:
+    filters = {}
+    for key in ("query", "status", "category", "origin", "model"):
+        value = (params.get(key) or [""])[0].strip()
+        if value and value.lower() != "all":
+            filters[key] = value
+    return filters or None
+
+
 def _append_client_diagnostic(payload: Dict[str, Any]) -> None:
     """Persist browser reload breadcrumbs without ever recording its auth token."""
     safe_payload = {key: value for key, value in payload.items() if key != "_accessToken"}
@@ -1624,7 +1633,7 @@ class Handler(BaseHTTPRequestHandler):
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
             offset = _parse_int((params.get("offset") or [None])[0], default=0, minimum=0, maximum=100000)
             session_id = (params.get("session_id") or [None])[0] or None
-            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset, session_id=session_id))
+            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset, session_id=session_id, filters=_session_filter_params(params)))
             return
         if parsed.path == "/api/local/sessions":
             if not _is_authorized(self):
@@ -1632,7 +1641,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
             offset = _parse_int((params.get("offset") or [None])[0], default=0, minimum=0, maximum=100000)
-            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset))
+            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset, filters=_session_filter_params(params)))
             return
         if parsed.path == "/api/local/sessions/usage":
             if not _is_authorized(self):
