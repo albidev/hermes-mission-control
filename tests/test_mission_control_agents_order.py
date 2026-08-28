@@ -57,6 +57,42 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertFalse(item["isResumable"])
         self.assertEqual(item["status"], "ended")
 
+    def test_session_title_ignores_workspace_path_and_uses_preview(self):
+        with patch.object(mission_control_agents, "_trace_mode_for_artifacts", return_value="native"):
+            item = mission_control_agents._build_session_item(
+                "session-1",
+                {"display_name": "~/Projects/hermes-mission-control"},
+                None,
+                {
+                    "source": "mission-control",
+                    "model": "gpt-test",
+                    "title": "~/Projects/hermes-mission-control",
+                    "preview": "Mostrare il titolo della sessione",
+                    "last_active": "2026-08-28T10:00:00+00:00",
+                },
+                300,
+            )
+
+        self.assertEqual(item["title"], "Mostrare il titolo della sessione")
+
+    def test_session_title_uses_untitled_when_only_path_fallbacks_exist(self):
+        with patch.object(mission_control_agents, "_trace_mode_for_artifacts", return_value="native"):
+            item = mission_control_agents._build_session_item(
+                "session-2",
+                {"display_name": "~/Projects/hermes-mission-control"},
+                None,
+                {
+                    "source": "mission-control",
+                    "model": "gpt-test",
+                    "title": "/Users/albi/Projects/hermes-mission-control",
+                    "preview": "~/Projects/hermes-mission-control",
+                    "last_active": "2026-08-28T10:00:00+00:00",
+                },
+                300,
+            )
+
+        self.assertEqual(item["title"], "Untitled session")
+
     def test_session_facets_group_status_and_category(self):
         items = [
             {"status": "live", "category": "conversation", "source": "tui"},
