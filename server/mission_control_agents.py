@@ -93,6 +93,12 @@ def _parse_timestamp(value: Any) -> float | None:
 def _redact_home_path(value: str | None) -> str:
     if not value:
         return ""
+    # ``display_home_path`` resolves relative strings before redacting them.
+    # Applying it to arbitrary titles/prompts turns plain text into a fake
+    # path rooted at Mission Control's cwd. Only redact actual path-shaped
+    # values; preserve normal human-readable text verbatim.
+    if not _is_path_like_title(value):
+        return value
     from hermes_paths import display_home_path
 
     return display_home_path(value)
@@ -120,6 +126,21 @@ def _single_line_preview(value: str, limit: int = 180) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "…"
+
+
+def _is_path_like_title(value: str) -> bool:
+    """Return whether *value* is a filesystem path, not a session title."""
+    text = value.strip()
+    if not text:
+        return False
+    if text.startswith(("~/", "/", "\\")):
+        return True
+    if len(text) >= 3 and text[1] == ":" and text[2] in {"/", "\\"}:
+        return True
+    try:
+        return Path(text).expanduser().is_absolute()
+    except (OSError, RuntimeError):
+        return False
 
 
 def _build_agent_key(source: str, model: str) -> str:
@@ -226,11 +247,16 @@ def _first_user_content(messages: list[dict[str, Any]] | None) -> str:
     return ""
 
 
-def _derive_title(messages: list[dict[str, Any]] | None, fallback: str) -> str:
+def _derive_title(messages: list[dict[str, Any]] | None, *fallbacks: str) -> str:
     preview = _first_user_content(messages)
-    if preview:
-        return _single_line_preview(preview, limit=72)
-    return fallback or "Untitled session"
+    candidates = ([preview] if preview else []) + list(fallbacks)
+    for candidate in candidates:
+        if not candidate or _is_path_like_title(candidate):
+            continue
+        title = _single_line_preview(candidate, limit=72)
+        if title:
+            return title
+    return "Untitled session"
 
 
 def _derive_preview(messages: list[dict[str, Any]] | None, fallback: str = "") -> str:
@@ -363,7 +389,9 @@ def _build_session_item(
     ended_at = _parse_timestamp((db_row or {}).get("ended_at"))
     title = _derive_title(
         sidecar_messages,
-        _normalize_text((db_row or {}).get("title")) or _normalize_text((index_entry or {}).get("display_name")) or session_id,
+        _normalize_text((db_row or {}).get("title")),
+        _normalize_text((db_row or {}).get("preview")),
+        _normalize_text((index_entry or {}).get("display_name")),
     )
     preview = _derive_preview(sidecar_messages, _normalize_text((db_row or {}).get("preview")))
     message_count = max(
