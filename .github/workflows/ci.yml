@@ -33,6 +33,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test:vite-config
+      - run: pnpm test:system-health-ui
 
   backend:
     name: Python tests

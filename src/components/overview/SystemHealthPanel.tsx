@@ -220,7 +220,7 @@ export function SystemHealthPanel({
           />
         )}
 
-        {/* Thermal — unavailable (no sensor) is distinct from a nominal value */}
+        {/* Thermal — macOS exposes a pressure level; Linux exposes °C */}
         {machine.thermal.source === 'unavailable' ? (
           <HealthMetric
             icon={Thermometer}
@@ -228,10 +228,18 @@ export function SystemHealthPanel({
             value={t('health.unavailable')}
             caption={machine.thermal.error ?? t('health.noSensor')}
           />
+        ) : machine.thermal.thermalLevel !== null ? (
+          <HealthMetric
+            icon={Thermometer}
+            label={t('health.thermal')}
+            value={machine.thermal.thermalLevel ? `${machine.thermal.thermalLevel.charAt(0).toUpperCase()}${machine.thermal.thermalLevel.slice(1)}` : '—'}
+            level={machine.thermal.thermalLevel}
+            caption={machine.thermal.levelSource ?? machine.thermal.source ?? undefined}
+          />
         ) : machine.thermal.thermalPressure !== null ? (
           <HealthMetric
             icon={Thermometer}
-            label="Thermal"
+            label={t('health.thermal')}
             value={`${machine.thermal.thermalPressure.toFixed(1)}°C`}
             bar={machine.thermal.thermalPressure}
             barVariant={
@@ -249,8 +257,7 @@ export function SystemHealthPanel({
           <HealthMetric
             icon={Thermometer}
             label={t('health.thermal')}
-            value={machine.thermal.thermalLevel ?? '—'}
-            level={machine.thermal.thermalLevel ?? null}
+            value="—"
           />
         )}
       </div>
