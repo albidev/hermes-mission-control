@@ -206,7 +206,6 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   useEffect(() => {
     if (!editor) return;
     const publishSnapshot = () => {
-  const { t } = useI18n();
       if (sessionId && !remoteHydratedRef.current) return;
       if (publishTimerRef.current !== null) window.clearTimeout(publishTimerRef.current);
       publishTimerRef.current = window.setTimeout(() => {
