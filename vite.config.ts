@@ -2,6 +2,9 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const LOCAL_TELEMETRY_TARGET = process.env.MISSION_CONTROL_LOCAL_TELEMETRY_URL || 'http://127.0.0.1:8765';
+const DASHBOARD_HOST = process.env.MISSION_CONTROL_DASHBOARD_HOST || '127.0.0.1';
+const DASHBOARD_PORT = process.env.MISSION_CONTROL_DASHBOARD_PORT || '9119';
+const DASHBOARD_TARGET = process.env.HERMES_DASHBOARD_URL || `http://${DASHBOARD_HOST}:${DASHBOARD_PORT}`;
 const ALLOWED_HOSTS = (process.env.MISSION_CONTROL_ALLOWED_HOSTS || 'localhost,127.0.0.1')
   .split(',')
   .map((host) => host.trim())
@@ -39,12 +42,12 @@ export default defineConfig({
         rewrite: (path) => path,
       },
       '/api/gateway-root': {
-        target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',
+        target: DASHBOARD_TARGET,
         changeOrigin: true,
         rewrite: () => '/',
       },
       '/api': {
-        target: process.env.HERMES_DASHBOARD_URL || 'http://127.0.0.1:9119',
+        target: DASHBOARD_TARGET,
         changeOrigin: true,
         ws: true,
         rewriteWsOrigin: true,

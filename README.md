@@ -93,11 +93,18 @@ Create `./.env` from `.env.example`:
 ```bash
 VITE_MISSION_CONTROL_LOCAL_API_BASE_URL=/api/local
 VITE_MISSION_CONTROL_TOKEN=your_token
+# Shared Hermes dashboard API endpoint; defaults to 127.0.0.1:9119
+MISSION_CONTROL_DASHBOARD_HOST=127.0.0.1
+MISSION_CONTROL_DASHBOARD_PORT=9119
+# Optional explicit Vite proxy override; takes precedence over host/port
+# HERMES_DASHBOARD_URL=http://127.0.0.1:9119
 # Optional: comma-separated local/Tailscale hostnames or IPs
 MISSION_CONTROL_DEV_HOSTS=
 ```
 
 The bearer token is shared between the telemetry server and the UI. The telemetry server reads it from `.env` via the launcher script.
+The dashboard API launcher and Vite proxy use the same dashboard host/port
+variables. Empty values use the defaults; ports must be between 1 and 65535.
 
 Operational scripts (`scripts/run-dashboard-api.sh`, `scripts/smoke-upgrade.sh`,
 `scripts/reapply-core-mission-control-fixes.sh`) load configuration through
@@ -130,7 +137,7 @@ macOS launchd. Example units live in [`systemd/`](systemd/README.md) and the
 full walkthrough (clean checkout, secrets, operations, health checks) is in
 [`docs/runbooks/linux-deployment.md`](docs/runbooks/linux-deployment.md):
 
-- `hermes-dashboard-api.service` — dashboard API (`:9119`)
+- `hermes-dashboard-api.service` — dashboard API (`:9119` by default; configurable)
 - `hermes-mission-control-telemetry.service` — telemetry sidecar (`:8765`)
 - `hermes-mission-control.service` — Vite frontend (`:5174`)
 - `mission-control.target` — group target for the three services
