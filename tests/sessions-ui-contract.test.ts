@@ -37,7 +37,7 @@ test('mobile sessions layout avoids nested scrolling and an oversized filter hea
   assert.match(source, /flex flex-nowrap gap-1\.5 overflow-x-auto/);
   assert.match(source, /grid-cols-2 gap-2/);
   assert.match(source, /className="hidden sm:block"/);
-  assert.match(source, /compactOnMobile/);
+  assert.doesNotMatch(source, /compactOnMobile/);
   assert.match(source, /filtersOpen/);
   assert.match(source, /max-w-full/);
   assert.match(source, /min-w-0[^\n]*truncate/);

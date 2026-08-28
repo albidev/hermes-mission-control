@@ -87,15 +87,15 @@ function formatDuration(startedAt: number | null, endedAt: number | null, lastAc
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
-function MetricCard({ icon: Icon, label, value, hint, className = '', compactOnMobile = false }: { icon: React.ElementType; label: string; value: string; hint: string; className?: string; compactOnMobile?: boolean }) {
+function MetricCard({ icon: Icon, label, value, hint, className = '', compact = false }: { icon: React.ElementType; label: string; value: string; hint: string; className?: string; compact?: boolean }) {
   return (
-    <Card className={`!border-0 p-3 sm:p-4 ${compactOnMobile ? 'px-2 py-2 sm:p-4' : ''} ${className}`}>
+    <Card className={`!border-0 p-3 sm:p-4 ${compact ? 'px-2 py-2 sm:p-4' : ''} ${className}`}>
       <div className="flex items-center justify-between">
-        <span className={`text-xs text-text-muted ${compactOnMobile ? 'truncate text-[10px] sm:text-xs' : ''}`}>{label}</span>
-        <Icon className={`h-4 w-4 text-text-subtle ${compactOnMobile ? 'h-3.5 w-3.5 sm:h-4 sm:w-4' : ''}`} />
+        <span className={`text-xs text-text-muted ${compact ? 'truncate text-[10px] sm:text-xs' : ''}`}>{label}</span>
+        <Icon className={`h-4 w-4 text-text-subtle ${compact ? 'h-3.5 w-3.5 sm:h-4 sm:w-4' : ''}`} />
       </div>
-      <p className={`mt-2 text-base font-semibold text-text tabular-nums sm:text-lg ${compactOnMobile ? 'mt-1 text-sm sm:mt-2 sm:text-lg' : ''}`}>{value}</p>
-      <p className={`mt-1 text-xs text-text-subtle ${compactOnMobile ? 'hidden sm:block' : ''}`}>{hint}</p>
+      <p className={`mt-2 text-base font-semibold text-text tabular-nums sm:text-lg ${compact ? 'mt-1 text-sm sm:mt-2 sm:text-lg' : ''}`}>{value}</p>
+      <p className={`mt-1 text-xs text-text-subtle ${compact ? 'hidden sm:block' : ''}`}>{hint}</p>
     </Card>
   );
 }
@@ -111,16 +111,14 @@ function SessionActionButton({
   onClick,
   variant = 'secondary',
   className = '',
-  compactOnMobile = false,
 }: {
   label: string;
   icon: React.ReactNode;
   onClick: () => void;
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   className?: string;
-  compactOnMobile?: boolean;
 }) {
-  return <Button type="button" size="sm" variant={variant} icon={icon} className={className} onClick={onClick} aria-label={label} title={label}>{compactOnMobile ? <><span className="hidden sm:inline">{label}</span><span className="sr-only sm:hidden">{label}</span></> : label}</Button>;
+  return <Button type="button" size="sm" variant={variant} icon={icon} className={className} onClick={onClick} aria-label={label} title={label}>{label}</Button>;
 }
 
 function SessionRow({
@@ -177,9 +175,9 @@ function SessionRow({
               <span className="truncate">{session.sessionId}</span>
             </button>
             <span className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:ml-auto sm:w-auto">
-              {actions.resumeChat ? <SessionActionButton label="Resume" icon={<MessageSquare size={14} />} onClick={() => navigate(`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`)} variant="primary" compactOnMobile className="!min-w-0 !border-0 !px-2 sm:!px-3" /> : null}
-              {actions.trace ? <SessionActionButton label="Trace" icon={<Workflow size={14} />} onClick={() => navigate(`/agents?session=${encodeURIComponent(session.sessionId)}`)} compactOnMobile className="!min-w-0 !border-0 !bg-sky-500/10 !text-sky-300 hover:!bg-sky-500/20 !px-2 sm:!px-3" /> : null}
-              {actions.inspect ? <SessionActionButton label="Inspect" icon={<Search size={14} />} onClick={() => onInspect(session)} variant="ghost" compactOnMobile className="!min-w-0 !border-0 !bg-transparent !px-2 text-text-muted hover:!bg-surface-sunken hover:!text-text sm:!px-3" /> : null}
+              {actions.resumeChat ? <SessionActionButton label="Resume" icon={<MessageSquare size={14} />} onClick={() => navigate(`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`)} variant="primary" className="!min-w-0 !border-0 !px-2 sm:!px-3" /> : null}
+              {actions.trace ? <SessionActionButton label="Trace" icon={<Workflow size={14} />} onClick={() => navigate(`/agents?session=${encodeURIComponent(session.sessionId)}`)} className="!min-w-0 !border-0 !bg-sky-500/10 !text-sky-300 hover:!bg-sky-500/20 !px-2 sm:!px-3" /> : null}
+              {actions.inspect ? <SessionActionButton label="Inspect" icon={<Search size={14} />} onClick={() => onInspect(session)} variant="ghost" className="!min-w-0 !border-0 !bg-transparent !px-2 text-text-muted hover:!bg-surface-sunken hover:!text-text sm:!px-3" /> : null}
             </span>
           </div>
         </div>
@@ -412,10 +410,10 @@ export function SessionsRoute() {
           </div>
         </div>
         <div className="grid grid-cols-4 gap-1.5 p-2 sm:grid-cols-4 sm:gap-3 sm:p-4 xl:grid-cols-6">
-          <MetricCard icon={MessagesSquare} label="Total" value={String(totalSessions)} hint="tracked sessions" compactOnMobile />
-          <MetricCard icon={Activity} label="Live now" value={String(liveCount)} hint="active in last 5m" compactOnMobile />
-          <MetricCard icon={Clock3} label="Idle" value={String(idleCount)} hint="not recently active" compactOnMobile />
-          <MetricCard icon={Layers} label="Ended" value={String(endedCount)} hint="completed history" compactOnMobile />
+          <MetricCard icon={MessagesSquare} label="Total" value={String(totalSessions)} hint="tracked sessions" compact />
+          <MetricCard icon={Activity} label="Live now" value={String(liveCount)} hint="active in last 5m" compact />
+          <MetricCard icon={Clock3} label="Idle" value={String(idleCount)} hint="not recently active" compact />
+          <MetricCard icon={Layers} label="Ended" value={String(endedCount)} hint="completed history" compact />
           <MetricCard icon={Bot} label="Agents" value={String(activeAgents)} hint="currently active" className="hidden sm:block" />
           <MetricCard icon={DollarSign} label="Loaded usage" value={formatCost(totalCost)} hint={`${formatTokens(totalTokens)} tokens`} className="hidden sm:block" />
         </div>
