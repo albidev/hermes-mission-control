@@ -88,16 +88,18 @@ class LinuxDeploymentContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="mc-dashboard-invalid-") as tmp:
             core = Path(tmp) / "core"
             (core / "venv" / "bin").mkdir(parents=True)
-            env = {
-                **os.environ,
-                "HOME": tmp,
-                "HERMES_AGENT_DIR": str(core),
-                "MISSION_CONTROL_ENV_FILE": str(Path(tmp) / "missing.env"),
-                "MISSION_CONTROL_DASHBOARD_PORT": "not-a-port",
-            }
-            result = subprocess.run([str(script)], env=env, capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("invalid dashboard port", result.stderr)
+            for invalid_port in ("not-a-port", "0", "65536"):
+                with self.subTest(invalid_port=invalid_port):
+                    env = {
+                        **os.environ,
+                        "HOME": tmp,
+                        "HERMES_AGENT_DIR": str(core),
+                        "MISSION_CONTROL_ENV_FILE": str(Path(tmp) / "missing.env"),
+                        "MISSION_CONTROL_DASHBOARD_PORT": invalid_port,
+                    }
+                    result = subprocess.run([str(script)], env=env, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("invalid dashboard port", result.stderr)
 
     def test_units_use_external_env_file_and_portable_commands(self):
         for name in (
@@ -119,7 +121,10 @@ class LinuxDeploymentContractTests(unittest.TestCase):
     def test_dashboard_port_contract_is_shared_with_vite_and_deployment_docs(self):
         vite = (ROOT / "vite.config.ts").read_text(encoding="utf-8")
         env_template = (ROOT / "deploy" / "systemd" / "env.template").read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
         systemd_readme = (SYSTEMD / "README.md").read_text(encoding="utf-8")
+        self.assertIn("loadEnv", vite)
+        self.assertIn("loadEnv(mode, process.cwd(), '')", vite)
         self.assertIn("MISSION_CONTROL_DASHBOARD_HOST", vite)
         self.assertIn("MISSION_CONTROL_DASHBOARD_PORT", vite)
         self.assertIn("HERMES_DASHBOARD_URL", vite)
@@ -128,6 +133,9 @@ class LinuxDeploymentContractTests(unittest.TestCase):
         self.assertIn("MISSION_CONTROL_DASHBOARD_HOST", env_template)
         self.assertIn("MISSION_CONTROL_DASHBOARD_PORT", env_template)
         self.assertIn("HERMES_DASHBOARD_URL", env_template)
+        self.assertIn("MISSION_CONTROL_DASHBOARD_HOST", env_example)
+        self.assertIn("MISSION_CONTROL_DASHBOARD_PORT", env_example)
+        self.assertIn("HERMES_DASHBOARD_URL", env_example)
         self.assertIn("MISSION_CONTROL_DASHBOARD_PORT", systemd_readme)
         self.assertIn("HERMES_DASHBOARD_URL", systemd_readme)
 

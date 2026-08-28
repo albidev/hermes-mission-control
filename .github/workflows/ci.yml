@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, feat/linux-port]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, feat/linux-port]
 
 permissions:
   contents: read
@@ -31,6 +31,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: pnpm test:vite-config
 
   backend:
     name: Python tests
