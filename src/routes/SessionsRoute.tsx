@@ -75,14 +75,14 @@ function formatDuration(startedAt: number | null, endedAt: number | null, lastAc
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
-function MetricCard({ icon: Icon, label, value, hint }: { icon: React.ElementType; label: string; value: string; hint: string }) {
+function MetricCard({ icon: Icon, label, value, hint, className = '' }: { icon: React.ElementType; label: string; value: string; hint: string; className?: string }) {
   return (
-    <Card className="!border-0 p-4">
+    <Card className={`!border-0 p-3 sm:p-4 ${className}`}>
       <div className="flex items-center justify-between">
         <span className="text-xs text-text-muted">{label}</span>
         <Icon className="h-4 w-4 text-text-subtle" />
       </div>
-      <p className="mt-2 text-lg font-semibold text-text tabular-nums">{value}</p>
+      <p className="mt-2 text-base font-semibold text-text tabular-nums sm:text-lg">{value}</p>
       <p className="mt-1 text-xs text-text-subtle">{hint}</p>
     </Card>
   );
@@ -99,14 +99,16 @@ function SessionActionButton({
   onClick,
   variant = 'secondary',
   className = '',
+  compactOnMobile = false,
 }: {
   label: string;
   icon: React.ReactNode;
   onClick: () => void;
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   className?: string;
+  compactOnMobile?: boolean;
 }) {
-  return <Button type="button" size="sm" variant={variant} icon={icon} className={className} onClick={onClick}>{label}</Button>;
+  return <Button type="button" size="sm" variant={variant} icon={icon} className={className} onClick={onClick} aria-label={label} title={label}>{compactOnMobile ? <><span className="hidden sm:inline">{label}</span><span className="sr-only sm:hidden">{label}</span></> : label}</Button>;
 }
 
 function SessionRow({
@@ -163,9 +165,9 @@ function SessionRow({
               <span className="truncate">{session.sessionId}</span>
             </button>
             <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-              {actions.resumeChat ? <SessionActionButton label="Resume" icon={<MessageSquare size={14} />} onClick={() => navigate(`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`)} variant="primary" className="!min-w-0 !border-0 !px-3" /> : null}
-              {actions.trace ? <SessionActionButton label="Trace" icon={<Workflow size={14} />} onClick={() => navigate(`/agents?session=${encodeURIComponent(session.sessionId)}`)} className="!min-w-0 !border-0 !bg-sky-500/10 !text-sky-300 hover:!bg-sky-500/20 !px-3" /> : null}
-              {actions.inspect ? <SessionActionButton label="Inspect" icon={<Search size={14} />} onClick={() => onInspect(session)} variant="ghost" className="!min-w-0 !border-0 !bg-transparent !px-3 text-text-muted hover:!bg-surface-sunken hover:!text-text" /> : null}
+              {actions.resumeChat ? <SessionActionButton label="Resume" icon={<MessageSquare size={14} />} onClick={() => navigate(`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`)} variant="primary" compactOnMobile className="!min-w-0 !border-0 !px-2 sm:!px-3" /> : null}
+              {actions.trace ? <SessionActionButton label="Trace" icon={<Workflow size={14} />} onClick={() => navigate(`/agents?session=${encodeURIComponent(session.sessionId)}`)} compactOnMobile className="!min-w-0 !border-0 !bg-sky-500/10 !text-sky-300 hover:!bg-sky-500/20 !px-2 sm:!px-3" /> : null}
+              {actions.inspect ? <SessionActionButton label="Inspect" icon={<Search size={14} />} onClick={() => onInspect(session)} variant="ghost" compactOnMobile className="!min-w-0 !border-0 !bg-transparent !px-2 text-text-muted hover:!bg-surface-sunken hover:!text-text sm:!px-3" /> : null}
             </span>
           </div>
         </div>
@@ -362,57 +364,57 @@ export function SessionsRoute() {
   const toggleGroup = (category: SessionCategory) => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(category)) next.delete(category); else next.add(category); return next; });
 
   return (
-    <div ref={containerRef} className="flex h-full flex-col gap-5 overflow-y-auto">
+    <div ref={containerRef} className="flex flex-col gap-4 sm:gap-5">
       <PullToReloadIndicator state={pullState} />
       <Card padding="none" className="!border-0">
-        <div className="flex flex-wrap items-start justify-between gap-4 px-4 pb-4 pt-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 px-3 pb-3 pt-3 sm:gap-4 sm:px-4 sm:pb-4 sm:pt-4">
           <div>
             <span className="eyebrow">{t('nav.sessions')}</span>
             <h2 className="mt-1 text-base font-semibold text-text">Session Control</h2>
-            <p className="mt-1 text-xs text-text-muted">Conversations, automated runs, and runtime history in one place.</p>
+            <p className="mt-1 hidden text-xs text-text-muted sm:block">Conversations, automated runs, and runtime history in one place.</p>
           </div>
-          <div className="flex items-center gap-3 text-xs text-text-subtle">
-            <span>{lastSyncedAt ? `Updated ${formatRelativeTime(lastSyncedAt / 1000)}` : 'Not synced yet'}</span>
+          <div className="flex items-center gap-2 text-xs text-text-subtle sm:gap-3">
+            <span className="hidden sm:inline">{lastSyncedAt ? `Updated ${formatRelativeTime(lastSyncedAt / 1000)}` : 'Not synced yet'}</span>
             <button type="button" onClick={() => void loadSessions()} className="inline-flex items-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text" disabled={loading}>
               <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4 sm:gap-3 sm:p-4 xl:grid-cols-6">
           <MetricCard icon={MessagesSquare} label="Total" value={String(totalSessions)} hint="tracked sessions" />
           <MetricCard icon={Activity} label="Live now" value={String(liveCount)} hint="active in last 5m" />
           <MetricCard icon={Clock3} label="Idle" value={String(idleCount)} hint="not recently active" />
           <MetricCard icon={Layers} label="Ended" value={String(endedCount)} hint="completed history" />
-          <MetricCard icon={Bot} label="Agents" value={String(activeAgents)} hint="currently active" />
-          <MetricCard icon={DollarSign} label="Loaded usage" value={formatCost(totalCost)} hint={`${formatTokens(totalTokens)} tokens`} />
+          <MetricCard icon={Bot} label="Agents" value={String(activeAgents)} hint="currently active" className="hidden sm:block" />
+          <MetricCard icon={DollarSign} label="Loaded usage" value={formatCost(totalCost)} hint={`${formatTokens(totalTokens)} tokens`} className="hidden sm:block" />
         </div>
       </Card>
 
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         <Card padding="none" className="min-w-0 !border-0">
           <div className="p-3">
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
               {(['all', 'live', 'conversation', 'automation', 'system'] as SessionTab[]).map((value) => (
-                <button key={value} type="button" onClick={() => setTab(value)} className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${tab === value ? 'bg-accent text-white' : 'bg-surface-sunken text-text-muted hover:bg-border-subtle hover:text-text'}`}>
+                <button key={value} type="button" onClick={() => setTab(value)} className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${tab === value ? 'bg-accent text-white' : 'bg-surface-sunken text-text-muted hover:bg-border-subtle hover:text-text'}`}>
                   {value === 'all' ? 'All' : value === 'live' ? 'Live now' : CATEGORY_LABELS[value]} <span className="ml-1 opacity-70">{tabCount(value)}</span>
                 </button>
               ))}
             </div>
-            <div className="mt-3 flex flex-col gap-2 md:flex-row">
-              <label className="relative min-w-0 flex-1">
+            <div className="mt-3 grid grid-cols-2 gap-2 md:flex md:flex-row">
+              <label className="relative col-span-2 min-w-0 flex-1 md:col-span-1">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
                 <input value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} placeholder="Search title, preview, ID, model…" className="w-full rounded-md bg-surface py-2 pl-9 pr-3 text-sm text-text outline-none placeholder:text-text-subtle focus:ring-1 focus:ring-accent/40" />
               </label>
-              <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as SessionViewFilters['status'] }))} className="rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" aria-label="Filter status">
+              <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as SessionViewFilters['status'] }))} className="min-w-0 w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" aria-label="Filter status">
                 <option value="all">All statuses</option><option value="live">Live</option><option value="idle">Idle</option><option value="ended">Ended</option>
               </select>
-              <select value={filters.origin} onChange={(event) => setFilters((current) => ({ ...current, origin: event.target.value }))} className="rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" aria-label="Filter origin">
+              <select value={filters.origin} onChange={(event) => setFilters((current) => ({ ...current, origin: event.target.value }))} className="min-w-0 w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" aria-label="Filter origin">
                 <option value="">All origins</option>{originOptions.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
               </select>
-              <select value={filters.model} onChange={(event) => setFilters((current) => ({ ...current, model: event.target.value }))} className="max-w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" aria-label="Filter model">
+              <select value={filters.model} onChange={(event) => setFilters((current) => ({ ...current, model: event.target.value }))} className="min-w-0 w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" aria-label="Filter model">
                 <option value="">All models</option>{modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
               </select>
-              <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)} className="rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" aria-label="Sort sessions">
+              <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)} className="min-w-0 w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" aria-label="Sort sessions">
                 <option value="activity">Last activity</option><option value="started">Started</option><option value="messages">Messages</option><option value="tokens">Tokens</option><option value="cost">Cost</option>
               </select>
             </div>
@@ -432,7 +434,7 @@ export function SessionsRoute() {
             if (!sessions.length) return null;
             return <SessionSection key={category} category={category} sessions={sessions} collapsed={collapsedGroups.has(category)} onToggle={() => toggleGroup(category)} selectedId={selectedSession?.sessionId ?? null} onInspect={setSelectedSession} onCopy={copySessionId} />;
           })}
-          {hasMore ? <div className="p-3"><button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="w-full rounded-md py-2 text-xs font-medium text-accent hover:bg-surface-sunken disabled:opacity-50">{loadingMore ? 'Loading…' : `Load more · ${loadedItems.length} of ${totalSessions}`}</button></div> : null}
+          {hasMore ? <div className="p-3"><button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="w-full rounded-md py-2 text-xs font-medium text-accent hover:bg-surface-sunken disabled:opacity-50">{loadingMore ? 'Loading…' : `Load more · ${loadedItems.length} of ${filteredTotal}`}</button></div> : null}
         </Card>
         {selectedSession ? <SessionDetails session={selectedSession} onClose={() => setSelectedSession(null)} onCopy={copySessionId} /> : null}
       </div>
