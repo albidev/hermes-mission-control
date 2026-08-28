@@ -35,9 +35,13 @@ test('session actions use shared full-size buttons', () => {
 test('mobile sessions layout avoids nested scrolling and an oversized filter header', () => {
   assert.doesNotMatch(source, /flex h-full flex-col gap-5 overflow-y-auto/);
   assert.match(source, /flex flex-nowrap gap-1\.5 overflow-x-auto/);
-  assert.match(source, /grid grid-cols-2 gap-2/);
+  assert.match(source, /grid-cols-2 gap-2/);
   assert.match(source, /className="hidden sm:block"/);
   assert.match(source, /compactOnMobile/);
+  assert.match(source, /filtersOpen/);
+  assert.match(source, /max-w-full/);
+  assert.match(source, /min-w-0[^\n]*truncate/);
+  assert.match(source, /w-full[^\n]*justify-end[^\n]*sm:ml-auto/);
 });
 
 console.log('sessions UI contract tests passed');
