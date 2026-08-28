@@ -56,4 +56,19 @@ test('desktop search and dropdown controls share the same height contract', () =
   assert.equal((source.match(/py-0(?:\s|")/g) ?? []).length, 5);
 });
 
+test('tab changes expose loading state, reset stale totals, and expand filtered groups', () => {
+  assert.match(source, /role="status"/);
+  assert.match(source, /loading && !loadingMore/);
+  assert.match(source, /setFilteredTotal\(0\)/);
+  assert.match(source, /setCollapsedGroups\(new Set\(\)\)/);
+  assert.match(source, /onClick=\{\(\) => selectTab\(value\)\}/);
+  assert.match(source, /const groupsForcedOpen = tab !== 'all' \|\| activeFilterCount > 0/);
+  assert.match(source, /collapsed=\{groupsForcedOpen \? false : collapsedGroups\.has\(category\)\}/);
+});
+
+test('active tab count uses the filtered result total instead of global facets', () => {
+  assert.match(source, /if \(value === tab\) return loading \? null : filteredTotal/);
+  assert.match(source, /tabCount\(value\) === null \? '…' : tabCount\(value\)/);
+});
+
 console.log('sessions UI contract tests passed');

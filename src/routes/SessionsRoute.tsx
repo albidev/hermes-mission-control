@@ -293,6 +293,8 @@ export function SessionsRoute() {
     if (!silent) {
       setLoading(true);
       setLoadError(null);
+      setFilteredTotal(0);
+      setHasMore(false);
     }
     try {
       const data = await withTimeout(loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, 0, effectiveFilters), SESSION_LOAD_TIMEOUT_MS);
@@ -382,15 +384,25 @@ export function SessionsRoute() {
     return groups;
   }, [filteredSessions]);
 
-  const tabCount = (value: SessionTab): number => {
+  const tabCount = (value: SessionTab): number | null => {
+    if (value === tab) return loading ? null : filteredTotal;
     if (value === 'all') return totalSessions;
     if (value === 'live') return liveCount;
     if (value === 'conversation' || value === 'automation' || value === 'system') return facets?.category[value] ?? loadedItems.filter((session) => classifySessionOrigin(session).category === value).length;
     return (facets?.category.unknown ?? 0);
   };
 
+  const selectTab = (value: SessionTab) => {
+    setTab(value);
+    setCollapsedGroups(new Set());
+  };
   const copySessionId = (sessionId: string) => { void navigator.clipboard?.writeText(sessionId); };
   const toggleGroup = (category: SessionCategory) => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(category)) next.delete(category); else next.add(category); return next; });
+  const groupsForcedOpen = tab !== 'all' || activeFilterCount > 0;
+
+  useEffect(() => {
+    if (tab !== 'all' || activeFilterCount > 0) setCollapsedGroups(new Set());
+  }, [activeFilterCount, tab]);
 
   return (
     <div ref={containerRef} className="flex flex-col gap-4 sm:gap-5">
@@ -424,8 +436,8 @@ export function SessionsRoute() {
           <div className="p-3">
             <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
               {(['all', 'live', 'conversation', 'automation', 'system'] as SessionTab[]).map((value) => (
-                <button key={value} type="button" onClick={() => setTab(value)} className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${tab === value ? 'bg-accent text-white' : 'bg-surface-sunken text-text-muted hover:bg-border-subtle hover:text-text'}`}>
-                  {value === 'all' ? 'All' : value === 'live' ? 'Live now' : CATEGORY_LABELS[value]} <span className="ml-1 opacity-70">{tabCount(value)}</span>
+                <button key={value} type="button" onClick={() => selectTab(value)} className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${tab === value ? 'bg-accent text-white' : 'bg-surface-sunken text-text-muted hover:bg-border-subtle hover:text-text'}`}>
+                  {value === 'all' ? 'All' : value === 'live' ? 'Live now' : CATEGORY_LABELS[value]} <span className="ml-1 opacity-70">{tabCount(value) === null ? '…' : tabCount(value)}</span>
                 </button>
               ))}
             </div>
@@ -453,11 +465,11 @@ export function SessionsRoute() {
                 </select>
               </div>
             </div>
-            <div className="mt-2 flex flex-col gap-1 text-[11px] text-text-subtle sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0 break-words">{filteredSessions.length} shown · {loadedItems.length} loaded of {filteredTotal}</span>{tab === 'live' ? <span className="text-positive">Auto-refreshing every 5s</span> : <span>Auto-refreshing every 10s</span>}</div>
+            <div className="mt-2 flex flex-col gap-1 text-[11px] text-text-subtle sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0 break-words">{loading ? 'Loading sessions…' : `${filteredSessions.length} shown · ${loadedItems.length} loaded of ${filteredTotal}`}</span>{tab === 'live' ? <span className="text-positive">Auto-refreshing every 5s</span> : <span>Auto-refreshing every 10s</span>}</div>
           </div>
 
           {loadError ? <div className="px-4 py-8 text-center"><p className="text-sm font-medium text-text">Unable to load sessions</p><p className="mt-1 text-xs text-text-muted">{loadError}</p><button type="button" onClick={() => void loadSessions()} className="mt-4 rounded-md bg-accent px-3 py-2 text-xs font-medium text-white hover:bg-accent-hover">Retry</button></div> : null}
-          {!loadError && loading && loadedItems.length === 0 ? <div className="px-4 py-12 text-center text-sm text-text-muted">Loading sessions…</div> : null}
+          {!loadError && loading && !loadingMore ? <div role="status" aria-live="polite" className="flex items-center justify-center gap-2 px-4 py-3 text-sm text-text-muted"><RefreshCw size={14} className="animate-spin" />Loading sessions…</div> : null}
           {!loadError && !loading && filteredSessions.length === 0 ? <div className="px-4 py-12 text-center text-sm text-text-muted">No sessions match these filters.</div> : null}
           {liveSessions.length > 0 ? (
             <section>
@@ -468,7 +480,7 @@ export function SessionsRoute() {
           {CATEGORY_ORDER.map((category) => {
             const sessions = groupedSessions.get(category) ?? [];
             if (!sessions.length) return null;
-            return <SessionSection key={category} category={category} sessions={sessions} collapsed={collapsedGroups.has(category)} onToggle={() => toggleGroup(category)} selectedId={selectedSession?.sessionId ?? null} onInspect={setSelectedSession} onCopy={copySessionId} />;
+            return <SessionSection key={category} category={category} sessions={sessions} collapsed={groupsForcedOpen ? false : collapsedGroups.has(category)} onToggle={groupsForcedOpen ? () => undefined : () => toggleGroup(category)} selectedId={selectedSession?.sessionId ?? null} onInspect={setSelectedSession} onCopy={copySessionId} />;
           })}
           {hasMore ? <div className="p-3"><button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="w-full rounded-md py-2 text-xs font-medium text-accent hover:bg-surface-sunken disabled:opacity-50">{loadingMore ? 'Loading…' : `Load more · ${loadedItems.length} of ${filteredTotal}`}</button></div> : null}
         </Card>
