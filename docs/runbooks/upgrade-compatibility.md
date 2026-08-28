@@ -5,18 +5,18 @@ Keep Mission Control usable across Hermes updates without touching core internal
 
 ## Repos and boundaries
 - `hermes-agent` (main upstream repo): must stay clean before/after update.
-- `apps/mission-control` (separate repo): contains UI compatibility logic, contracts, and smoke scripts.
+- `hermes-mission-control` (this repo): contains the UI, the telemetry sidecar, contracts, and smoke scripts.
 - Rule: do not couple Mission Control to unstable internal payloads without a fallback path.
 
 ## Pre-upgrade checklist
 1. Ensure `hermes-agent` working tree is clean
    - `git status --short`
 2. Ensure Mission Control branch is clean or committed
-   - `git -C apps/mission-control status --short`
+   - `git status --short`
 3. Run frontend build
-   - `npm --prefix apps/mission-control run build`
+   - `pnpm build`
 4. Run smoke script
-   - `bash apps/mission-control/scripts/smoke-upgrade.sh`
+   - `bash scripts/smoke-upgrade.sh`
 
 ## Update flow (safe)
 1. Update `hermes-agent` to target version/commit.
@@ -64,7 +64,9 @@ Use this when update/autostash leaves conflicted files:
 
 ## Canonical backend recovery path
 If a Hermes core update drops Mission Control routes from `gateway/platforms/api_server.py`:
-1. Run `bash apps/mission-control/scripts/reapply-core-mission-control-fixes.sh`
+1. Run `bash scripts/reapply-core-mission-control-fixes.sh` (optionally pass the
+   path to the `hermes-agent` checkout as the first argument; it defaults to
+   `$HOME/.hermes/hermes-agent`).
 2. The script first reapplies `patches/hermes-core-mission-control-api_server.patch` with `git apply`
 3. Then it reapplies compatibility shims in `model_tools.py` and `tools/skills_tool.py`
 4. Finally it runs syntax checks, restarts gateway, and smoke-checks Mission Control endpoints

@@ -1,0 +1,15 @@
+# Optional runtime dependencies for Web Push (Mission Control).
+#
+# Not part of the base server/requirements.txt: push is an optional feature
+# and the telemetry sidecar runs fine without these packages (push degrades
+# to an explicit "disabled" state, see push_status() in push_server.py).
+#
+# Install only if you want push notifications:
+#   python3 -m pip install -r server/requirements-push.txt
+#
+# You also need a VAPID keypair plus MISSION_CONTROL_VAPID_CONTACT in the
+# environment (see .env.example). Without them push stays disabled even with
+# these packages installed.
+
+pywebpush>=1.14.0
+websockets>=12.0

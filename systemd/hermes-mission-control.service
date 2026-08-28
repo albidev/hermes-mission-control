@@ -1,0 +1,29 @@
+[Unit]
+Description=Hermes Mission Control Vite frontend (port 5174)
+# The frontend proxies /api/local to the telemetry sidecar and /api to the
+# dashboard API, so it must start after both are up. Stopping/restarting the
+# stack target stops/restarts this unit with the others.
+After=network.target hermes-dashboard-api.service hermes-mission-control-telemetry.service
+Wants=hermes-dashboard-api.service hermes-mission-control-telemetry.service
+PartOf=mission-control.target
+
+# Bound the restart rate. A port conflict or missing node_modules fails the
+# unit visibly instead of looping forever.
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/hermes-mission-control
+EnvironmentFile=-%h/.hermes/mission-control.env
+# `--host 0.0.0.0` is the explicit opt-in for LAN/Tailscale exposure of the
+# frontend. For a local-only Linux box remove it so Vite binds loopback only.
+Environment=PATH=%h/.local/share/pnpm:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env pnpm exec vite --host 0.0.0.0
+
+# Restart on unexpected exit.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=mission-control.target

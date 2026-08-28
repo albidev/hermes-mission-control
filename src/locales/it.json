@@ -83,7 +83,12 @@
   "health.ram": "RAM",
   "health.disk": "Disco",
   "health.fan": "Ventola",
+  "health.fanCount": "Ventola ×{count}",
   "health.thermal": "Termico",
+  "health.unavailable": "Non disponibile",
+  "health.noSensor": "Nessun sensore termico rilevato su questo host",
+  "health.thermalSysfs": "zona termica sysfs",
+  "health.thermalLmSensors": "lm-sensors",
 
   "usage.eyebrow": "Uso",
   "usage.title": "Consumo di token e stima dei costi",

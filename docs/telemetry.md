@@ -9,9 +9,80 @@ Mission Control is a local-first dashboard: all of its data comes from a small l
 | Telemetry server | `server/local_telemetry_server.py` | `8765` | Python stdlib + psutil |
 | Frontend | `src/` | `5174` | React + Vite + TypeScript + Tailwind |
 
-All data flows through `/api/local/*`. In development, Vite proxies those requests to the telemetry server. The telemetry server binds to `0.0.0.0` and requires a bearer token on every request (see [`SECURITY.md`](../SECURITY.md)).
+All data flows through `/api/local/*`. In development, Vite proxies those requests to the telemetry server. The telemetry server binds to `127.0.0.1` (loopback) by default and requires a bearer token on every request (see [`SECURITY.md`](../SECURITY.md)).
 
 The sidecar does **not** hot-reload: restart it after any backend change.
+
+## Bind address and port
+
+The telemetry server reads its bind address and port from environment variables at startup:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MISSION_CONTROL_LOCAL_TELEMETRY_HOST` | `127.0.0.1` | Bind address (canonical name) |
+| `MISSION_CONTROL_LOCAL_TELEMETRY_PORT` | `8765` | Bind port (canonical name) |
+| `TELEMETRY_BIND_HOST` | — | Legacy alias for the host |
+| `TELEMETRY_BIND_PORT` | — | Legacy alias for the port |
+
+The canonical `MISSION_CONTROL_LOCAL_TELEMETRY_*` names take precedence over the legacy `TELEMETRY_BIND_*` aliases when both are set. An invalid port (non-integer or out of `1..65535`) aborts startup with a clear error instead of silently falling back to the default.
+
+### Security implications of the bind address
+
+Mission Control is a **local operator dashboard**: it defaults to loopback so it is unreachable from the network unless you explicitly opt in. This matters on Linux hosts with LAN interfaces, containers, VPNs, or Tailscale peers — `0.0.0.0` would expose the dashboard (and its data endpoints) to every interface the machine has.
+
+- Local-only operation: leave `MISSION_CONTROL_LOCAL_TELEMETRY_HOST` unset (or set it to `127.0.0.1`). The server listens on loopback only.
+- Tailscale/LAN exposure: set `MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0` (or the legacy `TELEMETRY_BIND_HOST`) explicitly. This is the opt-in signal. The dashboard is still protected by the bearer token, but the token is the only boundary between your network peers and the data.
+- A reverse proxy (Caddy, nginx, `tailscale serve`) can expose the dashboard without changing the bind: keep the telemetry server on loopback and proxy to it.
+
+On Linux systemd deployments, set the canonical pair in the external
+`~/.hermes/mission-control.env` file (see `.env.example` for the variable list).
+
+## CORS origin enforcement
+
+Browsers enforce the same-origin policy: a page served from one origin cannot read responses from another unless the server grants it via CORS headers. The telemetry server's behavior depends on `MISSION_CONTROL_ALLOWED_ORIGIN`:
+
+| Setting | Behavior |
+|---------|----------|
+| Unset (dev default) | Incoming `Origin` is mirrored back (`Access-Control-Allow-Origin: <origin>`), so browser sidecars work across Tailscale/LAN without extra configuration. |
+| Set to `http://host:port` | **Only that exact origin** receives CORS headers. Any other `Origin` gets none, so browsers block the cross-origin response. |
+
+Examples:
+
+```bash
+# Dev / Tailscale: mirror whatever origin the browser sends
+MISSION_CONTROL_ALLOWED_ORIGIN=
+
+# Hardened: only this exact frontend origin may read responses
+MISSION_CONTROL_ALLOWED_ORIGIN=http://100.84.148.17:5174
+```
+
+The comparison is exact — scheme, host, and port must all match. Requests without an `Origin` header (curl, same-origin fetches, non-browser clients) are not subject to CORS and pass through as usual; CORS never protects data without authentication, it only tells the browser which origins may read the response.
+
+### Vite dev server: `host: true`
+
+The Vite dev server (`vite.config.ts`) uses `host: true`, which makes it listen on **all interfaces** — the same exposure surface as the telemetry server's old `0.0.0.0` default. It is a dev tool, so it does not have a loopback default, but on a shared/LAN host you should treat `5174` as network-visible:
+
+- Vite filters incoming requests by `Host` header via `allowedHosts` (default `localhost,127.0.0.1`, extended with `MISSION_CONTROL_DEV_HOSTS`). A peer whose address is not listed gets rejected at the Vite layer ("due to access control checks") before any request reaches the backend.
+- `host: true` is required for Tailscale/LAN access and for the bundled systemd unit (`vite --host 0.0.0.0`). For local-only work, run plain `pnpm dev` (loopback) or remove `--host` from the unit.
+- The Vite dev server is a development surface: for production, serve the built `dist/` behind a static host or reverse proxy instead of exposing the dev server.
+
+## Hermes home and profile resolution
+
+The sidecar resolves every Hermes state path (state DB, sessions, logs,
+skills, config, cache, vault-brain candidates) through
+`server/hermes_paths.py`, which mirrors the Hermes core launcher:
+
+1. `HERMES_HOME` set and already profile-shaped (`<root>/profiles/<name>`) → used verbatim.
+2. Sticky active profile (`<root>/active_profile` contains a name other than `default`) → `<root>/profiles/<name>`.
+3. `HERMES_HOME` set (non profile-shaped) → used verbatim.
+4. Platform default → `~/.hermes`.
+
+The bash launchers (`scripts/run-local-telemetry.sh`,
+`scripts/run-dashboard-api.sh`) use the twin `resolve_hermes_home` from
+`scripts/lib/env.sh` with the same precedence, so the server process is
+launched with the same home the server itself resolves. This keeps Mission
+Control reading the correct Hermes state when Hermes runs from a non-default
+home or a named profile.
 
 ## Endpoints
 
@@ -26,8 +97,88 @@ The telemetry server exposes a set of read-only `/api/local/*` endpoints. Repres
 - `/api/local/cron/jobs`, `/api/local/config`, `/api/local/tools`, `/api/local/skills`
 - `/api/local/logs`
 - `/api/local/chat/last`, `/api/local/chat/whiteboard` — chat + tldraw bridge
+- `/api/local/knowledge`, `/api/local/knowledge/file` — vault knowledge (see below)
 
 The frontend consumes these through `src/lib/hermes-api.ts` (`loadProviderUsage`, etc.) and `src/lib/mission-control-store.tsx`.
+
+## Thermal telemetry
+
+`/api/local/system` includes a `thermal` object produced by `collect_thermal_snapshot()`. The backend is platform-specific and never requires interactive or passwordless sudo for normal operation.
+
+### Linux
+
+Fallback order in `_collect_linux_thermal_snapshot()`:
+
+1. **`/sys/class/thermal`** — kernel thermal zones (`thermal_zone*`). Purely passive sysfs reads, no privileges. The lowest zone temperature (in °C) is reported as `thermalPressure`.
+2. **`lm-sensors`** — when sysfs has no usable zone, the `sensors -u` binary is invoked without sudo. The lowest `temp*_input` value is reported.
+3. **Unavailable** — no supported sensor at all → a structured `unavailable` state (`source: "unavailable"`), never a backend failure.
+
+| Field | Meaning |
+|-------|---------|
+| `thermalPressure` | Lowest temperature in °C (Linux), or 0–100 pressure index (macOS). `null` when unavailable. |
+| `thermalLevel` | Text level (macOS only: `nominal`…`extreme`). `null` on Linux. |
+| `levelSource` | Backend that produced `thermalLevel` (`powermetrics`), `null` otherwise. |
+| `source` | `sysfs-thermal`, `lm-sensors`, `powermetrics`, `unavailable`, or `null` when no data was read. |
+| `error` | Diagnostic message; `null` on success. A missing sensor sets `source: "unavailable"` with an explanatory `error` — this is a normal state on hosts without thermal hardware, not a failure. |
+
+The Overview UI distinguishes the states: `source === 'unavailable'` renders "Unavailable" (with the diagnostic as a caption), a numeric `thermalPressure` renders °C with a threshold bar, and macOS falls back to the discrete level meter.
+
+### macOS (unchanged)
+
+`powermetrics` needs passwordless sudo and on macOS 26 / Apple Silicon only exposes thermal pressure as a text level (`Nominal`/`Low`/`Moderate`/`Heavy`/`Extreme`), mapped to a normalised 0–100 index. Returns nulls when powermetrics/sudo is unavailable.
+
+## Knowledge vault
+
+The Knowledge page scans a local Markdown vault and exposes it through `/api/local/knowledge` (snapshot) and `/api/local/knowledge/file` (single note content).
+
+### Vault path resolution
+
+The vault root is resolved by one canonical function (`_knowledge_vault_root()` in `server/local_telemetry_server.py`), used for scanning, display, fallback payloads, and file reads:
+
+1. `MISSION_CONTROL_VAULT_PATH` (canonical; supports `~` expansion);
+2. `HERMES_OBSIDIAN_VAULT` (legacy alias, kept for compatibility);
+3. platform default: `~/Documents/Hermes` on macOS, `~/wiki` on Linux.
+
+On Linux the default is `~/wiki`; set `MISSION_CONTROL_VAULT_PATH` in the
+external `~/.hermes/mission-control.env` file (or export it) to point at an
+existing vault when the default does not match your layout.
+
+### Path safety
+
+API responses never include absolute home paths: `sourcePath` and `vaultPath` are rendered home-relative (`~/wiki/notes.md`). When the vault is unavailable the fallback payload still reports a valid display path for the platform — it never fabricates a macOS path on Linux. File reads are restricted to the vault root and `~/.hermes` core files; anything outside returns 403.
+
+## Web Push (optional)
+
+Web Push lets the browser deliver notifications while the app is in the
+background or closed. It is **opt-in**: the base install (`server/requirements.txt`)
+does not include the required packages, and the sidecar runs fine without them.
+
+Enable it with:
+
+```bash
+python3 -m pip install -r server/requirements-push.txt   # pywebpush + websockets
+```
+
+then set `MISSION_CONTROL_VAPID_PUBLIC_KEY`, `MISSION_CONTROL_VAPID_PRIVATE_KEY`
+and `MISSION_CONTROL_VAPID_CONTACT` (a `mailto:` or `https:` sender identity —
+**required**; push stays disabled without it) in the environment file. See
+`.env.example` for the exact names.
+
+The sidecar reports the push state on every health probe:
+
+```json
+{"ok": true, "service": "mission-control-local-telemetry", "source": "local-psutil",
+ "push": {"enabled": false, "reason": "vapid_not_configured",
+          "missingConfig": ["MISSION_CONTROL_VAPID_CONTACT"]}}
+```
+
+- `reason: "vapid_not_configured"` — keys or contact missing (`missingConfig` lists them): intentional disablement.
+- `reason: "missing_dependency"` — the optional packages are not installed in the interpreter running the sidecar (`missingDependencies` lists them).
+- `reason: "ok"` — configured and importable; per-subscription delivery failures are still possible and are counted in `send_push`'s `failed` field.
+
+Related endpoints: `/api/local/push/vapid-public-key` (serves the public key to
+the client), `/api/local/push/subscriptions` (store/list/delete), and
+`/api/local/push/send` (test delivery — returns the same `reason` when disabled).
 
 ## Provider usage (CodexBar)
 
@@ -65,7 +216,7 @@ scripts/update-provider-usage.sh        # writes ~/.hermes/cache/mission-control
 scripts/local/update-provider-usage.sh  # identical variant
 ```
 
-These read `MISSION_CONTROL_CACHE_DIR` (default `~/.hermes/cache`). A LaunchAgent (or cron) can run it every 60s so the dashboard always has a fresh cache without paying a CodexBar call per request.
+These read `MISSION_CONTROL_CACHE_DIR` (default `~/.hermes/cache`). A scheduler (macOS LaunchAgent, Linux systemd timer, or cron) can run it every 60s so the dashboard always has a fresh cache without paying a CodexBar call per request.
 
 ### Ollama requires the web source
 

@@ -1,0 +1,26 @@
+[Unit]
+Description=Hermes Mission Control telemetry server (port 8765)
+# Reads Hermes state (state.db, sessions) via the core checkout, so it must
+# start after the dashboard API is up. The frontend unit starts after this one.
+After=network.target hermes-dashboard-api.service
+Wants=network.target
+PartOf=mission-control.target
+
+# Bound the restart rate so a missing dependency (e.g. core checkout or
+# psutil) fails the unit visibly instead of looping.
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/hermes-mission-control
+EnvironmentFile=-%h/.hermes/mission-control.env
+# The wrapper resolves HERMES_HOME, the active profile, PYTHONPATH, and Python.
+ExecStart=%h/Projects/hermes-mission-control/scripts/run-local-telemetry.sh
+
+# Restart on unexpected exit.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=mission-control.target

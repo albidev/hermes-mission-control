@@ -67,8 +67,9 @@ See [docs/kanban.md](docs/kanban.md) for the Kanban board architecture, supporte
 
 ## Quick start
 
+From the repository root:
+
 ```bash
-cd apps/mission-control
 pnpm install
 python3 -m pip install -r server/requirements.txt
 pnpm dev:full
@@ -87,20 +88,88 @@ pnpm dev             # port 5174
 
 ## Configuration
 
-Create `apps/mission-control/.env` from `.env.example`:
+Create `./.env` from `.env.example`:
 
 ```bash
 VITE_MISSION_CONTROL_LOCAL_API_BASE_URL=/api/local
 VITE_MISSION_CONTROL_TOKEN=your_token
+# Shared Hermes dashboard API endpoint; defaults to 127.0.0.1:9119
+MISSION_CONTROL_DASHBOARD_HOST=127.0.0.1
+MISSION_CONTROL_DASHBOARD_PORT=9119
+# Optional explicit Vite proxy override; takes precedence over host/port
+# HERMES_DASHBOARD_URL=http://127.0.0.1:9119
 # Optional: comma-separated local/Tailscale hostnames or IPs
 MISSION_CONTROL_DEV_HOSTS=
 ```
 
 The bearer token is shared between the telemetry server and the UI. The telemetry server reads it from `.env` via the launcher script.
+The dashboard API launcher and Vite proxy use the same dashboard host/port
+variables. Empty values use the defaults; ports must be between 1 and 65535.
+
+Operational scripts (`scripts/run-dashboard-api.sh`, `scripts/smoke-upgrade.sh`,
+`scripts/reapply-core-mission-control-fixes.sh`) load configuration through
+`scripts/lib/env.sh`: they read `<repo-root>/.env` by default, or the file
+pointed to by `MISSION_CONTROL_ENV_FILE`, and otherwise fall back to the
+already-exported environment. No `launchctl` lookup is used, so the same
+scripts run identically on macOS and Linux.
+
+### Hermes home & active profile resolution
+
+Mission Control resolves all Hermes state (state DB, sessions, logs, skills,
+config, cache, vault-brain candidates) through the **same profile-aware
+Hermes home used by the running Hermes installation** — see
+`server/hermes_paths.py` (and the bash twin `resolve_hermes_home` in
+`scripts/lib/env.sh`). Precedence:
+
+1. `HERMES_HOME` set and already profile-shaped (`<root>/profiles/<name>`) → used verbatim.
+2. Sticky active profile (`<root>/active_profile` contains a name other than `default`) → `<root>/profiles/<name>`.
+3. `HERMES_HOME` set (non profile-shaped) → used verbatim.
+4. Platform default → `~/.hermes`.
+
+This mirrors the Hermes core launcher exactly, so Mission Control keeps
+reading the correct database, sessions, logs, skills, and configuration even
+when Hermes runs from a non-default home or a named profile.
+
+## Linux (systemd --user)
+
+On Linux the services are supervised by the systemd user session instead of
+macOS launchd. Example units live in [`systemd/`](systemd/README.md) and the
+full walkthrough (clean checkout, secrets, operations, health checks) is in
+[`docs/runbooks/linux-deployment.md`](docs/runbooks/linux-deployment.md):
+
+- `hermes-dashboard-api.service` — dashboard API (`:9119` by default; configurable)
+- `hermes-mission-control-telemetry.service` — telemetry sidecar (`:8765`)
+- `hermes-mission-control.service` — Vite frontend (`:5174`)
+- `mission-control.target` — group target for the three services
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/*.service systemd/*.target ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable mission-control.target
+systemctl --user start mission-control.target
+# Optional: keep user units running after logout
+loginctl enable-linger "$USER"
+```
+
+Secrets and environment values live in `~/.hermes/mission-control.env`
+(outside the repository; see the runbook for a template). Services restart on
+failure with a bounded rate and fail visibly when dependencies are missing.
+Health checks: `scripts/check-mission-control-health.sh`.
+
+`scripts/reapply-core-mission-control-fixes.sh` restarts the stack with
+`systemctl --user restart` on Linux (macOS keeps its `launchctl` path, isolated
+in `scripts/lib/restart-services.sh` and documented as macOS-only).
 
 ## Tailscale / LAN access
 
-Vite listens on all interfaces (`host: true`) and `allowedHosts` is read from `MISSION_CONTROL_DEV_HOSTS`. The telemetry server binds to `0.0.0.0`. Both accept Tailscale peer IPs.
+By default the telemetry server binds to loopback (`127.0.0.1`) and Vite serves locally. To expose Mission Control to Tailscale peers or your LAN you must opt in explicitly:
+
+- Set `MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0` (telemetry sidecar) — see `.env.example` and `docs/telemetry.md`.
+- List the peer addresses in `MISSION_CONTROL_DEV_HOSTS` (Vite `allowedHosts`, e.g. `100.84.148.17,192.168.1.63`).
+- Optionally harden CORS with `MISSION_CONTROL_ALLOWED_ORIGIN=http://<peer>:5174` so only that origin can read responses.
+
+Both processes accept Tailscale peer IPs once configured. A reverse proxy (`tailscale serve`, Caddy, nginx) is the recommended alternative: it exposes the dashboard without widening the telemetry bind.
 
 ## Building
 

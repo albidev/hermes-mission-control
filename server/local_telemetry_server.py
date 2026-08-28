@@ -28,8 +28,22 @@ SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
-CLIENT_DIAGNOSTICS_LOG = Path.home() / ".hermes" / "logs" / "mission-control-client.log"
+from hermes_paths import (
+    display_home_path,
+    get_hermes_home as resolve_hermes_home,
+    hermes_cache_dir,
+    hermes_core_dir,
+    hermes_logs_dir,
+    hermes_skills_dir,
+    hermes_root,
+    hermes_vault_dir,
+)
+
 _CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
+
+
+def _client_diagnostics_log() -> Path:
+    return hermes_logs_dir() / "mission-control-client.log"
 
 import candidates as candidates_mod
 
@@ -44,6 +58,7 @@ from push_server import (
     add_subscription,
     list_subscriptions,
     load_vapid_public_key,
+    push_status,
     remove_subscription,
     send_push,
     start_gateway_watcher,
@@ -169,33 +184,142 @@ def collect_system_snapshot() -> Dict[str, Any]:
     }
 
 
-def collect_thermal_snapshot() -> Dict[str, Any]:
-    """Read thermal pressure via powermetrics (needs sudo NOPASSWD).
+_THERMAL_LEVEL_INDEX = {
+    "nominal": 0.0,
+    "low": 25.0,
+    "moderate": 50.0,
+    "heavy": 75.0,
+    "extreme": 100.0,
+}
 
-    On macOS 26 (Apple Silicon) powermetrics no longer exposes the `smc`/`fan`
-    samplers, and ioreg/AppleSMC does not publish fan RPM on M-series. The only
-    readable surface is thermal pressure as a textual level:
 
-        **** Thermal pressure ****
-        Current pressure level: Nominal
+def _thermal_unavailable(error: Optional[str]) -> Dict[str, Any]:
+    """Structured 'no usable thermal sensor' payload.
 
-    Levels map to a normalised 0-100 index so the UI can render a bar:
-    Nominal=0, Low=25, Moderate=50, Heavy=75, Extreme=100. Returns nulls when
-    powermetrics/sudo is unavailable so the UI degrades to "—".
+    ``unavailable`` is distinct from ``None`` so the frontend can tell
+    "sensor missing" from "value is zero/nominal". The API still exposes
+    ``error`` for diagnostics, but a missing sensor is a normal state on
+    hosts without thermal hardware (containers, VMs, some desktops), not
+    a backend failure.
     """
+    return {
+        "fanRpm": None,
+        "fanCount": None,
+        "thermalPressure": None,
+        "thermalLevel": None,
+        "levelSource": None,
+        "source": "unavailable",
+        "error": error,
+    }
+
+
+def _collect_linux_thermal_snapshot() -> Dict[str, Any]:
+    """Collect thermal state from sysfs and, optionally, lm-sensors.
+
+    Fallback order:
+
+    1. ``/sys/class/thermal`` — kernel thermal zones. Purely passive
+       reads, no privileges needed. Works for CPU packages/cores on most
+       x86 and many ARM Linux hosts.
+    2. ``sensors`` (lm-sensors) — a user-space fallback when sysfs has no
+       ``thermal_zone`` entries but lm-sensors is installed. Executed
+       without sudo; if it is missing or fails, the result stays
+       ``unavailable``.
+    3. Unavailable — structured ``unavailable`` state, never an error.
+    """
+    thermal_zones_dir = Path("/sys/class/thermal")
+
+    if thermal_zones_dir.is_dir():
+        zones = sorted(thermal_zones_dir.glob("thermal_zone*"))
+        if zones:
+            temps: list[float] = []
+            for zone in zones:
+                temp_path = zone / "temp"
+                if not temp_path.is_file():
+                    continue
+                try:
+                    temp_milli = float(temp_path.read_text(encoding="utf-8", errors="replace").strip())
+                except (OSError, ValueError):
+                    continue
+                if temp_milli <= 0:
+                    continue
+                temps.append(temp_milli / 1000.0)
+            if temps:
+                return {
+                    "fanRpm": None,
+                    "fanCount": None,
+                    "thermalPressure": round(max(temps), 1),
+                    "thermalLevel": None,
+                    "levelSource": None,
+                    "source": "sysfs-thermal",
+                    "error": None,
+                }
+
+    # lm-sensors fallback: `sensors` parses every chip the kernel knows
+    # about. No sudo, no config: missing binary == unavailable.
+    try:
+        proc = subprocess.run(
+            ["sensors", "-u"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except FileNotFoundError:
+        return _thermal_unavailable("no thermal sensor available (sysfs empty, lm-sensors not installed)")
+    except subprocess.TimeoutExpired:
+        return _thermal_unavailable("sensors timed out")
+    except Exception as exc:  # noqa: BLE001 - telemetry must never crash on a bad read
+        return _thermal_unavailable(str(exc))
+
+    if proc.returncode != 0:
+        return _thermal_unavailable((proc.stderr or "").strip() or f"sensors exited {proc.returncode}")
+
+    temps: list[float] = []
+    for line in (proc.stdout or "").splitlines():
+        # `sensors -u` emits "tempN_input: 52.000" per sensor.
+        m = re.match(r"\s*temp\d+_input:\s*([+-]?\d+(?:\.\d+)?)", line)
+        if m:
+            temps.append(float(m.group(1)))
+    if not temps:
+        return _thermal_unavailable("sensors reported no temperature inputs")
+
+    return {
+        "fanRpm": None,
+        "fanCount": None,
+        "thermalPressure": round(max(temps), 1),
+        "thermalLevel": None,
+        "levelSource": None,
+        "source": "lm-sensors",
+        "error": None,
+    }
+
+
+def collect_thermal_snapshot() -> Dict[str, Any]:
+    """Read thermal pressure from the host platform.
+
+    **macOS (unchanged, isolated):** ``powermetrics`` needs passwordless
+    sudo. On macOS 26 / Apple Silicon the ``smc``/``fan`` samplers are
+    gone, so the only readable surface is thermal pressure as a textual
+    level (``Nominal``/``Low``/``Moderate``/``Heavy``/``Extreme``),
+    mapped to a normalised 0-100 index for the UI bar. Returns nulls
+    when powermetrics/sudo is unavailable so the UI degrades to "—".
+
+    **Linux:** sysfs thermal zones first, then lm-sensors, then a
+    structured ``unavailable`` state (see :func:`_collect_linux_thermal_snapshot`).
+    Never requires interactive or passwordless sudo.
+
+    The result includes ``source`` identifying the telemetry source and
+    ``levelSource`` identifying which backend produced ``thermalLevel``.
+    """
+    if platform.system() == "Linux":
+        return _collect_linux_thermal_snapshot()
+
     thermal_pressure: Optional[float] = None
     thermal_level: Optional[str] = None
+    level_source: Optional[str] = None
     fan_rpm: Optional[float] = None
     fan_count: Optional[int] = None
     error: Optional[str] = None
-
-    _LEVEL_INDEX = {
-        "nominal": 0.0,
-        "low": 25.0,
-        "moderate": 50.0,
-        "heavy": 75.0,
-        "extreme": 100.0,
-    }
 
     try:
         proc = subprocess.run(
@@ -214,8 +338,9 @@ def collect_thermal_snapshot() -> Dict[str, Any]:
             if m:
                 level = m.group(1).strip().lower()
                 thermal_level = level
-                if level in _LEVEL_INDEX:
-                    thermal_pressure = _LEVEL_INDEX[level]
+                level_source = "powermetrics"
+                if level in _THERMAL_LEVEL_INDEX:
+                    thermal_pressure = _THERMAL_LEVEL_INDEX[level]
                 else:
                     error = f"unknown thermal level: {level}"
     except subprocess.TimeoutExpired:
@@ -225,11 +350,15 @@ def collect_thermal_snapshot() -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - telemetry must never crash on a bad read
         error = str(exc)
 
+    if error is not None and thermal_level is None:
+        return _thermal_unavailable(error)
+
     result: Dict[str, Any] = {
         "fanRpm": fan_rpm,
         "fanCount": fan_count,
         "thermalPressure": thermal_pressure,
         "thermalLevel": thermal_level,
+        "levelSource": level_source,
         "source": "powermetrics" if (thermal_pressure is not None or fan_rpm is not None) else None,
         "error": error,
     }
@@ -302,7 +431,7 @@ def _sanitize_provider_usage(provider: str, payload: Any) -> Dict[str, Any]:
 
 
 def collect_provider_usage() -> Dict[str, Any]:
-    cache_path = Path.home() / ".hermes" / "cache" / "mission-control-provider-usage.json"
+    cache_path = hermes_cache_dir() / "mission-control-provider-usage.json"
     try:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
         if isinstance(cached, dict) and isinstance(cached.get("providers"), list):
@@ -409,9 +538,10 @@ def _append_client_diagnostic(payload: Dict[str, Any]) -> None:
     """Persist browser reload breadcrumbs without ever recording its auth token."""
     safe_payload = {key: value for key, value in payload.items() if key != "_accessToken"}
     line = json.dumps(safe_payload, ensure_ascii=False, separators=(",", ":"))
+    diagnostics_log = _client_diagnostics_log()
     with _CLIENT_DIAGNOSTICS_LOCK:
-        CLIENT_DIAGNOSTICS_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with CLIENT_DIAGNOSTICS_LOG.open("a", encoding="utf-8") as handle:
+        diagnostics_log.parent.mkdir(parents=True, exist_ok=True)
+        with diagnostics_log.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
 
 
@@ -431,14 +561,21 @@ _KNOWLEDGE_SKIPPED_DIRS = {".git", ".obsidian", ".agents", "node_modules", "dist
 
 
 def _knowledge_vault_root() -> Path:
-    override = os.environ.get("HERMES_OBSIDIAN_VAULT") or os.environ.get("MISSION_CONTROL_VAULT_PATH")
-    if override:
-        return Path(os.path.expanduser(override)).resolve()
-    return (Path.home() / "Documents" / "Hermes").resolve()
+    """Canonical vault-path resolver.
+
+    Resolution order:
+    1. ``MISSION_CONTROL_VAULT_PATH`` (canonical).
+    2. ``HERMES_OBSIDIAN_VAULT`` (legacy alias, kept for compatibility).
+    3. Platform default: ``~/Documents/Hermes`` on macOS, ``~/wiki`` on Linux.
+
+    The same resolved path is used for scanning, display, fallback payloads,
+    and file reads.
+    """
+    return hermes_vault_dir()
 
 
 def _knowledge_core_root() -> Path:
-    return (Path.home() / ".hermes").resolve()
+    return resolve_hermes_home().resolve()
 
 
 def _path_is_within(path: Path, root: Path) -> bool:
@@ -449,16 +586,35 @@ def _path_is_within(path: Path, root: Path) -> bool:
         return False
 
 
+def _home_relative(path: Path) -> str:
+    """Render a path relative to the user's home directory (``~/...``)."""
+    try:
+        relative = path.resolve().relative_to(Path.home().resolve()).as_posix()
+    except ValueError:
+        return str(path.resolve())
+    return f"~/{relative}" if relative else "~"
+
+
 def _display_knowledge_path(path: Path) -> str:
+    """Home-relative display path for API responses (no absolute usernames).
+
+    The vault root is rendered from its real location (``~/Documents/Hermes``
+    on macOS, ``~/wiki`` on Linux, or wherever ``MISSION_CONTROL_VAULT_PATH``
+    points), so a configured vault never shows a fabricated macOS path.
+    """
     resolved = path.resolve()
     home_root = Path.home().resolve()
     vault_root = _knowledge_vault_root().resolve()
+    core_root = _knowledge_core_root().resolve()
 
-    if resolved == vault_root:
-        return "~/Documents/Hermes"
     if _path_is_within(resolved, vault_root):
         relative = resolved.relative_to(vault_root).as_posix()
-        return f"~/Documents/Hermes/{relative}" if relative else "~/Documents/Hermes"
+        vault_display = _home_relative(vault_root)
+        if not relative or relative == ".":
+            return vault_display
+        return f"{vault_display}/{relative}"
+    if _path_is_within(resolved, core_root):
+        return display_home_path(resolved)
     if _path_is_within(resolved, home_root):
         relative = resolved.relative_to(home_root).as_posix()
         return f"~/{relative}" if relative else "~"
@@ -575,10 +731,11 @@ def collect_knowledge_snapshot() -> Dict[str, Any]:
     sections: list[Dict[str, Any]] = []
     all_items: list[Dict[str, Any]] = []
 
+    core_root = _knowledge_core_root()
     core_candidates = [
-        ("soul", "~/.hermes/SOUL.md", Path.home() / ".hermes" / "SOUL.md"),
-        ("user", "~/.hermes/USER.md", Path.home() / ".hermes" / "USER.md"),
-        ("agents", "~/.hermes/AGENTS.md", Path.home() / ".hermes" / "AGENTS.md"),
+        ("soul", display_home_path(core_root / "SOUL.md"), core_root / "SOUL.md"),
+        ("user", display_home_path(core_root / "USER.md"), core_root / "USER.md"),
+        ("agents", display_home_path(core_root / "AGENTS.md"), core_root / "AGENTS.md"),
     ]
     for section_id, title, file_path in core_candidates:
         items: list[Dict[str, Any]] = []
@@ -628,7 +785,7 @@ def collect_knowledge_snapshot() -> Dict[str, Any]:
             "id": "knowledge-sharing",
             "title": "Knowledge Sharing",
             "path": "Knowledge Sharing.md",
-            "sourcePath": "~/Documents/Hermes/Knowledge Sharing.md",
+            "sourcePath": _display_knowledge_path(vault_root / "Knowledge Sharing.md"),
             "updatedAt": None,
             "excerpt": "Create shared vault notes to surface them here.",
             "highlights": [],
@@ -656,14 +813,22 @@ def _resolve_knowledge_request_path(requested_path: str) -> Path:
 
     vault_root = _knowledge_vault_root().resolve()
     core_root = _knowledge_core_root().resolve()
-    if raw == "~/Documents/Hermes":
+    vault_prefix = _display_knowledge_path(vault_root)
+    core_home = resolve_hermes_home()
+    core_display = display_home_path(core_home)
+    root_display = display_home_path(hermes_root())
+    if raw == vault_prefix:
         candidate = vault_root
-    elif raw.startswith("~/Documents/Hermes/"):
-        candidate = vault_root / raw[len("~/Documents/Hermes/"):]
-    elif raw == "~/.hermes":
+    elif raw.startswith(vault_prefix + "/"):
+        candidate = vault_root / raw[len(vault_prefix) + 1:]
+    elif raw == core_display:
         candidate = core_root
-    elif raw.startswith("~/.hermes/"):
-        candidate = core_root / raw[len("~/.hermes/"):]
+    elif raw.startswith(core_display + "/"):
+        candidate = core_home / raw[len(core_display) + 1:]
+    elif raw == root_display:
+        candidate = hermes_root()
+    elif raw.startswith(root_display + "/"):
+        candidate = hermes_root() / raw[len(root_display) + 1:]
     elif raw.startswith("~/"):
         candidate = Path.home() / raw[2:]
     else:
@@ -728,7 +893,7 @@ def _parse_float(value: str | None, default: float, minimum: float | None = None
 
 
 def _get_hermes_home() -> Path:
-    return Path.home() / '.hermes'
+    return resolve_hermes_home()
 
 
 def _read_runtime_status() -> Optional[Dict[str, Any]]:
@@ -945,7 +1110,7 @@ def _collect_tools() -> Dict[str, Any]:
     tool_catalog: list[Dict[str, Any]] = []
     resolved: list[str] = []
 
-    project_root = _get_hermes_home() / "hermes-agent"
+    project_root = hermes_core_dir()
     tc_path = project_root / "hermes_cli" / "tools_config.py"
 
     try:
@@ -1052,7 +1217,7 @@ def _collect_skills() -> Dict[str, Any]:
     Reads skills.disabled (and skills.platform_disabled for the local
     platform) from config.yaml to determine each skill's enabled state.
     """
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
 
     # Read disabled skill names from config.yaml
     disabled_names: set[str] = set()
@@ -1227,8 +1392,8 @@ _SKILL_FILE_READ_LIMIT = 200_000  # 200 KB max for a single file read
 
 
 def _is_within_skills_dir(path: Path) -> bool:
-    """Check that a resolved path is inside ~/.hermes/skills/."""
-    skills_root = (Path.home() / ".hermes" / "skills").resolve()
+    """Check that a resolved path is inside the active Hermes skills directory."""
+    skills_root = hermes_skills_dir().resolve()
     try:
         path.resolve().relative_to(skills_root)
         return True
@@ -1243,7 +1408,7 @@ def _collect_skill_detail(skill_name: str) -> Dict[str, Any]:
     matches *skill_name* (case-insensitive).  Falls back to matching the
     leaf directory name.
     """
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
     if not skills_dir.exists():
         return {"success": False, "error": "skills_directory_not_found"}
 
@@ -1311,7 +1476,7 @@ def _read_skill_file(file_path_str: str) -> Dict[str, Any]:
     """
     candidate = Path(file_path_str)
     if not candidate.is_absolute():
-        candidate = Path.home() / ".hermes" / "skills" / candidate
+        candidate = hermes_skills_dir() / candidate
 
     resolved = candidate.resolve()
     if not _is_within_skills_dir(resolved):
@@ -1337,7 +1502,7 @@ def _read_skill_file(file_path_str: str) -> Dict[str, Any]:
 
 def _collect_skill_files_recursive(skill_name: str) -> Dict[str, Any]:
     """Return all files with their contents for a named skill (recursive)."""
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = hermes_skills_dir()
     if not skills_dir.exists():
         raise FileNotFoundError("Skills directory not found")
 
@@ -1392,8 +1557,8 @@ def _collect_skill_files_recursive(skill_name: str) -> Dict[str, Any]:
 
 
 def _collect_logs(max_files: int = 10, max_lines: int = 160) -> Dict[str, Any]:
-    """Read latest log files from ~/.hermes/logs/."""
-    logs_dir = Path.home() / ".hermes" / "logs"
+    """Read latest log files from the active Hermes logs directory."""
+    logs_dir = hermes_logs_dir()
     files_list: list[Dict[str, Any]] = []
     total_entries = 0
 
@@ -1455,12 +1620,20 @@ class Handler(BaseHTTPRequestHandler):
     def _cors_headers(self) -> Dict[str, str]:
         configured_origin = (os.getenv("MISSION_CONTROL_ALLOWED_ORIGIN") or "").strip()
         request_origin = (self.headers.get("Origin") or "").strip()
-        if configured_origin and request_origin and request_origin == configured_origin:
-            return {
-                "Access-Control-Allow-Origin": request_origin,
-                "Vary": "Origin",
-            }
-        # Dev mode: mirror the incoming origin so browser sidecars work without explicit config.
+        if configured_origin:
+            # Explicit allow-list mode: only the exact configured origin is
+            # accepted. Any other Origin gets no CORS headers, so browsers
+            # block the cross-origin response. Requests without an Origin
+            # header (curl, same-origin fetches, non-browser clients) are not
+            # subject to CORS and pass through untouched.
+            if request_origin and request_origin == configured_origin:
+                return {
+                    "Access-Control-Allow-Origin": request_origin,
+                    "Vary": "Origin",
+                }
+            return {}
+        # Dev mode (no explicit configuration): mirror the incoming origin so
+        # browser sidecars work across Tailscale/LAN without extra config.
         if request_origin:
             return {
                 "Access-Control-Allow-Origin": request_origin,
@@ -1588,10 +1761,20 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         if parsed.path == "/health":
-            self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
+            self._json(200, {
+                "ok": True,
+                "service": "mission-control-local-telemetry",
+                "source": "local-psutil",
+                "push": push_status(),
+            })
             return
         if parsed.path == "/api/local/health":
-            self._json(200, {"ok": True, "service": "mission-control-local-telemetry", "source": "local-psutil"})
+            self._json(200, {
+                "ok": True,
+                "service": "mission-control-local-telemetry",
+                "source": "local-psutil",
+                "push": push_status(),
+            })
             return
         if parsed.path == "/api/local/system":
             if not _is_authorized(self):
@@ -1779,9 +1962,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             public_key = load_vapid_public_key()
             if not public_key:
-                self._json(200, {'publicKey': None, 'enabled': False})
+                self._json(200, {'publicKey': None, 'enabled': False, 'status': push_status()})
                 return
-            self._json(200, {'publicKey': public_key, 'enabled': True})
+            self._json(200, {'publicKey': public_key, 'enabled': True, 'status': push_status()})
             return
         if parsed.path == '/api/local/push/subscriptions':
             if not _is_authorized(self):
@@ -2196,7 +2379,7 @@ class Handler(BaseHTTPRequestHandler):
             text = data.get('body', '')
             result = send_push(str(title), str(text))
             if result.get('disabled'):
-                self._json(200, {'success': False, 'disabled': True, 'detail': 'Push not configured (missing VAPID keys).'})
+                self._json(200, {'success': False, 'disabled': True, **result})
                 return
             self._json(200, {'success': True, **result})
             return
@@ -2325,9 +2508,39 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+def _resolve_telemetry_bind() -> tuple[str, int]:
+    """Resolve the telemetry bind address and port from environment variables.
+
+    Canonical names: MISSION_CONTROL_LOCAL_TELEMETRY_HOST / _PORT.
+    Legacy aliases (documented in .env.example): TELEMETRY_BIND_HOST / _PORT.
+    Canonical names win over the legacy aliases when both are set.
+    An invalid port aborts startup with a clear error instead of silently
+    falling back to the default.
+
+    The default bind is loopback (``127.0.0.1``): Mission Control is a
+    local operator dashboard and must not listen on all interfaces unless
+    the operator explicitly opts in (Tailscale/LAN exposure) by setting
+    ``MISSION_CONTROL_LOCAL_TELEMETRY_HOST=0.0.0.0`` (or the legacy alias).
+    """
+    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST") or os.getenv("TELEMETRY_BIND_HOST") or "127.0.0.1"
+    port_raw = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT") or os.getenv("TELEMETRY_BIND_PORT") or "8765"
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError):
+        raise SystemExit(
+            f"[mission-control-local-telemetry] invalid telemetry port {port_raw!r}: "
+            "expected an integer (MISSION_CONTROL_LOCAL_TELEMETRY_PORT / TELEMETRY_BIND_PORT)"
+        )
+    if not 0 < port < 65536:
+        raise SystemExit(
+            f"[mission-control-local-telemetry] invalid telemetry port {port}: "
+            "must be between 1 and 65535"
+        )
+    return host, port
+
+
 def main() -> None:
-    host = os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_HOST", "0.0.0.0")
-    port = int(os.getenv("MISSION_CONTROL_LOCAL_TELEMETRY_PORT", "8765"))
+    host, port = _resolve_telemetry_bind()
 
     sampler = threading.Thread(target=_cpu_sampler, name="mc-cpu-sampler", daemon=True)
     sampler.start()
