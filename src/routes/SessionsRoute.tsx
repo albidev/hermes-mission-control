@@ -42,6 +42,7 @@ import {
 const PAGE_SIZE = 50;
 const POLL_INTERVAL_MS = 10_000;
 const LIVE_POLL_INTERVAL_MS = 5_000;
+const SESSION_LOAD_TIMEOUT_MS = 15_000;
 
 type SessionTab = 'all' | 'live' | SessionCategory;
 type SortKey = 'activity' | 'started' | 'messages' | 'tokens' | 'cost';
@@ -53,6 +54,16 @@ const CATEGORY_LABELS: Record<SessionCategory, string> = {
   system: 'System',
   unknown: 'Other',
 };
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error('Session request timed out.')), timeoutMs);
+    promise.then(
+      (value) => { window.clearTimeout(timer); resolve(value); },
+      (error) => { window.clearTimeout(timer); reject(error); },
+    );
+  });
+}
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -264,6 +275,7 @@ export function SessionsRoute() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [filteredTotal, setFilteredTotal] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<SessionTab>('all');
   const [filters, setFilters] = useState<SessionViewFilters>({ query: '', status: 'all', category: 'all', origin: '', model: '' });
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -280,14 +292,27 @@ export function SessionsRoute() {
   }), [filters, tab]);
 
   const loadSessions = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+    if (!silent) {
+      setLoading(true);
+      setLoadError(null);
+    }
     try {
-      const data = await loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, 0, effectiveFilters);
+      const data = await withTimeout(loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, 0, effectiveFilters), SESSION_LOAD_TIMEOUT_MS);
       setAgentSessions(data);
       setLoadedItems(data.items ?? []);
       setFilteredTotal(data.pagination.total);
       setHasMore(data.pagination.hasMore);
+      setLoadError(null);
       setLastSyncedAt(Date.now());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load sessions.';
+      setLoadError(message);
+      if (!silent) {
+        setAgentSessions(null);
+        setLoadedItems([]);
+        setFilteredTotal(0);
+        setHasMore(false);
+      }
     } finally {
       if (!silent) setLoading(false);
     }
@@ -307,11 +332,14 @@ export function SessionsRoute() {
     if (loadingMore) return;
     setLoadingMore(true);
     try {
-      const next = await loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, loadedItems.length, effectiveFilters);
+      const next = await withTimeout(loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, loadedItems.length, effectiveFilters), SESSION_LOAD_TIMEOUT_MS);
       const nextItems = next.items ?? [];
       setLoadedItems((current) => [...current, ...nextItems]);
       setFilteredTotal(next.pagination.total);
       setHasMore(next.pagination.hasMore);
+      setLoadError(null);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Unable to load more sessions.');
     } finally {
       setLoadingMore(false);
     }
@@ -378,7 +406,7 @@ export function SessionsRoute() {
           </div>
           <div className="flex shrink-0 items-center gap-2 text-xs text-text-subtle sm:gap-3">
             <span className="hidden sm:inline">{lastSyncedAt ? `Updated ${formatRelativeTime(lastSyncedAt / 1000)}` : 'Not synced yet'}</span>
-            <button type="button" onClick={() => void loadSessions()} className="inline-flex items-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text" disabled={loading}>
+            <button type="button" onClick={() => void loadSessions()} className="inline-flex items-center justify-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text !px-0 sm:!px-2.5" aria-label="Refresh sessions" title="Refresh sessions" disabled={loading}>
               <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /><span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
@@ -430,8 +458,9 @@ export function SessionsRoute() {
             <div className="mt-2 flex flex-col gap-1 text-[11px] text-text-subtle sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0 break-words">{filteredSessions.length} shown · {loadedItems.length} loaded of {filteredTotal}</span>{tab === 'live' ? <span className="text-positive">Auto-refreshing every 5s</span> : <span>Auto-refreshing every 10s</span>}</div>
           </div>
 
-          {loading && loadedItems.length === 0 ? <div className="px-4 py-12 text-center text-sm text-text-muted">Loading sessions…</div> : null}
-          {!loading && filteredSessions.length === 0 ? <div className="px-4 py-12 text-center text-sm text-text-muted">No sessions match these filters.</div> : null}
+          {loadError ? <div className="px-4 py-8 text-center"><p className="text-sm font-medium text-text">Unable to load sessions</p><p className="mt-1 text-xs text-text-muted">{loadError}</p><button type="button" onClick={() => void loadSessions()} className="mt-4 rounded-md bg-accent px-3 py-2 text-xs font-medium text-white hover:bg-accent-hover">Retry</button></div> : null}
+          {!loadError && loading && loadedItems.length === 0 ? <div className="px-4 py-12 text-center text-sm text-text-muted">Loading sessions…</div> : null}
+          {!loadError && !loading && filteredSessions.length === 0 ? <div className="px-4 py-12 text-center text-sm text-text-muted">No sessions match these filters.</div> : null}
           {liveSessions.length > 0 ? (
             <section>
               <div className="flex items-center gap-2 bg-positive/5 px-4 py-2.5"><span className="h-2 w-2 animate-pulse rounded-full bg-positive" /><span className="text-xs font-semibold uppercase tracking-[0.12em] text-positive">Live now</span><Badge variant="positive">{liveSessions.length}</Badge></div>

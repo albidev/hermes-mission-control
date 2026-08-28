@@ -91,6 +91,15 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(snapshot["stats"]["totalSessions"], 3)
         self.assertEqual(snapshot["facets"]["category"]["system"], 2)
 
+    def test_identical_snapshot_requests_use_short_cache(self):
+        payload = {"success": True, "items": [], "pagination": {"total": 0}}
+        with patch.object(mission_control_agents, "_load_agents_sessions_snapshot_uncached", return_value=payload) as uncached:
+            first = mission_control_agents.load_agents_sessions_snapshot(limit=7, offset=0, filters={"query": "cache-probe"})
+            second = mission_control_agents.load_agents_sessions_snapshot(limit=7, offset=0, filters={"query": "cache-probe"})
+
+        self.assertIs(first, second)
+        uncached.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

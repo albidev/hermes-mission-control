@@ -44,4 +44,11 @@ test('mobile sessions layout avoids nested scrolling and an oversized filter hea
   assert.match(source, /w-full[^\n]*justify-end[^\n]*sm:ml-auto/);
 });
 
+test('session loading has a bounded failure state and a centered mobile refresh icon', () => {
+  assert.match(source, /SESSION_LOAD_TIMEOUT_MS/);
+  assert.match(source, /loadError/);
+  assert.match(source, /Unable to load sessions/);
+  assert.match(source, /justify-center/);
+});
+
 console.log('sessions UI contract tests passed');

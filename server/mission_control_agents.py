@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -521,7 +522,7 @@ def _collect_agent_sessions(
         _close_session_db(db)
 
 
-def load_agents_sessions_snapshot(
+def _load_agents_sessions_snapshot_uncached(
     limit: int = 100,
     live_window_seconds: int = 300,
     offset: int = 0,
@@ -576,6 +577,53 @@ def load_agents_sessions_snapshot(
         },
         "facets": facets,
     }
+
+
+_SESSION_SNAPSHOT_CACHE_TTL_SECONDS = 3.0
+_SESSION_SNAPSHOT_CACHE_LOCK = threading.Lock()
+_SESSION_SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+
+
+def load_agents_sessions_snapshot(
+    limit: int = 100,
+    live_window_seconds: int = 300,
+    offset: int = 0,
+    session_id: str | None = None,
+    include_facets: bool = True,
+    filters: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Return a short-lived, coalesced snapshot for polling clients.
+
+    Mission Control has several consumers polling the same endpoint. Serialize
+    identical snapshot work and reuse it briefly so concurrent browser tabs do
+    not multiply the SessionDB scan.
+    """
+    cache_key = (
+        limit,
+        live_window_seconds,
+        offset,
+        session_id,
+        include_facets,
+        tuple(sorted((filters or {}).items())),
+    )
+    now = time.monotonic()
+    with _SESSION_SNAPSHOT_CACHE_LOCK:
+        cached = _SESSION_SNAPSHOT_CACHE.get(cache_key)
+        if cached and now - cached[0] < _SESSION_SNAPSHOT_CACHE_TTL_SECONDS:
+            return cached[1]
+        payload = _load_agents_sessions_snapshot_uncached(
+            limit=limit,
+            live_window_seconds=live_window_seconds,
+            offset=offset,
+            session_id=session_id,
+            include_facets=include_facets,
+            filters=filters,
+        )
+        _SESSION_SNAPSHOT_CACHE[cache_key] = (time.monotonic(), payload)
+        if len(_SESSION_SNAPSHOT_CACHE) > 64:
+            oldest_key = min(_SESSION_SNAPSHOT_CACHE, key=lambda key: _SESSION_SNAPSHOT_CACHE[key][0])
+            del _SESSION_SNAPSHOT_CACHE[oldest_key]
+        return payload
 
 
 def _query_db_token_aggregates() -> dict[str, Any] | None:
