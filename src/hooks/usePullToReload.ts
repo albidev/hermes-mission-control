@@ -48,16 +48,31 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
     return window;
   }, [containerRef]);
 
+  const hasScrollableAncestor = useCallback((target: EventTarget | null): boolean => {
+    const root = containerRef?.current;
+    if (!root || !(target instanceof HTMLElement)) return false;
+
+    let element: HTMLElement | null = target;
+    while (element && element !== root) {
+      const style = window.getComputedStyle(element);
+      const scrollable = /(auto|scroll|overlay)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
+      if (scrollable) return true;
+      element = element.parentElement;
+    }
+    return false;
+  }, [containerRef]);
+
   const handleStart = useCallback(
-    (clientY: number) => {
+    (clientY: number, target?: EventTarget | null) => {
       if (disabled || reloadingRef.current) return;
+      if (hasScrollableAncestor(target ?? null)) return;
       if (!isAtTop(getTarget())) return;
       startYRef.current = clientY;
       currentYRef.current = clientY;
       pullStartedRef.current = false;
       recordReloadDiagnostic('touchstart-at-top', { clientY });
     },
-    [disabled, getTarget, isAtTop],
+    [disabled, getTarget, hasScrollableAncestor, isAtTop],
   );
 
   const handleMove = useCallback(
@@ -122,16 +137,24 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
   useEffect(() => {
     const target = getTarget();
 
-    const onTouchStart = (event: TouchEvent) => {
-      handleStart(event.touches[0].clientY);
+    const onTouchStart = (event: Event) => {
+      const touch = (event as TouchEvent).touches[0];
+      if (touch) handleStart(touch.clientY, event.target);
     };
-    const onTouchMove = (event: TouchEvent) => {
+    const onTouchMove = (event: Event) => {
       if (pullStartedRef.current || startYRef.current !== null) {
-        const clientY = event.touches[0].clientY;
+        const touch = (event as TouchEvent).touches[0];
+        if (!touch) return;
+        const clientY = touch.clientY;
         // Do not wait for React to re-render `state.pulling`: the first move
         // after the threshold can otherwise reach iOS' native pull-to-refresh
         // before the stateful listener sees `pulling === true`.
+        handleMove(clientY);
+        // Preserve native scrolling until the gesture is intentional. Calling
+        // preventDefault() while the gesture is merely armed makes a small
+        // downward jitter at the top cancel the user's subsequent scroll.
         if (
+          pullStartedRef.current &&
           startYRef.current !== null &&
           clientY > startYRef.current &&
           isAtTop(getTarget())
@@ -139,7 +162,6 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
           event.preventDefault();
           recordReloadDiagnostic('touch-prevent-default', { delta: clientY - startYRef.current });
         }
-        handleMove(clientY);
       }
     };
     const onTouchEnd = () => {
@@ -148,13 +170,15 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
       }
       void handleEnd();
     };
+    const onTouchCancel = () => reset();
 
-    const onMouseDown = (event: MouseEvent) => {
-      handleStart(event.clientY);
+    const onMouseDown = (event: Event) => {
+      const mouse = event as MouseEvent;
+      handleStart(mouse.clientY, event.target);
     };
-    const onMouseMove = (event: MouseEvent) => {
+    const onMouseMove = (event: Event) => {
       if (pullStartedRef.current || startYRef.current !== null) {
-        handleMove(event.clientY);
+        handleMove((event as MouseEvent).clientY);
       }
     };
     const onMouseUp = () => handleEnd();
@@ -162,6 +186,7 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
     target.addEventListener('touchstart', onTouchStart, { passive: true });
     target.addEventListener('touchmove', onTouchMove, { passive: false });
     target.addEventListener('touchend', onTouchEnd, { passive: true });
+    target.addEventListener('touchcancel', onTouchCancel, { passive: true });
 
     target.addEventListener('mousedown', onMouseDown, { passive: true });
     target.addEventListener('mousemove', onMouseMove, { passive: true });
@@ -171,6 +196,7 @@ export function usePullToReload({ containerRef, onReload, disabled }: UsePullToR
       target.removeEventListener('touchstart', onTouchStart);
       target.removeEventListener('touchmove', onTouchMove);
       target.removeEventListener('touchend', onTouchEnd);
+      target.removeEventListener('touchcancel', onTouchCancel);
       target.removeEventListener('mousedown', onMouseDown);
       target.removeEventListener('mousemove', onMouseMove);
       target.removeEventListener('mouseup', onMouseUp);

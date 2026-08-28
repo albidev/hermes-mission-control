@@ -13,7 +13,7 @@ export function AgentsPanel({
   sessions: MissionControlSessionsSnapshot;
 }) {
   const { t } = useI18n();
-  const liveSessions = sessions.items.filter((session) => session.endedAt === null);
+  const liveSessions = sessions.items.filter((session) => session.status === 'live');
   const modelCount = new Map<string, number>();
 
   for (const session of liveSessions) {

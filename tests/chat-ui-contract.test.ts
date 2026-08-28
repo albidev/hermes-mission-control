@@ -14,6 +14,7 @@ function assertExcludes(source: string, forbidden: string, label: string) {
 
 const component = readFileSync(new URL('../src/components/ChatDrawer.tsx', import.meta.url), 'utf8');
 const composer = readFileSync(new URL('../src/components/ChatComposer.tsx', import.meta.url), 'utf8');
+const messagesComponent = readFileSync(new URL('../src/components/chat-messages.tsx', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 const buttonComponent = readFileSync(new URL('../src/components/ui/Button.tsx', import.meta.url), 'utf8');
 const tldraw = readFileSync(new URL('../src/components/TLDrawCanvas.tsx', import.meta.url), 'utf8');
@@ -23,11 +24,20 @@ assertExcludes(component, '<div className="chat-head-meta">', 'header has no red
 assertExcludes(component, '<p className="chat-preview">{lastPreview}</p>', 'composer has no redundant last-message strip');
 assertIncludes(composer, 'chat-composer-attach', 'attachment uses shared touch-target contract');
 assertIncludes(composer, 'chat-composer-action chat-send', 'send uses shared touch-target contract');
+assertIncludes(messagesComponent, 'function ChatMarkdown', 'chat messages expose one shared Markdown renderer');
+assertIncludes(messagesComponent, '<ChatMarkdown', 'message cards use the shared Markdown renderer');
+assertIncludes(messagesComponent, 'text={message.text}', 'streaming and completed text use Markdown renderer');
+assertExcludes(messagesComponent, '<div className="chat-streaming-copy">{message.text}</div>', 'streaming text is not rendered as plain text');
+assertExcludes(messagesComponent, '<ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || \'\'}</ReactMarkdown>', 'message cards do not duplicate Markdown renderer branches');
+
 
 assertIncludes(styles, '--chat-control-size: 44px;', 'chat control token');
 assertIncludes(styles, 'height: 100dvh;', 'mobile viewport contract');
 assertIncludes(styles, 'min-width: var(--chat-control-size);', 'controls keep a usable minimum width');
 assertIncludes(styles, 'padding-bottom: max(0.65rem, env(safe-area-inset-bottom));', 'composer respects iPhone safe area');
+assertIncludes(styles, '.chat-markdown h1,', 'Markdown headings have explicit chat styling');
+assertIncludes(styles, '.chat-markdown ul { list-style: disc; }', 'Markdown unordered lists retain markers');
+assertIncludes(styles, '.chat-markdown table {', 'Markdown tables have a responsive surface');
 assertExcludes(styles, '.chat-activity {', 'legacy activity strip is removed');
 assertExcludes(styles, '.chat-head-meta', 'legacy metadata row styles are removed');
 assertExcludes(styles, '.chat-reasoning-body', 'legacy reasoning body styles are removed');

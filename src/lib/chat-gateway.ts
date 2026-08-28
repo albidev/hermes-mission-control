@@ -9,12 +9,14 @@ import {
   applyGatewayEvent,
   attachmentRpcMethod,
   createRpcRequest,
+  ConnectionAttemptGate,
   eventActivity,
   extractInflightAssistant,
   extractInteractionRequest,
   extractSessionId,
   extractSessionKey,
   extractSessionModel,
+  extractSessionRunning,
   extractTranscript,
   getRpcErrorMessage,
   isResponseFor,
@@ -22,6 +24,7 @@ import {
   parseSlash,
   normalizeTranscript,
   parseGatewayFrame,
+  pendingPromptWasPersisted,
   shouldCloseBackendSessionForNewChat,
   type ChatActivity,
   type ChatAttachmentSummary,
@@ -35,6 +38,7 @@ import {
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
 import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
+import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
 import { interactionTitle } from './chat-interactions';
@@ -52,6 +56,8 @@ type PendingRpc = {
   reject: (error: Error) => void;
   timeout: number;
 };
+
+type PendingPrompt = PendingChatSubmit;
 
 export type PendingAttachment = Omit<ChatAttachmentSummary, 'id'> & {
   id: string;
@@ -116,6 +122,11 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [previewMode, setPreviewMode] = useState<boolean>(Boolean(initialSessionId?.trim()));
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef(new Map<string, PendingRpc>());
+  const pendingPromptRef = useRef<PendingPrompt | null>(readPendingChatSubmit());
+  const durableTranscriptRef = useRef<ReturnType<typeof extractTranscript>>([]);
+  const replayInFlightRef = useRef(false);
+  const connectionAttemptGateRef = useRef(new ConnectionAttemptGate());
+  const connectionGenerationRef = useRef(0);
   const requestSeqRef = useRef(0);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -337,7 +348,9 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         sessionIdRef.current = resolvedSessionId;
         setSessionKey(resolvedSessionKey);
         sessionKeyRef.current = resolvedSessionKey;
-        const transcript = normalizeTranscript(extractTranscript(resumed));
+        const durableTranscript = extractTranscript(resumed);
+        durableTranscriptRef.current = durableTranscript;
+        const transcript = normalizeTranscript(durableTranscript);
         const inflight = extractInflightAssistant(resumed);
         if (transcript.length > 0 || inflight) {
           setMessages(
@@ -346,7 +359,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
               : transcript,
           );
         }
-        setRunning(Boolean(inflight));
+        setRunning(Boolean(inflight) || extractSessionRunning(resumed));
         return resolvedSessionId;
       } catch (err) {
         recordReloadDiagnostic('chat-session-resume-fallback', {
@@ -379,6 +392,53 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     return createdSessionId;
   }, [request, adoptModel]);
 
+  const clearPendingPrompt = useCallback(() => {
+    pendingPromptRef.current = null;
+    clearPendingChatSubmit();
+  }, []);
+
+  const replayPendingPrompt = useCallback(async (activeSessionId: string) => {
+    const pending = pendingPromptRef.current;
+    if (!pending || replayInFlightRef.current) return;
+    const activeKey = sessionKeyRef.current || activeSessionId;
+    if (pending.sessionKey && pending.sessionKey !== activeKey && pending.sessionKey !== activeSessionId) return;
+    if (pendingPromptWasPersisted(pending, durableTranscriptRef.current)) {
+      clearPendingPrompt();
+      return;
+    }
+
+    replayInFlightRef.current = true;
+    setSubmitting(true);
+    setRunning(true);
+    setError(null);
+    setMessages((current) => {
+      const userMessages = current.filter((message) => message.role === 'user');
+      const lastUser = userMessages.at(-1);
+      if (userMessages.length > pending.baselineUserCount && lastUser?.text === pending.displayText) return current;
+      return [...current, {
+        id: `user-replay-${Date.now()}`,
+        role: 'user',
+        text: pending.displayText,
+        attachments: pending.attachments,
+        status: 'complete',
+        createdAt: Date.now(),
+      }];
+    });
+    try {
+      await request('prompt.submit', { session_id: activeSessionId, text: pending.text });
+      clearPendingPrompt();
+      void refreshModel(activeSessionId);
+    } catch {
+      // Keep the outbox entry. The next successful reconnect/resume gets one
+      // more reconciliation chance instead of silently dropping the prompt.
+      setError('Message queued until the chat connection is restored.');
+      setRunning(false);
+    } finally {
+      replayInFlightRef.current = false;
+      setSubmitting(false);
+    }
+  }, [clearPendingPrompt, refreshModel, request]);
+
   useEffect(() => {
     if (!open || !initialSessionId || wsRef.current?.readyState !== WebSocket.OPEN) return;
     // In preview mode the drawer opens showing the session preview; resume is
@@ -397,13 +457,14 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       if (activeSessionId) {
         void refreshModel(activeSessionId);
         void refreshContext(activeSessionId);
+        void replayPendingPrompt(activeSessionId);
       }
       return activeSessionId ?? null;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to resume the selected session.');
       return null;
     }
-  }, [ensureSession, refreshContext, refreshModel]);
+  }, [ensureSession, refreshContext, refreshModel, replayPendingPrompt]);
 
   const scheduleReconnect = useCallback(() => {
     if (intentionalCloseRef.current || reconnectAttemptsRef.current >= MAX_RECONNECTS) {
@@ -425,6 +486,13 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const connect = useCallback(async () => {
     if (!open) return;
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
+    if (!connectionAttemptGateRef.current.tryAcquire()) return;
+    const attemptGeneration = ++connectionGenerationRef.current;
+    const releaseAttempt = () => {
+      if (connectionGenerationRef.current === attemptGeneration) {
+        connectionAttemptGateRef.current.release();
+      }
+    };
     if (reconnectTimerRef.current !== null) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -437,7 +505,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
     try {
       const credential = await mintWsCredential(storedToken);
-      if (!open || intentionalCloseRef.current) return;
+      if (!open || intentionalCloseRef.current || connectionGenerationRef.current !== attemptGeneration) {
+        releaseAttempt();
+        return;
+      }
       const ws = new WebSocket(getWebSocketUrl(credential));
       wsRef.current = ws;
       setConnectionState('connecting');
@@ -581,6 +652,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           void ensureSession().then((activeSessionId) => {
             void refreshModel(activeSessionId);
             void refreshContext(activeSessionId);
+            void replayPendingPrompt(activeSessionId);
           }).catch((err: unknown) => {
             setError(err instanceof Error ? err.message : 'Failed to create or resume chat session.');
           });
@@ -610,12 +682,14 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       ws.addEventListener('error', () => {
         setError('Chat WebSocket connection failed.');
       });
+      releaseAttempt();
     } catch (err) {
+      releaseAttempt();
       setConnectionState('error');
       setStatusText('Connection failed');
       setError(err instanceof Error ? err.message : 'Chat connection failed.');
     }
-  }, [adoptModel, ensureSession, open, refreshContext, refreshModel, refreshReasoning, rejectPending, scheduleReconnect, storedToken]);
+  }, [adoptModel, ensureSession, open, refreshContext, refreshModel, refreshReasoning, rejectPending, replayPendingPrompt, scheduleReconnect, storedToken]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -624,6 +698,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   useEffect(() => {
     if (!open) {
       intentionalCloseRef.current = true;
+      connectionGenerationRef.current += 1;
+      connectionAttemptGateRef.current.release();
       if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
       readyResolveRef.current?.();
@@ -638,6 +714,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     void connect();
     return () => {
       intentionalCloseRef.current = true;
+      connectionGenerationRef.current += 1;
+      connectionAttemptGateRef.current.release();
       if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
       if (readyTimerRef.current !== null) window.clearTimeout(readyTimerRef.current);
       readyResolveRef.current?.();
@@ -695,6 +773,15 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
       const promptText = [trimmed, ...attachmentRefs].filter(Boolean).join('\n\n') || 'Please analyze the attached files.';
       const summaries = attachments.map(({ dataUrl: _dataUrl, ...summary }) => summary);
+      const pendingPrompt: PendingPrompt = {
+        text: promptText,
+        displayText: displayText.trim() || trimmed || 'Attached files',
+        attachments: summaries,
+        baselineUserCount: durableTranscriptRef.current.filter((message) => message.role === 'user').length,
+        sessionKey: sessionKeyRef.current || activeSessionId,
+      };
+      pendingPromptRef.current = pendingPrompt;
+      persistPendingChatSubmit(pendingPrompt);
       setMessages((current) => [
         ...current,
         {
@@ -708,16 +795,20 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       ]);
       setRunning(true);
       await request('prompt.submit', { session_id: activeSessionId, text: promptText });
+      clearPendingPrompt();
       void refreshModel(activeSessionId);
       return true;
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Prompt submission failed.';
+      const retryable = /disconnected|not connected|connection|timed out|closed|send chat request/i.test(message);
+      if (!retryable) clearPendingPrompt();
       setRunning(false);
-      setError(err instanceof Error ? err.message : 'Prompt submission failed.');
+      setError(retryable ? 'Message queued until the chat connection is restored.' : message);
       return false;
     } finally {
       setSubmitting(false);
     }
-  }, [ensureSession, refreshModel, request, submitting]);
+  }, [clearPendingPrompt, ensureSession, refreshModel, request, submitting]);
 
   const closeModelPicker = useCallback(() => {
     setModelPickerOpen(false);
@@ -942,13 +1033,14 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     sessionKeyRef.current = null;
     setInteraction(null);
     setActivity(null);
+    clearPendingPrompt();
     persistChat(null, null, null, []);
     try {
       await ensureSession();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create a new chat.');
     }
-  }, [ensureSession, request]);
+  }, [clearPendingPrompt, ensureSession, request]);
 
   return {
     messages,

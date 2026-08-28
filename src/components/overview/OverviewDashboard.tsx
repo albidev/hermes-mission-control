@@ -1,17 +1,15 @@
 import { useI18n } from '../../lib/i18n';
 import { useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, ArrowRight, PanelLeftClose, RefreshCw, Rocket } from 'lucide-react';
+import { Activity, ArrowRight, Bot, PanelLeftClose, RefreshCw, Rocket } from 'lucide-react';
 import { useMissionControl } from '../../lib/mission-control-store';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { AgentStatusBar } from './AgentStatusBar';
 import { SystemHealthPanel } from './SystemHealthPanel';
-import { ActivityFeed } from './ActivityFeed';
 import { AttentionNeeded } from './AttentionNeeded';
 import { QuickActions } from './QuickActions';
-import { AgentsPanel } from './AgentsPanel';
 import { UsagePanel } from './UsagePanel';
 import { ProviderUsagePanel } from './ProviderUsagePanel';
 import { DashboardGrid, type DashboardWidget } from './DashboardGrid';
@@ -77,46 +75,10 @@ export function OverviewDashboard() {
   } = useMissionControl();
 
   const { machine, sessions, cron, alerts, backendHealth, gatewayStatus } = snapshot;
-  const sessionItems = sessions.items.slice(0, 2);
+  const liveSessionItems = sessions.items.filter((session) => session.status === 'live').slice(0, 3);
   const cronItems = cron.items.slice(0, 3);
   const runningCron = cron.items.filter((job) => job.state === 'running').length;
   const queuedCron = cron.items.filter((job) => job.state === 'queued').length;
-
-  const alertSignals: Array<{ label: string; detail: string; tone: 'good' | 'warn' | 'bad' }> = alerts.items
-    .filter((alert) => alert.tone !== 'good')
-    .slice(0, 2)
-    .map((alert) => ({
-      label: `${alert.category} alert`,
-      detail: alert.title,
-      tone: alert.tone === 'bad' ? 'bad' : 'warn',
-    }));
-
-  const cronSignals: Array<{ label: string; detail: string; tone: 'good' | 'warn' | 'bad' }> = cron.items
-    .filter((job) => job.state === 'running' || job.state === 'queued')
-    .slice(0, 2)
-    .map((job) => ({
-      label: `cron ${job.state}`,
-      detail: `${job.label} · ${job.nextRunAt ? formatRelativeTime(job.nextRunAt) : job.scheduleDisplay}`,
-      tone: job.state === 'running' ? 'good' : 'warn',
-    }));
-
-  const sessionSignals: Array<{ label: string; detail: string; tone: 'good' | 'warn' | 'bad' }> = sessions.items
-    .slice(0, 1)
-    .map((session) => ({
-      label: 'session activity',
-      detail: `${session.title} · ${session.messageCount} msgs · ${formatRelativeTime(session.lastActive)}`,
-      tone: 'good',
-    }));
-
-  const eventSignals: Array<{ label: string; detail: string; tone: 'good' | 'warn' | 'bad' }> = [
-    ...alertSignals,
-    ...cronSignals,
-    ...sessionSignals,
-  ].slice(0, 5);
-
-  const feedSignals = eventSignals.length > 0
-    ? eventSignals
-    : snapshot.recentSignals.filter((signal) => signal.tone !== 'good').slice(0, 5);
 
   const widgets: DashboardWidget[] = [
     {
@@ -141,53 +103,54 @@ export function OverviewDashboard() {
       content: <UsagePanel />,
     },
     {
-      id: 'agents',
-      label: 'Agents',
-      className: 'widget-agents',
-      content: <AgentsPanel activeAgents={snapshot.activeAgents} sessions={sessions} />,
-    },
-    {
       id: 'attention',
       label: 'Attention needed',
       className: 'widget-attention',
       content: <AttentionNeeded alerts={alerts.items} />,
     },
     {
-      id: 'activity',
-      label: 'Live activity',
-      className: 'widget-activity',
-      content: <ActivityFeed signals={feedSignals} />,
-    },
-    {
       id: 'current-session',
-      label: 'Current session',
+      label: 'Live sessions',
       className: 'widget-current-session',
       content: (
         <SectionCard
-          eyebrow="Current session"
-          title={sessionItems.length > 0 ? sessionItems[0].title : 'No active session'}
+          eyebrow={t('overview.currentSession')}
+          title={liveSessionItems.length > 0 ? t('overview.liveSessionsTitle', { count: liveSessionItems.length }) : t('overview.noActiveSession')}
           actions={
-            <SectionLink to="/sessions" label="All sessions">
+            <SectionLink to="/sessions" label={t('overview.allSessions')}>
               <PanelLeftClose className="h-3 w-3" />
             </SectionLink>
           }
         >
-          {sessionItems.length > 0 ? (
+          {liveSessionItems.length > 0 ? (
             <div className="flex flex-col gap-3">
-              <p className="text-sm text-text-muted line-clamp-1">
-                {sessionItems[0].preview || 'No preview available.'}
-              </p>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-subtle">
-                <span className="flex items-center gap-1">
-                  <Rocket className="h-3.5 w-3.5" />
-                  {sessionItems[0].source}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Activity className="h-3.5 w-3.5" />
-                  {sessionItems[0].messageCount} msgs
-                </span>
-                <span>{formatRelativeTime(sessionItems[0].lastActive)}</span>
-              </div>
+              {liveSessionItems.map((session) => (
+                <div key={session.id} className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface-sunken/30 p-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-positive shadow-[0_0_0_3px_rgba(52,211,153,0.14)] animate-pulse" />
+                        <p className="truncate text-sm font-medium text-text">{session.title}</p>
+                        <Badge variant="positive" dot>{t('sessions.liveStatus')}</Badge>
+                      </div>
+                      <p className="mt-1 line-clamp-1 text-xs text-text-muted">{session.preview || t('overview.noPreview')}</p>
+                    </div>
+                    <Link
+                      to={`/sessions?chatSession=${encodeURIComponent(session.id)}`}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-accent/85"
+                      aria-label={t('sessions.resumeAria', { title: session.title })}
+                    >
+                      <Bot className="h-3 w-3" />
+                      {t('sessions.resumeChat')}
+                    </Link>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-subtle">
+                    <span className="flex items-center gap-1"><Rocket className="h-3 w-3" />{session.source}</span>
+                    <span className="flex items-center gap-1"><Activity className="h-3 w-3" />{session.messageCount} msgs</span>
+                    <span>{formatRelativeTime(session.lastActive)}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <p className="text-sm text-text-muted italic py-1">{t('overview.noActiveSessions')}</p>

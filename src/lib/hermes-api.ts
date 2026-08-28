@@ -44,6 +44,7 @@ export type MissionControlSessionItem = {
   title: string;
   startedAt: number;
   endedAt: number | null;
+  status: MissionControlAgentSessionStatus;
   messageCount: number;
   preview: string;
   lastActive: number;
@@ -417,6 +418,9 @@ export type MissionControlAgentSessionItem = {
   lastActiveAt: number | null;
   endedAt: number | null;
   status: MissionControlAgentSessionStatus;
+  category: 'conversation' | 'automation' | 'system' | 'unknown';
+  originLabel: string;
+  isResumable: boolean;
   messageCount: number;
   traceMode: MissionControlTraceMode;
   preview: string;
@@ -439,6 +443,19 @@ export type MissionControlAgentsSessionsSnapshot = {
     totalSessions: number;
     liveSessions: number;
     activeAgents: number;
+  };
+  facets: {
+    status: Record<MissionControlAgentSessionStatus, number>;
+    category: Record<'conversation' | 'automation' | 'system' | 'unknown', number>;
+    origin: Record<string, number>;
+    model: Record<string, number>;
+  };
+  tabCounts: Record<'all' | 'live' | 'conversation' | 'automation' | 'system', number>;
+  pagination: {
+    total: number;
+    offset: number;
+    limit: number;
+    hasMore: boolean;
   };
 };
 
@@ -824,6 +841,9 @@ function normalizeMachineStatus(input: Partial<MissionControlMachineStatus> | un
 }
 
 function normalizeSessionItem(input: Partial<MissionControlSessionItem> | undefined): MissionControlSessionItem {
+  const status = input?.status === 'live' || input?.status === 'idle' || input?.status === 'ended'
+    ? input.status
+    : input?.endedAt === null || input?.endedAt === undefined ? 'idle' : 'ended';
   return {
     id: input?.id ?? 'unknown-session',
     source: input?.source ?? 'unknown',
@@ -831,6 +851,7 @@ function normalizeSessionItem(input: Partial<MissionControlSessionItem> | undefi
     title: input?.title ?? 'Untitled session',
     startedAt: Number(input?.startedAt ?? 0),
     endedAt: input?.endedAt === null || input?.endedAt === undefined ? null : Number(input.endedAt),
+    status,
     messageCount: Number(input?.messageCount ?? 0),
     preview: input?.preview ?? '',
     lastActive: Number(input?.lastActive ?? 0),
@@ -927,6 +948,14 @@ function normalizeSessionPreviewMessages(input: unknown): MissionControlSessionP
 function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): MissionControlAgentSessionItem {
   const source = readString(input?.source, 'unknown');
   const model = readString(input?.model, 'unknown');
+  const rawCategory = input?.category;
+  const category = rawCategory === 'conversation' || rawCategory === 'automation' || rawCategory === 'system' || rawCategory === 'unknown'
+    ? rawCategory
+    : ['tui', 'discord', 'telegram', 'mission-control'].includes(source)
+      ? 'conversation'
+      : ['cron', 'kanban'].includes(source)
+        ? 'automation'
+        : 'unknown';
   return {
     sessionId: readString(input?.sessionId, readString(input?.id, 'unknown-session')),
     agentId: readString(input?.agentId, getAgentKey(source, model)),
@@ -940,6 +969,9 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
     lastActiveAt: input?.lastActiveAt === null || input?.lastActiveAt === undefined ? null : readNumber(input?.lastActiveAt, 0),
     endedAt: input?.endedAt === null || input?.endedAt === undefined ? null : readNumber(input?.endedAt, 0),
     status: input?.status === 'live' || input?.status === 'idle' || input?.status === 'ended' ? input.status : 'idle',
+    category,
+    originLabel: readString(input?.originLabel, source === 'unknown' ? 'Unknown' : source),
+    isResumable: readBoolean(input?.isResumable, category === 'conversation'),
     messageCount: readNumber(input?.messageCount, 0),
     traceMode: normalizeTraceMode(input?.traceMode),
     preview: readString(input?.preview),
@@ -954,6 +986,18 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
   };
 }
 
+function normalizeFacetCounts(input: Record<string, unknown> | undefined, keys: string[], fallbackItems: MissionControlAgentSessionItem[], field: 'status' | 'category' | 'source' | 'model'): Record<string, number> {
+  if (input) {
+    return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, readNumber(value, 0)]));
+  }
+  const counts: Record<string, number> = Object.fromEntries(keys.map((key) => [key, 0]));
+  for (const item of fallbackItems) {
+    const key = field === 'status' ? item.status : field === 'category' ? item.category : field === 'model' ? item.model : item.source;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
 function normalizeAgentSessionsSnapshot(input: OfficialMissionControlAgentSessionsPayload | null | undefined): MissionControlAgentsSessionsSnapshot {
   const items = Array.isArray(input?.items) ? input.items.filter(isRecord).map((item) => normalizeAgentSessionItem(item)) : [];
   return {
@@ -965,6 +1009,25 @@ function normalizeAgentSessionsSnapshot(input: OfficialMissionControlAgentSessio
       totalSessions: readNumber(input?.stats?.totalSessions, items.length),
       liveSessions: readNumber(input?.stats?.liveSessions, items.filter((item) => item.status === 'live').length),
       activeAgents: readNumber(input?.stats?.activeAgents, new Set(items.filter((item) => item.status === 'live').map((item) => item.agentId)).size),
+    },
+    facets: {
+      status: normalizeFacetCounts(input?.facets?.status, ['live', 'idle', 'ended'], items, 'status') as Record<MissionControlAgentSessionStatus, number>,
+      category: normalizeFacetCounts(input?.facets?.category, ['conversation', 'automation', 'system', 'unknown'], items, 'category') as Record<'conversation' | 'automation' | 'system' | 'unknown', number>,
+      origin: normalizeFacetCounts(input?.facets?.origin, [], items, 'source'),
+      model: normalizeFacetCounts(input?.facets?.model, [], items, 'model'),
+    },
+    tabCounts: {
+      all: readNumber(input?.tabCounts?.all, readNumber(input?.stats?.totalSessions, items.length)),
+      live: readNumber(input?.tabCounts?.live, readNumber(input?.stats?.liveSessions, items.filter((item) => item.status === 'live').length)),
+      conversation: readNumber(input?.tabCounts?.conversation, readNumber(input?.facets?.category?.conversation, items.filter((item) => item.category === 'conversation').length)),
+      automation: readNumber(input?.tabCounts?.automation, readNumber(input?.facets?.category?.automation, items.filter((item) => item.category === 'automation').length)),
+      system: readNumber(input?.tabCounts?.system, readNumber(input?.facets?.category?.system, items.filter((item) => item.category === 'system').length)),
+    },
+    pagination: {
+      total: readNumber(input?.pagination?.total, items.length),
+      offset: readNumber(input?.pagination?.offset, 0),
+      limit: readNumber(input?.pagination?.limit, items.length),
+      hasMore: Boolean(input?.pagination?.hasMore ?? false),
     },
   };
 }
@@ -996,6 +1059,7 @@ function normalizeTraceSessionRef(input: Record<string, unknown> | null | undefi
     title: readString(input.title, 'Untitled session'),
     startedAt: input.startedAt === null || input.startedAt === undefined ? 0 : readNumber(input.startedAt, 0),
     endedAt: null,
+    status: 'idle',
     messageCount: 0,
     preview: '',
     lastActive: input.lastActiveAt === null || input.lastActiveAt === undefined ? 0 : readNumber(input.lastActiveAt, 0),
@@ -1390,11 +1454,24 @@ type OfficialMissionControlAgentSessionsPayload = {
   available?: boolean;
   items?: Array<Record<string, unknown>>;
   offset?: number;
+  pagination?: {
+    total?: number;
+    offset?: number;
+    limit?: number;
+    hasMore?: boolean;
+  };
   stats?: {
     totalSessions?: number;
     liveSessions?: number;
     activeAgents?: number;
   };
+  facets?: {
+    status?: Record<string, unknown>;
+    category?: Record<string, unknown>;
+    origin?: Record<string, unknown>;
+    model?: Record<string, unknown>;
+  };
+  tabCounts?: Record<string, unknown>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1504,10 +1581,28 @@ async function fetchMissionControlAgents(accessToken?: string): Promise<Official
   return await maybeFetchOfficialJson<OfficialMissionControlAgentsPayload>('/mission-control/agents', accessToken);
 }
 
-async function fetchMissionControlAgentSessions(accessToken?: string, limit = 100, offset = 0, sessionId?: string | null): Promise<OfficialMissionControlAgentSessionsPayload | null> {
-  const query = sessionId
-    ? `/mission-control/sessions?limit=${limit}&offset=${offset}&session_id=${encodeURIComponent(sessionId)}`
-    : `/mission-control/sessions?limit=${limit}&offset=${offset}`;
+export type MissionControlAgentSessionFilters = {
+  query?: string;
+  status?: string;
+  category?: string;
+  origin?: string;
+  model?: string;
+  tab?: string;
+};
+
+async function fetchMissionControlAgentSessions(
+  accessToken?: string,
+  limit = 100,
+  offset = 0,
+  sessionId?: string | null,
+  filters?: MissionControlAgentSessionFilters,
+): Promise<OfficialMissionControlAgentSessionsPayload | null> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (sessionId) params.set('session_id', sessionId);
+  for (const [key, value] of Object.entries(filters ?? {})) {
+    if (value && value !== 'all') params.set(key, value);
+  }
+  const query = `/mission-control/sessions?${params.toString()}`;
   const { payload: local } = await maybeFetchLocalJson<OfficialMissionControlAgentSessionsPayload>(query, accessToken);
   return local ?? null;
 }
@@ -1685,6 +1780,7 @@ function normalizeOfficialSessionItem(input: Record<string, unknown>): MissionCo
     title: readString(input.title, 'Untitled session'),
     startedAt: readNumber(input.started_at),
     endedAt: input.ended_at === null ? null : readNumber(input.ended_at),
+    status: readBoolean(input.is_active, false) ? 'live' : undefined,
     messageCount: readNumber(input.message_count),
     preview: readString(input.preview),
     lastActive: readNumber(input.last_active, readNumber(input.started_at)),
@@ -1966,8 +2062,13 @@ export async function loadMissionControlMachineStatus(accessToken?: string): Pro
   }
 }
 
-export async function loadMissionControlAgentSessions(accessToken?: string, limit = 100, offset = 0): Promise<MissionControlAgentsSessionsSnapshot> {
-  const payload = await fetchMissionControlAgentSessions(accessToken, limit, offset);
+export async function loadMissionControlAgentSessions(
+  accessToken?: string,
+  limit = 100,
+  offset = 0,
+  filters?: MissionControlAgentSessionFilters,
+): Promise<MissionControlAgentsSessionsSnapshot> {
+  const payload = await fetchMissionControlAgentSessions(accessToken, limit, offset, null, filters);
   return normalizeAgentSessionsSnapshot(payload);
 }
 
@@ -1992,6 +2093,7 @@ export async function loadMissionControlSessions(accessToken?: string): Promise<
           title: item.title,
           startedAt: item.startedAt ?? 0,
           endedAt: item.endedAt,
+          status: item.status,
           messageCount: item.messageCount,
           preview: item.preview,
           lastActive: item.lastActiveAt ?? item.startedAt ?? 0,
