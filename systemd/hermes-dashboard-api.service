@@ -1,0 +1,26 @@
+[Unit]
+Description=Hermes Mission Control dashboard API (port 9119)
+# Hermes core dashboard backend. No ordering dependency on the rest of the
+# stack — it is the first service to start.
+After=network.target
+Wants=network.target
+
+# Bound the restart rate so a permanently broken dependency fails the unit
+# visibly instead of spinning. (StartLimit* belong in [Unit], not [Service].)
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# Paths shown are the default install; adjust for your checkout/core.
+WorkingDirectory=%h/Projects/hermes-mission-control
+EnvironmentFile=-%h/.hermes/mission-control.env
+# The wrapper resolves HERMES_HOME and the active profile before starting core.
+ExecStart=%h/Projects/hermes-mission-control/scripts/run-dashboard-api.sh
+
+# Restart on unexpected exit (crashes, OOM).
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=mission-control.target

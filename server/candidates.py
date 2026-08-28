@@ -2,7 +2,8 @@
 """Candidate management for the nightly brain approval flow.
 
 Candidates are YAML-frontmatter .md files written by vault-brain-v2.py into
-~/.hermes/vault-brain/candidates/. Each has a status:
+<hermes-home>/vault-brain/candidates/ (default ~/.hermes/vault-brain/candidates/,
+profile-aware via server/hermes_paths.py). Each has a status:
   pending      -> awaiting human review in Mission Control
   approved     -> human approved; enters quarantine (quarantine_until set)
   quarantined  -> approved + quarantine elapsed; ready to promote
@@ -15,6 +16,7 @@ This module is standalone so it can later be extracted into a sidecar/plugin.
 from __future__ import annotations
 
 import os
+import sys
 import re
 import shutil
 import time
@@ -22,9 +24,31 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-DEFAULT_CANDIDATES_DIR = Path.home() / ".hermes" / "vault-brain" / "candidates"
+
+SERVER_DIR = Path(__file__).resolve().parent
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
+
+from hermes_paths import hermes_vault_dir
+
+
+def _vault_brain_dir() -> Path:
+    from hermes_paths import hermes_vault_brain_dir
+
+    return hermes_vault_brain_dir()
+
+
+def _default_candidates_dir() -> Path:
+    return _vault_brain_dir() / "candidates"
+
+
+def _vaults_file() -> Path:
+    return _vault_brain_dir() / "curate-vaults.yaml"
+
+
+DEFAULT_CANDIDATES_DIR = _default_candidates_dir()
 DEFAULT_QUARANTINE_DAYS = float(os.environ.get("VB_QUARANTINE_DAYS", "1"))
-VAULTS_FILE = Path.home() / ".hermes" / "vault-brain" / "curate-vaults.yaml"
+VAULTS_FILE = _vaults_file()
 
 
 def _load_vaults() -> Dict[str, Dict[str, str]]:
@@ -249,7 +273,7 @@ def promote_ready() -> List[Dict[str, Any]]:
         m = mapping.get(vault_id) or {}
         if m.get("vault_dir"):
             return Path(os.path.expanduser(str(m["vault_dir"])))
-        return Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
+        return Path(os.environ.get("VB_VAULT", str(hermes_vault_dir())))
 
     # build [(candidates_dir, vault_dir)]
     targets = [(str(_candidates_dir(None)), vault_target("core"))]
@@ -323,7 +347,7 @@ def vault_dir_for(vault_id: str) -> Path:
     m = mapping.get(vault_id) or {}
     if m.get("vault_dir"):
         return Path(os.path.expanduser(str(m["vault_dir"])))
-    return Path(os.environ.get("VB_VAULT", str(Path.home() / "Documents" / "Hermes")))
+    return Path(os.environ.get("VB_VAULT", str(hermes_vault_dir())))
 
 
 def rejection_feedback() -> str:

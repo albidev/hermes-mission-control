@@ -9,14 +9,28 @@ Provides:
   so notifications arrive while the app is in the background or closed
   (the page's own JS is suspended then and cannot poll).
 
-Requires pywebpush (installed in the same interpreter the telemetry server
-runs under) and a VAPID keypair. If either is missing, push is disabled
-gracefully and every call returns a "disabled" state rather than crashing.
+Optional runtime dependencies (declared in server/requirements-push.txt, not
+in the base server/requirements.txt):
+- pywebpush   — Web Push Protocol delivery.
+- websockets  — the real-time interaction observer (approvals, clarities...).
+
+Push is enabled only when ALL of the following hold:
+- MISSION_CONTROL_VAPID_PUBLIC_KEY and MISSION_CONTROL_VAPID_PRIVATE_KEY are
+  set (VAPID keypair);
+- MISSION_CONTROL_VAPID_CONTACT is set (required sender identity);
+- pywebpush and websockets are importable.
+
+Otherwise push is explicitly disabled and push_status() reports a stable
+`reason` so an operator can distinguish an intentional disablement from an
+incomplete installation:
+- vapid_not_configured  — keys/contact missing (see missingConfig);
+- missing_dependency    — optional package(s) absent (see missingDependencies).
 """
 from __future__ import annotations
 
-import base64
 import asyncio
+import base64
+import importlib.util
 import json
 import os
 import re
@@ -58,6 +72,58 @@ def load_vapid_public_key() -> Optional[str]:
 
 def vapid_contact() -> Optional[str]:
     return os.environ.get("MISSION_CONTROL_VAPID_CONTACT", "").strip() or None
+
+
+# --- Optional dependency detection ------------------------------------------
+#
+# pywebpush and websockets are declared in server/requirements-push.txt.
+# Importability is checked with importlib.util.find_spec so the module works
+# (and reports a precise reason) when the packages are absent.
+
+_PUSH_DEPENDENCIES = ("pywebpush", "websockets")
+
+
+def _missing_push_dependencies() -> List[str]:
+    return [name for name in _PUSH_DEPENDENCIES if importlib.util.find_spec(name) is None]
+
+
+def _dependencies_available() -> bool:
+    return not _missing_push_dependencies()
+
+
+def push_status() -> Dict[str, Any]:
+    """Report whether push delivery is available and, if not, why.
+
+    Reasons:
+    - "vapid_not_configured": VAPID keys or MISSION_CONTROL_VAPID_CONTACT are
+      missing (intentional disablement). missingConfig lists what is unset.
+    - "missing_dependency": the optional packages are not installed in the
+      interpreter running the telemetry server. missingDependencies lists
+      them; install with `python3 -m pip install -r server/requirements-push.txt`.
+    - "ok": everything is configured and importable; delivery may still fail
+      at runtime per subscription (surfaced via send_push's failed count).
+    """
+    missing_config: List[str] = []
+    if not load_vapid_private_key():
+        missing_config.append("MISSION_CONTROL_VAPID_PRIVATE_KEY")
+    if not load_vapid_public_key():
+        missing_config.append("MISSION_CONTROL_VAPID_PUBLIC_KEY")
+    if not vapid_contact():
+        missing_config.append("MISSION_CONTROL_VAPID_CONTACT")
+    if missing_config:
+        return {
+            "enabled": False,
+            "reason": "vapid_not_configured",
+            "missingConfig": missing_config,
+        }
+    missing_deps = _missing_push_dependencies()
+    if missing_deps:
+        return {
+            "enabled": False,
+            "reason": "missing_dependency",
+            "missingDependencies": missing_deps,
+        }
+    return {"enabled": True, "reason": "ok"}
 
 
 # --- Subscription storage -------------------------------------------------
@@ -119,15 +185,25 @@ def send_push(title: str, body: str, *, tag: str = "mission-control", data: Opti
     subscription so one dead device doesn't block the rest.
     """
     private_key = load_vapid_private_key()
-    public_key = load_vapid_public_key()
     contact = vapid_contact()
-    if not private_key or not public_key:
-        return {"sent": 0, "failed": 0, "disabled": True}
+    status = push_status()
+    if status.get("reason") != "ok":
+        return {"sent": 0, "failed": 0, "disabled": True, "reason": status.get("reason")}
+    # push_status() == ok guarantees a non-empty contact; keep the type narrow.
+    assert contact is not None and private_key is not None
 
-    try:
-        from pywebpush import webpush, WebPushException
-    except ImportError:
-        return {"sent": 0, "failed": 0, "disabled": True}
+    # VAPID configuration is complete; a missing package here means the
+    # dependency disappeared between status checks — still report it.
+    if not _dependencies_available():
+        return {
+            "sent": 0,
+            "failed": 0,
+            "disabled": True,
+            "reason": "missing_dependency",
+            "missingDependencies": _missing_push_dependencies(),
+        }
+
+    from pywebpush import webpush, WebPushException
 
     payload = json.dumps({"title": title, "body": body, "tag": tag, "data": data or {}})
 
@@ -139,14 +215,14 @@ def send_push(title: str, body: str, *, tag: str = "mission-control", data: Opti
                 subscription_info=subscription,
                 data=payload,
                 vapid_private_key=private_key,
-                vapid_claims={"sub": contact or "mailto:albi@mac-mini-01.taild7292a.ts.net"},
+                vapid_claims={"sub": contact},
                 timeout=10,
             )
             sent += 1
         except WebPushException as exc:
             # 404/410 means the subscription is gone — drop it.
-            status = getattr(exc.response, "status_code", None)
-            if status in (404, 410):
+            status_code = getattr(exc.response, "status_code", None)
+            if status_code in (404, 410):
                 remove_subscription(str(subscription.get("endpoint", "")))
             failed += 1
         except Exception:

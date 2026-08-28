@@ -1,1 +1,7 @@
+# Base runtime dependencies for the Mission Control telemetry sidecar.
+#
+# Web Push is optional and pulls in extra packages — install them separately:
+#   python3 -m pip install -r server/requirements-push.txt
+# (pywebpush + websockets). Without them push is explicitly disabled and
+# reported via /health (push.reason = missing_dependency).
 psutil>=6.0.0

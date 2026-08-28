@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Promote approved candidates whose quarantine has elapsed into the vault.
 
-Reads ~/.hermes/vault-brain/candidates/, finds candidates with status=approved
-whose quarantine_until <= now, and writes them to the vault wiki/concepts.
-Marks them status=promoted. Safe to run as a cron (idempotent).
+Reads <hermes-home>/vault-brain/candidates/ (profile-aware), finds candidates
+with status=approved whose quarantine_until <= now, and writes them to the
+vault wiki/concepts. Marks them status=promoted. Safe to run as a cron
+(idempotent).
 
 Usage:
   python3 promote_candidates.py

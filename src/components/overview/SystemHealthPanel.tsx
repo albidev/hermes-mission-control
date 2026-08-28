@@ -70,6 +70,7 @@ function HealthMetric({
   bar,
   barVariant = 'default',
   level,
+  caption,
 }: {
   icon: React.ElementType;
   label: string;
@@ -78,6 +79,7 @@ function HealthMetric({
   bar?: number | null;
   barVariant?: 'default' | 'positive' | 'warning' | 'negative';
   level?: string | null;
+  caption?: string | null;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -94,6 +96,9 @@ function HealthMetric({
         <LevelMeter level={level} />
       ) : bar !== undefined ? (
         <MiniBar value={bar} variant={barVariant} />
+      ) : null}
+      {caption ? (
+        <span className="text-[10px] text-text-muted">{caption}</span>
       ) : null}
     </div>
   );
@@ -168,7 +173,7 @@ export function SystemHealthPanel({
         {/* CPU Load */}
         <HealthMetric
           icon={Cpu}
-          label="CPU load"
+          label={t('health.cpuLoad')}
           value={cpuUsagePercent !== null ? `${cpuUsagePercent.toFixed(1)}%` : '—'}
           bar={cpuUsagePercent}
           barVariant={cpuLoadVariant}
@@ -177,7 +182,7 @@ export function SystemHealthPanel({
         {/* Memory */}
         <HealthMetric
           icon={Disc}
-          label="RAM"
+          label={t('health.ram')}
           value={
             machine.ramUsage?.usedGb !== null && machine.ramUsage?.totalGb !== null
               ? `${machine.ramUsage.usedGb} / ${machine.ramUsage.totalGb} GB`
@@ -192,7 +197,7 @@ export function SystemHealthPanel({
         {/* Disk */}
         <HealthMetric
           icon={HardDrive}
-          label="Disk"
+          label={t('health.disk')}
           value={
             diskUsedGb !== null && machine.diskUsage.totalGb > 0
               ? `${diskUsedGb} / ${machine.diskUsage.totalGb} GB`
@@ -210,18 +215,44 @@ export function SystemHealthPanel({
         {machine.thermal.fanRpm !== null && (
           <HealthMetric
             icon={Fan}
-            label={machine.thermal.fanCount ? `Fan ×${machine.thermal.fanCount}` : 'Fan'}
+            label={machine.thermal.fanCount ? t('health.fanCount', { count: machine.thermal.fanCount }) : t('health.fan')}
             value={`${machine.thermal.fanRpm.toFixed(0)} rpm`}
           />
         )}
 
-        {/* Thermal — discrete level meter */}
-        <HealthMetric
-          icon={Thermometer}
-          label="Thermal"
-          value={machine.thermal.thermalLevel ?? '—'}
-          level={machine.thermal.thermalLevel ?? null}
-        />
+        {/* Thermal — unavailable (no sensor) is distinct from a nominal value */}
+        {machine.thermal.source === 'unavailable' ? (
+          <HealthMetric
+            icon={Thermometer}
+            label={t('health.thermal')}
+            value={t('health.unavailable')}
+            caption={machine.thermal.error ?? t('health.noSensor')}
+          />
+        ) : machine.thermal.thermalPressure !== null ? (
+          <HealthMetric
+            icon={Thermometer}
+            label="Thermal"
+            value={`${machine.thermal.thermalPressure.toFixed(1)}°C`}
+            bar={machine.thermal.thermalPressure}
+            barVariant={
+              machine.thermal.thermalPressure > 85 ? 'negative' :
+              machine.thermal.thermalPressure > 75 ? 'warning' :
+              'positive'
+            }
+            caption={
+              machine.thermal.source === 'sysfs-thermal' ? t('health.thermalSysfs') :
+              machine.thermal.source === 'lm-sensors' ? t('health.thermalLmSensors') :
+              machine.thermal.source ?? undefined
+            }
+          />
+        ) : (
+          <HealthMetric
+            icon={Thermometer}
+            label={t('health.thermal')}
+            value={machine.thermal.thermalLevel ?? '—'}
+            level={machine.thermal.thermalLevel ?? null}
+          />
+        )}
       </div>
     </Card>
   );

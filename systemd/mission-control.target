@@ -1,0 +1,26 @@
+[Unit]
+Description=Hermes Mission Control stack (dashboard API + telemetry + frontend)
+# Group target for the three Mission Control user services. Use this to
+# start/stop/restart the whole stack with a single command:
+#
+#   systemctl --user start   mission-control.target
+#   systemctl --user stop    mission-control.target
+#   systemctl --user restart mission-control.target
+#   systemctl --user status  mission-control.target
+#
+# Individual units stay manageable on their own (systemctl --user restart
+# hermes-mission-control-telemetry). Each service is PartOf=this target, so
+# stopping the target stops every service in the stack; stopping a single
+# service does NOT stop the target (PartOf propagation is one-directional).
+#
+# The target pulls in the three services explicitly (Wants=), so enabling
+# only this target and starting it is enough to run the whole stack. Ordering
+# between the services is declared in the service units themselves:
+# dashboard-api -> telemetry -> frontend.
+Wants=hermes-dashboard-api.service hermes-mission-control-telemetry.service hermes-mission-control.service
+After=hermes-dashboard-api.service hermes-mission-control-telemetry.service hermes-mission-control.service
+
+[Install]
+# Enabling the target adds it to the user session boot set; its Wants= then
+# pulls in every service at login.
+WantedBy=default.target

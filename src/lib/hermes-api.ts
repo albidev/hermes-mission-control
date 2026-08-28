@@ -30,6 +30,7 @@ export type MissionControlMachineStatus = {
     fanCount: number | null;
     thermalPressure: number | null;
     thermalLevel: string | null;
+    levelSource: string | null;
     source: string | null;
     error: string | null;
   };
@@ -499,6 +500,7 @@ const fallbackMachine: MissionControlMachineStatus = {
     fanCount: null,
     thermalPressure: null,
     thermalLevel: null,
+    levelSource: null,
     source: null,
     error: null,
   },
@@ -533,7 +535,10 @@ const fallbackAlerts: MissionControlAlertsSnapshot = {
 
 const fallbackKnowledge: MissionControlKnowledgeSnapshot = {
   available: false,
-  vaultPath: '~/Documents/Hermes',
+  // Platform-neutral placeholder: the real vault path always comes from the
+  // telemetry server (MISSION_CONTROL_VAULT_PATH or the platform default).
+  // Do not fabricate a macOS-style path here.
+  vaultPath: '~/wiki',
   title: 'Knowledge Sharing',
   path: 'Knowledge Sharing.md',
   updatedAt: null,
@@ -788,7 +793,8 @@ export function buildHeaders(accessToken?: string): Record<string, string> {
 
 function redactHomePath(value: string | undefined | null): string | undefined | null {
   if (!value) return value;
-  return value.replace(/^\/Users\/[^/]+/, '~');
+  // macOS: /Users/<name>, Linux: /home/<name>
+  return value.replace(/^\/(Users|home)\/[^/]+/, '~');
 }
 
 function normalizeMachineStatus(input: Partial<MissionControlMachineStatus> | undefined): MissionControlMachineStatus {
@@ -826,6 +832,7 @@ function normalizeMachineStatus(input: Partial<MissionControlMachineStatus> | un
       fanCount: input.thermal?.fanCount ?? fallbackMachine.thermal.fanCount,
       thermalPressure: input.thermal?.thermalPressure ?? fallbackMachine.thermal.thermalPressure,
       thermalLevel: input.thermal?.thermalLevel ?? fallbackMachine.thermal.thermalLevel,
+      levelSource: input.thermal?.levelSource ?? fallbackMachine.thermal.levelSource,
       source: input.thermal?.source ?? fallbackMachine.thermal.source,
       error: input.thermal?.error ?? fallbackMachine.thermal.error,
     },

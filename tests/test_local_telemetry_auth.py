@@ -11,7 +11,9 @@ import urllib.request
 from contextlib import closing
 from pathlib import Path
 import importlib.util
+import tempfile
 from typing import Optional
+from unittest import mock
 import sys
 
 
@@ -36,10 +38,21 @@ class LocalTelemetryAuthTests(unittest.TestCase):
             "MISSION_CONTROL_TOKEN": os.environ.get("MISSION_CONTROL_TOKEN"),
             "API_SERVER_KEY": os.environ.get("API_SERVER_KEY"),
             "MISSION_CONTROL_READ_ONLY": os.environ.get("MISSION_CONTROL_READ_ONLY"),
+            "MISSION_CONTROL_VAULT_PATH": os.environ.get("MISSION_CONTROL_VAULT_PATH"),
+            "HERMES_OBSIDIAN_VAULT": os.environ.get("HERMES_OBSIDIAN_VAULT"),
+            "HERMES_HOME": os.environ.get("HERMES_HOME"),
         }
         os.environ["MISSION_CONTROL_TOKEN"] = "phase1-secret"
         os.environ.pop("API_SERVER_KEY", None)
         os.environ.pop("MISSION_CONTROL_READ_ONLY", None)
+        # Isolate knowledge tests from any vault override on the host.
+        os.environ.pop("MISSION_CONTROL_VAULT_PATH", None)
+        os.environ.pop("HERMES_OBSIDIAN_VAULT", None)
+        # The profile-aware core scan (hermes_paths) reads HERMES_HOME before
+        # falling back to Path.home; tests that patch Path.home (e.g. the
+        # "no fabricated macOS path" check) need it unset so the patched home
+        # actually takes effect.
+        os.environ.pop("HERMES_HOME", None)
 
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
             sock.bind(("127.0.0.1", 0))
@@ -226,84 +239,173 @@ class LocalTelemetryAuthTests(unittest.TestCase):
             hermes_home / "config.md": (hermes_home / "config.md").read_text(encoding="utf-8", errors="replace") if (hermes_home / "config.md").exists() else None,
         }
 
-        vault = Path.home() / "Documents" / "Hermes"
-        vault.mkdir(parents=True, exist_ok=True)
-        knowledge_path = vault / "Knowledge Sharing.md"
-        project_dir = vault / "projects"
-        project_dir.mkdir(parents=True, exist_ok=True)
-        project_path = project_dir / "mission-control.md"
-        original_vault = {
-            knowledge_path: knowledge_path.read_text(encoding="utf-8", errors="replace") if knowledge_path.exists() else None,
-            project_path: project_path.read_text(encoding="utf-8", errors="replace") if project_path.exists() else None,
-            vault / ".private" / "secret.md": (vault / ".private" / "secret.md").read_text(encoding="utf-8", errors="replace") if (vault / ".private" / "secret.md").exists() else None,
-        }
+        with tempfile.TemporaryDirectory(prefix="mc-vault-") as tmp:
+            vault = Path(tmp)
+            knowledge_path = vault / "Knowledge Sharing.md"
+            project_dir = vault / "projects"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            project_path = project_dir / "mission-control.md"
 
-        try:
-            soul_path.write_text("# Soul\n\n- Identity\n", encoding="utf-8")
-            user_path.write_text("# User\n\nPreferences\n", encoding="utf-8")
-            agents_path.write_text("# Agents\n\n- Rules\n", encoding="utf-8")
-            knowledge_path.write_text(
-                "# Knowledge Sharing\n\nShared dashboard note.\n\n- Highlight one\n- Highlight two\n",
-                encoding="utf-8",
+            # Point the canonical variable at the temporary vault: this also
+            # proves MISSION_CONTROL_VAULT_PATH is honored end-to-end.
+            os.environ["MISSION_CONTROL_VAULT_PATH"] = str(vault)
+
+            try:
+                soul_path.write_text("# Soul\n\n- Identity\n", encoding="utf-8")
+                user_path.write_text("# User\n\nPreferences\n", encoding="utf-8")
+                agents_path.write_text("# Agents\n\n- Rules\n", encoding="utf-8")
+                knowledge_path.write_text(
+                    "# Knowledge Sharing\n\nShared dashboard note.\n\n- Highlight one\n- Highlight two\n",
+                    encoding="utf-8",
+                )
+                project_path.write_text(
+                    "# Mission Control\n\nProject details here.\n\n## Next\n- Ship fixes\n",
+                    encoding="utf-8",
+                )
+
+                with self._request("/api/local/knowledge", token="phase1-secret") as response:
+                    self.assertEqual(response.status, 200)
+                    payload = json.loads(response.read().decode("utf-8"))
+
+                resolved_vault = vault.resolve()
+                vault_display = (
+                    f"~/{resolved_vault.relative_to(Path.home().resolve())}"
+                    if local_telemetry_server._path_is_within(resolved_vault, Path.home())
+                    else str(resolved_vault)
+                )
+                self.assertTrue(payload["available"])
+                self.assertEqual(payload["vaultPath"], vault_display)
+                self.assertEqual(payload["primary"]["title"], "Knowledge Sharing")
+                self.assertEqual(payload["primary"]["sourcePath"], f"{vault_display}/Knowledge Sharing.md")
+                self.assertTrue(any(section["id"] == "vault-notes" for section in payload["sections"]))
+
+                encoded = urllib.parse.quote(f"{vault_display}/Knowledge Sharing.md", safe="")
+                with self._request(f"/api/local/knowledge/file?path={encoded}", token="phase1-secret") as response:
+                    self.assertEqual(response.status, 200)
+                    file_payload = json.loads(response.read().decode("utf-8"))
+
+                self.assertTrue(file_payload["success"])
+                self.assertEqual(file_payload["title"], "Knowledge Sharing")
+                self.assertIn("Shared dashboard note.", file_payload["content"])
+
+                encoded_core = urllib.parse.quote("~/.hermes/SOUL.md", safe="")
+                with self._request(f"/api/local/knowledge/file?path={encoded_core}", token="phase1-secret") as response:
+                    self.assertEqual(response.status, 200)
+                    core_payload = json.loads(response.read().decode("utf-8"))
+
+                self.assertTrue(core_payload["success"])
+                self.assertEqual(core_payload["path"], "SOUL.md")
+                self.assertEqual(core_payload["sourcePath"], "~/.hermes/SOUL.md")
+                self.assertIn("Identity", core_payload["content"])
+
+                hidden_dir = vault / ".private"
+                hidden_dir.mkdir(parents=True, exist_ok=True)
+                hidden_path = hidden_dir / "secret.md"
+                hidden_path.write_text("# Hidden\n\nNope\n", encoding="utf-8")
+                encoded_hidden = urllib.parse.quote(f"{vault_display}/.private/secret.md", safe="")
+                with self.assertRaises(urllib.error.HTTPError) as hidden_exc:
+                    self._request(f"/api/local/knowledge/file?path={encoded_hidden}", token="phase1-secret")
+                self.assertEqual(hidden_exc.exception.code, 403)
+
+                extra_core = hermes_home / "config.md"
+                extra_core.write_text("# Config\n\nShould not leak\n", encoding="utf-8")
+                encoded_extra_core = urllib.parse.quote("~/.hermes/config.md", safe="")
+                with self.assertRaises(urllib.error.HTTPError) as core_exc:
+                    self._request(f"/api/local/knowledge/file?path={encoded_extra_core}", token="phase1-secret")
+                self.assertEqual(core_exc.exception.code, 403)
+            finally:
+                os.environ.pop("MISSION_CONTROL_VAULT_PATH", None)
+                for path, original in original_core.items():
+                    if original is None:
+                        try:
+                            path.unlink()
+                        except FileNotFoundError:
+                            pass
+                    else:
+                        path.write_text(original, encoding="utf-8")
+
+    def test_knowledge_uses_configured_linux_vault_with_nested_markdown(self):
+        """A Linux-style vault (e.g. ~/wiki) set via MISSION_CONTROL_VAULT_PATH
+        is discovered, scanned with nested Markdown files, and returned with
+        home-relative (not macOS) display paths."""
+        with tempfile.TemporaryDirectory(prefix="mc-wiki-") as tmp:
+            vault = Path(tmp)
+            (vault / "projects").mkdir(parents=True)
+            (vault / "knowledge").mkdir(parents=True)
+            (vault / "projects" / "mission-control.md").write_text(
+                "# Mission Control\n\nLinux notes here.\n\n## Next\n- Ship it\n", encoding="utf-8"
             )
-            project_path.write_text(
-                "# Mission Control\n\nProject details here.\n\n## Next\n- Ship fixes\n",
-                encoding="utf-8",
-            )
+            (vault / "knowledge" / "ideas.md").write_text("# Ideas\n\nNested note.\n", encoding="utf-8")
+            (vault / "notes.md").write_text("# Notes\n\nRoot note.\n", encoding="utf-8")
 
-            with self._request("/api/local/knowledge", token="phase1-secret") as response:
-                self.assertEqual(response.status, 200)
-                payload = json.loads(response.read().decode("utf-8"))
+            os.environ["MISSION_CONTROL_VAULT_PATH"] = str(vault)
+            try:
+                with self._request("/api/local/knowledge", token="phase1-secret") as response:
+                    self.assertEqual(response.status, 200)
+                    payload = json.loads(response.read().decode("utf-8"))
 
-            self.assertTrue(payload["available"])
-            self.assertEqual(payload["vaultPath"], "~/Documents/Hermes")
-            self.assertEqual(payload["primary"]["title"], "Knowledge Sharing")
-            self.assertEqual(payload["primary"]["sourcePath"], "~/Documents/Hermes/Knowledge Sharing.md")
-            self.assertTrue(any(section["id"] == "vault-notes" for section in payload["sections"]))
+                self.assertTrue(payload["available"])
+                self.assertNotIn("Documents/Hermes", payload["vaultPath"])
+                self.assertNotIn("/Users/", payload["vaultPath"])
+                vault_display = payload["vaultPath"]
 
-            encoded = urllib.parse.quote("~/Documents/Hermes/Knowledge Sharing.md", safe="")
-            with self._request(f"/api/local/knowledge/file?path={encoded}", token="phase1-secret") as response:
-                self.assertEqual(response.status, 200)
-                file_payload = json.loads(response.read().decode("utf-8"))
+                nested_paths = {
+                    item["path"] for section in payload["sections"] if section["id"] == "vault-notes" for item in section["items"]
+                }
+                self.assertIn("projects/mission-control.md", nested_paths)
+                self.assertIn("knowledge/ideas.md", nested_paths)
 
-            self.assertTrue(file_payload["success"])
-            self.assertEqual(file_payload["title"], "Knowledge Sharing")
-            self.assertIn("Shared dashboard note.", file_payload["content"])
+                encoded = urllib.parse.quote(f"{vault_display}/projects/mission-control.md", safe="")
+                with self._request(f"/api/local/knowledge/file?path={encoded}", token="phase1-secret") as response:
+                    self.assertEqual(response.status, 200)
+                    file_payload = json.loads(response.read().decode("utf-8"))
 
-            encoded_core = urllib.parse.quote("~/.hermes/SOUL.md", safe="")
-            with self._request(f"/api/local/knowledge/file?path={encoded_core}", token="phase1-secret") as response:
-                self.assertEqual(response.status, 200)
-                core_payload = json.loads(response.read().decode("utf-8"))
+                self.assertTrue(file_payload["success"])
+                self.assertEqual(file_payload["path"], "projects/mission-control.md")
+                self.assertIn("Linux notes here.", file_payload["content"])
+                self.assertNotIn("/Users/", file_payload["sourcePath"])
+                self.assertEqual(file_payload["sourcePath"], f"{vault_display}/projects/mission-control.md")
+            finally:
+                os.environ.pop("MISSION_CONTROL_VAULT_PATH", None)
 
-            self.assertTrue(core_payload["success"])
-            self.assertEqual(core_payload["path"], "SOUL.md")
-            self.assertEqual(core_payload["sourcePath"], "~/.hermes/SOUL.md")
-            self.assertIn("Identity", core_payload["content"])
+    def test_knowledge_unavailable_payload_does_not_fabricate_macos_path(self):
+        """With no vault configured and no vault present, the fallback payload
+        must report the platform default (never a fabricated macOS path)."""
+        with tempfile.TemporaryDirectory(prefix="mc-empty-home-") as empty_home:
+            # Patch the module's Path.home so both the core candidates
+            # (~/.hermes/...) and the Linux vault default (~/wiki) resolve
+            # inside an empty directory: nothing to index, so the fallback
+            # payload path is what we assert on.
+            with mock.patch.object(local_telemetry_server.platform, "system", return_value="Linux"), mock.patch.object(
+                local_telemetry_server.Path, "home", return_value=Path(empty_home)
+            ):
+                with self._request("/api/local/knowledge", token="phase1-secret") as response:
+                    self.assertEqual(response.status, 200)
+                    payload = json.loads(response.read().decode("utf-8"))
 
-            hidden_dir = vault / ".private"
-            hidden_dir.mkdir(parents=True, exist_ok=True)
-            hidden_path = hidden_dir / "secret.md"
-            hidden_path.write_text("# Hidden\n\nNope\n", encoding="utf-8")
-            encoded_hidden = urllib.parse.quote("~/Documents/Hermes/.private/secret.md", safe="")
-            with self.assertRaises(urllib.error.HTTPError) as hidden_exc:
-                self._request(f"/api/local/knowledge/file?path={encoded_hidden}", token="phase1-secret")
-            self.assertEqual(hidden_exc.exception.code, 403)
+        self.assertFalse(payload["available"])
+        self.assertEqual(payload["vaultPath"], "~/wiki")
+        self.assertNotIn("Documents/Hermes", payload["vaultPath"])
+        self.assertNotIn("Documents/Hermes", payload["primary"]["sourcePath"])
+        self.assertEqual(payload["primary"]["sourcePath"], "~/wiki/Knowledge Sharing.md")
 
-            extra_core = hermes_home / "config.md"
-            extra_core.write_text("# Config\n\nShould not leak\n", encoding="utf-8")
-            encoded_extra_core = urllib.parse.quote("~/.hermes/config.md", safe="")
-            with self.assertRaises(urllib.error.HTTPError) as core_exc:
-                self._request(f"/api/local/knowledge/file?path={encoded_extra_core}", token="phase1-secret")
-            self.assertEqual(core_exc.exception.code, 403)
-        finally:
-            for path, original in {**original_core, **original_vault}.items():
-                if original is None:
-                    try:
-                        path.unlink()
-                    except FileNotFoundError:
-                        pass
-                else:
-                    path.write_text(original, encoding="utf-8")
+    def test_knowledge_traversal_protection_still_works_with_configured_vault(self):
+        """Path traversal protection holds when the vault is configured: a
+        request outside the vault root (and outside ~/.hermes) is rejected."""
+        with tempfile.TemporaryDirectory(prefix="mc-vault-") as tmp:
+            vault = Path(tmp)
+            (vault / "notes.md").write_text("# Notes\n", encoding="utf-8")
+            os.environ["MISSION_CONTROL_VAULT_PATH"] = str(vault)
+            try:
+                outside = Path.home() / "Documents" / "outside.md"
+                outside.parent.mkdir(parents=True, exist_ok=True)
+                outside.write_text("# Outside\n", encoding="utf-8")
+                encoded = urllib.parse.quote("~/Documents/outside.md", safe="")
+                with self.assertRaises(urllib.error.HTTPError) as exc:
+                    self._request(f"/api/local/knowledge/file?path={encoded}", token="phase1-secret")
+                self.assertEqual(exc.exception.code, 403)
+            finally:
+                os.environ.pop("MISSION_CONTROL_VAULT_PATH", None)
 
     def test_knowledge_file_endpoint_rejects_paths_outside_vault(self):
         outside = Path.home() / "Documents" / "outside.md"

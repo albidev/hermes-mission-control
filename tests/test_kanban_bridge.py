@@ -25,25 +25,6 @@ if _CORE_AVAILABLE:
     try:
         sys.path.insert(0, str(CORE_ROOT))
         sys.path.insert(0, str(SERVER_DIR))
-        # Point hermes at an isolated home BEFORE importing the bridge.
-        # Kanban workers inherit explicit board pins so their own task tools
-        # cannot escape the assigned board. Those pins have higher precedence
-        # than HERMES_HOME; if they leak into this test process, the fixtures
-        # are written to the real board instead of the temporary test DB.
-        # Clear every worker-specific pin before setting the isolated home.
-        for _name in (
-            "HERMES_KANBAN_DB",
-            "HERMES_KANBAN_BOARD",
-            "HERMES_KANBAN_WORKSPACES_ROOT",
-            "HERMES_KANBAN_HOME",
-            "HERMES_KANBAN_TASK",
-            "HERMES_KANBAN_RUN_ID",
-            "HERMES_KANBAN_CLAIM_LOCK",
-            "HERMES_KANBAN_WORKSPACE",
-            "HERMES_KANBAN_BRANCH",
-        ):
-            os.environ.pop(_name, None)
-        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="mc-kanban-test-")
         # Probe: hermes_constants uses `str | object` unions and fails with
         # TypeError on Python < 3.10 — sometimes lazily (inside connect()).
         # Import it directly here so the incompatibility is caught up front.
@@ -62,6 +43,31 @@ _skip_reason = (
 @unittest.skipUnless(_CORE_AVAILABLE, _skip_reason)
 class KanbanBridgeTest(unittest.TestCase):
     def setUp(self):
+        # Point hermes at an isolated home BEFORE connecting, and restore the
+        # previous env afterwards. kanban_db resolves its DB path from
+        # HERMES_HOME on every connect(), and Mission Control's path resolver
+        # honors it — leaking a temp home here would poison later test modules
+        # (issue #12).
+        self._hermes_home_backup = os.environ.get("HERMES_HOME")
+        self._kanban_env_backup = {
+            _name: os.environ.get(_name)
+            for _name in (
+                "HERMES_KANBAN_DB",
+                "HERMES_KANBAN_BOARD",
+                "HERMES_KANBAN_WORKSPACES_ROOT",
+                "HERMES_KANBAN_HOME",
+                "HERMES_KANBAN_TASK",
+                "HERMES_KANBAN_RUN_ID",
+                "HERMES_KANBAN_CLAIM_LOCK",
+                "HERMES_KANBAN_WORKSPACE",
+                "HERMES_KANBAN_BRANCH",
+            )
+        }
+        # Dispatcher workers inherit explicit Kanban pins. They override
+        # HERMES_HOME, so clear them before creating the isolated test home.
+        for _name in self._kanban_env_backup:
+            os.environ.pop(_name, None)
+        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="mc-kanban-test-")
         # Fresh DB per test: connect auto-inits the schema.
         self.conn = kanban_db.connect()
         try:
@@ -75,6 +81,15 @@ class KanbanBridgeTest(unittest.TestCase):
             self.conn.close()
         except Exception:
             pass
+        if self._hermes_home_backup is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = self._hermes_home_backup
+        for _name, _value in self._kanban_env_backup.items():
+            if _value is None:
+                os.environ.pop(_name, None)
+            else:
+                os.environ[_name] = _value
 
     def _make_task(self, title="Task", **kwargs):
         return kanban_db.create_task(self.conn, title=title, **kwargs)
