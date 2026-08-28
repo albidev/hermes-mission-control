@@ -5,6 +5,7 @@ on:
     branches: [main, develop, feat/linux-port]
   pull_request:
     branches: [main, develop, feat/linux-port]
+  workflow_dispatch:
 
 permissions:
   contents: read
