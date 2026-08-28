@@ -432,23 +432,23 @@ export function SessionsRoute() {
             <div className="mt-3 md:flex md:items-center md:gap-2">
               <label className="relative block min-w-0 md:flex-1">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
-                <input value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} placeholder="Search sessions…" className="w-full min-w-0 rounded-md bg-surface py-2 pl-9 pr-3 text-sm text-text outline-none placeholder:text-text-subtle focus:ring-1 focus:ring-accent/40" />
+                <input value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} placeholder="Search sessions…" className="w-full min-w-0 rounded-md bg-surface h-9 py-0 pl-9 pr-3 text-sm text-text outline-none placeholder:text-text-subtle focus:ring-1 focus:ring-accent/40" />
               </label>
               <div className="mt-2 flex items-center justify-between md:hidden">
                 <span className="text-[11px] text-text-subtle">{activeFilterCount ? `${activeFilterCount} active filter${activeFilterCount > 1 ? 's' : ''}` : 'No filters applied'}</span>
                 <Button type="button" size="sm" variant="ghost" icon={<SlidersHorizontal size={14} />} className="!min-w-0 !border-0 !bg-transparent !px-2 text-xs text-text-muted hover:!bg-surface-sunken hover:!text-text" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? 'Hide filters' : 'Filters'}</Button>
               </div>
               <div className={`${filtersOpen ? 'grid' : 'hidden'} mt-2 grid-cols-2 gap-2 md:mt-0 md:flex md:min-w-0 md:flex-1 md:gap-2`}>
-                <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as SessionViewFilters['status'] }))} className="min-w-0 w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label="Filter status">
+                <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as SessionViewFilters['status'] }))} className="min-w-0 w-full rounded-md bg-surface h-9 px-3 py-0 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label="Filter status">
                   <option value="all">All statuses</option><option value="live">Live</option><option value="idle">Idle</option><option value="ended">Ended</option>
                 </select>
-                <select value={filters.origin} onChange={(event) => setFilters((current) => ({ ...current, origin: event.target.value }))} className="min-w-0 w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label="Filter origin">
+                <select value={filters.origin} onChange={(event) => setFilters((current) => ({ ...current, origin: event.target.value }))} className="min-w-0 w-full rounded-md bg-surface h-9 px-3 py-0 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label="Filter origin">
                   <option value="">All origins</option>{originOptions.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
                 </select>
-                <select value={filters.model} onChange={(event) => setFilters((current) => ({ ...current, model: event.target.value }))} className="min-w-0 w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label="Filter model">
+                <select value={filters.model} onChange={(event) => setFilters((current) => ({ ...current, model: event.target.value }))} className="min-w-0 w-full rounded-md bg-surface h-9 px-3 py-0 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label="Filter model">
                   <option value="">All models</option>{modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
                 </select>
-                <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)} className="min-w-0 w-full rounded-md bg-surface px-3 py-2 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label="Sort sessions">
+                <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)} className="min-w-0 w-full rounded-md bg-surface h-9 px-3 py-0 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label="Sort sessions">
                   <option value="activity">Last activity</option><option value="started">Started</option><option value="messages">Messages</option><option value="tokens">Tokens</option><option value="cost">Cost</option>
                 </select>
               </div>

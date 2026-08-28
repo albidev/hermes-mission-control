@@ -51,4 +51,9 @@ test('session loading has a bounded failure state and a centered mobile refresh 
   assert.match(source, /justify-center/);
 });
 
+test('desktop search and dropdown controls share the same height contract', () => {
+  assert.equal((source.match(/h-9/g) ?? []).length, 5);
+  assert.equal((source.match(/py-0(?:\s|")/g) ?? []).length, 5);
+});
+
 console.log('sessions UI contract tests passed');
