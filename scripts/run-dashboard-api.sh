@@ -29,4 +29,7 @@ cd "$HERMES_AGENT_DIR"
 export MISSION_CONTROL_TOKEN="${MISSION_CONTROL_TOKEN:-}"
 export API_SERVER_KEY="${API_SERVER_KEY:-}"
 
-exec ./venv/bin/python -m hermes_cli.main dashboard --host 127.0.0.1 --port 9119 --no-open
+DASHBOARD_HOST="${MISSION_CONTROL_DASHBOARD_HOST:-127.0.0.1}"
+DASHBOARD_PORT="${MISSION_CONTROL_DASHBOARD_PORT:-9119}"
+
+exec ./venv/bin/python -m hermes_cli.main dashboard --host "$DASHBOARD_HOST" --port "$DASHBOARD_PORT" --no-open
