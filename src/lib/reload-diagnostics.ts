@@ -63,7 +63,7 @@ function postDiagnostic(event: DiagnosticPayload, unload = false): void {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
-      keepalive: true,
+      keepalive: unload,
       credentials: 'include',
     }).catch(() => {});
   } catch {
@@ -106,7 +106,6 @@ export function installReloadDiagnostics(): () => void {
 
   const previous = previousBreadcrumbs();
   recordReloadDiagnostic('boot', {
-    previousBreadcrumbs: previous,
     previousBreadcrumbCount: previous.length,
     wasDiscarded: Boolean((document as Document & { wasDiscarded?: boolean }).wasDiscarded),
   });
