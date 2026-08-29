@@ -18,6 +18,7 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 from hermes_paths import hermes_cache_dir  # noqa: E402
+from provider_usage_config import visible_usage_providers  # noqa: E402
 from provider_usage_contract import normalize_codexbar_entry, unavailable_provider  # noqa: E402
 
 CODEXBAR_PROVIDERS = ("codex", "ollama", "openrouter")
@@ -43,8 +44,11 @@ def _decode_payload(stdout: str) -> Any:
 
 def collect_codexbar_usage() -> list[dict[str, Any]]:
     executable = shutil.which("codexbar") or "/opt/homebrew/bin/codexbar"
+    visible = set(visible_usage_providers())
     providers: list[dict[str, Any]] = []
     for provider in CODEXBAR_PROVIDERS:
+        if provider not in visible:
+            continue
         source_args = ["--source", "web"] if provider == "ollama" else []
         try:
             completed = subprocess.run(

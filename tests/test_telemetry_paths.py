@@ -36,6 +36,7 @@ class TelemetryPathResolutionTests(unittest.TestCase):
         self._home_backup = os.environ.get("HOME")
         self._hermes_home_backup = os.environ.get("HERMES_HOME")
         self._vault_backup = os.environ.get("MISSION_CONTROL_VAULT_PATH")
+        self._usage_providers_backup = os.environ.get("MISSION_CONTROL_USAGE_PROVIDERS")
         os.environ["HOME"] = str(self._tmp / "home")
         os.environ["HERMES_HOME"] = str(self._tmp / "hermes")
         os.environ.pop("MISSION_CONTROL_VAULT_PATH", None)
@@ -54,6 +55,10 @@ class TelemetryPathResolutionTests(unittest.TestCase):
             os.environ.pop("MISSION_CONTROL_VAULT_PATH", None)
         else:
             os.environ["MISSION_CONTROL_VAULT_PATH"] = self._vault_backup
+        if self._usage_providers_backup is None:
+            os.environ.pop("MISSION_CONTROL_USAGE_PROVIDERS", None)
+        else:
+            os.environ["MISSION_CONTROL_USAGE_PROVIDERS"] = self._usage_providers_backup
         import shutil
 
         shutil.rmtree(self._tmp, ignore_errors=True)
@@ -83,6 +88,30 @@ class TelemetryPathResolutionTests(unittest.TestCase):
         self.assertEqual(result["providers"][0]["provider"], "codex")
         self.assertEqual(result["providers"][0]["windows"], [])
         self.assertEqual(result["providers"][-1]["provider"], "nous")
+
+    def test_local_allowlist_filters_hidden_provider_from_cache_and_fetches(self):
+        cache = self._hermes_home / "cache" / "mission-control-provider-usage.json"
+        cache.parent.mkdir(parents=True)
+        cache.write_text(
+            json.dumps({
+                "success": True,
+                "available": True,
+                "providers": [
+                    {"provider": "codex", "available": True, "windows": [], "balances": [], "metrics": []},
+                    {"provider": "openrouter", "available": True, "windows": [], "balances": [], "metrics": []},
+                ],
+            }),
+            encoding="utf-8",
+        )
+        os.environ["MISSION_CONTROL_USAGE_PROVIDERS"] = "codex,nous"
+        nous = {"provider": "nous", "available": True, "windows": [], "balances": [], "metrics": []}
+
+        with patch.object(local_telemetry_server, "collect_nous_portal_usage", return_value=nous), \
+             patch.object(local_telemetry_server.subprocess, "run") as run:
+            result = local_telemetry_server.collect_provider_usage()
+
+        self.assertEqual([item["provider"] for item in result["providers"]], ["codex", "nous"])
+        run.assert_not_called()
 
     def test_runtime_home_follows_central_resolver(self):
         self.assertEqual(local_telemetry_server._get_hermes_home(), self._hermes_home)

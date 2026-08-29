@@ -47,6 +47,7 @@ def _client_diagnostics_log() -> Path:
 
 import candidates as candidates_mod
 from nous_portal_usage import collect_nous_portal_usage
+from provider_usage_config import visible_usage_providers
 from provider_usage_contract import normalize_cached_entry, normalize_codexbar_entry
 
 from mission_control_agents import (
@@ -385,6 +386,7 @@ def _sanitize_provider_usage(provider: str, payload: Any) -> Dict[str, Any]:
 
 
 def collect_provider_usage() -> Dict[str, Any]:
+    visible = set(visible_usage_providers())
     cache_path = hermes_cache_dir() / "mission-control-provider-usage.json"
     cached: Optional[Dict[str, Any]] = None
     try:
@@ -399,12 +401,15 @@ def collect_provider_usage() -> Dict[str, Any]:
             normalized
             for provider in cached["providers"]
             if (normalized := normalize_cached_entry(provider)) is not None
+            and normalized.get("provider") in visible
             and normalized.get("provider") != "nous"
         ]
     else:
         executable = shutil.which("codexbar") or "/opt/homebrew/bin/codexbar"
         providers = []
         for provider in _USAGE_PROVIDERS:
+            if provider not in visible:
+                continue
             try:
                 # Ollama's API path exposes no usage data; must read the web dashboard (Chrome cookies).
                 src_flag = ["--source", "web"] if provider == "ollama" else []
@@ -443,9 +448,10 @@ def collect_provider_usage() -> Dict[str, Any]:
                     "error": "CodexBar unavailable." if isinstance(exc, OSError) else "CodexBar timed out.",
                 })
 
-    # Nous is deliberately not sent through CodexBar. The sidecar uses the
-    # access token already persisted by Hermes and never rotates a refresh token.
-    providers.append(collect_nous_portal_usage())
+    if "nous" in visible:
+        # Nous is deliberately not sent through CodexBar. The sidecar uses the
+        # access token already persisted by Hermes and never rotates a refresh token.
+        providers.append(collect_nous_portal_usage())
     return {
         "schemaVersion": 1,
         "success": any(provider.get("available") for provider in providers),
