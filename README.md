@@ -19,7 +19,7 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 - Gateway/runtime health and system metrics
 - Active model, fallback model, and agent status
 - Sessions, agents, tools, skills, configuration, logs, and cron visibility
-- Provider usage for Codex and Ollama with session/weekly gauges
+- Provider usage for Codex, Ollama, OpenRouter, and Nous Portal with quota/billing views
 - Draggable dashboard widgets with persisted layout
 
 ### Kanban operations

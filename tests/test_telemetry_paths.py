@@ -10,6 +10,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 import candidates as candidates_module  # noqa: E402
@@ -63,7 +64,25 @@ class TelemetryPathResolutionTests(unittest.TestCase):
         payload = {"success": True, "available": True, "providers": [{"provider": "codex"}]}
         cache.write_text(json.dumps(payload), encoding="utf-8")
 
-        self.assertEqual(local_telemetry_server.collect_provider_usage(), payload)
+        with patch.object(
+            local_telemetry_server,
+            "collect_nous_portal_usage",
+            return_value={
+                "provider": "nous",
+                "available": False,
+                "source": "portal-account",
+                "windows": [],
+                "balances": [],
+                "metrics": [],
+            },
+        ):
+            result = local_telemetry_server.collect_provider_usage()
+
+        self.assertEqual(result["schemaVersion"], 1)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["providers"][0]["provider"], "codex")
+        self.assertEqual(result["providers"][0]["windows"], [])
+        self.assertEqual(result["providers"][-1]["provider"], "nous")
 
     def test_runtime_home_follows_central_resolver(self):
         self.assertEqual(local_telemetry_server._get_hermes_home(), self._hermes_home)

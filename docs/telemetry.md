@@ -180,9 +180,9 @@ Related endpoints: `/api/local/push/vapid-public-key` (serves the public key to
 the client), `/api/local/push/subscriptions` (store/list/delete), and
 `/api/local/push/send` (test delivery — returns the same `reason` when disabled).
 
-## Provider usage (CodexBar)
+## Provider usage (CodexBar + Nous Portal)
 
-The **Provider usage** overview card shows live cloud limits and balances for Codex, Ollama Cloud, and OpenRouter. The numbers come from [CodexBar](https://github.com/steipete/codexbar), a macOS menu-bar CLI that reads each provider's usage/credits.
+The **Provider usage** overview card shows live cloud limits and balances for Codex, Ollama Cloud, OpenRouter, and Nous Portal. CodexBar supplies the first three providers; the telemetry sidecar reads Nous Portal account data through the already-authenticated Hermes access token.
 
 ### Data flow
 
@@ -190,33 +190,39 @@ The **Provider usage** overview card shows live cloud limits and balances for Co
 CodexBar (codexbar usage --provider <p>)
         │  --json --no-color
         ▼
-provider-usage script OR telemetry sidecar
-        │  sanitized → providers[]
-        ▼
-~/.hermes/cache/mission-control-provider-usage.json
-        │
-        ▼
+provider-usage writer OR telemetry fallback
+        │  normalized → providers[]
+        ├──────────────────────────────┐
+        │                              │
+        ▼                              ▼
+CodexBar cache                 Nous Portal adapter
+~/.hermes/cache/               auth.json access_token
+mission-control-               GET /api/oauth/account
+provider-usage.json                   │
+        └──────────────┬───────────────┘
+                       ▼
 GET /api/local/provider-usage  (telemetry :8765)
-        │
-        ▼
-src/components/overview/ProviderUsagePanel.tsx  → gauges
+                       │
+                       ▼
+src/components/overview/ProviderUsagePanel.tsx
 ```
 
 The frontend polls `loadProviderUsage()` every **60s** (`ProviderUsagePanel` `useEffect` + `setInterval`).
 
-### Two ways the cache is produced
+### Data sources and cache behavior
 
-1. **Cache-first (preferred):** the telemetry server reads `~/.hermes/cache/mission-control-provider-usage.json` (`collect_provider_usage`). If the file is present and valid, it returns it directly — no CodexBar call at request time.
-2. **Live fallback:** if the cache is missing or corrupt, the sidecar invokes `codexbar usage` for each provider on demand, sanitizes the output, and returns it.
+1. **CodexBar providers:** the telemetry server reads `~/.hermes/cache/mission-control-provider-usage.json` (`collect_provider_usage`). If the file is present and valid, it uses the cached CodexBar entries; otherwise it invokes CodexBar for `codex`, `ollama`, and `openrouter`.
+2. **Nous Portal:** the sidecar reads the current `providers.nous.access_token` from the active/profile-aware `auth.json` and performs a read-only `GET /api/oauth/account`. If the access token is expired, it delegates refresh to the existing `hermes portal info` command and then re-reads `auth.json`; the sidecar never implements the OAuth refresh exchange or rotates refresh tokens itself.
+3. **Provider-agnostic boundary:** every entry returned by `/api/local/provider-usage` exposes `windows`, `balances`, and `metrics`. The frontend does not depend on CodexBar's raw provider-specific fields.
 
-There is also a standalone script to refresh the cache outside the sidecar:
+The standalone cache writer is still useful for refreshing the CodexBar entries outside request time:
 
 ```bash
-scripts/update-provider-usage.sh        # writes ~/.hermes/cache/mission-control-provider-usage.json
-scripts/local/update-provider-usage.sh  # identical variant
+scripts/update-provider-usage.sh        # profile-aware writer
+scripts/local/update-provider-usage.sh  # compatibility wrapper
 ```
 
-These read `MISSION_CONTROL_CACHE_DIR` (default `~/.hermes/cache`). A scheduler (macOS LaunchAgent, Linux systemd timer, or cron) can run it every 60s so the dashboard always has a fresh cache without paying a CodexBar call per request.
+These read `MISSION_CONTROL_CACHE_DIR` (defaulting to the resolved Hermes cache directory). A scheduler can run the writer every 60s so CodexBar data stays fresh without paying a CodexBar call per request. Nous data is fetched by the telemetry sidecar from the already-authenticated Portal session.
 
 ### Ollama requires the web source
 
@@ -230,39 +236,45 @@ Both the script and the sidecar force `--source web` for `ollama` (the `local/` 
 
 ### Sanitized provider shape
 
-Each provider is reduced to a small, UI-safe object:
+Each provider is reduced to the same small, UI-safe contract:
 
 ```json
 {
-  "provider": "codex",
+  "provider": "nous",
   "available": true,
-  "source": "cli",
-  "updatedAt": null,
-  "primary":   { "usedPercent": 12, "resetsAt": "...", "windowMinutes": 240 },
-  "secondary": { "usedPercent": 2,  "resetsAt": "...", "windowMinutes": 10080 },
-  "tertiary":  null,
-  "pace": null,
-  "openRouter": null,
-  "creditsRemaining": null,
-  "resetCreditsAvailable": null
+  "source": "portal-account",
+  "updatedAt": "...",
+  "stale": false,
+  "plan": "Free",
+  "renewsAt": "...",
+  "windows": [
+    { "id": "subscription", "label": "Subscription", "usedPercent": 42, "remaining": 12, "total": 20, "unit": "USD" }
+  ],
+  "balances": [
+    { "id": "topup_remaining", "label": "Top-up remaining", "value": 9.87, "currency": "USD" }
+  ],
+  "metrics": []
 }
 ```
 
-- `primary` / `secondary` / `tertiary` map to CodexBar's usage windows (session / weekly / …). The UI renders `Session` (primary) and `Weekly` (secondary) gauges.
-- `openRouter` is populated only for `openrouter` (balance + usage).
-- `creditsRemaining` / `resetCreditsAvailable` only for `codex`.
-- On error, `available` is `false` and `error` carries a short (≤240 char) message.
+- `windows` contains quota/period usage such as CodexBar's session/weekly windows or Nous's monthly subscription allowance.
+- `balances` contains monetary or credit balances.
+- `metrics` contains provider counters such as Codex reset credits.
+- On error, `available` is `false`, the arrays remain present, and `error` carries a short (≤240 character) message.
+- Nous's `stale` flag is `true` only when the Portal request failed but a previous valid in-process snapshot is being served.
 
 ### Gauges
 
-`ProviderUsagePanel.tsx` renders **two horizontal bars** per card (Session + Weekly) — not circular. Color semantics: blue normal (<60%), amber warning (≥60%), red error (≥85%). Missing data renders as `—`, never a fabricated `0%`. OpenRouter shows only its balance, with no artificial gauge.
+`ProviderUsagePanel.tsx` renders horizontal usage bars for entries in `windows` and numeric balances for entries in `balances`. Missing data renders as `—`, never a fabricated `0%`. Nous uses a billing-oriented card: subscription usage is shown as a window when the Portal supplies a monthly denominator, while subscription/top-up/total values remain explicit balances.
 
 ### Troubleshooting
 
+- **Nous Portal unavailable:** telemetry reads only the current `providers.nous.access_token` from the active Hermes `auth.json`. If it is expired, telemetry delegates the refresh to `hermes portal info`; it never implements or rotates the refresh token itself. Re-authenticate through Hermes (`hermes portal` / `hermes auth add nous`) if that delegated refresh fails.
+- **Nous endpoint changes:** the Portal account endpoint is currently used by Hermes but is not a public CodexBar usage contract. The adapter is isolated in `server/nous_portal_usage.py`; update that adapter and its fixture if Nous changes the response shape.
+- **Cache stale after a fix:** CodexBar entries are cache-first. Regenerate them with `scripts/update-provider-usage.sh`; Nous is fetched by the sidecar with its own 60-second in-process snapshot.
 - **Ollama shows empty / `—`:** likely a Keychain denial. CodexBar's web source uses Chrome cookies; a macOS Keychain prompt denial triggers a **6h cooldown**. Refresh the cookie:
   ```bash
   codexbar cookie refresh --provider ollama --allow-keychain-prompt --json
   ```
   then click **Consenti** on the Keychain prompt.
-- **Cache stale after a fix:** if the sidecar keeps serving an old cache, the cache file is read first. Regenerate it with `scripts/update-provider-usage.sh`, or delete `~/.hermes/cache/mission-control-provider-usage.json` to force the live fallback.
 - **Zombie telemetry process:** after a restart, confirm the sidecar is running from the repo path, not from a deleted inode. Use `lsof -i :8765` to check the actual process/path.

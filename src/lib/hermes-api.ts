@@ -1651,35 +1651,49 @@ export async function loadSessionsUsage(accessToken?: string): Promise<MissionCo
 }
 
 export type MissionControlProviderUsageWindow = {
+  id: string;
+  label: string;
   usedPercent?: number;
   resetsAt?: string;
   windowMinutes?: number;
+  remaining?: number;
+  total?: number;
+  unit?: string;
+};
+
+export type MissionControlProviderUsageBalance = {
+  id: string;
+  label: string;
+  value?: number;
+  currency?: string;
+  unit?: string;
+};
+
+export type MissionControlProviderUsageMetric = {
+  id: string;
+  label: string;
+  value?: number | string | boolean | null;
+  unit?: string;
 };
 
 export type MissionControlProviderUsage = {
-  provider: 'codex' | 'ollama' | 'openrouter' | string;
+  provider: string;
   available: boolean;
   source?: string;
   updatedAt?: string | null;
-  primary?: MissionControlProviderUsageWindow | null;
-  secondary?: MissionControlProviderUsageWindow | null;
-  tertiary?: MissionControlProviderUsageWindow | null;
-  pace?: Record<string, unknown> | null;
-  openRouter?: {
-    balance?: number;
-    totalCredits?: number;
-    totalUsage?: number;
-    keyUsageDaily?: number;
-    keyUsageWeekly?: number;
-    keyUsageMonthly?: number;
-    usedPercent?: number;
-  };
-  creditsRemaining?: number;
-  resetCreditsAvailable?: number;
+  stale?: boolean;
   error?: string;
+  plan?: string | null;
+  status?: string;
+  renewsAt?: string | null;
+  windows: MissionControlProviderUsageWindow[];
+  balances: MissionControlProviderUsageBalance[];
+  metrics: MissionControlProviderUsageMetric[];
+  pace?: Record<string, unknown> | null;
 };
 
 export type MissionControlProviderUsageSnapshot = {
+  schemaVersion?: number;
   success: boolean;
   available: boolean;
   updatedAt?: string;
