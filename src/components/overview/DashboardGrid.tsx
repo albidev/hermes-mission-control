@@ -18,9 +18,13 @@ function loadOrder(ids: string[], fallback: string[]): string[] {
   try {
     const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null');
     if (!Array.isArray(saved)) return fallback;
-    const known = new Set(ids);
-    const valid = saved.filter((id): id is string => typeof id === 'string' && known.has(id));
-    return [...valid, ...fallback.filter((id) => !valid.includes(id))];
+    // Keep the FULL saved order, including ids not yet rendered (widgets can
+    // appear async, e.g. the cron widget mounts only after data loads).
+    // Dropping them here would let the save effect overwrite the persisted
+    // order before the widget appears. orderedWidgets filters unknown ids.
+    const valid = saved.filter((id): id is string => typeof id === 'string');
+    const known = new Set(valid);
+    return [...valid, ...fallback.filter((id) => !known.has(id))];
   } catch {
     return fallback;
   }
