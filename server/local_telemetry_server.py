@@ -46,6 +46,9 @@ def _client_diagnostics_log() -> Path:
     return hermes_logs_dir() / "mission-control-client.log"
 
 import candidates as candidates_mod
+from nous_portal_usage import collect_nous_portal_usage
+from provider_usage_config import apply_provider_display_config, visible_usage_providers
+from provider_usage_contract import normalize_cached_entry, normalize_codexbar_entry
 
 from mission_control_agents import (
     load_agent_trace_snapshot,
@@ -378,107 +381,78 @@ def _sanitize_usage_window(value: Any) -> Optional[Dict[str, Any]]:
 
 
 def _sanitize_provider_usage(provider: str, payload: Any) -> Dict[str, Any]:
-    if not isinstance(payload, list):
-        return {"provider": provider, "available": False, "source": "cli", "error": "Invalid CodexBar response."}
-
-    item = next((entry for entry in payload if isinstance(entry, dict) and entry.get("provider") == provider), None)
-    if not isinstance(item, dict):
-        return {"provider": provider, "available": False, "source": "cli", "error": "Provider not returned by CodexBar."}
-
-    error = item.get("error")
-    if isinstance(error, dict):
-        return {
-            "provider": provider,
-            "available": False,
-            "source": item.get("source") or "cli",
-            "error": str(error.get("message") or "Provider unavailable.")[:240],
-        }
-
-    usage = item.get("usage") if isinstance(item.get("usage"), dict) else {}
-    sanitized: Dict[str, Any] = {
-        "provider": provider,
-        "available": True,
-        "source": item.get("source") or "cli",
-        "updatedAt": usage.get("updatedAt"),
-        "primary": _sanitize_usage_window(usage.get("primary")),
-        "secondary": _sanitize_usage_window(usage.get("secondary")),
-        "tertiary": _sanitize_usage_window(usage.get("tertiary")),
-        "pace": item.get("pace") if isinstance(item.get("pace"), dict) else None,
-    }
-    if provider == "openrouter":
-        openrouter = usage.get("openRouterUsage")
-        if isinstance(openrouter, dict):
-            sanitized["openRouter"] = {
-                key: openrouter[key]
-                for key in ("balance", "totalCredits", "totalUsage", "keyUsageDaily", "keyUsageWeekly", "keyUsageMonthly", "usedPercent")
-                if key in openrouter
-            }
-    if provider == "codex":
-        credits = item.get("credits")
-        if isinstance(credits, dict) and "remaining" in credits:
-            sanitized["creditsRemaining"] = credits.get("remaining")
-        codex_credits = usage.get("codexResetCredits")
-        if isinstance(codex_credits, dict):
-            available_count = codex_credits.get("availableCount")
-            if not isinstance(available_count, (int, float)):
-                reset_entries = codex_credits.get("credits")
-                if isinstance(reset_entries, list):
-                    available_count = sum(1 for entry in reset_entries if isinstance(entry, dict) and entry.get("status") == "available")
-            if isinstance(available_count, (int, float)):
-                sanitized["resetCreditsAvailable"] = available_count
-    return sanitized
+    """Compatibility wrapper for the provider-agnostic contract."""
+    return normalize_codexbar_entry(provider, payload)
 
 
 def collect_provider_usage() -> Dict[str, Any]:
+    visible = set(visible_usage_providers())
     cache_path = hermes_cache_dir() / "mission-control-provider-usage.json"
+    cached: Optional[Dict[str, Any]] = None
     try:
-        cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if isinstance(cached, dict) and isinstance(cached.get("providers"), list):
-            return cached
+        candidate = json.loads(cache_path.read_text(encoding="utf-8"))
+        if isinstance(candidate, dict) and isinstance(candidate.get("providers"), list):
+            cached = candidate
     except (OSError, json.JSONDecodeError):
         pass
 
-    executable = shutil.which("codexbar") or "/opt/homebrew/bin/codexbar"
-    providers = []
-    for provider in _USAGE_PROVIDERS:
-        try:
-            # Ollama's API path exposes no usage data; must read the web dashboard (Chrome cookies).
-            src_flag = ["--source", "web"] if provider == "ollama" else []
-            completed = subprocess.run(
-                [executable, "usage", "--provider", provider, *src_flag, "--json", "--no-color"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-            stdout, stderr, returncode = completed.stdout, completed.stderr, completed.returncode
+    if cached is not None:
+        providers = []
+        for provider in cached["providers"]:
+            normalized = normalize_cached_entry(provider)
+            if normalized is None or normalized.get("provider") not in visible or normalized.get("provider") == "nous":
+                continue
+            providers.append(apply_provider_display_config(normalized))
+    else:
+        executable = shutil.which("codexbar") or "/opt/homebrew/bin/codexbar"
+        providers = []
+        for provider in _USAGE_PROVIDERS:
+            if provider not in visible:
+                continue
             try:
-                payload = json.loads(stdout)
-            except json.JSONDecodeError:
-                raw_output = stdout.strip()
+                # Ollama's API path exposes no usage data; must read the web dashboard (Chrome cookies).
+                src_flag = ["--source", "web"] if provider == "ollama" else []
+                completed = subprocess.run(
+                    [executable, "usage", "--provider", provider, *src_flag, "--json", "--no-color"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                stdout, stderr, returncode = completed.stdout, completed.stderr, completed.returncode
                 try:
-                    decoded = json.loads(raw_output)
-                    payload = json.loads(decoded) if isinstance(decoded, str) else decoded
-                except (json.JSONDecodeError, TypeError):
-                    start = raw_output.find("[")
-                    end = raw_output.rfind("]")
+                    payload = json.loads(stdout)
+                except json.JSONDecodeError:
+                    raw_output = stdout.strip()
                     try:
-                        payload = json.loads(raw_output[start:end + 1]) if start >= 0 and end > start else None
-                    except json.JSONDecodeError:
-                        payload = None
-            result = _sanitize_provider_usage(provider, payload)
-            if returncode != 0 and result.get("available"):
-                result["available"] = False
-                result["error"] = "CodexBar returned a provider error."
-            providers.append(result)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            providers.append({
-                "provider": provider,
-                "available": False,
-                "source": "cli",
-                "error": "CodexBar unavailable." if isinstance(exc, OSError) else "CodexBar timed out.",
-            })
+                        decoded = json.loads(raw_output)
+                        payload = json.loads(decoded) if isinstance(decoded, str) else decoded
+                    except (json.JSONDecodeError, TypeError):
+                        start = raw_output.find("[")
+                        end = raw_output.rfind("]")
+                        try:
+                            payload = json.loads(raw_output[start:end + 1]) if start >= 0 and end > start else None
+                        except json.JSONDecodeError:
+                            payload = None
+                result = apply_provider_display_config(_sanitize_provider_usage(provider, payload))
+                if returncode != 0 and result.get("available"):
+                    result["available"] = False
+                    result["error"] = "CodexBar returned a provider error."
+                providers.append(result)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                providers.append({
+                    "provider": provider,
+                    "available": False,
+                    "source": "cli",
+                    "error": "CodexBar unavailable." if isinstance(exc, OSError) else "CodexBar timed out.",
+                })
+
+    if "nous" in visible:
+        # Nous is deliberately not sent through CodexBar. The sidecar uses the
+        # access token already persisted by Hermes and never rotates a refresh token.
+        providers.append(apply_provider_display_config(collect_nous_portal_usage()))
     return {
+        "schemaVersion": 1,
         "success": any(provider.get("available") for provider in providers),
         "available": True,
         "updatedAt": datetime.now(timezone.utc).isoformat(),

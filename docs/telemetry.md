@@ -66,6 +66,89 @@ The Vite dev server (`vite.config.ts`) uses `host: true`, which makes it listen 
 - `host: true` is required for Tailscale/LAN access and for the bundled systemd unit (`vite --host 0.0.0.0`). For local-only work, run plain `pnpm dev` (loopback) or remove `--host` from the unit.
 - The Vite dev server is a development surface: for production, serve the built `dist/` behind a static host or reverse proxy instead of exposing the dev server.
 
+## Troubleshooting Tailscale access errors
+
+The browser message `Fetch API ... due to access control checks` is ambiguous. Diagnose the first failing layer instead of changing CORS blindly:
+
+| Observation | Layer | Meaning | Fix |
+|-------------|-------|---------|-----|
+| The frontend root returns `403` | Vite | The request `Host` is not in `allowedHosts`; the request never reaches telemetry | Add the hostname/IP to `MISSION_CONTROL_DEV_HOSTS` or `MISSION_CONTROL_ALLOWED_HOSTS`, then restart Vite |
+| Root is `200`, protected API is `401` | Telemetry auth | The bearer token is missing or differs between frontend and sidecar | Check token bootstrap/configuration without printing the secret |
+| Root and API are `200`, but Agents/Sessions/Trace time out | SessionDB read path | Concurrent snapshot requests are contending on SQLite or a shared cache lock | Restart telemetry after backend changes; use the bounded snapshot/coalescing path described below |
+| Direct telemetry works, browser API fails | Proxy/origin | Vite proxy or browser origin is wrong | Keep the frontend API base relative (`/api/local`) and test through the same URL used by the browser |
+
+### Vite host allow-list
+
+`vite.config.ts` combines the static `MISSION_CONTROL_ALLOWED_HOSTS` list with
+`MISSION_CONTROL_DEV_HOSTS`. The config is resolved as:
+
+```text
+loadEnv(.env) → process.env / service-manager environment overrides → Vite config
+```
+
+Therefore a LaunchAgent/systemd environment can override a value in `.env`.
+A process started manually from a shell may have a different allow-list than
+the supervised process. Check the actual owner and working directory before
+editing files:
+
+```bash
+lsof -nP -iTCP:5174 -sTCP:LISTEN
+ps -p <vite-pid> -o pid=,ppid=,command=
+lsof -a -p <vite-pid> -d cwd -Fn
+```
+
+After changing host configuration, restart the supervised process rather than
+only killing its child:
+
+```bash
+# macOS LaunchAgent
+launchctl kickstart -k gui/$(id -u)/ai.hermes.mission-control
+
+# Linux systemd --user
+systemctl --user restart hermes-mission-control.service
+```
+
+Verify both access forms when Tailscale is in use:
+
+```bash
+curl --max-time 5 -I https://<tailnet-hostname>/
+curl --max-time 5 https://<tailnet-hostname>/api/local/health
+```
+
+For a reverse-proxy deployment (`tailscale serve`, Caddy, or nginx), keep the
+telemetry sidecar on `127.0.0.1` and proxy through the frontend. Do **not** set
+`VITE_MISSION_CONTROL_LOCAL_API_BASE_URL` to `http://localhost:...` or
+`http://127.0.0.1:...`: those addresses resolve on the client device and create
+cross-origin failures. Use `/api/local` or leave the variable unset.
+
+### SessionDB snapshot contention
+
+The Agents, Sessions, and Trace pages can request related session snapshots at
+the same time. The sidecar must not hold `_SESSION_SNAPSHOT_CACHE_LOCK` while
+performing SessionDB I/O. `server/mission_control_agents.py` uses:
+
+- `compact_rows=True` for discovery and hydration, avoiding unnecessary
+  `system_prompt` blob reads;
+- an in-flight event per snapshot key, so identical requests share one query;
+- a short-lived result cache after the query completes.
+
+This prevents one slow SQLite read from blocking unrelated requests and being
+reported by the UI as a generic access-control/fallback error. A healthy
+SessionDB can still make a cold snapshot slower than `/health`; verify the
+HTTP status separately from latency:
+
+```bash
+sqlite3 -readonly ~/.hermes/state.db 'PRAGMA quick_check(1);'
+# Expected: ok
+
+curl --max-time 30 -H "Authorization: Bearer <token>" \
+  http://127.0.0.1:8765/api/local/mission-control/agents
+```
+
+Do not run `VACUUM`, prune, or repair operations as a first response to a
+snapshot timeout. Those are data-affecting operations and require a backup and
+post-operation integrity/count checks.
+
 ## Hermes home and profile resolution
 
 The sidecar resolves every Hermes state path (state DB, sessions, logs,
@@ -180,9 +263,9 @@ Related endpoints: `/api/local/push/vapid-public-key` (serves the public key to
 the client), `/api/local/push/subscriptions` (store/list/delete), and
 `/api/local/push/send` (test delivery — returns the same `reason` when disabled).
 
-## Provider usage (CodexBar)
+## Provider usage (CodexBar + Nous Portal)
 
-The **Provider usage** overview card shows live cloud limits and balances for Codex, Ollama Cloud, and OpenRouter. The numbers come from [CodexBar](https://github.com/steipete/codexbar), a macOS menu-bar CLI that reads each provider's usage/credits.
+The **Provider usage** overview card shows live cloud limits and balances for Codex, Ollama Cloud, OpenRouter, and Nous Portal. CodexBar supplies the first three providers; the telemetry sidecar reads Nous Portal account data through the already-authenticated Hermes access token.
 
 ### Data flow
 
@@ -190,33 +273,68 @@ The **Provider usage** overview card shows live cloud limits and balances for Co
 CodexBar (codexbar usage --provider <p>)
         │  --json --no-color
         ▼
-provider-usage script OR telemetry sidecar
-        │  sanitized → providers[]
-        ▼
-~/.hermes/cache/mission-control-provider-usage.json
-        │
-        ▼
+provider-usage writer OR telemetry fallback
+        │  normalized → providers[]
+        ├──────────────────────────────┐
+        │                              │
+        ▼                              ▼
+CodexBar cache                 Nous Portal adapter
+~/.hermes/cache/               auth.json access_token
+mission-control-               GET /api/oauth/account
+provider-usage.json                   │
+        └──────────────┬───────────────┘
+                       ▼
 GET /api/local/provider-usage  (telemetry :8765)
-        │
-        ▼
-src/components/overview/ProviderUsagePanel.tsx  → gauges
+                       │
+                       ▼
+src/components/overview/ProviderUsagePanel.tsx
 ```
 
 The frontend polls `loadProviderUsage()` every **60s** (`ProviderUsagePanel` `useEffect` + `setInterval`).
 
-### Two ways the cache is produced
+### Local provider visibility
 
-1. **Cache-first (preferred):** the telemetry server reads `~/.hermes/cache/mission-control-provider-usage.json` (`collect_provider_usage`). If the file is present and valid, it returns it directly — no CodexBar call at request time.
-2. **Live fallback:** if the cache is missing or corrupt, the sidecar invokes `codexbar usage` for each provider on demand, sanitizes the output, and returns it.
-
-There is also a standalone script to refresh the cache outside the sidecar:
+Provider visibility is a local operator preference, not a provider implementation detail. Set an optional comma-separated allowlist in the external Mission Control environment file (`~/.hermes/mission-control.env`, or the file selected by `MISSION_CONTROL_ENV_FILE`):
 
 ```bash
-scripts/update-provider-usage.sh        # writes ~/.hermes/cache/mission-control-provider-usage.json
-scripts/local/update-provider-usage.sh  # identical variant
+MISSION_CONTROL_USAGE_PROVIDERS=codex,ollama,nous
 ```
 
-These read `MISSION_CONTROL_CACHE_DIR` (default `~/.hermes/cache`). A scheduler (macOS LaunchAgent, Linux systemd timer, or cron) can run it every 60s so the dashboard always has a fresh cache without paying a CodexBar call per request.
+The example above hides OpenRouter. Unset or blank means all built-in providers (`codex`, `ollama`, `openrouter`, `nous`) are visible. The telemetry sidecar applies the allowlist both to CodexBar collection and to the `/api/local/provider-usage` response, so hidden providers are not rendered or fetched.
+
+Field presentation can be customized independently in `~/.hermes/mission-control-usage.json` (or the path set by `MISSION_CONTROL_USAGE_CONFIG_FILE`):
+
+```json
+{
+  "providers": {
+    "codex": {
+      "hidden": {
+        "balances": ["credits_remaining"]
+      },
+      "featured": {
+        "metrics": ["reset_credits_available"]
+      }
+    }
+  }
+}
+```
+
+`hidden` removes matching field IDs from the local telemetry response; `featured` marks a matching field for prominent rendering. An absent file preserves the default display.
+
+### Data sources and cache behavior
+
+1. **CodexBar providers:** the telemetry server reads `~/.hermes/cache/mission-control-provider-usage.json` (`collect_provider_usage`). If the file is present and valid, it uses the cached CodexBar entries; otherwise it invokes CodexBar for `codex`, `ollama`, and `openrouter`.
+2. **Nous Portal:** the sidecar reads the current `providers.nous.access_token` from the active/profile-aware `auth.json` and performs a read-only `GET /api/oauth/account`. If the access token is expired, it delegates refresh to the existing `hermes portal info` command and then re-reads `auth.json`; the sidecar never implements the OAuth refresh exchange or rotates refresh tokens itself.
+3. **Provider-agnostic boundary:** every entry returned by `/api/local/provider-usage` exposes `windows`, `balances`, and `metrics`. The frontend does not depend on CodexBar's raw provider-specific fields.
+
+The standalone cache writer is still useful for refreshing the CodexBar entries outside request time:
+
+```bash
+scripts/update-provider-usage.sh        # profile-aware writer
+scripts/local/update-provider-usage.sh  # compatibility wrapper
+```
+
+These read `MISSION_CONTROL_CACHE_DIR` (defaulting to the resolved Hermes cache directory). A scheduler can run the writer every 60s so CodexBar data stays fresh without paying a CodexBar call per request. Nous data is fetched by the telemetry sidecar from the already-authenticated Portal session.
 
 ### Ollama requires the web source
 
@@ -230,39 +348,45 @@ Both the script and the sidecar force `--source web` for `ollama` (the `local/` 
 
 ### Sanitized provider shape
 
-Each provider is reduced to a small, UI-safe object:
+Each provider is reduced to the same small, UI-safe contract:
 
 ```json
 {
-  "provider": "codex",
+  "provider": "nous",
   "available": true,
-  "source": "cli",
-  "updatedAt": null,
-  "primary":   { "usedPercent": 12, "resetsAt": "...", "windowMinutes": 240 },
-  "secondary": { "usedPercent": 2,  "resetsAt": "...", "windowMinutes": 10080 },
-  "tertiary":  null,
-  "pace": null,
-  "openRouter": null,
-  "creditsRemaining": null,
-  "resetCreditsAvailable": null
+  "source": "portal-account",
+  "updatedAt": "...",
+  "stale": false,
+  "plan": "Free",
+  "renewsAt": "...",
+  "windows": [
+    { "id": "subscription", "label": "Subscription", "usedPercent": 42, "remaining": 12, "total": 20, "unit": "USD" }
+  ],
+  "balances": [
+    { "id": "topup_remaining", "label": "Top-up remaining", "value": 9.87, "currency": "USD" }
+  ],
+  "metrics": []
 }
 ```
 
-- `primary` / `secondary` / `tertiary` map to CodexBar's usage windows (session / weekly / …). The UI renders `Session` (primary) and `Weekly` (secondary) gauges.
-- `openRouter` is populated only for `openrouter` (balance + usage).
-- `creditsRemaining` / `resetCreditsAvailable` only for `codex`.
-- On error, `available` is `false` and `error` carries a short (≤240 char) message.
+- `windows` contains quota/period usage such as CodexBar's session/weekly windows or Nous's monthly subscription allowance.
+- `balances` contains monetary or credit balances.
+- `metrics` contains provider counters such as Codex reset credits.
+- On error, `available` is `false`, the arrays remain present, and `error` carries a short (≤240 character) message.
+- Nous's `stale` flag is `true` only when the Portal request failed but a previous valid in-process snapshot is being served.
 
 ### Gauges
 
-`ProviderUsagePanel.tsx` renders **two horizontal bars** per card (Session + Weekly) — not circular. Color semantics: blue normal (<60%), amber warning (≥60%), red error (≥85%). Missing data renders as `—`, never a fabricated `0%`. OpenRouter shows only its balance, with no artificial gauge.
+`ProviderUsagePanel.tsx` renders horizontal usage bars for entries in `windows` and numeric balances for entries in `balances`. Missing data renders as `—`, never a fabricated `0%`. Nous uses a billing-oriented card: subscription usage is shown as a window when the Portal supplies a monthly denominator, while subscription/top-up/total values remain explicit balances.
 
 ### Troubleshooting
 
+- **Nous Portal unavailable:** telemetry reads only the current `providers.nous.access_token` from the active Hermes `auth.json`. If it is expired, telemetry delegates the refresh to `hermes portal info`; it never implements or rotates the refresh token itself. Re-authenticate through Hermes (`hermes portal` / `hermes auth add nous`) if that delegated refresh fails.
+- **Nous endpoint changes:** the Portal account endpoint is currently used by Hermes but is not a public CodexBar usage contract. The adapter is isolated in `server/nous_portal_usage.py`; update that adapter and its fixture if Nous changes the response shape.
+- **Cache stale after a fix:** CodexBar entries are cache-first. Regenerate them with `scripts/update-provider-usage.sh`; Nous is fetched by the sidecar with its own 60-second in-process snapshot.
 - **Ollama shows empty / `—`:** likely a Keychain denial. CodexBar's web source uses Chrome cookies; a macOS Keychain prompt denial triggers a **6h cooldown**. Refresh the cookie:
   ```bash
   codexbar cookie refresh --provider ollama --allow-keychain-prompt --json
   ```
   then click **Consenti** on the Keychain prompt.
-- **Cache stale after a fix:** if the sidecar keeps serving an old cache, the cache file is read first. Regenerate it with `scripts/update-provider-usage.sh`, or delete `~/.hermes/cache/mission-control-provider-usage.json` to force the live fallback.
 - **Zombie telemetry process:** after a restart, confirm the sidecar is running from the repo path, not from a deleted inode. Use `lsof -i :8765` to check the actual process/path.

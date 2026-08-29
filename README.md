@@ -19,7 +19,7 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 - Gateway/runtime health and system metrics
 - Active model, fallback model, and agent status
 - Sessions, agents, tools, skills, configuration, logs, and cron visibility
-- Provider usage for Codex and Ollama with session/weekly gauges
+- Provider usage for Codex, Ollama, OpenRouter, and Nous Portal with quota/billing views
 - Draggable dashboard widgets with persisted layout
 
 ### Kanban operations
@@ -61,7 +61,7 @@ For the Chat internals (WebSocket transport, presence pill, persistence, streami
 
 All data flows through `/api/local/*` endpoints. In development, Vite proxies those requests to the telemetry server.
 
-See [docs/telemetry.md](docs/telemetry.md) for the full telemetry overview, including the **provider-usage** pipeline (CodexBar → cache → gauges) and its troubleshooting.
+See [docs/telemetry.md](docs/telemetry.md) for the full telemetry overview, including the **provider-usage** pipeline (CodexBar/Nous Portal → normalized cache/API → gauges) and its troubleshooting.
 
 See [docs/kanban.md](docs/kanban.md) for the Kanban board architecture, supported task/board operations, API endpoints, and desktop/mobile behavior. See [docs/tools.md](docs/tools.md) for the tool inventory source and discovery behavior.
 
@@ -129,6 +129,38 @@ Hermes home used by the running Hermes installation** — see
 This mirrors the Hermes core launcher exactly, so Mission Control keeps
 reading the correct database, sessions, logs, skills, and configuration even
 when Hermes runs from a non-default home or a named profile.
+
+### Provider usage preferences
+
+Provider usage visibility is local configuration. Use the external environment
+file selected by `MISSION_CONTROL_ENV_FILE` (by default `~/.hermes/mission-control.env`):
+
+```bash
+MISSION_CONTROL_USAGE_PROVIDERS=codex,ollama,nous
+```
+
+The allowlist above hides OpenRouter. If the variable is unset or blank, all
+built-in provider sources are enabled. To customize fields within a provider,
+create `~/.hermes/mission-control-usage.json`:
+
+```json
+{
+  "providers": {
+    "codex": {
+      "hidden": {
+        "balances": ["credits_remaining"]
+      },
+      "featured": {
+        "metrics": ["reset_credits_available"]
+      }
+    }
+  }
+}
+```
+
+`hidden` removes field IDs from the local telemetry response. `featured` gives
+matching fields prominent rendering in the Overview card. These preferences are
+read by the telemetry sidecar and do not modify Hermes Core or CodexBar.
 
 ## Linux (systemd --user)
 
