@@ -1,5 +1,7 @@
 import importlib.util
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -36,6 +38,64 @@ class MissionControlSessionOrderTests(unittest.TestCase):
             items = mission_control_agents._collect_agent_sessions(limit=2)
 
         self.assertEqual([item["sessionId"] for item in items], ["gateway-live", "gateway-recent"])
+
+    def test_identical_concurrent_requests_share_inflight_work(self):
+        payload = {"success": True, "items": [], "pagination": {"total": 0}}
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def slow_load(**kwargs):
+            calls.append(kwargs)
+            self.assertFalse(mission_control_agents._SESSION_SNAPSHOT_CACHE_LOCK.locked())
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return payload
+
+        results = []
+        with patch.object(mission_control_agents, "_load_agents_sessions_snapshot_uncached", side_effect=slow_load):
+            first = threading.Thread(target=lambda: results.append(mission_control_agents.load_agents_sessions_snapshot(limit=7)))
+            second = threading.Thread(target=lambda: results.append(mission_control_agents.load_agents_sessions_snapshot(limit=7)))
+            first.start()
+            self.assertTrue(started.wait(timeout=1))
+            second.start()
+            time.sleep(0.05)
+            self.assertEqual(len(calls), 1)
+            release.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+
+        self.assertEqual(len(results), 2)
+        self.assertIs(results[0], payload)
+        self.assertIs(results[1], payload)
+        self.assertEqual(len(calls), 1)
+
+    def test_db_discovery_uses_compact_rows(self):
+        calls = {}
+
+        class FakeDb:
+            def list_sessions_rich(self, **kwargs):
+                calls.update(kwargs)
+                return [{"id": "session-1"}]
+
+        with patch.object(mission_control_agents, "_try_get_session_db", return_value=FakeDb()):
+            self.assertEqual(mission_control_agents._iter_db_session_ids(), ["session-1"])
+
+        self.assertTrue(calls["compact_rows"])
+
+    def test_db_hydration_uses_compact_rows(self):
+        calls = {}
+
+        class FakeDb:
+            def _get_session_rich_row(self, session_id, **kwargs):
+                calls.update(kwargs)
+                return {"id": session_id}
+
+        row = mission_control_agents._get_db_rich_row(FakeDb(), "session-1")
+
+        self.assertEqual(row, {"id": "session-1"})
+        self.assertTrue(calls["compact_rows"])
+
     def test_session_item_exposes_canonical_origin_metadata(self):
         with patch.object(mission_control_agents, "_trace_mode_for_artifacts", return_value="native"):
             item = mission_control_agents._build_session_item(

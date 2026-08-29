@@ -184,7 +184,11 @@ def _iter_db_session_ids() -> list[str]:
     try:
         if db is None:
             return []
-        rows = db.list_sessions_rich(limit=2000, order_by_last_active=True)
+        rows = db.list_sessions_rich(
+            limit=2000,
+            order_by_last_active=True,
+            compact_rows=True,
+        )
         return [str(row.get("id", "")) for row in rows if row.get("id")]
     except Exception:
         return []
@@ -219,7 +223,7 @@ def _get_db_rich_row(db: Any, session_id: str) -> dict[str, Any] | None:
     if db is None:
         return None
     try:
-        row = db._get_session_rich_row(session_id)
+        row = db._get_session_rich_row(session_id, compact_rows=True)
         return row if isinstance(row, dict) else None
     except Exception:
         return None
@@ -639,6 +643,7 @@ def _load_agents_sessions_snapshot_uncached(
 _SESSION_SNAPSHOT_CACHE_TTL_SECONDS = 3.0
 _SESSION_SNAPSHOT_CACHE_LOCK = threading.Lock()
 _SESSION_SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+_SESSION_SNAPSHOT_INFLIGHT: dict[tuple[Any, ...], threading.Event] = {}
 
 
 def load_agents_sessions_snapshot(
@@ -651,9 +656,11 @@ def load_agents_sessions_snapshot(
 ) -> dict[str, Any]:
     """Return a short-lived, coalesced snapshot for polling clients.
 
-    Mission Control has several consumers polling the same endpoint. Serialize
+    Mission Control has several consumers polling the same endpoint. Coalesce
     identical snapshot work and reuse it briefly so concurrent browser tabs do
-    not multiply the SessionDB scan.
+    not multiply the SessionDB scan. The cache lock is never held while the
+    SessionDB query runs: a slow read must not block unrelated cache lookups or
+    turn one overloaded request into an API-wide access-control-looking outage.
     """
     cache_key = (
         limit,
@@ -663,24 +670,52 @@ def load_agents_sessions_snapshot(
         include_facets,
         tuple(sorted((filters or {}).items())),
     )
-    now = time.monotonic()
-    with _SESSION_SNAPSHOT_CACHE_LOCK:
-        cached = _SESSION_SNAPSHOT_CACHE.get(cache_key)
-        if cached and now - cached[0] < _SESSION_SNAPSHOT_CACHE_TTL_SECONDS:
-            return cached[1]
-        payload = _load_agents_sessions_snapshot_uncached(
-            limit=limit,
-            live_window_seconds=live_window_seconds,
-            offset=offset,
-            session_id=session_id,
-            include_facets=include_facets,
-            filters=filters,
-        )
-        _SESSION_SNAPSHOT_CACHE[cache_key] = (time.monotonic(), payload)
-        if len(_SESSION_SNAPSHOT_CACHE) > 64:
-            oldest_key = min(_SESSION_SNAPSHOT_CACHE, key=lambda key: _SESSION_SNAPSHOT_CACHE[key][0])
-            del _SESSION_SNAPSHOT_CACHE[oldest_key]
-        return payload
+    while True:
+        now = time.monotonic()
+        with _SESSION_SNAPSHOT_CACHE_LOCK:
+            cached = _SESSION_SNAPSHOT_CACHE.get(cache_key)
+            if cached and now - cached[0] < _SESSION_SNAPSHOT_CACHE_TTL_SECONDS:
+                return cached[1]
+            inflight = _SESSION_SNAPSHOT_INFLIGHT.get(cache_key)
+            if inflight is None:
+                inflight = threading.Event()
+                _SESSION_SNAPSHOT_INFLIGHT[cache_key] = inflight
+                leader = True
+            else:
+                leader = False
+
+        if not leader:
+            # Wait outside the cache lock. If the leader fails, it signals and
+            # removes the entry; the next loop iteration becomes the new leader.
+            if not inflight.wait(timeout=30):
+                raise TimeoutError("Mission Control session snapshot timed out.")
+            continue
+
+        try:
+            payload = _load_agents_sessions_snapshot_uncached(
+                limit=limit,
+                live_window_seconds=live_window_seconds,
+                offset=offset,
+                session_id=session_id,
+                include_facets=include_facets,
+                filters=filters,
+            )
+        except BaseException:
+            with _SESSION_SNAPSHOT_CACHE_LOCK:
+                if _SESSION_SNAPSHOT_INFLIGHT.get(cache_key) is inflight:
+                    del _SESSION_SNAPSHOT_INFLIGHT[cache_key]
+                    inflight.set()
+            raise
+
+        with _SESSION_SNAPSHOT_CACHE_LOCK:
+            _SESSION_SNAPSHOT_CACHE[cache_key] = (time.monotonic(), payload)
+            if len(_SESSION_SNAPSHOT_CACHE) > 64:
+                oldest_key = min(_SESSION_SNAPSHOT_CACHE, key=lambda key: _SESSION_SNAPSHOT_CACHE[key][0])
+                del _SESSION_SNAPSHOT_CACHE[oldest_key]
+            if _SESSION_SNAPSHOT_INFLIGHT.get(cache_key) is inflight:
+                del _SESSION_SNAPSHOT_INFLIGHT[cache_key]
+                inflight.set()
+            return payload
 
 
 def _query_db_token_aggregates() -> dict[str, Any] | None:
