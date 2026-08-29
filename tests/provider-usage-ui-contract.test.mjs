@@ -11,5 +11,14 @@ if (component.includes('lg:grid-cols-4')) {
 if (!component.includes('featuredMetrics')) {
   throw new Error('provider usage cards must support featured metrics');
 }
+if (!component.includes('showReset')) {
+  throw new Error('usage gauges must support provider-specific reset placement');
+}
+if (!component.includes('provider-reset-footer')) {
+  throw new Error('Codex reset must render in a card footer');
+}
+if (!component.includes("provider.provider === 'codex'")) {
+  throw new Error('Codex reset footer must be scoped to the Codex provider');
+}
 
 console.log('provider usage UI contract test passed');

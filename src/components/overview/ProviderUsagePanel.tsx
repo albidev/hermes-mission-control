@@ -78,10 +78,12 @@ function UsageGauge({
   label,
   window,
   t,
+  showReset = true,
 }: {
   label: string;
   window: MissionControlProviderUsageWindow;
   t: (key: string, values?: Record<string, string | number>) => string;
+  showReset?: boolean;
 }) {
   const value = typeof window.usedPercent === 'number'
     ? Math.max(0, Math.min(100, window.usedPercent))
@@ -96,7 +98,7 @@ function UsageGauge({
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value ?? undefined}>
         {tone ? <div className={`h-full rounded-full transition-[width] duration-300 ${tone.className ?? ''}`} style={{ width: `${value}%`, backgroundColor: tone.color || undefined }} /> : null}
       </div>
-      <span className="text-[10px] text-text-subtle truncate">{formatReset(window.resetsAt, t)}</span>
+      {showReset ? <span className="text-[10px] text-text-subtle truncate">{formatReset(window.resetsAt, t)}</span> : null}
     </div>
   );
 }
@@ -161,7 +163,13 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
             </div>
           ) : null}
           {provider.windows.map((window) => (
-            <UsageGauge key={window.id} label={windowLabel(window, t)} window={window} t={t} />
+            <UsageGauge
+              key={window.id}
+              label={windowLabel(window, t)}
+              window={window}
+              t={t}
+              showReset={provider.provider !== 'codex'}
+            />
           ))}
           {provider.renewsAt && formatRenews(provider.renewsAt, t) ? <span className="text-[10px] text-text-subtle">{formatRenews(provider.renewsAt, t)}</span> : null}
           {regularMetrics.length > 0 ? (
@@ -175,6 +183,15 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
           ) : null}
         </div>
       )}
+      {!unavailable && provider.provider === 'codex' && provider.windows.length > 0 ? (
+        <div className="provider-reset-footer border-t border-border-subtle pt-2 flex flex-wrap gap-x-3 gap-y-1">
+          {provider.windows.map((window) => (
+            <span key={window.id} className="text-[10px] text-text-subtle truncate">
+              {windowLabel(window, t)} · {formatReset(window.resetsAt, t)}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
