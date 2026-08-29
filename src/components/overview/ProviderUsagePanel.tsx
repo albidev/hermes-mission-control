@@ -217,7 +217,7 @@ export function ProviderUsagePanel() {
           <span className="text-[10px] text-text-subtle">{t('provider.live')}</span>
         </div>
       </div>
-      <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {snapshot.providers.map((provider) => <ProviderCard key={provider.provider} provider={provider} />)}
       </div>
     </Card>
