@@ -1,7 +1,7 @@
 import { useI18n } from '../../lib/i18n';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, Bell, CheckCircle, Clock, PanelLeftClose } from 'lucide-react';
+import { AlertCircle, Bell, CheckCircle, Clock, ListChecks, PanelLeftClose } from 'lucide-react';
 import {
   loadMissionControlCandidates,
   loadMissionControlVaults,
@@ -18,17 +18,22 @@ type AttentionNeededProps = {
 
 function SectionLink({
   to,
+  label,
   children,
 }: {
   to: string;
+  label: string;
   children: React.ReactNode;
 }) {
   return (
     <Link
       to={to}
-      className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-accent transition-colors"
+      className="inline-flex h-11 w-11 items-center justify-center rounded-[var(--control-radius)] text-text-muted transition-colors hover:bg-surface-sunken hover:text-accent sm:h-auto sm:w-auto sm:justify-start sm:gap-1 sm:rounded-none sm:bg-transparent"
+      aria-label={label}
+      title={label}
     >
-      {children}
+      <span aria-hidden="true">{children}</span>
+      <span className="hidden sm:inline">{label}</span>
     </Link>
   );
 }
@@ -37,7 +42,7 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
   const { t } = useI18n();
   const { storedToken } = useMissionControl();
   const [pendingCandidates, setPendingCandidates] = useState(0);
-  const [pendingByVault, setPendingByVault] = useState<Array<{ label: string; count: number }>>([]);
+  const [pendingByVault, setPendingByVault] = useState<Array<{ id: string; label: string; count: number }>>([]);
 
   const refreshPending = useCallback(async () => {
     try {
@@ -47,6 +52,7 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
         : [{ id: 'core', label: 'Core', candidates_dir: '' }];
       const snapshots = await Promise.all(
         effectiveVaults.map(async (vault) => ({
+          id: vault.id,
           label: vault.label,
           count: (await loadMissionControlCandidates(storedToken ?? undefined, 'pending', vault.id)).count,
         })),
@@ -70,6 +76,9 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
 
   const totalCount = errorAlerts.length + warnAlerts.length + pendingCandidates;
   const hasAttention = totalCount > 0;
+  const curateHref = pendingByVault.length === 1
+    ? `/curate?vault=${encodeURIComponent(pendingByVault[0].id)}`
+    : '/curate';
 
   return (
     <Card padding="none">
@@ -106,10 +115,13 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
                   </p>
                 </div>
                 <Link
-                  to="/curate"
-                  className="flex-shrink-0 rounded border border-warning/30 px-2 py-1 text-xs text-warning hover:bg-warning/10"
+                  to={curateHref}
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--control-radius)] border border-warning/30 text-warning transition-colors hover:bg-warning/10 sm:h-auto sm:w-auto sm:gap-1 sm:px-2 sm:py-1 sm:text-xs"
+                  aria-label={t('attention.review')}
+                  title={t('attention.review')}
                 >
-                  Review
+                  <ListChecks aria-hidden="true" className="h-4 w-4 sm:h-3 sm:w-3" />
+                  <span className="hidden sm:inline">{t('attention.review')}</span>
                 </Link>
               </div>
             )}
@@ -154,9 +166,11 @@ export function AttentionNeeded({ alerts }: AttentionNeededProps) {
 
         {/* Footer link */}
         <div className="flex items-center justify-between pt-2 border-t border-border-subtle">
-          <SectionLink to={pendingCandidates > 0 ? '/curate' : '/sessions'}>
-            <PanelLeftClose className="h-3 w-3" />
-            <span>{pendingCandidates > 0 ? 'Review Curate' : 'View all'}</span>
+          <SectionLink
+            to={pendingCandidates > 0 ? curateHref : '/sessions'}
+            label={pendingCandidates > 0 ? t('attention.reviewCurate') : t('attention.viewAll')}
+          >
+              {pendingCandidates > 0 ? <ListChecks className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
           </SectionLink>
           <span className="text-xs text-text-subtle">
             {goodAlerts.length > 0 ? `${goodAlerts.length} info` : ''}

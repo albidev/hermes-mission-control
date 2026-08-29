@@ -28,15 +28,21 @@ function loadOrder(ids: string[], fallback: string[]): string[] {
 
 export function DashboardGrid({ widgets }: { widgets: DashboardWidget[] }) {
   const { t } = useI18n();
-  const ids = useMemo(() => widgets.map((widget) => widget.id), [widgets]);
-  const defaultOrder = useMemo(() => widgets.map((widget) => widget.id), [widgets]);
+  const widgetIds = widgets.map((widget) => widget.id);
+  const widgetIdsSignature = widgetIds.join('\u0000');
+  const ids = useMemo(() => widgetIds, [widgetIdsSignature]);
+  const defaultOrder = ids;
   const [order, setOrder] = useState(() => loadOrder(ids, defaultOrder));
   const [arranging, setArranging] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const pointerId = useRef<number | null>(null);
 
   useEffect(() => {
-    setOrder((current) => loadOrder(ids, current.filter((id) => ids.includes(id))));
+    setOrder((current) => {
+      const currentKnown = current.filter((id) => ids.includes(id));
+      const newlyAvailable = ids.filter((id) => !currentKnown.includes(id));
+      return loadOrder(ids, [...currentKnown, ...newlyAvailable]);
+    });
   }, [ids]);
 
   useEffect(() => {
