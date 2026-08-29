@@ -457,7 +457,7 @@ export function SessionsRoute() {
   }, [activeFilterCount, tab]);
 
   return (
-    <div ref={containerRef} className="flex flex-col gap-4 sm:gap-5">
+    <div ref={containerRef} className="route-page-scroll flex flex-col gap-4 sm:gap-5">
       <PullToReloadIndicator state={pullState} />
       <Card padding="none" className="!border-0">
         <div className="flex flex-wrap items-start justify-between gap-2 px-2 pb-2 pt-2 sm:gap-4 sm:px-4 sm:pb-4 sm:pt-4">

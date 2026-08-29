@@ -271,7 +271,7 @@ export function SkillsRoute() {
   const displayedCatalogSkills = filteredCatalogSkills.slice(0, 250);
 
   return (
-    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+    <div ref={containerRef} className="route-page-scroll flex flex-col gap-6 h-full overflow-y-auto">
       <PullToReloadIndicator state={pullState} />
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

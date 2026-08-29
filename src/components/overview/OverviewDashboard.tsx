@@ -272,7 +272,7 @@ export function OverviewDashboard() {
   });
 
   return (
-    <div ref={containerRef} className="flex flex-col h-full overflow-y-auto">
+    <div ref={containerRef} className="route-page-scroll flex flex-col h-full overflow-y-auto">
       <PullToReloadIndicator state={pullState} />
       <AgentStatusBar />
       <div className="p-4 sm:p-6">

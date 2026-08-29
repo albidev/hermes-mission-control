@@ -872,7 +872,7 @@ export function KanbanRoute() {
   // =========================================================================
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden text-text" style={{ minHeight: 0 }}>
+    <div className="route-page-scroll flex flex-1 flex-col overflow-hidden text-text" style={{ minHeight: 0 }}>
       {/* Header */}
       <div className="flex flex-col gap-2 border-b border-border-subtle px-4 py-3">
         <div className="flex items-center justify-between gap-2">

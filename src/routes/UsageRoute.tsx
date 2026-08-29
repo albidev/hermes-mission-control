@@ -169,7 +169,7 @@ export function UsageRoute() {
   }, [byModel, sortKey, sortDir]);
 
   return (
-    <div ref={containerRef} className="flex flex-col gap-6 h-full overflow-y-auto">
+    <div ref={containerRef} className="route-page-scroll flex flex-col gap-6 h-full overflow-y-auto">
       <PullToReloadIndicator state={pullState} />
       {/* Header */}
       <Card padding="none">
