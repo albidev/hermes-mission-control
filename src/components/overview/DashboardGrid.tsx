@@ -18,9 +18,13 @@ function loadOrder(ids: string[], fallback: string[]): string[] {
   try {
     const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null');
     if (!Array.isArray(saved)) return fallback;
-    const known = new Set(ids);
-    const valid = saved.filter((id): id is string => typeof id === 'string' && known.has(id));
-    return [...valid, ...fallback.filter((id) => !valid.includes(id))];
+    // Keep the FULL saved order, including ids not yet rendered (widgets can
+    // appear async, e.g. the cron widget mounts only after data loads).
+    // Dropping them here would let the save effect overwrite the persisted
+    // order before the widget appears. orderedWidgets filters unknown ids.
+    const valid = saved.filter((id): id is string => typeof id === 'string');
+    const known = new Set(valid);
+    return [...valid, ...fallback.filter((id) => !known.has(id))];
   } catch {
     return fallback;
   }
@@ -28,15 +32,21 @@ function loadOrder(ids: string[], fallback: string[]): string[] {
 
 export function DashboardGrid({ widgets }: { widgets: DashboardWidget[] }) {
   const { t } = useI18n();
-  const ids = useMemo(() => widgets.map((widget) => widget.id), [widgets]);
-  const defaultOrder = useMemo(() => widgets.map((widget) => widget.id), [widgets]);
+  const widgetIds = widgets.map((widget) => widget.id);
+  const widgetIdsSignature = widgetIds.join('\u0000');
+  const ids = useMemo(() => widgetIds, [widgetIdsSignature]);
+  const defaultOrder = ids;
   const [order, setOrder] = useState(() => loadOrder(ids, defaultOrder));
   const [arranging, setArranging] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const pointerId = useRef<number | null>(null);
 
   useEffect(() => {
-    setOrder((current) => loadOrder(ids, current.filter((id) => ids.includes(id))));
+    setOrder((current) => {
+      const currentKnown = current.filter((id) => ids.includes(id));
+      const newlyAvailable = ids.filter((id) => !currentKnown.includes(id));
+      return loadOrder(ids, [...currentKnown, ...newlyAvailable]);
+    });
   }, [ids]);
 
   useEffect(() => {
