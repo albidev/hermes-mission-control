@@ -294,26 +294,14 @@ def _collect_linux_thermal_snapshot() -> Dict[str, Any]:
     }
 
 
-def collect_thermal_snapshot() -> Dict[str, Any]:
-    """Read thermal pressure from the host platform.
+def _collect_macos_thermal_snapshot() -> Dict[str, Any]:
+    """Collect macOS thermal pressure through powermetrics.
 
-    **macOS (unchanged, isolated):** ``powermetrics`` needs passwordless
-    sudo. On macOS 26 / Apple Silicon the ``smc``/``fan`` samplers are
-    gone, so the only readable surface is thermal pressure as a textual
-    level (``Nominal``/``Low``/``Moderate``/``Heavy``/``Extreme``),
-    mapped to a normalised 0-100 index for the UI bar. Returns nulls
-    when powermetrics/sudo is unavailable so the UI degrades to "—".
-
-    **Linux:** sysfs thermal zones first, then lm-sensors, then a
-    structured ``unavailable`` state (see :func:`_collect_linux_thermal_snapshot`).
-    Never requires interactive or passwordless sudo.
-
-    The result includes ``source`` identifying the telemetry source and
-    ``levelSource`` identifying which backend produced ``thermalLevel``.
+    macOS 26 on Apple Silicon exposes a textual thermal pressure level but
+    does not expose fan RPM or temperatures through the ``smc``/``fan``
+    samplers. The numeric ``thermalPressure`` value is therefore only a
+    normalised level index for the UI meter, never a temperature.
     """
-    if platform.system() == "Linux":
-        return _collect_linux_thermal_snapshot()
-
     thermal_pressure: Optional[float] = None
     thermal_level: Optional[str] = None
     level_source: Optional[str] = None
@@ -333,8 +321,8 @@ def collect_thermal_snapshot() -> Dict[str, Any]:
             error = stderr or f"powermetrics exited {proc.returncode}"
         else:
             text = proc.stdout or ""
-            # e.g. "Current pressure level: Nominal"
-            m = re.search(r"Current\s+pressure\s+level:\s*([A-Za-z]+)", text, re.IGNORECASE)
+            # macOS releases have emitted both labels over time.
+            m = re.search(r"(?:Current|Thermal)\s+pressure\s+level:\s*([A-Za-z]+)", text, re.IGNORECASE)
             if m:
                 level = m.group(1).strip().lower()
                 thermal_level = level
@@ -343,6 +331,8 @@ def collect_thermal_snapshot() -> Dict[str, Any]:
                     thermal_pressure = _THERMAL_LEVEL_INDEX[level]
                 else:
                     error = f"unknown thermal level: {level}"
+            else:
+                error = "powermetrics returned no thermal pressure level"
     except subprocess.TimeoutExpired:
         error = "powermetrics timed out"
     except FileNotFoundError:
@@ -353,16 +343,25 @@ def collect_thermal_snapshot() -> Dict[str, Any]:
     if error is not None and thermal_level is None:
         return _thermal_unavailable(error)
 
-    result: Dict[str, Any] = {
+    return {
         "fanRpm": fan_rpm,
         "fanCount": fan_count,
         "thermalPressure": thermal_pressure,
         "thermalLevel": thermal_level,
         "levelSource": level_source,
-        "source": "powermetrics" if (thermal_pressure is not None or fan_rpm is not None) else None,
+        "source": "powermetrics",
         "error": error,
     }
-    return result
+
+
+def collect_thermal_snapshot() -> Dict[str, Any]:
+    """Read thermal telemetry using the backend for the current OS."""
+    current_platform = platform.system()
+    if current_platform == "Linux":
+        return _collect_linux_thermal_snapshot()
+    if current_platform == "Darwin":
+        return _collect_macos_thermal_snapshot()
+    return _thermal_unavailable(f"unsupported platform: {current_platform or 'unknown'}")
 
 
 _USAGE_PROVIDERS = ("codex", "ollama", "openrouter")

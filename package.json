@@ -14,6 +14,7 @@
     "test:vite-config": "node tests/vite-config.test.mjs",
     "test:chat": "node --experimental-strip-types tests/chat-protocol.test.ts",
     "test:ui": "node --experimental-strip-types tests/chat-ui-contract.test.ts",
+    "test:system-health-ui": "node tests/system-health-ui-contract.test.mjs",
     "test:smoke": "bash scripts/smoke-test-telemetry.sh",
     "check:paths": "bash scripts/check-documented-paths.sh",
     "preview": "vite preview"

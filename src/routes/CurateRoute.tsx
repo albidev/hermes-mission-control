@@ -1,5 +1,6 @@
 import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, XCircle, RefreshCw, Inbox, ShieldCheck } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -29,9 +30,10 @@ function statusBadge(status: string) {
 export function CurateRoute() {
   const { t } = useI18n();
   const { storedToken } = useMissionControl();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [candidates, setCandidates] = useState<MissionControlCandidate[]>([]);
   const [vaults, setVaults] = useState<MissionControlVaultInfo[]>([]);
-  const [vault, setVault] = useState<string>('core');
+  const [vault, setVault] = useState<string>(searchParams.get('vault') || 'core');
   const [loading, setLoading] = useState(true);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
@@ -46,8 +48,14 @@ export function CurateRoute() {
         loadMissionControlCandidates(storedToken ?? undefined, undefined, v),
         loadMissionControlVaults(storedToken ?? undefined),
       ]);
+      const nextVaults = vaultsSnap.length ? vaultsSnap : [{ id: 'core', label: 'Core', candidates_dir: '' }];
+      const resolvedVault = nextVaults.some((item) => item.id === v) ? v : nextVaults[0].id;
+      if (resolvedVault !== vault) {
+        setVault(resolvedVault);
+        return;
+      }
       setCandidates(snap.candidates);
-      setVaults(vaultsSnap.length ? vaultsSnap : [{ id: 'core', label: 'Core', candidates_dir: '' }]);
+      setVaults(nextVaults);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load candidates');
     } finally {
@@ -62,6 +70,10 @@ export function CurateRoute() {
 
   const handleVaultChange = (v: string) => {
     setVault(v);
+    const nextParams = new URLSearchParams(searchParams);
+    if (v === 'core') nextParams.delete('vault');
+    else nextParams.set('vault', v);
+    setSearchParams(nextParams, { replace: true });
   };
 
   const handleApprove = async (c: MissionControlCandidate) => {

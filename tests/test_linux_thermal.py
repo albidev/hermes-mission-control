@@ -199,5 +199,48 @@ class ThermalUnavailablePayloadTests(unittest.TestCase):
         self.assertIsNone(payload["thermalLevel"])
 
 
+class PlatformThermalDispatchTests(unittest.TestCase):
+    """macOS uses pressure levels; Linux uses temperature sensors."""
+
+    def setUp(self):
+        self._original_system = local_telemetry_server.platform.system
+        self._original_run = local_telemetry_server.subprocess.run
+
+    def tearDown(self):
+        local_telemetry_server.platform.system = self._original_system
+        local_telemetry_server.subprocess.run = self._original_run
+
+    def test_macos_reads_thermal_pressure_level(self):
+        local_telemetry_server.platform.system = lambda: "Darwin"
+
+        def _fake_powermetrics(*args, **kwargs):
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout="**** Thermal pressure ****\\n\\nThermal pressure level: Nominal\\n",
+                stderr="",
+            )
+
+        local_telemetry_server.subprocess.run = _fake_powermetrics
+        result = local_telemetry_server.collect_thermal_snapshot()
+
+        self.assertEqual(result["source"], "powermetrics")
+        self.assertEqual(result["levelSource"], "powermetrics")
+        self.assertEqual(result["thermalLevel"], "nominal")
+        self.assertEqual(result["thermalPressure"], 0.0)
+        self.assertIsNone(result["fanRpm"])
+
+    def test_unsupported_platform_does_not_call_macos_backend(self):
+        local_telemetry_server.platform.system = lambda: "Windows"
+
+        def _unexpected_call(*args, **kwargs):
+            raise AssertionError("unsupported platforms must not call powermetrics")
+
+        local_telemetry_server.subprocess.run = _unexpected_call
+        result = local_telemetry_server.collect_thermal_snapshot()
+
+        self.assertEqual(result["source"], "unavailable")
+        self.assertIn("unsupported platform: Windows", result["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
