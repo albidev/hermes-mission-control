@@ -15,6 +15,7 @@ const routeFiles = [
   'SkillsRoute.tsx',
   'ConfigRoute.tsx',
   'LogsRoute.tsx',
+  'CurateRoute.tsx',
 ];
 
 assert.match(styles, /\.route-page-scroll\s*\{/);
@@ -30,5 +31,8 @@ for (const file of routeFiles) {
   const source = readFileSync(path, 'utf8');
   assert.match(source, /route-page-scroll/, `${file} must use the shared mobile scroll container`);
 }
+
+const cron = readFileSync(new URL('src/routes/CronRoute.tsx', root), 'utf8');
+assert.match(cron, /cron-job-row/, 'Cron job rows must expose a safe-area-aware final row');
 
 console.log('mobile route layout contract tests passed');

@@ -2311,6 +2311,10 @@
     padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
 
+  .cron-job-row:last-child {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
   .chat-drawer {
     width: 100vw;
     max-width: none;

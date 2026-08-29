@@ -101,7 +101,7 @@ export function CurateRoute() {
   const reviewed = candidates.filter((c) => c.status !== 'pending');
 
   return (
-    <div className="space-y-6">
+    <div className="route-page-scroll space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{t('nav.curate')}</h1>
