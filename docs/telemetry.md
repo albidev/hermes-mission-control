@@ -66,6 +66,89 @@ The Vite dev server (`vite.config.ts`) uses `host: true`, which makes it listen 
 - `host: true` is required for Tailscale/LAN access and for the bundled systemd unit (`vite --host 0.0.0.0`). For local-only work, run plain `pnpm dev` (loopback) or remove `--host` from the unit.
 - The Vite dev server is a development surface: for production, serve the built `dist/` behind a static host or reverse proxy instead of exposing the dev server.
 
+## Troubleshooting Tailscale access errors
+
+The browser message `Fetch API ... due to access control checks` is ambiguous. Diagnose the first failing layer instead of changing CORS blindly:
+
+| Observation | Layer | Meaning | Fix |
+|-------------|-------|---------|-----|
+| The frontend root returns `403` | Vite | The request `Host` is not in `allowedHosts`; the request never reaches telemetry | Add the hostname/IP to `MISSION_CONTROL_DEV_HOSTS` or `MISSION_CONTROL_ALLOWED_HOSTS`, then restart Vite |
+| Root is `200`, protected API is `401` | Telemetry auth | The bearer token is missing or differs between frontend and sidecar | Check token bootstrap/configuration without printing the secret |
+| Root and API are `200`, but Agents/Sessions/Trace time out | SessionDB read path | Concurrent snapshot requests are contending on SQLite or a shared cache lock | Restart telemetry after backend changes; use the bounded snapshot/coalescing path described below |
+| Direct telemetry works, browser API fails | Proxy/origin | Vite proxy or browser origin is wrong | Keep the frontend API base relative (`/api/local`) and test through the same URL used by the browser |
+
+### Vite host allow-list
+
+`vite.config.ts` combines the static `MISSION_CONTROL_ALLOWED_HOSTS` list with
+`MISSION_CONTROL_DEV_HOSTS`. The config is resolved as:
+
+```text
+loadEnv(.env) → process.env / service-manager environment overrides → Vite config
+```
+
+Therefore a LaunchAgent/systemd environment can override a value in `.env`.
+A process started manually from a shell may have a different allow-list than
+the supervised process. Check the actual owner and working directory before
+editing files:
+
+```bash
+lsof -nP -iTCP:5174 -sTCP:LISTEN
+ps -p <vite-pid> -o pid=,ppid=,command=
+lsof -a -p <vite-pid> -d cwd -Fn
+```
+
+After changing host configuration, restart the supervised process rather than
+only killing its child:
+
+```bash
+# macOS LaunchAgent
+launchctl kickstart -k gui/$(id -u)/ai.hermes.mission-control
+
+# Linux systemd --user
+systemctl --user restart hermes-mission-control.service
+```
+
+Verify both access forms when Tailscale is in use:
+
+```bash
+curl --max-time 5 -I https://<tailnet-hostname>/
+curl --max-time 5 https://<tailnet-hostname>/api/local/health
+```
+
+For a reverse-proxy deployment (`tailscale serve`, Caddy, or nginx), keep the
+telemetry sidecar on `127.0.0.1` and proxy through the frontend. Do **not** set
+`VITE_MISSION_CONTROL_LOCAL_API_BASE_URL` to `http://localhost:...` or
+`http://127.0.0.1:...`: those addresses resolve on the client device and create
+cross-origin failures. Use `/api/local` or leave the variable unset.
+
+### SessionDB snapshot contention
+
+The Agents, Sessions, and Trace pages can request related session snapshots at
+the same time. The sidecar must not hold `_SESSION_SNAPSHOT_CACHE_LOCK` while
+performing SessionDB I/O. `server/mission_control_agents.py` uses:
+
+- `compact_rows=True` for discovery and hydration, avoiding unnecessary
+  `system_prompt` blob reads;
+- an in-flight event per snapshot key, so identical requests share one query;
+- a short-lived result cache after the query completes.
+
+This prevents one slow SQLite read from blocking unrelated requests and being
+reported by the UI as a generic access-control/fallback error. A healthy
+SessionDB can still make a cold snapshot slower than `/health`; verify the
+HTTP status separately from latency:
+
+```bash
+sqlite3 -readonly ~/.hermes/state.db 'PRAGMA quick_check(1);'
+# Expected: ok
+
+curl --max-time 30 -H "Authorization: Bearer <token>" \
+  http://127.0.0.1:8765/api/local/mission-control/agents
+```
+
+Do not run `VACUUM`, prune, or repair operations as a first response to a
+snapshot timeout. Those are data-affecting operations and require a backup and
+post-operation integrity/count checks.
+
 ## Hermes home and profile resolution
 
 The sidecar resolves every Hermes state path (state DB, sessions, logs,
