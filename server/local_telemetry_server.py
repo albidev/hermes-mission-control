@@ -47,7 +47,7 @@ def _client_diagnostics_log() -> Path:
 
 import candidates as candidates_mod
 from nous_portal_usage import collect_nous_portal_usage
-from provider_usage_config import visible_usage_providers
+from provider_usage_config import apply_provider_display_config, visible_usage_providers
 from provider_usage_contract import normalize_cached_entry, normalize_codexbar_entry
 
 from mission_control_agents import (
@@ -397,13 +397,12 @@ def collect_provider_usage() -> Dict[str, Any]:
         pass
 
     if cached is not None:
-        providers = [
-            normalized
-            for provider in cached["providers"]
-            if (normalized := normalize_cached_entry(provider)) is not None
-            and normalized.get("provider") in visible
-            and normalized.get("provider") != "nous"
-        ]
+        providers = []
+        for provider in cached["providers"]:
+            normalized = normalize_cached_entry(provider)
+            if normalized is None or normalized.get("provider") not in visible or normalized.get("provider") == "nous":
+                continue
+            providers.append(apply_provider_display_config(normalized))
     else:
         executable = shutil.which("codexbar") or "/opt/homebrew/bin/codexbar"
         providers = []
@@ -435,7 +434,7 @@ def collect_provider_usage() -> Dict[str, Any]:
                             payload = json.loads(raw_output[start:end + 1]) if start >= 0 and end > start else None
                         except json.JSONDecodeError:
                             payload = None
-                result = _sanitize_provider_usage(provider, payload)
+                result = apply_provider_display_config(_sanitize_provider_usage(provider, payload))
                 if returncode != 0 and result.get("available"):
                     result["available"] = False
                     result["error"] = "CodexBar returned a provider error."
@@ -451,7 +450,7 @@ def collect_provider_usage() -> Dict[str, Any]:
     if "nous" in visible:
         # Nous is deliberately not sent through CodexBar. The sidecar uses the
         # access token already persisted by Hermes and never rotates a refresh token.
-        providers.append(collect_nous_portal_usage())
+        providers.append(apply_provider_display_config(collect_nous_portal_usage()))
     return {
         "schemaVersion": 1,
         "success": any(provider.get("available") for provider in providers),

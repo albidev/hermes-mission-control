@@ -113,6 +113,45 @@ class TelemetryPathResolutionTests(unittest.TestCase):
         self.assertEqual([item["provider"] for item in result["providers"]], ["codex", "nous"])
         run.assert_not_called()
 
+    def test_local_display_rules_filter_codex_balance_and_feature_reset_metric(self):
+        config = self._hermes_home / "mission-control-usage.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(
+            json.dumps({
+                "providers": {
+                    "codex": {
+                        "hidden": {"balances": ["credits_remaining"]},
+                        "featured": {"metrics": ["reset_credits_available"]},
+                    }
+                }
+            }),
+            encoding="utf-8",
+        )
+        cache = self._hermes_home / "cache" / "mission-control-provider-usage.json"
+        cache.parent.mkdir(parents=True)
+        cache.write_text(
+            json.dumps({
+                "schemaVersion": 1,
+                "available": True,
+                "providers": [{
+                    "provider": "codex",
+                    "available": True,
+                    "windows": [],
+                    "balances": [{"id": "credits_remaining", "value": 0, "unit": "credits"}],
+                    "metrics": [{"id": "reset_credits_available", "value": 1, "unit": "count"}],
+                }],
+            }),
+            encoding="utf-8",
+        )
+        os.environ["MISSION_CONTROL_USAGE_PROVIDERS"] = "codex"
+
+        result = local_telemetry_server.collect_provider_usage()
+        provider = result["providers"][0]
+
+        self.assertEqual(provider["balances"], [])
+        self.assertEqual(provider["metrics"][0]["id"], "reset_credits_available")
+        self.assertTrue(provider["metrics"][0]["featured"])
+
     def test_runtime_home_follows_central_resolver(self):
         self.assertEqual(local_telemetry_server._get_hermes_home(), self._hermes_home)
         self.assertEqual(local_telemetry_server._knowledge_core_root(), self._hermes_home.resolve())

@@ -63,6 +63,11 @@ function balanceLabel(balance: MissionControlProviderUsageBalance, t: (key: stri
   return labels[balance.id] ?? balance.label;
 }
 
+function metricLabel(metric: { id: string; label: string }, t: (key: string) => string): string {
+  if (metric.id === 'reset_credits_available') return t('provider.resetCredits');
+  return metric.label;
+}
+
 function gaugeTone(value: number): { className?: string; color: string } {
   if (value >= 85) return { className: 'bg-negative', color: '' };
   if (value >= 60) return { className: 'bg-warning', color: '' };
@@ -104,6 +109,8 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
   const primaryBalance = balances.find((balance) => balance.id === 'total_spendable' || balance.id === 'balance') ?? balances[0];
   const secondaryBalances = balances.filter((balance) => balance !== primaryBalance);
   const metrics = provider.metrics.filter((metric) => metric.value !== null && metric.value !== undefined);
+  const featuredMetrics = metrics.filter((metric) => metric.featured);
+  const regularMetrics = metrics.filter((metric) => !metric.featured);
 
   return (
     <div className="rounded-lg border border-border-subtle bg-surface/40 p-2.5 flex flex-col gap-2 min-w-0 min-h-[108px]">
@@ -123,6 +130,18 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
         </div>
       ) : (
         <div className="flex flex-1 flex-col gap-2.5">
+          {featuredMetrics.length > 0 ? (
+            <div className="rounded-md border border-sky-400/20 bg-sky-400/5 px-2.5 py-2">
+              {featuredMetrics.slice(0, 1).map((metric) => (
+                <div key={metric.id}>
+                  <span className="text-[10px] text-text-muted uppercase tracking-wide">{metricLabel(metric, t)}</span>
+                  <div className="text-2xl font-semibold tabular-nums text-sky-400">
+                    {typeof metric.value === 'boolean' ? (metric.value ? t('provider.enabled') : t('provider.disabled')) : String(metric.value)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {primaryBalance ? (
             <div>
               <span className="text-[10px] text-text-muted uppercase tracking-wide">{balanceLabel(primaryBalance, t)}</span>
@@ -145,11 +164,11 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
             <UsageGauge key={window.id} label={windowLabel(window, t)} window={window} t={t} />
           ))}
           {provider.renewsAt && formatRenews(provider.renewsAt, t) ? <span className="text-[10px] text-text-subtle">{formatRenews(provider.renewsAt, t)}</span> : null}
-          {metrics.length > 0 ? (
+          {regularMetrics.length > 0 ? (
             <div className="flex flex-wrap justify-end gap-x-2 gap-y-1">
-              {metrics.slice(0, 2).map((metric) => (
+              {regularMetrics.slice(0, 2).map((metric) => (
                 <span key={metric.id} className="text-[10px] text-text-subtle">
-                  {metric.label}: {typeof metric.value === 'boolean' ? (metric.value ? t('provider.enabled') : t('provider.disabled')) : String(metric.value)}
+                  {metricLabel(metric, t)}: {typeof metric.value === 'boolean' ? (metric.value ? t('provider.enabled') : t('provider.disabled')) : String(metric.value)}
                 </span>
               ))}
             </div>

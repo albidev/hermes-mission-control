@@ -1659,6 +1659,7 @@ export type MissionControlProviderUsageWindow = {
   remaining?: number;
   total?: number;
   unit?: string;
+  featured?: boolean;
 };
 
 export type MissionControlProviderUsageBalance = {
@@ -1667,6 +1668,7 @@ export type MissionControlProviderUsageBalance = {
   value?: number;
   currency?: string;
   unit?: string;
+  featured?: boolean;
 };
 
 export type MissionControlProviderUsageMetric = {
@@ -1674,6 +1676,7 @@ export type MissionControlProviderUsageMetric = {
   label: string;
   value?: number | string | boolean | null;
   unit?: string;
+  featured?: boolean;
 };
 
 export type MissionControlProviderUsage = {

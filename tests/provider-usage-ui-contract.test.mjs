@@ -8,5 +8,8 @@ if (!component.includes('lg:grid-cols-3')) {
 if (component.includes('lg:grid-cols-4')) {
   throw new Error('provider usage desktop grid must not use four columns');
 }
+if (!component.includes('featuredMetrics')) {
+  throw new Error('provider usage cards must support featured metrics');
+}
 
 console.log('provider usage UI contract test passed');

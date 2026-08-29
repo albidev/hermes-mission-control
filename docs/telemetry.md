@@ -219,6 +219,25 @@ MISSION_CONTROL_USAGE_PROVIDERS=codex,ollama,nous
 
 The example above hides OpenRouter. Unset or blank means all built-in providers (`codex`, `ollama`, `openrouter`, `nous`) are visible. The telemetry sidecar applies the allowlist both to CodexBar collection and to the `/api/local/provider-usage` response, so hidden providers are not rendered or fetched.
 
+Field presentation can be customized independently in `~/.hermes/mission-control-usage.json` (or the path set by `MISSION_CONTROL_USAGE_CONFIG_FILE`):
+
+```json
+{
+  "providers": {
+    "codex": {
+      "hidden": {
+        "balances": ["credits_remaining"]
+      },
+      "featured": {
+        "metrics": ["reset_credits_available"]
+      }
+    }
+  }
+}
+```
+
+`hidden` removes matching field IDs from the local telemetry response; `featured` marks a matching field for prominent rendering. An absent file preserves the default display.
+
 ### Data sources and cache behavior
 
 1. **CodexBar providers:** the telemetry server reads `~/.hermes/cache/mission-control-provider-usage.json` (`collect_provider_usage`). If the file is present and valid, it uses the cached CodexBar entries; otherwise it invokes CodexBar for `codex`, `ollama`, and `openrouter`.
