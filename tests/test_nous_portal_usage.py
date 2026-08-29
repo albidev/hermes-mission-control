@@ -161,7 +161,11 @@ class NousPortalUsageTests(unittest.TestCase):
             )
             return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-        with patch.object(nous_portal_usage.subprocess, "run", side_effect=refresh_via_cli) as run, \
+        fake_cli = self._tmp / "fake-hermes-cli"
+        fake_cli.write_text("#!/bin/sh\n", encoding="utf-8")
+
+        with patch.object(nous_portal_usage, "_hermes_cli_path", return_value=str(fake_cli)), \
+             patch.object(nous_portal_usage.subprocess, "run", side_effect=refresh_via_cli) as run, \
              patch.object(nous_portal_usage.urllib.request, "urlopen", return_value=_Response(payload)) as urlopen:
             result = nous_portal_usage.fetch_nous_portal_usage()
 
