@@ -109,7 +109,10 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
   const primaryBalance = balances.find((balance) => balance.id === 'total_spendable' || balance.id === 'balance') ?? balances[0];
   const secondaryBalances = balances.filter((balance) => balance !== primaryBalance);
   const metrics = provider.metrics.filter((metric) => metric.value !== null && metric.value !== undefined);
-  const featuredMetrics = metrics.filter((metric) => metric.featured);
+  const resetCreditMetrics = provider.provider === 'codex'
+    ? metrics.filter((metric) => metric.id === 'reset_credits_available')
+    : [];
+  const featuredMetrics = metrics.filter((metric) => metric.featured && !resetCreditMetrics.includes(metric));
   const regularMetrics = metrics.filter((metric) => !metric.featured);
 
   return (
@@ -175,6 +178,20 @@ function ProviderCard({ provider }: { provider: MissionControlProviderUsage }) {
           ) : null}
         </div>
       )}
+      {!unavailable && resetCreditMetrics.length > 0 ? (
+        <div className="provider-reset-footer border-t border-border-subtle pt-2 flex items-center justify-between gap-2">
+          {resetCreditMetrics.slice(0, 1).map((metric) => (
+            <span key={metric.id} className="text-[10px] text-text-muted uppercase tracking-wide">
+              {metricLabel(metric, t)}
+            </span>
+          ))}
+          {resetCreditMetrics.slice(0, 1).map((metric) => (
+            <span key={`${metric.id}-value`} className="text-sm font-semibold tabular-nums text-sky-400">
+              {typeof metric.value === 'boolean' ? (metric.value ? t('provider.enabled') : t('provider.disabled')) : String(metric.value)}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
