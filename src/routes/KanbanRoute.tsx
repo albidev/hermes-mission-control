@@ -893,7 +893,7 @@ export function KanbanRoute() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative flex-1 min-w-[10rem] max-w-[16rem]">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-subtle pointer-events-none" />
-            <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks…" className="w-full rounded-lg border border-border-subtle bg-surface-sunken pl-6 pr-2 py-1.5 text-[11px] text-text placeholder:text-text-subtle focus:border-border focus:outline-none" />
+            <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search tasks…" className="w-full rounded-lg border border-border-subtle bg-surface-sunken pl-6 pr-2 py-1.5 text-[11px] text-text placeholder:text-text-subtle focus:border-border focus:outline-none md:text-sm" />
           </div>
           {tenants.length > 0 ? (
             <div className="w-32">

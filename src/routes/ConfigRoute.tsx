@@ -1,10 +1,11 @@
 import { useI18n } from '../lib/i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FilePenLine, Hash, Server, Settings2 } from 'lucide-react';
+import { FilePenLine, Hash, Search, Server, Settings2 } from 'lucide-react';
 import { parse as parseYaml, parseDocument, stringify as stringifyYaml } from 'yaml';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/PageHeader';
 import { useMissionControl } from '../lib/mission-control-store';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
@@ -15,11 +16,11 @@ type PendingEdit = { path: PathSegment[]; value: unknown };
 function formatConfigValue(value: unknown) {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (value === null || value === undefined) return 'n/a';
+  if (value === null || value === undefined) return '—';
   try {
     return JSON.stringify(value);
   } catch {
-    return 'n/a';
+    return '—';
   }
 }
 
@@ -70,11 +71,27 @@ function setAtPath(root: Record<string, unknown>, path: PathSegment[], nextValue
 
 function pathLabel(path: PathSegment[]) {
   const key = String(path[path.length - 1] ?? 'field');
-  return key.replace(/[_-]+/g, ' ').trim();
+  return key
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
 function pathKey(path: PathSegment[]) {
   return path.map((segment) => String(segment)).join('.');
+}
+
+function configValueMatchesQuery(path: PathSegment[], value: unknown, query: string): boolean {
+  if (!query) return true;
+  const haystack = `${pathKey(path)} ${pathLabel(path)} ${formatConfigValue(value)}`.toLowerCase();
+  if (haystack.includes(query)) return true;
+  if (isPlainObject(value)) {
+    return Object.entries(value).some(([childKey, childValue]) => configValueMatchesQuery([...path, childKey], childValue, query));
+  }
+  if (Array.isArray(value)) {
+    return value.some((childValue, index) => configValueMatchesQuery([...path, index], childValue, query));
+  }
+  return false;
 }
 
 function MetricCard({
@@ -82,30 +99,35 @@ function MetricCard({
   label,
   value,
   hint,
+  color,
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
   hint: string;
+  color: string;
 }) {
   return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-text-muted">{label}</span>
-        <Icon className="h-4 w-4 text-text-subtle" />
+    <div className="min-w-0 rounded-lg bg-surface-sunken/35 p-3 transition-colors hover:bg-surface-sunken/50 sm:p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-text-muted">{label}</span>
+          <p className="mt-1 truncate text-xl font-semibold text-text tabular-nums">{value}</p>
+          <p className="mt-1 truncate text-[11px] leading-relaxed text-text-subtle">{hint}</p>
+        </div>
+        <Icon className={`h-[18px] w-[18px] shrink-0 ${color}`} />
       </div>
-      <p className="text-sm font-semibold text-text mt-2 break-all">{value}</p>
-      <p className="text-xs text-text-subtle mt-1">{hint}</p>
-    </Card>
+    </div>
   );
 }
 
 export function ConfigRoute() {
   const { t } = useI18n();
-  const { config, theme, resolvedTheme, snapshot, reloadConfig, saveConfig } = useMissionControl();
+  const { config, snapshot, reloadConfig, saveConfig } = useMissionControl();
   const [draft, setDraft] = useState(config.content);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [yamlError, setYamlError] = useState<string | null>(null);
   const [editorMode, setEditorMode] = useState<'yaml' | 'form'>('form');
   const [formState, setFormState] = useState<Record<string, unknown>>(config.config ?? {});
   const [complexDrafts, setComplexDrafts] = useState<Record<string, string>>({});
@@ -126,16 +148,16 @@ export function ConfigRoute() {
         setFormState(isPlainObject(updated.config) ? (updated.config as Record<string, unknown>) : {});
         setComplexDrafts({});
         setPendingEdits({});
-        setStatus(`Reloaded ${updated.path}.`);
+        setStatus(t('config.reloaded', { path: updated.path }));
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : 'Failed to reload config.');
+        setStatus(error instanceof Error ? error.message : t('config.failedReload'));
       } finally {
         setSaving(false);
       }
     },
   });
 
-  const dirty = useMemo(() => draft !== config.content || Object.keys(pendingEdits).length > 0, [draft, config.content, pendingEdits]);
+  const dirty = useMemo(() => draft !== config.content || Object.keys(pendingEdits).length > 0 || Object.keys(complexDrafts).length > 0, [draft, config.content, pendingEdits, complexDrafts]);
   const formSections = useMemo(() => Object.entries(formState ?? {}), [formState]);
   const changedPathKeys = useMemo(() => new Set(Object.keys(pendingEdits)), [pendingEdits]);
   const searchLower = useMemo(() => searchQuery.trim().toLowerCase(), [searchQuery]);
@@ -147,12 +169,20 @@ export function ConfigRoute() {
     }
     return counts;
   }, [pendingEdits]);
+  const visibleFormSections = useMemo(
+    () => formSections.filter(([sectionKey, sectionValue]) => {
+      if (showChangedOnly) return (changedSectionCounts[sectionKey] ?? 0) > 0;
+      return !searchLower || configValueMatchesQuery([sectionKey], sectionValue, searchLower);
+    }),
+    [changedSectionCounts, formSections, searchLower, showChangedOnly],
+  );
 
   useEffect(() => {
     setDraft(config.content);
     setFormState(isPlainObject(config.config) ? (config.config as Record<string, unknown>) : {});
     setComplexDrafts({});
     setPendingEdits({});
+    setYamlError(null);
     setSearchQuery('');
     setShowChangedOnly(false);
   }, [config]);
@@ -161,11 +191,24 @@ export function ConfigRoute() {
     setSectionOpen((previous) => {
       const next: Record<string, boolean> = {};
       for (const [section] of formSections) {
-        next[section] = previous[section] ?? true;
+        next[section] = previous[section] ?? section === formSections[0]?.[0];
       }
       return next;
     });
   }, [formSections]);
+
+  useEffect(() => {
+    if (!searchLower) return;
+    setSectionOpen((previous) => {
+      const next = { ...previous };
+      for (const [sectionKey, sectionValue] of formSections) {
+        if (configValueMatchesQuery([sectionKey], sectionValue, searchLower)) {
+          next[sectionKey] = true;
+        }
+      }
+      return next;
+    });
+  }, [formSections, searchLower]);
 
   const updateFormValue = (path: PathSegment[], nextValue: unknown) => {
     const editKey = pathKey(path);
@@ -179,13 +222,19 @@ export function ConfigRoute() {
   const handleYamlChange = (nextYaml: string) => {
     setDraft(nextYaml);
     try {
-      const parsed = parseYaml(nextYaml);
+      const document = parseDocument(nextYaml);
+      if (document.errors.length > 0) {
+        setYamlError(document.errors[0]?.message ?? t('config.yamlInvalid'));
+        return;
+      }
+      setYamlError(null);
+      const parsed = document.toJSON();
       if (isPlainObject(parsed)) {
         setFormState(parsed);
         setPendingEdits({});
       }
-    } catch {
-      // Keep the current schema form state while the user types invalid YAML.
+    } catch (error) {
+      setYamlError(error instanceof Error ? error.message : t('config.yamlInvalid'));
     }
   };
 
@@ -195,10 +244,23 @@ export function ConfigRoute() {
     try {
       let payloadYaml = draft;
 
+      if (editorMode === 'yaml' && yamlError) {
+        throw new Error(t('config.yamlParseErrors'));
+      }
+
+      if (editorMode === 'form' && Object.keys(complexDrafts).length > 0) {
+        for (const text of Object.values(complexDrafts)) {
+          const parsed = parseYaml(text);
+          if (!Array.isArray(parsed)) {
+            throw new Error(t('config.fixArrayBeforeSave'));
+          }
+        }
+      }
+
       if (editorMode === 'form' && Object.keys(pendingEdits).length > 0) {
         const doc = parseDocument(draft);
         if (doc.errors.length > 0) {
-          throw new Error('Current YAML has parse errors. Fix YAML mode first, then save form changes.');
+          throw new Error(t('config.yamlParseErrors'));
         }
 
         for (const edit of Object.values(pendingEdits)) {
@@ -213,9 +275,9 @@ export function ConfigRoute() {
       setFormState(isPlainObject(updated.config) ? (updated.config as Record<string, unknown>) : {});
       setComplexDrafts({});
       setPendingEdits({});
-      setStatus(`Saved ${updated.path}.`);
+      setStatus(t('config.saved', { path: updated.path }));
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Failed to save config.');
+      setStatus(error instanceof Error ? error.message : t('config.failedSave'));
     } finally {
       setSaving(false);
     }
@@ -230,9 +292,10 @@ export function ConfigRoute() {
       setFormState(isPlainObject(updated.config) ? (updated.config as Record<string, unknown>) : {});
       setComplexDrafts({});
       setPendingEdits({});
-      setStatus(`Reloaded ${updated.path}.`);
+      setYamlError(null);
+      setStatus(t('config.reloaded', { path: updated.path }));
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Failed to reload config.');
+      setStatus(error instanceof Error ? error.message : t('config.failedReload'));
     } finally {
       setSaving(false);
     }
@@ -243,7 +306,8 @@ export function ConfigRoute() {
     setFormState(isPlainObject(config.config) ? (config.config as Record<string, unknown>) : {});
     setComplexDrafts({});
     setPendingEdits({});
-    setStatus('Reset draft to the last loaded file.');
+    setYamlError(null);
+    setStatus(t('config.resetNote'));
   };
 
   const sectionDomId = (section: string) => `config-section-${section.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -335,13 +399,21 @@ export function ConfigRoute() {
             onChange={(event) => {
               const nextText = event.target.value;
               setComplexDrafts((previous) => ({ ...previous, [key]: nextText }));
+              try {
+                const parsed = parseYaml(nextText);
+                if (Array.isArray(parsed)) {
+                  updateFormValue(path, parsed);
+                }
+              } catch {
+                // Keep the text draft visible until the YAML becomes valid.
+              }
             }}
             onBlur={(event) => {
               const nextText = event.target.value;
               try {
                 const parsed = parseYaml(nextText);
                 if (!Array.isArray(parsed)) {
-                  throw new Error('Expected an array.');
+                  throw new Error(t('config.expectedArray'));
                 }
                 updateFormValue(path, parsed);
                 setComplexDrafts((previous) => {
@@ -351,7 +423,7 @@ export function ConfigRoute() {
                 });
                 setStatus(null);
               } catch (error) {
-                setStatus(error instanceof Error ? `${label}: ${error.message}` : `${label}: invalid YAML array.`);
+                setStatus(error instanceof Error ? t('config.invalidArray', { label, error: error.message }) : t('config.invalidArray', { label, error: t('config.expectedArray') }));
               }
             }}
           />
@@ -379,7 +451,7 @@ export function ConfigRoute() {
               checked={value}
               onChange={(event) => updateFormValue(path, event.target.checked)}
             />
-            {value ? 'enabled' : 'disabled'}
+            {value ? t('config.enabled') : t('config.disabled')}
           </label>
         </div>
       );
@@ -469,166 +541,214 @@ export function ConfigRoute() {
   };
 
   return (
-    <div ref={containerRef} className="route-page-scroll flex flex-col gap-6 h-full overflow-y-auto">
+    <div ref={containerRef} className="route-page-scroll flex h-full min-w-0 flex-col gap-5 overflow-y-auto sm:gap-6">
       <PullToReloadIndicator state={pullState} />
-      <Card padding="none">
-        <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">{t('nav.config')}</span>
-            <h2 className="text-sm font-semibold text-text">{t('config.title')}</h2>
-          </div>
-          <Badge variant={config.available ? 'positive' : 'warning'}>
-            {config.available ? 'live endpoint' : 'fallback'}
-          </Badge>
-        </div>
 
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-          <MetricCard icon={FilePenLine} label="Path" value={config.path} hint={config.exists ? 'file exists' : 'missing'} />
-          <MetricCard icon={Hash} label="Hash" value={config.hash || 'n/a'} hint="optimistic lock token" />
-          <MetricCard icon={Settings2} label="Sections" value={String(formSections.length)} hint="top-level keys" />
-          <MetricCard icon={Server} label="Gateway" value={snapshot.gatewayStatus} hint={`theme ${theme} · ${resolvedTheme}`} />
+      <PageHeader
+        eyebrow={t('config.eyebrow')}
+        title={t('config.title')}
+        description={t('config.description')}
+        meta={(
+          <div className="flex items-center gap-2">
+            <Badge variant={config.available ? 'positive' : 'warning'}>
+              {config.available ? t('config.liveEndpoint') : t('config.fallback')}
+            </Badge>
+            <span className="hidden text-xs text-text-subtle sm:inline">{snapshot.gatewayStatus}</span>
+          </div>
+        )}
+      />
+
+      <Card padding="none" className="!border-0">
+        <div className="grid grid-cols-2 gap-2.5 p-3 sm:gap-3 sm:p-4 xl:grid-cols-4">
+          <MetricCard
+            icon={FilePenLine}
+            label={t('config.file')}
+            value={config.path}
+            hint={config.exists ? t('config.fileExists') : t('config.missing')}
+            color="text-sky-400"
+          />
+          <MetricCard
+            icon={Hash}
+            label={t('config.hash')}
+            value={config.hash ? config.hash.slice(0, 12) : '—'}
+            hint={t('config.lockToken')}
+            color="text-violet-400"
+          />
+          <MetricCard
+            icon={Settings2}
+            label={t('config.sections')}
+            value={String(formSections.length)}
+            hint={t('config.topLevelKeys')}
+            color="text-amber-400"
+          />
+          <MetricCard
+            icon={Server}
+            label={t('config.changes')}
+            value={String(Object.keys(pendingEdits).length)}
+            hint={dirty ? t('config.unsavedChanges') : t('config.inSync')}
+            color={dirty ? 'text-amber-400' : 'text-emerald-400'}
+          />
         </div>
       </Card>
 
-      <div className="flex items-center justify-between gap-3">
-        <div className="inline-flex items-center rounded-lg border border-border-subtle bg-surface p-1">
-          <button
-            type="button"
-            className={`px-3 py-1.5 text-xs rounded-md transition ${editorMode === 'form' ? 'bg-surface-elevated text-text' : 'text-text-muted hover:text-text'}`}
-            onClick={() => setEditorMode('form')}
-          >
-            Form mode
-          </button>
-          <button
-            type="button"
-            className={`px-3 py-1.5 text-xs rounded-md transition ${editorMode === 'yaml' ? 'bg-surface-elevated text-text' : 'text-text-muted hover:text-text'}`}
-            onClick={() => setEditorMode('yaml')}
-          >
-            YAML mode
-          </button>
+      <div className="config-editor-mode-bar sticky top-0 z-20 -mx-1 px-2 py-2 sm:-mx-0 sm:px-3">
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div role="tablist" aria-label={t('config.editor')} className="flex min-h-11 shrink-0 flex-nowrap gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
+            <Button
+              className="shrink-0 whitespace-nowrap"
+              type="button"
+              role="tab"
+              aria-selected={editorMode === 'form'}
+              size="sm"
+              variant={editorMode === 'form' ? 'primary' : 'ghost'}
+              onClick={() => setEditorMode('form')}
+            >
+              {t('config.formMode')}
+            </Button>
+            <Button
+              className="shrink-0 whitespace-nowrap"
+              type="button"
+              role="tab"
+              aria-selected={editorMode === 'yaml'}
+              size="sm"
+              variant={editorMode === 'yaml' ? 'primary' : 'ghost'}
+              onClick={() => setEditorMode('yaml')}
+            >
+              {t('config.yamlMode')}
+            </Button>
+          </div>
         </div>
-        <span className="text-xs text-text-subtle">Showing {editorMode === 'yaml' ? 'raw YAML editor' : 'schema-driven form'}</span>
       </div>
 
       {editorMode === 'yaml' ? (
-        <Card padding="none">
-          <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-            <div className="flex flex-col gap-0.5">
+        <Card padding="none" className="!border-0">
+          <div className="flex flex-col gap-2 border-b border-border px-4 pb-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <span className="eyebrow">{t('config.editor')}</span>
-              <h3 className="text-sm font-semibold text-text">config.yaml</h3>
+              <h3 className="mt-0.5 truncate text-sm font-semibold text-text">config.yaml</h3>
+              <p className="mt-1 truncate text-xs text-text-subtle">{t('config.hash')}: {config.hash || '—'}</p>
             </div>
-            {dirty ? <Badge variant="warning">{t('config.unsavedChanges')}</Badge> : <Badge variant="default">{t('config.inSync')}</Badge>}
+            <Badge variant={yamlError ? 'warning' : dirty ? 'warning' : 'default'}>
+              {yamlError ? t('config.yamlInvalid') : dirty ? t('config.unsavedChanges') : t('config.inSync')}
+            </Badge>
           </div>
 
-          <form className="p-4 flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void handleSave(); }}>
+          <div className="flex flex-col gap-2 p-3 sm:p-4">
             <textarea
-              className="w-full mobile-config-editor min-h-[620px] rounded-lg border border-border bg-surface p-3 text-sm font-mono text-text resize-y"
+              aria-label={t('config.rawYamlEditor')}
+              className="mobile-config-editor min-h-[420px] w-full resize-y rounded-lg border border-border bg-surface p-3 text-sm font-mono text-text outline-none focus:border-accent sm:min-h-[620px]"
               value={draft}
               onChange={(event) => handleYamlChange(event.target.value)}
               spellCheck={false}
             />
-
-            {status ? <p className="text-xs text-text-muted">{status}</p> : null}
-
-            <div className="flex flex-wrap gap-2">
-              <Button type="submit" variant="primary" disabled={saving || !dirty} loading={saving}>{t('config.save')}</Button>
-              <Button type="button" variant="secondary" onClick={() => void handleReload()} disabled={saving}>{t('config.reload')}</Button>
-              <Button type="button" variant="ghost" onClick={handleReset} disabled={saving || !dirty}>{t('config.resetDraft')}</Button>
-            </div>
-          </form>
+            <p className={`text-xs ${yamlError ? 'text-warning' : 'text-text-subtle'}`}>
+              {yamlError ? `${t('config.yamlInvalid')}: ${yamlError}` : t('config.yamlValid')}
+            </p>
+          </div>
         </Card>
       ) : (
-        <Card padding="none">
-          <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-            <div>
+        <Card padding="none" className="!border-0">
+          <div className="flex flex-col gap-2 border-b border-border px-4 pb-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <span className="eyebrow">{t('config.schemaDrivenForm')}</span>
-              <h3 className="text-sm font-semibold text-text mt-0.5">{t('config.allSections')}</h3>
+              <h3 className="mt-0.5 text-sm font-semibold text-text">{t('config.allSections')}</h3>
+              <p className="mt-1 text-xs leading-relaxed text-text-subtle">{t('config.formPatched')}</p>
             </div>
-            {dirty ? <Badge variant="warning">{t('config.unsavedChanges')}</Badge> : <Badge variant="default">{t('config.inSync')}</Badge>}
           </div>
 
-          <div className="px-4 pt-2 text-xs text-text-subtle">
-            Form edits are patched onto the original YAML on save to preserve existing spacing/comments as much as possible.
-            {Object.keys(pendingEdits).length > 0 ? ` Pending changes: ${Object.keys(pendingEdits).length}.` : ''}
+          <div className="flex flex-col gap-2 border-b border-border px-3 py-3 sm:flex-row sm:items-center sm:px-4">
+            <label className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-subtle" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder={t('config.searchKeys')}
+                aria-label={t('config.searchKeys')}
+                className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm text-text outline-none focus:border-accent"
+              />
+            </label>
+            <div className="flex shrink-0 items-center gap-2 overflow-x-auto">
+              <Button type="button" size="sm" variant={showChangedOnly ? 'primary' : 'secondary'} onClick={() => setShowChangedOnly((previous) => !previous)}>
+                {showChangedOnly ? t('config.showAllFields') : t('config.showChangedOnly')}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setAllSectionsOpen(true)}>{t('config.expandAll')}</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setAllSectionsOpen(false)}>{t('config.collapseAll')}</Button>
+            </div>
           </div>
 
-          <div className="px-4 pt-3 pb-2 border-b border-border-subtle flex flex-wrap items-center gap-2">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder={t('config.searchKeys')}
-              className="min-w-[220px] flex-1 rounded-md border border-border bg-surface px-3 py-2 text-xs text-text"
-            />
-            <Button type="button" variant={showChangedOnly ? 'primary' : 'secondary'} onClick={() => setShowChangedOnly((previous) => !previous)}>
-              {showChangedOnly ? 'Show all fields' : 'Show changed only'}
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => setAllSectionsOpen(true)}>{t('config.expandAll')}</Button>
-            <Button type="button" variant="ghost" onClick={() => setAllSectionsOpen(false)}>{t('config.collapseAll')}</Button>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-4 p-4">
-            <Card className="xl:sticky xl:top-4 h-fit" padding="none">
-              <div className="px-3 py-2 border-b border-border-subtle text-xs font-semibold text-text">{t('knowledge.sections')}</div>
-              <div className="max-h-[520px] overflow-y-auto p-2 flex flex-col gap-1">
-                {formSections.map(([sectionKey, sectionValue]) => {
-                  const content = renderField([sectionKey], sectionValue, 0);
-                  if (!content) return null;
+          <div className="grid min-w-0 grid-cols-1 gap-4 p-3 sm:p-4 xl:grid-cols-[240px_minmax(0,1fr)]">
+            <Card className="h-fit min-w-0 !border-0 xl:sticky xl:top-16" padding="none">
+              <div className="border-b border-border px-3 py-2 text-xs font-semibold text-text">{t('config.sectionsNav')}</div>
+              <div className="flex max-w-full flex-nowrap gap-1 overflow-x-auto p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden xl:flex-col xl:overflow-visible">
+                {visibleFormSections.map(([sectionKey]) => {
                   const changes = changedSectionCounts[sectionKey] ?? 0;
                   const active = sectionOpen[sectionKey] !== false;
                   return (
                     <button
                       key={`nav-${sectionKey}`}
                       type="button"
-                      className={`w-full text-left rounded-md border px-2 py-2 text-xs transition ${active ? 'border-border bg-surface-elevated text-text' : 'border-border-subtle text-text-muted hover:text-text'}`}
+                      className={`flex shrink-0 items-center justify-between gap-2 rounded-md border px-2 py-2 text-left text-xs transition xl:w-full ${active ? 'border-border bg-surface-elevated text-text' : 'border-border-subtle text-text-muted hover:text-text'}`}
                       onClick={() => jumpToSection(sectionKey)}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate">{pathLabel([sectionKey])}</span>
-                        {changes > 0 ? <Badge variant="warning">{changes}</Badge> : null}
-                      </div>
+                      <span className="truncate">{pathLabel([sectionKey])}</span>
+                      {changes > 0 ? <Badge variant="warning">{changes}</Badge> : null}
                     </button>
                   );
                 })}
               </div>
             </Card>
 
-            <div className="max-h-[760px] overflow-y-auto flex flex-col gap-3 pr-1">
-              {formSections.map(([sectionKey, sectionValue]) => {
+            <div className="flex min-w-0 flex-col gap-3">
+              {visibleFormSections.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border-subtle px-4 py-8 text-center text-sm text-text-muted">
+                  {t('config.noMatches')}
+                </div>
+              ) : null}
+              {visibleFormSections.map(([sectionKey, sectionValue]) => {
                 const content = renderField([sectionKey], sectionValue, 0);
                 if (!content) return null;
                 const changes = changedSectionCounts[sectionKey] ?? 0;
                 const open = sectionOpen[sectionKey] !== false;
                 return (
-                  <section id={sectionDomId(sectionKey)} key={sectionKey} className="rounded-lg border border-border-subtle bg-surface-elevated/10">
+                  <section id={sectionDomId(sectionKey)} key={sectionKey} className="min-w-0 rounded-lg border border-border-subtle bg-surface-elevated/10">
                     <button
                       type="button"
-                      className="w-full px-4 py-3 border-b border-border-subtle flex items-center justify-between text-left"
+                      aria-expanded={open}
+                      className="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-3 text-left transition-colors hover:bg-surface-elevated/30 sm:px-4"
                       onClick={() => toggleSection(sectionKey)}
                     >
-                      <span className="text-xs font-semibold uppercase tracking-wide text-text">{pathLabel([sectionKey])}</span>
-                      <span className="flex items-center gap-2">
-                        {changes > 0 ? <Badge variant="warning">{changes} changed</Badge> : null}
-                        <span className="text-[11px] text-text-subtle">{open ? 'collapse' : 'expand'}</span>
+                      <span className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-text">{pathLabel([sectionKey])}</span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {changes > 0 ? <Badge variant="warning">{t('config.changedCount', { count: changes })}</Badge> : null}
+                        <span className="text-[11px] text-text-subtle">{open ? t('config.collapse') : t('config.expand')}</span>
                       </span>
                     </button>
-                    {open ? <div className="p-3 flex flex-col gap-3">{content}</div> : null}
+                    {open ? <div className="flex min-w-0 flex-col gap-3 border-t border-border p-3 sm:p-4">{content}</div> : null}
                   </section>
                 );
               })}
             </div>
           </div>
-
-          <div className="px-4 pb-4 pt-2 border-t border-border-subtle">
-            {status ? <p className="text-xs text-text-muted mb-3">{status}</p> : null}
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="primary" disabled={saving || !dirty} loading={saving} onClick={() => void handleSave()}>{t('config.save')}</Button>
-              <Button type="button" variant="secondary" onClick={() => void handleReload()} disabled={saving}>{t('config.reload')}</Button>
-              <Button type="button" variant="ghost" onClick={handleReset} disabled={saving || !dirty}>{t('config.resetDraft')}</Button>
-            </div>
-          </div>
         </Card>
       )}
+
+      <div className="config-action-bar sticky bottom-3 z-30 flex min-w-0 shrink-0 flex-col gap-2 overflow-hidden rounded-xl border border-border-subtle bg-surface/95 p-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <p className="min-w-0 truncate text-xs text-text-subtle">
+          {status ?? (dirty ? t('config.unsavedChanges') : t('config.inSync'))}
+        </p>
+        <div className="config-action-bar-buttons -mx-1 flex min-w-0 max-w-[calc(100%+0.5rem)] shrink-0 flex-nowrap gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:max-w-none sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+          <Button className="shrink-0 whitespace-nowrap" type="button" variant="primary" disabled={saving || !dirty || Boolean(yamlError)} loading={saving} onClick={() => void handleSave()}>
+            {t('config.save')}
+          </Button>
+          <Button className="shrink-0 whitespace-nowrap" type="button" variant="secondary" onClick={() => void handleReload()} disabled={saving}>
+            {t('config.reload')}
+          </Button>
+          <Button className="shrink-0 whitespace-nowrap" type="button" variant="ghost" onClick={handleReset} disabled={saving || !dirty}>
+            {t('config.resetDraft')}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/Modal';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
+import { PageHeader } from '../components/PageHeader';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { useI18n } from '../lib/i18n';
 import { useMissionControl } from '../lib/mission-control-store';
@@ -309,7 +310,17 @@ function CronDetailModal({ job, onClose }: { job: MissionControlCronJob; onClose
 }
 
 function Metric({ label, value, icon: Icon }: { label: string; value: string; icon: typeof Timer }) {
-  return <Card className="p-4"><div className="flex items-center justify-between text-xs text-text-muted"><span>{label}</span><Icon className="h-4 w-4 text-text-subtle" /></div><p className="mt-2 text-lg font-semibold text-text">{value}</p></Card>;
+  return (
+    <div className="rounded-lg bg-surface-sunken/35 p-3 transition-colors hover:bg-surface-sunken/50 sm:p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">{label}</p>
+          <p className="mt-1 text-xl font-semibold text-text tabular-nums">{value}</p>
+        </div>
+        <Icon className="h-[18px] w-[18px] shrink-0 text-text-subtle" />
+      </div>
+    </div>
+  );
 }
 
 const CRON_POLLING_ENABLED = false; // Temporary regression isolation; do not disable Hermes cron jobs.
@@ -405,17 +416,48 @@ export function CronRoute() {
   };
 
   return (
-    <div ref={containerRef} className="route-page-scroll flex h-full flex-col gap-6 overflow-y-auto">
+    <div ref={containerRef} className="route-page-scroll flex h-full flex-col gap-5 overflow-y-auto sm:gap-6">
       <PullToReloadIndicator state={pullState} />
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div><span className="eyebrow">{t('cron.eyebrow')}</span><h2 className="mt-1 text-xl font-semibold text-text">{t('cron.title')}</h2><p className="mt-1 text-sm text-text-muted">{t('cron.subtitle')}</p></div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="ghost" loading={refreshing} icon={<RefreshCw className="h-4 w-4" />} onClick={() => refresh()}>{t('common.refresh')}</Button>
-          <Button size="sm" variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setEditingJob(null)}>{t('cron.actions.new')}</Button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={t('cron.eyebrow')}
+        title={t('cron.title')}
+        description={t('cron.subtitle')}
+        actions={(
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              iconOnly
+              loading={refreshing}
+              icon={<RefreshCw className="h-4 w-4" />}
+              onClick={() => refresh()}
+              aria-label={t('common.refresh')}
+              title={t('common.refresh')}
+            />
+            <Button
+              size="sm"
+              variant="primary"
+              iconOnly
+              icon={<Plus className="h-4 w-4" />}
+              className="sm:w-auto sm:min-w-0 sm:px-2.5"
+              onClick={() => setEditingJob(null)}
+              aria-label={t('cron.actions.new')}
+              title={t('cron.actions.new')}
+            >
+              <span className="hidden sm:inline">{t('cron.actions.new')}</span>
+            </Button>
+          </div>
+        )}
+      />
       {error ? <div className="flex items-center justify-between gap-3 rounded-lg border border-negative/30 bg-negative-subtle px-3 py-2 text-sm text-negative"><span>{error}</span><button type="button" onClick={() => setError(null)} aria-label={t('common.dismiss')}><X className="h-4 w-4" /></button></div> : null}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4"><Metric label={t('cron.metrics.total')} value={String(jobs.length)} icon={Clock3} /><Metric label={t('cron.metrics.enabled')} value={String(counters.enabled)} icon={Play} /><Metric label={t('cron.metrics.paused')} value={String(counters.paused)} icon={Pause} /><Metric label={t('cron.metrics.failed')} value={String(counters.failed)} icon={RotateCcw} /></div>
+      <Card padding="none" className="!border-0">
+        <div className="grid grid-cols-2 gap-2.5 p-3 sm:gap-3 sm:p-4 xl:grid-cols-4">
+          <Metric label={t('cron.metrics.total')} value={String(jobs.length)} icon={Clock3} />
+          <Metric label={t('cron.metrics.enabled')} value={String(counters.enabled)} icon={Play} />
+          <Metric label={t('cron.metrics.paused')} value={String(counters.paused)} icon={Pause} />
+          <Metric label={t('cron.metrics.failed')} value={String(counters.failed)} icon={RotateCcw} />
+        </div>
+      </Card>
       <Card padding="none">
         <div className="border-b border-border-subtle px-4 pb-3 pt-4"><span className="eyebrow">{t('cron.list.eyebrow')}</span><h3 className="mt-0.5 text-sm font-semibold text-text">{t('cron.list.title')}</h3></div>
         {loading ? <div className="px-4 py-10 text-center text-sm text-text-muted">{t('cron.loading')}</div> : jobs.length === 0 ? <div className="px-4 py-10 text-center text-sm text-text-muted">{t('cron.empty')}</div> : <div className="divide-y divide-border-subtle">{orderedJobs.map((job) => {
@@ -423,8 +465,8 @@ export function CronRoute() {
           const paused = isCronPaused(job);
           return <div key={job.id} className="cron-job-row flex flex-col gap-3 px-4 py-4 xl:flex-row xl:items-center xl:gap-5">
             <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h4 className="truncate text-sm font-medium text-text">{job.label}</h4><Badge variant={statusVariant(job)}>{statusLabel(job, t)}</Badge></div><p className="mt-1 truncate font-mono text-xs text-text-muted">{job.scheduleDisplay}</p><p className="mt-1 text-xs text-text-subtle">{job.id}</p></div>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-text-muted sm:grid-cols-4 xl:w-[30rem]"><div><span className="block text-text-subtle">{t('cron.list.next')}</span><span>{formatRelative(job.nextRunAt)}</span></div><div><span className="block text-text-subtle">{t('cron.list.last')}</span><span>{formatRelative(job.lastRunAt)}</span></div><div><span className="block text-text-subtle">{t('cron.list.delivery')}</span><span className="max-w-28 truncate block">{job.deliver || 'local'}</span></div><div><span className="block text-text-subtle">{t('cron.list.mode')}</span><span>{job.noAgent ? t('cron.status.script') : t('cron.status.agent')}</span></div></div>
-            <div className="flex flex-wrap items-center gap-1.5 xl:justify-end"><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.detail')} aria-label={t('cron.actions.detail')} onClick={() => openDetail(job)}>{detailLoading && selectedJob?.id === job.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.edit')} aria-label={t('cron.actions.edit')} onClick={() => setEditingJob(job)}><Pencil className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.run')} aria-label={t('cron.actions.run')} loading={busy} onClick={() => runAction(job, 'run')}><Play className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={paused ? t('cron.actions.resume') : t('cron.actions.pause')} aria-label={paused ? t('cron.actions.resume') : t('cron.actions.pause')} loading={busy} onClick={() => runAction(job, paused ? 'resume' : 'pause')}>{paused ? <RotateCcw className="h-4 w-4" /> : <Pause className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="danger" title={t('cron.actions.delete')} aria-label={t('cron.actions.delete')} loading={busy} onClick={() => runAction(job, 'delete')}><Trash2 className="h-4 w-4" /></Button></div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-text-muted sm:grid-cols-4 xl:w-[30rem]"><div><span className="block text-text-subtle">{t('cron.list.next')}</span><span>{formatRelative(job.nextRunAt)}</span></div><div className="text-right sm:text-left"><span className="block text-text-subtle">{t('cron.list.last')}</span><span>{formatRelative(job.lastRunAt)}</span></div><div><span className="block text-text-subtle">{t('cron.list.delivery')}</span><span className="max-w-28 truncate block">{job.deliver || 'local'}</span></div><div className="text-right sm:text-left"><span className="block text-text-subtle">{t('cron.list.mode')}</span><span>{job.noAgent ? t('cron.status.script') : t('cron.status.agent')}</span></div></div>
+            <div className="flex w-fit self-end flex-wrap items-center gap-1.5 xl:self-auto xl:justify-end"><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.detail')} aria-label={t('cron.actions.detail')} onClick={() => openDetail(job)}>{detailLoading && selectedJob?.id === job.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.edit')} aria-label={t('cron.actions.edit')} onClick={() => setEditingJob(job)}><Pencil className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.run')} aria-label={t('cron.actions.run')} loading={busy} onClick={() => runAction(job, 'run')}><Play className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={paused ? t('cron.actions.resume') : t('cron.actions.pause')} aria-label={paused ? t('cron.actions.resume') : t('cron.actions.pause')} loading={busy} onClick={() => runAction(job, paused ? 'resume' : 'pause')}>{paused ? <RotateCcw className="h-4 w-4" /> : <Pause className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="danger" title={t('cron.actions.delete')} aria-label={t('cron.actions.delete')} loading={busy} onClick={() => runAction(job, 'delete')}><Trash2 className="h-4 w-4" /></Button></div>
           </div>;
         })}</div>}
       </Card>
