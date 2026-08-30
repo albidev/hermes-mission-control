@@ -28,6 +28,12 @@ assertIncludes(chatGateway, "parsed.event.type === 'todo.updated'", 'chat gatewa
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');
+assertIncludes(component, '<div className="chat-runtime-footer">', 'runtime footer groups TODO plan and status line');
+assertIncludes(todoPlan, 'chat-plan-title-status', 'TODO capsule exposes the current plan state');
+assertIncludes(styles, '.chat-plan {\n  position: absolute;', 'collapsed TODO plan floats above the status line');
+assertIncludes(styles, '.chat-plan.is-expanded {\n  position: static;', 'expanded TODO plan returns to normal flow');
+assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {', 'expanded TODO plan uses the unified footer surface');
+
 assertExcludes(component, '<div className="chat-head-meta">', 'header has no redundant metadata row');
 assertExcludes(component, '<p className="chat-preview">{lastPreview}</p>', 'composer has no redundant last-message strip');
 assertIncludes(composer, 'chat-composer-attach', 'attachment uses shared touch-target contract');

@@ -65,7 +65,7 @@ Events streamed over the socket update the transcript live (`chat-protocol.ts`).
 
 ## Live TODO mission capsule
 
-When the gateway transcript contains a `todo` tool result, the ChatDrawer renders a compact mission capsule immediately above the statusline. It shows the completed/total count and current task; tapping it expands the full plan with the current and next task, progress bar, nested subtasks, and semantic item states.
+When the gateway transcript contains a `todo` tool result, the ChatDrawer renders a compact mission capsule floating directly above the statusline while collapsed. It shows the plan state, completed/total count, and current task; tapping it expands the full plan in the footer flow on a uniform surface with the current and next task, progress bar, nested subtasks, and semantic item states.
 
 `src/lib/todo-plan.ts` normalizes the core's `{ revision, todos }` snapshot. The ChatDrawer consumes `todo.updated` during live streaming and `todo_state` from `session.resume`; the transcript parser remains a compatibility fallback for older gateways. Completed tool results are authoritative; partial `merge:true` arguments without task descriptions are ignored so they cannot erase a known plan. For post-session preview, the sessions API derives the same sanitized snapshot from the full JSONL (falling back to SessionDB/request dumps) and sends only `todoPlan`, never the request dump itself. An empty TODO list hides the capsule. This keeps live chat, resume, and preview mode on one data contract without modifying Hermes Core.
 
