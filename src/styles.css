@@ -3916,7 +3916,7 @@
 
 .chat-plan.is-expanded {
   position: static;
-  padding: 0.5rem 1rem 0;
+  padding: 0.5rem 1rem;
 }
 
 .chat-plan:not(.is-expanded) {
@@ -4080,6 +4080,33 @@
   animation: chat-plan-reveal 160ms ease-out;
 }
 
+.chat-plan.is-expanded .chat-plan-expanded,
+.chat-plan.is-expanded .chat-plan-focus,
+.chat-plan.is-expanded .chat-plan-focus.is-next {
+  background: var(--color-surface);
+}
+
+.chat-plan.is-expanded .chat-plan-capsule {
+  border-bottom-color: var(--color-border);
+}
+
+.chat-plan-complete.is-expanded .chat-plan-capsule,
+.chat-plan-complete.is-expanded .chat-plan-expanded {
+  border-color: color-mix(in srgb, var(--color-positive) 55%, var(--color-border));
+}
+
+.chat-plan-running.is-expanded .chat-plan-capsule,
+.chat-plan-running.is-expanded .chat-plan-expanded,
+.chat-plan-planning.is-expanded .chat-plan-capsule,
+.chat-plan-planning.is-expanded .chat-plan-expanded {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+}
+
+.chat-plan-waiting.is-expanded .chat-plan-capsule,
+.chat-plan-waiting.is-expanded .chat-plan-expanded {
+  border-color: color-mix(in srgb, var(--color-warning) 55%, var(--color-border));
+}
+
 @keyframes chat-plan-reveal {
   from { opacity: 0; transform: translateY(-3px); }
   to { opacity: 1; transform: translateY(0); }
@@ -4231,7 +4258,7 @@
     right: auto;
     bottom: auto;
     left: auto;
-    padding: 0.45rem 0.75rem 0;
+    padding: 0.45rem 0.75rem;
   }
 
   .chat-plan:not(.is-expanded) {
