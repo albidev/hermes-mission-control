@@ -4114,6 +4114,14 @@ button:not(.mobile-nav-backdrop):not(.chat-backdrop) {
   padding-inline: 0 !important;
 }
 
+@media (min-width: 641px) {
+  .skills-install-button.mc-icon-only {
+    width: auto !important;
+    min-width: 0 !important;
+    padding-inline: 0.625rem !important;
+  }
+}
+
 button {
   min-height: var(--control-height) !important;
   min-width: var(--touch-target) !important;

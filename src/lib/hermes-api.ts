@@ -2329,7 +2329,34 @@ export async function loadMissionControlSkillsCatalog(
   if (options?.limit != null) params.set('limit', String(options.limit));
   const query = params.toString();
   const { payload } = await maybeFetchLocalJson<MissionControlSkillsCatalogSnapshot>(`/skills/catalog${query ? '?' + query : ''}`, accessToken);
-  return normalizeSkillsCatalog(payload);
+  return normalizeSkillsCatalog(payload ?? undefined);
+}
+
+export type InstallSkillResult = {
+  success: boolean;
+  skillName: string;
+  identifier: string;
+  installed: boolean;
+  verified: boolean;
+};
+
+export async function installMissionControlSkill(
+  identifier: string,
+  accessToken?: string,
+): Promise<InstallSkillResult | null> {
+  try {
+    const response = await fetch(localApiUrl('/skills/install'), {
+      method: 'POST',
+      headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier }),
+    });
+    if (response.status === 401) throw new MissionControlAuthError();
+    if (!response.ok) return null;
+    return await response.json() as InstallSkillResult;
+  } catch (error) {
+    if (error instanceof MissionControlAuthError) throw error;
+    return null;
+  }
 }
 
 export type ToggleSkillResult = {

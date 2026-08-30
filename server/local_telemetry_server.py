@@ -530,7 +530,13 @@ def _read_only_mode() -> bool:
 
 _KNOWLEDGE_CORE_FILES = {"SOUL.md", "USER.md", "AGENTS.md"}
 _KNOWLEDGE_EXCLUDED_FILENAMES = {"IDENTITY.md"}
-_KNOWLEDGE_SKIPPED_DIRS = {".git", ".obsidian", ".agents", "node_modules", "dist", "build", ".trash", "__pycache__"}
+# Vaults often contain checked-out projects. Never descend into generated or
+# transient trees: they are both irrelevant to knowledge browsing and can
+# change underneath us while a build is running (the source of the old 500s).
+_KNOWLEDGE_SKIPPED_DIRS = {
+    ".git", ".obsidian", ".agents", ".cache", ".pytest_cache", ".trash", ".turbo",
+    "node_modules", "dist", "build", "target", "__pycache__", "venv", ".venv",
+}
 
 
 def _knowledge_vault_root() -> Path:
@@ -606,16 +612,48 @@ def _read_text_file(path: Path) -> str:
 
 
 def _is_allowed_vault_note(path: Path, vault_root: Path) -> bool:
-    if path.name in _KNOWLEDGE_EXCLUDED_FILENAMES or path.suffix.lower() != ".md":
-        return False
     try:
+        if path.name in _KNOWLEDGE_EXCLUDED_FILENAMES or path.suffix.lower() != ".md":
+            return False
         relative = path.resolve().relative_to(vault_root.resolve())
-    except ValueError:
+    except (OSError, ValueError):
+        # Files can disappear while Obsidian/build tooling is changing the
+        # vault. A vanished entry is not a server failure.
         return False
     parents = relative.parts[:-1]
-    if any(part.startswith(".") or part in _KNOWLEDGE_SKIPPED_DIRS for part in parents):
-        return False
-    return True
+    return not any(part.startswith(".") or part in _KNOWLEDGE_SKIPPED_DIRS for part in parents)
+
+
+def _find_knowledge_markdown_files(vault_root: Path) -> list[Path]:
+    """Walk the vault defensively, without ``Path.rglob``.
+
+    ``rglob`` eagerly descends into every directory and lets a transient
+    FileNotFoundError/InterruptedError escape when a project build changes the
+    tree. The telemetry request must instead skip unreadable/vanishing
+    entries and return the stable notes it was able to collect.
+    """
+    results: list[Path] = []
+    pending = [vault_root]
+    while pending:
+        current = pending.pop()
+        try:
+            with os.scandir(current) as entries:
+                child_dirs: list[Path] = []
+                for entry in entries:
+                    try:
+                        entry_path = Path(entry.path)
+                        if entry.is_dir(follow_symlinks=False):
+                            if not entry.name.startswith(".") and entry.name not in _KNOWLEDGE_SKIPPED_DIRS:
+                                child_dirs.append(entry_path)
+                        elif entry.is_file(follow_symlinks=False) and entry.name.lower().endswith(".md"):
+                            if _is_allowed_vault_note(entry_path, vault_root):
+                                results.append(entry_path)
+                    except (OSError, UnicodeError):
+                        continue
+                pending.extend(child_dirs)
+        except (OSError, UnicodeError):
+            continue
+    return results
 
 
 def _is_allowed_knowledge_file(path: Path) -> bool:
@@ -730,12 +768,12 @@ def collect_knowledge_snapshot() -> Dict[str, Any]:
                 mtime = 0.0
             return (priority, mtime, path.as_posix())
 
-        vault_candidates = [
-            path
-            for path in sorted(vault_root.rglob("*.md"), key=_sort_key)
-            if path.is_file() and _is_allowed_vault_note(path, vault_root)
-        ]
-        max_items = int(os.environ.get("MISSION_CONTROL_KNOWLEDGE_MAX_FILES", "80"))
+        vault_candidates = _find_knowledge_markdown_files(vault_root)
+        vault_candidates.sort(key=_sort_key)
+        try:
+            max_items = max(1, min(int(os.environ.get("MISSION_CONTROL_KNOWLEDGE_MAX_FILES", "80")), 500))
+        except (TypeError, ValueError):
+            max_items = 80
         selected_candidates = vault_candidates[:max_items]
         knowledge_sharing = next((path for path in vault_candidates if path.name == "Knowledge Sharing.md"), None)
         if knowledge_sharing is not None and knowledge_sharing not in selected_candidates:
@@ -1200,6 +1238,7 @@ def _find_skill_md_files(skills_dir: Path) -> list[Path]:
 _SKILLS_CACHE_LOCK = threading.Lock()
 _SKILLS_CACHE: tuple[float, Dict[str, Any]] | None = None
 _SKILLS_CACHE_TTL_SECONDS = 5.0
+_SKILL_INSTALL_LOCK = threading.Lock()
 
 
 def _collect_skills_uncached() -> Dict[str, Any]:
@@ -1393,6 +1432,113 @@ def _collect_skills_catalog(query: str = "", source: str = "all", limit: int = 5
         "sources": source_counts,
         "timedOut": [],
     }
+
+
+def _resolve_hermes_cli() -> Optional[Path]:
+    """Resolve Hermes CLI independently of the LaunchAgent PATH.
+
+    LaunchAgents intentionally start with a minimal PATH. The CLI installed by
+    Hermes may still be present in ``~/.local/bin`` or the active core venv.
+    """
+    discovered = shutil.which("hermes")
+    candidates = [Path(discovered)] if discovered else []
+    home = _get_hermes_home()
+    candidates.extend([
+        home / "hermes-agent" / "venv" / "bin" / "hermes",
+        Path.home() / ".local" / "bin" / "hermes",
+        home / "bin" / "hermes",
+        Path.home() / ".hermes" / "bin" / "hermes",
+        Path("/opt/homebrew/bin/hermes"),
+    ])
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def _install_catalog_skill(identifier: str) -> tuple[int, Dict[str, Any]]:
+    """Install one exact entry from the published Skills Hub catalog.
+
+    The identifier is never passed to a shell. Before invoking Hermes, it must
+    match an entry returned by the same catalog source used by the UI. This
+    keeps the sidecar from becoming an arbitrary command runner while still
+    delegating installation semantics to the Hermes CLI.
+    """
+    requested = identifier.strip()
+    if not requested or len(requested) > 500:
+        return 400, {"success": False, "error": "invalid_identifier", "detail": "A valid skill identifier is required."}
+
+    catalog = _collect_skills_catalog(query=requested, limit=5000)
+    if not catalog.get("available"):
+        return 503, {"success": False, "error": "catalog_unavailable", "detail": "The Skills Hub catalog is unavailable."}
+
+    item = next(
+        (
+            candidate
+            for candidate in catalog.get("skills", [])
+            if isinstance(candidate, dict) and str(candidate.get("identifier") or "") == requested
+        ),
+        None,
+    )
+    if item is None:
+        return 404, {"success": False, "error": "skill_not_in_catalog", "detail": "That skill is not present in the published catalog."}
+
+    skill_name = str(item.get("name") or requested).strip()
+    if bool(item.get("installed")):
+        return 409, {"success": False, "error": "already_installed", "skillName": skill_name, "detail": "This skill is already installed."}
+
+    if not _SKILL_INSTALL_LOCK.acquire(blocking=False):
+        return 409, {"success": False, "error": "install_in_progress", "detail": "Another skill installation is already in progress."}
+
+    try:
+        hermes_bin = _resolve_hermes_cli()
+        if not hermes_bin:
+            return 503, {"success": False, "error": "hermes_cli_not_found", "detail": "The Hermes CLI is not available to the telemetry sidecar."}
+
+        env = os.environ.copy()
+        hermes_home = _get_hermes_home()
+        env["HERMES_HOME"] = str(hermes_home)
+        # Preserve the LaunchAgent environment but make the resolved CLI and
+        # its venv helpers available to the child process as well.
+        cli_dirs = [str(hermes_bin.parent), str(hermes_home / "hermes-agent" / "venv" / "bin"), str(Path.home() / ".local" / "bin")]
+        env["PATH"] = ":".join(dict.fromkeys([*cli_dirs, env.get("PATH", "")]))
+        try:
+            completed = subprocess.run(
+                [str(hermes_bin), "skills", "install", requested, "--yes"],
+                cwd=str(hermes_home),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return 504, {"success": False, "error": "install_timeout", "skillName": skill_name, "detail": "Skill installation timed out."}
+        except OSError as exc:
+            return 503, {"success": False, "error": "install_start_failed", "skillName": skill_name, "detail": str(exc)[:240]}
+
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "Skill installation failed.").strip()
+            detail = detail.replace(str(_get_hermes_home()), display_home_path(_get_hermes_home()))[:500]
+            return 422, {"success": False, "error": "install_failed", "skillName": skill_name, "detail": detail}
+
+        global _SKILLS_CACHE
+        with _SKILLS_CACHE_LOCK:
+            _SKILLS_CACHE = None
+        installed_snapshot = _collect_skills_uncached()
+        installed_names = {
+            str(skill.get("name") or skill.get("id") or "").strip().lower()
+            for skill in installed_snapshot.get("skills", [])
+            if isinstance(skill, dict)
+        }
+        if skill_name.lower() not in installed_names:
+            return 500, {"success": False, "error": "install_unverified", "skillName": skill_name, "detail": "Hermes completed without a verifiable installed skill."}
+        return 200, {"success": True, "skillName": skill_name, "identifier": requested, "installed": True, "verified": True}
+    finally:
+        _SKILL_INSTALL_LOCK.release()
 
 
 _SKILL_FILE_READ_LIMIT = 200_000  # 200 KB max for a single file read
@@ -1805,7 +1951,17 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            self._json(200, collect_knowledge_snapshot())
+            try:
+                payload = collect_knowledge_snapshot()
+            except (OSError, UnicodeError, ValueError) as exc:
+                # The vault is user-editable and can change during the scan.
+                # Return a valid response instead of killing the request thread.
+                self._json(503, {
+                    "error": "knowledge_temporarily_unavailable",
+                    "detail": f"Knowledge vault changed or could not be read ({type(exc).__name__}).",
+                })
+                return
+            self._json(200, payload)
             return
         if parsed.path == "/api/local/knowledge/file":
             if not _is_authorized(self):
@@ -1819,6 +1975,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             except FileNotFoundError:
                 self._json(404, {"error": "not_found", "detail": "Knowledge file not found."})
+                return
+            except OSError as exc:
+                self._json(503, {"error": "knowledge_file_temporarily_unavailable", "detail": f"Knowledge file could not be read ({type(exc).__name__})."})
                 return
             self._json(200, payload)
             return
@@ -2304,6 +2463,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {'success': True})
                 return
             self._json(200, save_snapshot(session_id, data.get('snapshot')))
+            return
+        if parsed.path == '/api/local/skills/install':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            identifier = payload.get('identifier')
+            if not isinstance(identifier, str):
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing skill identifier.'})
+                return
+            status, result = _install_catalog_skill(identifier)
+            self._json(status, result)
             return
         if parsed.path == '/api/local/skills/toggle':
             if not _is_authorized(self):
