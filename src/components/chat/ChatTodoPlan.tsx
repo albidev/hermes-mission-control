@@ -49,7 +49,6 @@ export function ChatTodoPlan({ plan, waitingForInput = false }: ChatTodoPlanProp
         : t('chatPlan.status.complete');
   const summaryItem = plan.current ?? plan.next;
   const progressLabel = t('chatPlan.progress', { completed: plan.completed, total: plan.total });
-  const compactSummary = summaryItem?.content || progressLabel;
   const capsuleLabel = `${statusLabel} · ${t('chatPlan.expand')}: ${progressLabel}${summaryItem ? ` · ${summaryItem.content}` : ''}`;
 
   return (
@@ -65,7 +64,7 @@ export function ChatTodoPlan({ plan, waitingForInput = false }: ChatTodoPlanProp
         <span className="chat-plan-mark" aria-hidden><ListTodo size={15} /></span>
         <span className="chat-plan-copy">
           <span className="chat-plan-title">{statusLabel}</span>
-          <span className="chat-plan-current">{compactSummary}</span>
+          {summaryItem ? <span className="chat-plan-current">{summaryItem.content}</span> : null}
         </span>
         <span className="chat-plan-count" title={progressLabel}>{plan.completed}/{plan.total}</span>
         <span className="chat-plan-chevron" aria-hidden><ChevronDown size={15} /></span>
