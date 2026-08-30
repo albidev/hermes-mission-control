@@ -103,7 +103,7 @@
 
   "usage.eyebrow": "Usage",
   "usage.title": "Token consumption & cost estimate",
-  "usage.details": "Details",
+  "usage.description": "Session token consumption and estimated cost by model",
   "usage.processedTokens": "Processed tokens",
   "usage.estimatedCost": "Estimated cost",
   "usage.cacheRead": "Cache read",

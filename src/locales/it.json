@@ -103,7 +103,7 @@
 
   "usage.eyebrow": "Uso",
   "usage.title": "Consumo di token e stima dei costi",
-  "usage.details": "Dettagli",
+  "usage.description": "Consumo dei token delle sessioni e costo stimato per modello",
   "usage.processedTokens": "Token elaborati",
   "usage.estimatedCost": "Costo stimato",
   "usage.cacheRead": "Lettura cache",
