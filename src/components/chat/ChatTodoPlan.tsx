@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Circle, CircleDot, ListTodo, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Circle, CircleDot, ListTodo, X } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { useI18n } from '../../lib/i18n';
 import type { TodoPlan, TodoPlanItem, TodoStatus } from '../../lib/todo-plan';
@@ -67,7 +67,7 @@ export function ChatTodoPlan({ plan, waitingForInput = false }: ChatTodoPlanProp
           {summaryItem ? <span className="chat-plan-current">{summaryItem.content}</span> : null}
         </span>
         <span className="chat-plan-count" title={progressLabel}>{plan.completed}/{plan.total}</span>
-        <span className="chat-plan-chevron" aria-hidden><ChevronDown size={15} /></span>
+        <span className="chat-plan-chevron" aria-hidden>{expanded ? <ChevronDown size={15} /> : <ChevronUp size={15} />}</span>
       </button>
 
       {expanded ? (

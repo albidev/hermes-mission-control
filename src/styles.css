@@ -3916,13 +3916,19 @@
 
 .chat-plan.is-expanded {
   position: static;
-  padding: 0.5rem 1rem;
+  margin: 0.5rem 1rem;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .chat-plan:not(.is-expanded) {
   right: auto;
   left: 50%;
   width: 50%;
+  background: transparent;
   transform: translateX(-50%);
 }
 
@@ -4057,25 +4063,24 @@
   flex: 0 0 auto;
   place-items: center;
   color: var(--color-text-muted);
-  transition: transform 160ms ease;
+  transition: color 160ms ease;
 }
 
 .chat-plan.is-expanded .chat-plan-chevron {
-  transform: rotate(180deg);
+  color: var(--color-text-muted);
 }
 
 .chat-plan.is-expanded .chat-plan-capsule {
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-  border-bottom-color: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .chat-plan-expanded {
   display: grid;
   gap: 0.6rem;
   padding: 0.7rem;
-  border: 1px solid var(--color-border);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  border: 0;
+  border-radius: 0;
   background: var(--color-surface-raised);
   animation: chat-plan-reveal 160ms ease-out;
 }
@@ -4086,24 +4091,16 @@
   background: var(--color-surface);
 }
 
-.chat-plan.is-expanded .chat-plan-capsule {
-  border-bottom-color: var(--color-border);
-}
-
-.chat-plan-complete.is-expanded .chat-plan-capsule,
-.chat-plan-complete.is-expanded .chat-plan-expanded {
+.chat-plan-complete.is-expanded {
   border-color: color-mix(in srgb, var(--color-positive) 55%, var(--color-border));
 }
 
-.chat-plan-running.is-expanded .chat-plan-capsule,
-.chat-plan-running.is-expanded .chat-plan-expanded,
-.chat-plan-planning.is-expanded .chat-plan-capsule,
-.chat-plan-planning.is-expanded .chat-plan-expanded {
+.chat-plan-running.is-expanded,
+.chat-plan-planning.is-expanded {
   border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
 }
 
-.chat-plan-waiting.is-expanded .chat-plan-capsule,
-.chat-plan-waiting.is-expanded .chat-plan-expanded {
+.chat-plan-waiting.is-expanded {
   border-color: color-mix(in srgb, var(--color-warning) 55%, var(--color-border));
 }
 
@@ -4258,7 +4255,7 @@
     right: auto;
     bottom: auto;
     left: auto;
-    padding: 0.45rem 0.75rem;
+    margin: 0.45rem 0.75rem;
   }
 
   .chat-plan:not(.is-expanded) {
