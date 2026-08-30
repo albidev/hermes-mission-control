@@ -3920,7 +3920,10 @@
 }
 
 .chat-plan:not(.is-expanded) {
-  right: 4rem;
+  right: auto;
+  left: 50%;
+  width: 50%;
+  transform: translateX(-50%);
 }
 
 .chat-plan-capsule {
@@ -4228,7 +4231,9 @@
   }
 
   .chat-plan:not(.is-expanded) {
-    right: 3.75rem;
+    right: auto;
+    left: 50%;
+    width: 50%;
   }
 
   .chat-plan-capsule {

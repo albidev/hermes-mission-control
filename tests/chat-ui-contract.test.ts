@@ -34,7 +34,7 @@ assertIncludes(styles, '.chat-plan {\n  position: absolute;', 'collapsed TODO pl
 assertIncludes(styles, '.chat-plan.is-expanded {\n  position: static;', 'expanded TODO plan returns to normal flow');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {', 'expanded TODO plan uses the unified footer surface');
 assertIncludes(styles, '.chat-transcript:has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {', 'chat transcript reserves space for the collapsed TODO plan');
-assertIncludes(styles, '.chat-plan:not(.is-expanded) {\n  right: 4rem;', 'collapsed TODO plan leaves room for the scroll FAB');
+assertIncludes(styles, '.chat-plan:not(.is-expanded) {\n  right: auto;\n  left: 50%;\n  width: 50%;', 'collapsed TODO plan is centered and leaves room for the scroll FAB');
 
 assertExcludes(component, '<div className="chat-head-meta">', 'header has no redundant metadata row');
 assertExcludes(component, '<p className="chat-preview">{lastPreview}</p>', 'composer has no redundant last-message strip');
