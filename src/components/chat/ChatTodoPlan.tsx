@@ -75,7 +75,7 @@ export function ChatTodoPlan({ plan, waitingForInput = false }: ChatTodoPlanProp
           <div className="chat-plan-heading">
             <div>
               <strong>{t('chatPlan.title')}</strong>
-              <span>{statusLabel}</span>
+              {visibleStatus !== 'complete' ? <span>{statusLabel}</span> : null}
             </div>
             <span className="chat-plan-progress-label">{progressLabel}</span>
           </div>
