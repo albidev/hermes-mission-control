@@ -383,6 +383,7 @@
 
   "tools.eyebrow": "Tools",
   "tools.title": "Runtime tool inventory",
+  "tools.description": "Inspect the toolsets available to the Hermes runtime.",
   "tools.live": "live",
   "tools.fallback": "fallback",
   "tools.toolsets": "Toolsets",
@@ -401,10 +402,6 @@
   "tools.toolCount": "{count} tools",
   "tools.composite": "composite",
   "tools.direct": "direct",
-  "tools.requirements": "Requirements",
-  "tools.toolList": "Tools ({count})",
-  "tools.directTools": "Direct tools",
-  "tools.includes": "Includes",
   "tools.notFound": "Toolset not found.",
 
   "config.eyebrow": "Config",
