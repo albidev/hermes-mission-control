@@ -198,6 +198,38 @@ const clearedTodoPlan = deriveTodoPlan([
 assertEqual(clearedTodoPlan?.items.length, 0);
 assertEqual(clearedTodoPlan?.status, 'idle');
 
+const toolCallOnlyMessages = normalizeTranscript([
+  {
+    role: 'assistant',
+    content: '',
+    tool_calls: [{
+      id: 'todo-call-only',
+      type: 'function',
+      function: {
+        name: 'todo',
+        arguments: '{"todos":[{"id":"live-call","content":"Read the live TODO call","status":"in_progress"}]}',
+      },
+    }],
+  },
+], 1104);
+const toolCallOnlyPlan = deriveTodoPlan(toolCallOnlyMessages);
+assertEqual(toolCallOnlyPlan?.current?.id, 'live-call');
+assertEqual(toolCallOnlyPlan?.current?.content, 'Read the live TODO call');
+
+const mergePreviewFallback = deriveTodoPlan([
+  {
+    id: 'todo-authoritative', role: 'tool', kind: 'tool', toolName: 'todo',
+    text: '', output: '{"todos":[{"id":"known","content":"Keep the known plan","status":"in_progress"}]}',
+    status: 'complete', createdAt: 1105,
+  },
+  {
+    id: 'todo-merge-call', role: 'assistant', kind: 'assistant', text: '', status: 'complete', createdAt: 1106,
+    toolCalls: [{ name: 'todo', arguments: '{"merge":true,"todos":[{"id":"known","status":"completed"}]}' }],
+  },
+]);
+assertEqual(mergePreviewFallback?.current?.id, 'known');
+assertEqual(mergePreviewFallback?.current?.content, 'Keep the known plan');
+
 let messages = applyGatewayEvent([], { type: 'message.start' }, 2000);
 messages = applyGatewayEvent(messages, { type: 'message.delta', payload: { text: 'A' } }, 2001);
 messages = applyGatewayEvent(messages, { type: 'message.delta', payload: { text: 'B' } }, 2002);

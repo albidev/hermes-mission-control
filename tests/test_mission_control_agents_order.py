@@ -96,6 +96,36 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(row, {"id": "session-1"})
         self.assertTrue(calls["compact_rows"])
 
+    def test_session_item_exposes_todo_plan_for_preview(self):
+        todo_plan = mission_control_agents._derive_todo_plan([
+            {
+                "role": "tool",
+                "name": "todo",
+                "content": '{"todos":[{"id":"one","content":"First task","status":"completed"},{"id":"two","content":"Second task","status":"in_progress"},{"id":"three","content":"Third task","status":"pending"}],"revision":4}',
+            },
+        ])
+
+        self.assertEqual(todo_plan["total"], 3)
+        self.assertEqual(todo_plan["completed"], 1)
+        self.assertEqual(todo_plan["inProgress"], 1)
+        self.assertEqual(todo_plan["current"]["id"], "two")
+        self.assertEqual(todo_plan["next"]["id"], "three")
+
+    def test_todo_plan_reads_assistant_tool_call_when_result_is_not_present(self):
+        todo_plan = mission_control_agents._derive_todo_plan([
+            {
+                "role": "assistant",
+                "tool_calls": [{
+                    "function": {
+                        "name": "todo",
+                        "arguments": '{"todos":[{"id":"live","content":"Live task","status":"in_progress"}]}'
+                    }
+                }],
+            },
+        ])
+
+        self.assertEqual(todo_plan["current"]["content"], "Live task")
+
     def test_session_item_exposes_canonical_origin_metadata(self):
         with patch.object(mission_control_agents, "_trace_mode_for_artifacts", return_value="native"):
             item = mission_control_agents._build_session_item(

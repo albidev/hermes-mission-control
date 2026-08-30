@@ -43,6 +43,7 @@ function normalizeItems(value: unknown): TodoPlanItem[] | null {
       : undefined;
     items.push({ id, content, status: status as TodoStatus, ...(parent ? { parent } : {}) });
   }
+  if (value.length > 0 && items.length !== value.length) return null;
   return items;
 }
 
@@ -141,22 +142,34 @@ function buildPlan(payload: { todos: TodoPlanItem[]; revision: number | null }):
   };
 }
 
+/** Normalize a server-provided plan snapshot using the same rules as transcript plans. */
+export function normalizeTodoPlanSnapshot(value: unknown): TodoPlan | null {
+  if (!isRecord(value) || !Array.isArray(value.items)) return null;
+  const payload = readPayload({ todos: value.items, revision: value.revision });
+  return payload ? buildPlan(payload) : null;
+}
+
 /**
  * Extract the newest authoritative TODO result from the chat transcript.
  *
  * TODO calls return the complete list on every invocation. A streaming call
  * exposes its proposed list in toolInput before the result arrives, while a
  * completed call exposes the authoritative snapshot in output. Walking the
- * transcript backwards keeps the UI live without adding a gateway endpoint.
+ * transcript backwards keeps live and restored ChatDrawer state consistent.
  */
 export function deriveTodoPlan(messages: ChatMessage[]): TodoPlan | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (message.kind !== 'tool' || message.toolName?.trim().toLowerCase() !== 'todo') continue;
+    if (message.kind !== 'tool' && !message.toolCalls?.length) continue;
+    if (message.kind === 'tool' && message.toolName?.trim().toLowerCase() !== 'todo') continue;
     const sources = [message.output, message.detail, message.toolInput, message.text];
     for (const source of sources) {
       if (!source) continue;
       const payload = parseTodoPayload(source);
+      if (payload) return buildPlan(payload);
+    }
+    for (const call of message.toolCalls ?? []) {
+      const payload = parseTodoPayload(call.arguments);
       if (payload) return buildPlan(payload);
     }
   }

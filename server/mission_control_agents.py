@@ -178,6 +178,34 @@ def _read_session_jsonl(session_id: str) -> list[dict[str, Any]]:
     return _safe_read_jsonl(_sessions_dir() / f"{session_id}.jsonl")
 
 
+def _read_session_request_dump(session_id: str) -> list[dict[str, Any]]:
+    """Read only the provider request messages needed for a TODO fallback.
+
+    A gateway request can fail before the normal JSONL writer flushes a session.
+    Keep this fallback private to the extractor; never return the dump itself.
+    """
+    try:
+        paths = sorted(
+            _sessions_dir().glob(f"request_dump_{session_id}_*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+    for path in paths:
+        dump = _safe_read_json(path) or {}
+        request = dump.get("request")
+        body = request.get("body") if isinstance(request, dict) else None
+        messages = body.get("messages") if isinstance(body, dict) else None
+        if isinstance(messages, list):
+            return [message for message in messages if isinstance(message, dict)]
+    return []
+
+
+def _session_messages(db: Any, session_id: str) -> list[dict[str, Any]]:
+    return _read_session_jsonl(session_id) or _get_db_messages(db, session_id) or _read_session_request_dump(session_id)
+
+
 def _iter_db_session_ids() -> list[str]:
     """Discover session IDs from SessionDB (replaces sidecar-based discovery)."""
     db = _try_get_session_db()
@@ -270,10 +298,120 @@ def _derive_preview(messages: list[dict[str, Any]] | None, fallback: str = "") -
     return _single_line_preview(fallback, limit=180)
 
 
+_TODO_STATUSES = {"pending", "in_progress", "completed", "cancelled"}
+
+
+def _normalize_todo_items(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list):
+        return None
+    items: list[dict[str, Any]] = []
+    for candidate in value:
+        if not isinstance(candidate, dict):
+            return None
+        item_id = str(candidate.get("id") or "").strip()
+        content = str(candidate.get("content") or "").strip()
+        status = str(candidate.get("status") or "").strip().lower()
+        # A merge call may intentionally send only id/status. It is not a
+        # complete snapshot and must never erase the last known plan.
+        if not item_id or not content or status not in _TODO_STATUSES:
+            return None
+        item: dict[str, Any] = {"id": item_id, "content": _redact_home_path(content), "status": status}
+        parent = str(candidate.get("parent") or "").strip()
+        if parent and parent != item_id:
+            item["parent"] = parent
+        items.append(item)
+    return items
+
+
+def _parse_todo_payload(value: Any) -> tuple[list[dict[str, Any]], int | None] | None:
+    candidates: list[Any] = [value]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        fenced = text
+        if text.startswith("```") and text.endswith("```"):
+            fenced = text.split("\n", 1)[1].rsplit("```", 1)[0].strip() if "\n" in text else ""
+        for raw in (fenced, text):
+            try:
+                candidates.append(json.loads(raw))
+            except Exception:
+                start, end = raw.find("{"), raw.rfind("}")
+                if start >= 0 and end > start:
+                    try:
+                        candidates.append(json.loads(raw[start:end + 1]))
+                    except Exception:
+                        pass
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            items = _normalize_todo_items(candidate)
+            if items is not None:
+                return items, None
+        if not isinstance(candidate, dict) or "todos" not in candidate:
+            continue
+        items = _normalize_todo_items(candidate.get("todos"))
+        if items is None:
+            continue
+        revision = candidate.get("revision")
+        try:
+            normalized_revision = max(0, int(revision)) if revision is not None else None
+        except (TypeError, ValueError):
+            normalized_revision = None
+        return items, normalized_revision
+    return None
+
+
+def _derive_todo_plan(messages: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    if not messages:
+        return None
+    for message in reversed(messages):
+        role = str(message.get("role") or "").strip().lower()
+        candidates: list[Any] = []
+        if role == "tool":
+            name = str(message.get("name") or message.get("tool_name") or "").strip().lower()
+            if name == "todo":
+                candidates.extend((message.get("content"), message.get("result_text"), message.get("result"), message.get("output")))
+        elif role == "assistant" and isinstance(message.get("tool_calls"), list):
+            for call in reversed(message["tool_calls"]):
+                if not isinstance(call, dict):
+                    continue
+                function: dict[str, Any] = call["function"] if isinstance(call.get("function"), dict) else call
+                name = str(function.get("name") or "").strip().lower()
+                if name == "todo":
+                    candidates.append(function.get("arguments"))
+        for candidate in candidates:
+            parsed = _parse_todo_payload(candidate)
+            if parsed is None:
+                continue
+            items, revision = parsed
+            pending = sum(item["status"] == "pending" for item in items)
+            in_progress = sum(item["status"] == "in_progress" for item in items)
+            completed = sum(item["status"] == "completed" for item in items)
+            cancelled = sum(item["status"] == "cancelled" for item in items)
+            current = next((item for item in items if item["status"] == "in_progress"), None)
+            next_item = next((item for item in items if item["status"] == "pending"), None)
+            resolved = completed + cancelled
+            status = "idle" if not items else "complete" if resolved == len(items) else "running" if in_progress else "planning"
+            return {
+                "items": items,
+                "revision": revision,
+                "total": len(items),
+                "pending": pending,
+                "inProgress": in_progress,
+                "completed": completed,
+                "cancelled": cancelled,
+                "current": current,
+                "next": next_item,
+                "status": status,
+            }
+    return None
+
+
 def _recent_chat_messages(
     db: Any,
     session_id: str,
     limit: int = 4,
+    messages: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Return a small, UI-safe conversation preview for the Sessions list.
 
@@ -283,7 +421,7 @@ def _recent_chat_messages(
     """
     if limit <= 0:
         return []
-    messages = _get_db_messages(db, session_id) or _read_session_jsonl(session_id)
+    messages = messages or _session_messages(db, session_id)
     if not messages:
         return []
 
@@ -369,6 +507,7 @@ def _build_session_item(
     db_row: dict[str, Any] | None,
     live_window_seconds: int,
     recent_messages: list[dict[str, Any]] | None = None,
+    todo_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sidecar_messages = sidecar.get("messages") if isinstance(sidecar, dict) and isinstance(sidecar.get("messages"), list) else None
     source = str(
@@ -425,6 +564,7 @@ def _build_session_item(
         "traceMode": trace_mode,
         "preview": preview,
         "recentMessages": recent_messages or [],
+        "todoPlan": todo_plan,
         # Token usage (from SessionDB, fallback to gateway index)
         "inputTokens": _coerce_token_int((db_row or index_entry or {}).get("input_tokens")),
         "outputTokens": _coerce_token_int((db_row or index_entry or {}).get("output_tokens")),
@@ -545,6 +685,8 @@ def _collect_agent_sessions(
         # Narrow to a single session for the chat drawer preview. Keep the
         # recency ordering contract; the id either exists or yields nothing.
         ordered_ids = [sid for sid in ordered_ids if sid == session_id]
+        if not ordered_ids and (_read_session_jsonl(session_id) or _read_session_request_dump(session_id)):
+            ordered_ids = [session_id]
     # With filters, pagination must happen after item classification. Without
     # filters retain the cheap id-level window used by existing consumers.
     if not filters:
@@ -557,7 +699,9 @@ def _collect_agent_sessions(
         items: list[dict[str, Any]] = []
         for session_id in ordered_ids:
             db_row = _get_db_rich_row(db, session_id)
-            recent_messages = _recent_chat_messages(db, session_id) if include_recent_messages else []
+            session_messages = _session_messages(db, session_id) if include_recent_messages else None
+            recent_messages = _recent_chat_messages(db, session_id, messages=session_messages) if include_recent_messages else []
+            todo_plan = _derive_todo_plan(session_messages) if include_recent_messages else None
             item = _build_session_item(
                 session_id,
                 index_map.get(session_id),
@@ -565,6 +709,7 @@ def _collect_agent_sessions(
                 db_row,
                 live_window_seconds,
                 recent_messages,
+                todo_plan,
             )
             if _session_matches_filters(item, filters):
                 items.append(item)

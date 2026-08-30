@@ -21,7 +21,7 @@ const tldraw = readFileSync(new URL('../src/components/TLDrawCanvas.tsx', import
 const todoPlan = readFileSync(new URL('../src/components/chat/ChatTodoPlan.tsx', import.meta.url), 'utf8');
 
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
-assertIncludes(component, '<ChatTodoPlan plan={todoPlan}', 'chat drawer exposes the live TODO plan');
+assertIncludes(component, '<ChatTodoPlan plan={visibleTodoPlan}', 'chat drawer exposes the live TODO plan');
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');

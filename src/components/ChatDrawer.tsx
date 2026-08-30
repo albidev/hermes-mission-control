@@ -518,6 +518,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const contextWindow = contextMax || estimateContextWindow(modelIdentity?.model);
   const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
   const todoPlan = deriveTodoPlan(messages);
+  const visibleTodoPlan = preview?.todoPlan ?? todoPlan;
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);
     const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);
@@ -976,7 +977,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           </div>
         ) : null}
 
-        <ChatTodoPlan plan={todoPlan} waitingForInput={Boolean(interaction)} />
+        <ChatTodoPlan plan={visibleTodoPlan} waitingForInput={Boolean(interaction)} />
         <div className="chat-status-line" role="status">
           <span className={`chat-status-line-verb ${running ? 'is-streaming' : statusLineLabel === 'Ready' ? 'is-ready' : ''}`}>
             {running ? (

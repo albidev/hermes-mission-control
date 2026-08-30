@@ -30,6 +30,7 @@ export type ChatMessage = {
   toolName?: string;
   toolInput?: string;
   durationS?: number;
+  toolCalls?: Array<{ name: string; arguments: string }>;
 };
 
 export type GatewayTranscriptMessage = {
@@ -186,6 +187,17 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+function todoToolCalls(message: GatewayTranscriptMessage): Array<{ name: string; arguments: string }> {
+  if (!Array.isArray(message.tool_calls)) return [];
+  return message.tool_calls.flatMap((call) => {
+    if (!isRecord(call)) return [];
+    const fn = isRecord(call.function) ? call.function : call;
+    const name = stringValue(fn.name).trim();
+    const args = stringValue(fn.arguments);
+    return name.toLowerCase() === 'todo' && args.trim() ? [{ name, arguments: args }] : [];
+  });
+}
+
 function structuredText(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === undefined || value === null) return '';
@@ -324,6 +336,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = 
     }
 
     const reasoning = role === 'assistant' ? reasoningFromMessage(message) : '';
+    const todoCalls = role === 'assistant' ? todoToolCalls(message) : [];
     if (reasoning) {
       normalized.push({
         id: `restored-reasoning-${now}-${index}`,
@@ -343,6 +356,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = 
       text: rawText,
       status: 'complete',
       createdAt: now + index,
+      ...(todoCalls.length ? { toolCalls: todoCalls } : {}),
     });
   });
   return normalized;

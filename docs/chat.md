@@ -14,7 +14,8 @@ React Chat UI (ChatDrawer / chat-messages)
         ├─ chat-persistence.ts  → transcript save/restore (localStorage + server)
         ├─ chat-interactions.ts → interaction request titles
         ├─ chat-commands.ts     → slash command dispatch
-        └─ todo-plan.ts         → derives the latest TODO snapshot for the live plan capsule
+        ├─ todo-plan.ts         → derives and normalizes the live plan snapshot
+        └─ Mission Control sessions API → exposes the sanitized plan in preview payloads
         │
         ▼
 GET /api/ws  (Hermes gateway)
@@ -34,7 +35,7 @@ The chat connects to the gateway's WebSocket endpoint, not to the telemetry side
 | Interactions | `src/lib/chat-interactions.ts` | Interaction-request titles |
 | Commands | `src/lib/chat-commands.ts` | Slash-command output |
 | Rendering | `src/components/chat-messages.tsx` | Message bubbles, reasoning bubble, attachments |
-| Live plan | `src/lib/todo-plan.ts` + `src/components/chat/ChatTodoPlan.tsx` | Derives and displays the current `todo` tool snapshot |
+| Live plan | `src/lib/todo-plan.ts` + `src/components/chat/ChatTodoPlan.tsx` + session payload | Derives and displays the current `todo` tool snapshot in live chat and preview mode |
 
 ## Connection & auth
 
@@ -66,7 +67,7 @@ Events streamed over the socket update the transcript live (`chat-protocol.ts`).
 
 When the gateway transcript contains a `todo` tool result, the ChatDrawer renders a compact mission capsule immediately above the statusline. It shows the completed/total count and current task; tapping it expands the full plan with the current and next task, progress bar, nested subtasks, and semantic item states.
 
-`src/lib/todo-plan.ts` walks the normalized transcript backwards because each `todo` invocation returns the complete list. Completed tool results are authoritative; while a TODO call is streaming, its `toolInput` is used as a live preview. An empty TODO list hides the capsule. This is frontend-only and does not add an endpoint or modify Hermes Core.
+`src/lib/todo-plan.ts` walks the normalized transcript backwards because each `todo` invocation returns the complete list. Completed tool results are authoritative; while a TODO result is not available yet, the parser also reads the `assistant.tool_calls` arguments as a live preview. Partial `merge:true` arguments without task descriptions are ignored so they cannot erase a known plan. For post-session preview, the sessions API derives the same sanitized snapshot from the full JSONL (falling back to SessionDB/request dumps) and sends only `todoPlan`, never the request dump itself. An empty TODO list hides the capsule. This keeps live chat and preview mode on one data contract without modifying Hermes Core.
 
 The capsule is responsive: it remains inline in the desktop drawer and keeps a 44px-friendly touch target on narrow screens. All labels and accessibility copy are localized through the EN/IT catalogs.
 

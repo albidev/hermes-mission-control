@@ -1,3 +1,5 @@
+import { normalizeTodoPlanSnapshot, type TodoPlan } from './todo-plan';
+
 export type MissionControlMachineStatus = {
   health: 'healthy' | 'degraded' | 'critical' | 'offline';
   source?: 'local-psutil' | 'core-api' | 'fallback';
@@ -397,6 +399,7 @@ export type MissionControlAgentSessionItem = {
   traceMode: MissionControlTraceMode;
   preview: string;
   recentMessages: MissionControlSessionPreviewMessage[];
+  todoPlan: TodoPlan | null;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -935,6 +938,7 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
     traceMode: normalizeTraceMode(input?.traceMode),
     preview: readString(input?.preview),
     recentMessages: normalizeSessionPreviewMessages(input?.recentMessages),
+    todoPlan: normalizeTodoPlanSnapshot(input?.todoPlan),
     inputTokens: readNumber(input?.inputTokens, 0),
     outputTokens: readNumber(input?.outputTokens, 0),
     cacheReadTokens: readNumber(input?.cacheReadTokens, 0),
