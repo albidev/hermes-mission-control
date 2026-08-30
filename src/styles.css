@@ -3887,6 +3887,11 @@
   background: radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--color-accent) 6%, transparent), transparent 30%);
 }
 
+.chat-transcript:has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {
+  padding-bottom: 4.25rem;
+  scroll-padding-bottom: 4.25rem;
+}
+
 .chat-empty {
   min-height: 100%;
   gap: 0.55rem;
@@ -3912,6 +3917,10 @@
 .chat-plan.is-expanded {
   position: static;
   padding: 0.5rem 1rem 0;
+}
+
+.chat-plan:not(.is-expanded) {
+  right: 4rem;
 }
 
 .chat-plan-capsule {
@@ -4216,6 +4225,10 @@
     bottom: auto;
     left: auto;
     padding: 0.45rem 0.75rem 0;
+  }
+
+  .chat-plan:not(.is-expanded) {
+    right: 3.75rem;
   }
 
   .chat-plan-capsule {
