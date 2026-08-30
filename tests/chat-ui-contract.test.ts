@@ -38,6 +38,7 @@ assertIncludes(styles, '.chat-transcript:has(+ .chat-runtime-footer .chat-plan:n
 assertIncludes(styles, 'height: 44px;', 'compact TODO capsule keeps a 44px control height');
 assertIncludes(styles, '.chat-plan-capsule .chat-plan-title {', 'compact TODO capsule uses a compact status row');
 assertIncludes(styles, '.chat-plan-complete.is-expanded {', 'completed expanded TODO plan keeps a uniform state border');
+assertIncludes(styles, '.chat-runtime-footer {\n  position: relative;\n  z-index: 2;\n  flex: 0 0 auto;\n  background: transparent;', 'runtime footer stays transparent behind the expanded plan');
 assertIncludes(styles, '.chat-plan:not(.is-expanded) .chat-plan-capsule {\n  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);\n  background: var(--color-surface-raised);', 'collapsed TODO plan keeps its filled capsule surface');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {\n  background: transparent;', 'expanded TODO container has no outer fill');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-focus.is-next {', 'expanded TODO plan keeps one internal background surface');

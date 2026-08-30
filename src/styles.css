@@ -3901,7 +3901,7 @@
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
-  background: var(--color-surface);
+  background: transparent;
 }
 
 .chat-plan {
