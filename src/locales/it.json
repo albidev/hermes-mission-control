@@ -471,6 +471,7 @@
 
   "logs.eyebrow": "Log",
   "logs.title": "Tail live da ~/.hermes/logs",
+  "logs.description": "Monitora l'output recente del runtime e ispeziona le ultime righe per file di log.",
   "logs.loading": "caricamento",
   "logs.live": "live",
   "logs.unavailable": "non disponibile",
@@ -481,7 +482,10 @@
   "logs.path": "~/.hermes/logs",
   "logs.filters": "Filtri",
   "logs.streamTitle": "Stream singolo a tutta larghezza con selettore di log",
-  "logs.autoRefresh": "auto-aggiornamento 5s",
+  "logs.autoRefreshLabel": "Intervallo di auto-aggiornamento dei log",
+  "logs.autoRefresh1": "Auto-aggiorna · 1s",
+  "logs.autoRefresh2": "Auto-aggiorna · 2s",
+  "logs.autoRefresh5": "Auto-aggiorna · 5s",
   "logs.lines": "{count} righe",
   "logs.line": "riga {number}",
   "logs.updatedUnknown": "aggiornamento sconosciuto",
@@ -490,6 +494,7 @@
   "logs.noFiles": "Nessun file di log trovato.",
   "logs.authRequired": "È richiesto il token di accesso per leggere i file di log.",
   "logs.failedLoad": "Impossibile caricare i log.",
+  "logs.scrollToTop": "Torna in cima",
 
   "curate.title": "Curatela",
   "curate.subtitle": "Candidati del brain notturno. Approva per entrare in quarantena (1 giorno), oppure rifiuta con una motivazione opzionale usata come feedback per il modello.",

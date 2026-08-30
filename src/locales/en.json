@@ -471,6 +471,7 @@
 
   "logs.eyebrow": "Logs",
   "logs.title": "Live tail from ~/.hermes/logs",
+  "logs.description": "Monitor recent runtime output and inspect the latest entries by log file.",
   "logs.loading": "loading",
   "logs.live": "live",
   "logs.unavailable": "unavailable",
@@ -481,7 +482,10 @@
   "logs.path": "~/.hermes/logs",
   "logs.filters": "Filters",
   "logs.streamTitle": "Single full-width stream with log switcher",
-  "logs.autoRefresh": "auto-refresh 5s",
+  "logs.autoRefreshLabel": "Log auto-refresh interval",
+  "logs.autoRefresh1": "Auto-refresh · 1s",
+  "logs.autoRefresh2": "Auto-refresh · 2s",
+  "logs.autoRefresh5": "Auto-refresh · 5s",
   "logs.lines": "{count} lines",
   "logs.line": "line {number}",
   "logs.updatedUnknown": "updated unknown",
@@ -490,6 +494,7 @@
   "logs.noFiles": "No log files found.",
   "logs.authRequired": "Access token required to read log files.",
   "logs.failedLoad": "Failed to load logs.",
+  "logs.scrollToTop": "Scroll to top",
 
   "curate.title": "Curate",
   "curate.subtitle": "Nightly brain candidates. Approve to enter quarantine (1 day), or reject with an optional reason used as model feedback.",
