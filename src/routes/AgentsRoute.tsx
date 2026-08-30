@@ -1,7 +1,7 @@
 import { useI18n } from '../lib/i18n';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Activity, Bot, Clock3, Cpu, Gauge, GitBranch, Layers, ListTree, RefreshCw, Workflow } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Activity, Bot, Clock3, Gauge, GitBranch, ListTree, RefreshCw } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/Modal';
@@ -15,7 +15,6 @@ import {
   type MissionControlAgentSessionItem,
   type MissionControlAgentTraceEvent,
   type MissionControlAgentTraceSnapshot,
-  type MissionControlAgentRegistryItem,
   type MissionControlCapabilities,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
@@ -27,12 +26,6 @@ function formatTokenCount(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
-
-type AgentAggregate = MissionControlAgentRegistryItem & {
-  id: string;
-  totalMessages: number;
-  lastActive: number;
-};
 
 function MetricCard({
   icon: Icon,
@@ -75,6 +68,16 @@ const TRACE_ACTION_FILTERS: Array<{ id: TraceActionFilter; label: string }> = [
   { id: 'turn', label: 'Turn' },
   { id: 'other', label: 'Other' },
 ];
+
+const TRACE_ACTION_LABEL_KEYS: Record<TraceActionFilter, string> = {
+  user_message: 'agents.user',
+  thought: 'agents.thought',
+  tool_call: 'agents.toolCall',
+  skill_used: 'agents.skill',
+  assistant_response: 'agents.assistant',
+  turn: 'agents.turn',
+  other: 'agents.other',
+};
 
 function getTraceActionFilter(event: MissionControlAgentTraceEvent): TraceActionFilter {
   if (event.type === 'user_message') return 'user_message';
@@ -196,82 +199,9 @@ const DAG_ROW_GAP = 112;
 const DAG_PADDING_X = 48;
 const DAG_PADDING_Y = 40;
 
-function getAgentKey(source?: string, model?: string): string {
-  return `${source || 'unknown'}::${model || 'unknown'}`;
-}
-
-const AgentRegistryCard = memo(function AgentRegistryCard({
-  registry,
-  selectedAgentId,
-}: {
-  registry: AgentAggregate[];
-  selectedAgentId: string;
-}) {
-  const { t } = useI18n();
-  return (
-    <Card padding="none">
-      <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-        <div className="flex flex-col gap-0.5">
-          <span className="eyebrow">{t('agents.registry')}</span>
-          <h3 className="text-sm font-semibold text-text">{t('agents.perAgentStats')}</h3>
-        </div>
-        <Badge variant="default">{registry.length} agents</Badge>
-      </div>
-
-      <div className="divide-y divide-border-subtle">
-        {registry.length > 0 ? (
-          registry.map((agent) => {
-            const isSelected = selectedAgentId === agent.id;
-            return <AgentRegistryRow key={agent.id} agent={agent} isSelected={isSelected} />;
-          })
-        ) : (
-          <div className="px-4 py-8 text-center text-sm text-text-muted italic">{t('agents.noRegistry')}</div>
-        )}
-      </div>
-    </Card>
-  );
-});
-
-const AgentRegistryRow = memo(function AgentRegistryRow({
-  agent,
-  isSelected,
-}: {
-  agent: AgentAggregate;
-  isSelected: boolean;
-}) {
-  const { t } = useI18n();
-  return (
-    <div className={`px-4 py-3 grid grid-cols-1 lg:grid-cols-12 gap-2 items-center ${isSelected ? 'bg-surface-sunken/70' : ''}`}>
-      <div className="lg:col-span-5 min-w-0">
-        <p className="text-sm font-medium text-text break-all">{agent.source}</p>
-        <p className="text-xs text-text-muted break-all">{agent.model}</p>
-      </div>
-
-      <div className="lg:col-span-2 flex items-center gap-2">
-        <Badge variant={agent.liveSessions > 0 ? 'positive' : 'default'}>{agent.liveSessions > 0 ? 'running' : 'idle'}</Badge>
-      </div>
-
-      <div className="lg:col-span-5 flex flex-wrap items-center gap-2 text-xs text-text-subtle">
-        <span className="inline-flex items-center gap-1"><Cpu className="h-3.5 w-3.5" /> sessions {agent.totalSessions}</span>
-        <span className="inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> msgs {agent.totalMessages}</span>
-        <span>{t('agents.lastActive', { time: formatRelativeTime(agent.lastActive) })}</span>
-        <span className="text-text-muted">({formatTimestamp(agent.lastActive)})</span>
-        <Link
-          to={`/agents/${encodeURIComponent(agent.id)}?mode=${agent.liveSessions > 0 ? 'live' : 'post'}`}
-          className={`pill pill-button text-[11px] ${isSelected ? 'nav-link-active' : 'pill-subtle'}`}
-        >
-          Open workflow
-        </Link>
-      </div>
-    </div>
-  );
-});
-
 export function AgentsRoute() {
   const { t } = useI18n();
-  const { agentId } = useParams<{ agentId?: string }>();
   const [searchParams] = useSearchParams();
-  const selectedAgentId = agentId ? decodeURIComponent(agentId) : '';
   const requestedMode = searchParams.get('mode');
   const requestedSession = searchParams.get('session');
   const { snapshot, storedToken } = useMissionControl();
@@ -360,25 +290,8 @@ export function AgentsRoute() {
     return orderedSessions.filter((session) => session.status === 'live' && (session.lastActiveAt ?? 0) >= cutoff);
   }, [orderedSessions]);
 
-  const allSelectedAgentSessions = useMemo(() => {
-    if (!selectedAgentId) return orderedSessions;
-    return orderedSessions.filter((session) => getAgentKey(session.source, session.model) === selectedAgentId);
-  }, [orderedSessions, selectedAgentId]);
-
   const baseSessions = liveMode ? trulyLiveSessions : orderedSessions;
-  const selectableSessions = useMemo(() => {
-    if (!selectedAgentId) return baseSessions;
-    return baseSessions.filter((session) => getAgentKey(session.source, session.model) === selectedAgentId);
-  }, [baseSessions, selectedAgentId]);
-
-  useEffect(() => {
-    if (!selectedAgentId || !liveMode) return;
-    if (selectableSessions.length > 0 || allSelectedAgentSessions.length === 0) return;
-
-    manualSessionSelectionRef.current = false;
-    setSelectedSessionId('');
-    setLiveMode(false);
-  }, [allSelectedAgentSessions.length, liveMode, selectableSessions.length, selectedAgentId]);
+  const selectableSessions = baseSessions;
 
   useEffect(() => {
     if (selectedSessionId) return;
@@ -634,7 +547,7 @@ export function AgentsRoute() {
 
   useEffect(() => {
     manualSessionSelectionRef.current = false;
-  }, [liveMode, selectedAgentId]);
+  }, [liveMode]);
 
   useEffect(() => {
     if (!selectedEvent || !filteredTrace) return;
@@ -674,55 +587,6 @@ export function AgentsRoute() {
       selectSession(freshest.sessionId);
     }
   }, [liveMode, selectableSessions, selectedSessionId]);
-
-  const registry = useMemo<AgentAggregate[]>(() => {
-    const map = new Map<string, AgentAggregate>();
-
-    for (const session of orderedSessions) {
-      const key = session.agentId;
-      const current = map.get(key);
-
-      if (!current) {
-        map.set(key, {
-          id: key,
-          agentId: key,
-          source: session.source,
-          model: session.model,
-          label: `${session.source} / ${session.model}`,
-          totalSessions: 1,
-          liveSessions: session.status === 'live' ? 1 : 0,
-          lastActiveAt: session.lastActiveAt,
-          traceMode: session.traceMode,
-          totalMessages: session.messageCount,
-          lastActive: session.lastActiveAt ?? 0,
-        });
-        continue;
-      }
-
-      current.totalSessions += 1;
-      if (session.status === 'live') current.liveSessions += 1;
-      current.totalMessages += session.messageCount;
-      current.lastActiveAt = Math.max(current.lastActiveAt ?? 0, session.lastActiveAt ?? 0) || null;
-      current.lastActive = Math.max(current.lastActive, session.lastActiveAt ?? 0);
-      if (current.traceMode !== 'native' && session.traceMode === 'native') current.traceMode = 'native';
-      else if (current.traceMode === 'unavailable' && session.traceMode === 'transcript') current.traceMode = 'transcript';
-    }
-
-    return [...map.values()].sort((a, b) => {
-      if (b.liveSessions !== a.liveSessions) return b.liveSessions - a.liveSessions;
-      return b.lastActive - a.lastActive;
-    });
-  }, [orderedSessions]);
-
-  const selectedAgent = useMemo(() => {
-    if (!selectedAgentId) return null;
-    return registry.find((agent) => agent.id === selectedAgentId) ?? null;
-  }, [registry, selectedAgentId]);
-
-  const selectedAgentAvgMessages = useMemo(() => {
-    if (!selectedAgent || selectedAgent.totalSessions === 0) return 0;
-    return selectedAgent.totalMessages / selectedAgent.totalSessions;
-  }, [selectedAgent]);
 
   useEffect(() => {
     if (!liveMode || sseFallbackToPolling || !traceStreamAvailable) {
@@ -862,14 +726,16 @@ export function AgentsRoute() {
       <Card padding="none">
         <PageHeader
           eyebrow={t('nav.agents')}
-          title={selectedAgent ? `Agent cockpit · ${selectedAgent.source}` : 'Runtime + trace chain (Timeline and DAG)'}
-          description={selectedAgent ? t('agents.singleDescription') : t('agents.description')}
-          meta={selectedAgent ? t('agents.singleView') : t('agents.activeCount', { count: registry.filter((agent) => agent.liveSessions > 0).length })}
+          title={t('agents.title')}
+          description={t('agents.description')}
+          meta={selectedSessionId ? t('agents.selectedSessionMeta') : t('agents.noSessionMeta')}
           actions={<button type="button" onClick={() => void refreshPage()} className="inline-flex items-center justify-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text !px-0 sm:!px-2.5" aria-label={t('common.refresh')} title={t('common.refresh')} disabled={refreshing}>
             <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /><span className="hidden sm:inline">{t('common.refresh')}</span>
           </button>}
         />
+      </Card>
 
+      <Card padding="none">
         <div className="px-4 pt-1 sm:pt-0">
           <span className="eyebrow">{t('agents.statsTitle')}</span>
         </div>
@@ -877,126 +743,102 @@ export function AgentsRoute() {
           <MetricCard
             icon={Bot}
             compact
-            label={selectedAgent ? t('agents.agentSessions') : t('agents.activeAgents')}
-            value={selectedAgent ? String(selectedAgent.totalSessions) : String(registry.filter((agent) => agent.liveSessions > 0).length)}
-            hint={selectedAgent ? t('agents.modelHint', { model: selectedAgent.model }) : t('agents.activeAgentsHint')}
+            label={t('agents.activeAgents')}
+            value={String(snapshot.activeAgents)}
+            hint={t('agents.activeAgentsHint')}
           />
           <MetricCard
             icon={Activity}
             compact
-            label={selectedAgent ? t('agents.agentLiveSessions') : t('agents.liveSessions')}
-            value={selectedAgent ? String(selectedAgent.liveSessions) : String(trulyLiveSessions.length)}
+            label={t('agents.liveSessions')}
+            value={String(trulyLiveSessions.length)}
             hint={t('agents.liveSessionsHint')}
           />
           <MetricCard
             icon={Clock3}
             compact
-            label={selectedAgent ? t('agents.avgMessages') : t('agents.inFlightQueue')}
-            value={selectedAgent ? selectedAgentAvgMessages.toFixed(1) : String(snapshot.queuedJobs)}
-            hint={selectedAgent ? t('agents.sessionDepth') : t('agents.inFlightQueueHint')}
+            label={t('agents.inFlightQueue')}
+            value={String(snapshot.queuedJobs)}
+            hint={t('agents.inFlightQueueHint')}
           />
           <MetricCard
             icon={Gauge}
             compact
-            label={selectedAgent ? t('agents.lastActiveCard') : t('agents.trackedSessions')}
-            value={selectedAgent ? formatRelativeTime(selectedAgent.lastActive) : String(orderedSessions.length)}
-            hint={selectedAgent ? formatTimestamp(selectedAgent.lastActive) : t('agents.trackedSessionsHint')}
+            label={t('agents.trackedSessions')}
+            value={String(snapshot.sessions.totalSessions)}
+            hint={t('agents.trackedSessionsHint')}
           />
         </div>
       </Card>
 
-      {selectedAgent ? (
-        <Card className="p-4 sticky top-0 z-10 border-border-subtle">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="eyebrow">Single agent</p>
-              <p className="text-sm font-semibold text-text break-all">{selectedAgent.source}</p>
-              <p className="text-xs text-text-muted break-all">{selectedAgent.model}</p>
-            </div>
-            <Link to="/agents" className="pill pill-subtle pill-button text-xs">
-              Show all agents
-            </Link>
-          </div>
-        </Card>
-      ) : selectedAgentId ? (
-        <Card className="p-4 border-border-subtle">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-warning">Agent not found in current registry snapshot.</p>
-            <Link to="/agents" className="pill pill-subtle pill-button text-xs">
-              Back to registry
-            </Link>
-          </div>
-        </Card>
-      ) : null}
-
       <Card padding="none">
-        <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0 flex flex-col gap-0.5">
-            <span className="eyebrow">Execution trace</span>
-            <h3 className="text-sm font-semibold text-text">
-              {selectedAgent ? 'Single-agent flow: thoughts, tools, skills, responses' : 'Full chain: thoughts, tools, skills, responses'}
-            </h3>
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-2 sm:items-end">
-            <div className="flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
-              <button className={`pill shrink-0 whitespace-nowrap ${view === 'timeline' ? 'nav-link-active' : 'pill-subtle'} pill-button`} onClick={() => setView('timeline')}>
-                <ListTree className="h-3.5 w-3.5" /> Timeline
-              </button>
-              <button className={`pill shrink-0 whitespace-nowrap ${view === 'dag' ? 'nav-link-active' : 'pill-subtle'} pill-button`} onClick={() => setView('dag')}>
-                <GitBranch className="h-3.5 w-3.5" /> DAG
-              </button>
-              <button className={`pill shrink-0 whitespace-nowrap ${liveMode ? 'status-online' : 'pill-subtle'} pill-button`} onClick={() => setLiveMode((v) => !v)}>
-                <Workflow className="h-3.5 w-3.5" /> {liveMode ? 'Live' : 'Post'}
-              </button>
+        <div className="border-b border-border-subtle">
+          <div className="flex min-w-0 flex-col gap-4 px-4 py-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+            <div className="min-w-0 flex-1">
+              <span className="eyebrow">{t('agents.executionTrace')}</span>
+              <h3 className="mt-1 text-base font-semibold leading-6 text-text">
+                {t('agents.fullChain')}
+              </h3>
             </div>
 
-            {liveMode ? (
-              <div className="flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
-                <span className="shrink-0 text-text-subtle">Scope</span>
-                <button
-                  className={`pill pill-button shrink-0 whitespace-nowrap ${liveTraceScope === 'current' ? 'nav-link-active' : 'pill-subtle'}`}
-                  onClick={() => setLiveTraceScope('current')}
-                >
-                  Current turn
-                </button>
-                <button
-                  className={`pill pill-button shrink-0 whitespace-nowrap ${liveTraceScope === 'last3' ? 'nav-link-active' : 'pill-subtle'}`}
-                  onClick={() => setLiveTraceScope('last3')}
-                >
-                  Last 3 turns
-                </button>
-                <button
-                  className={`pill pill-button shrink-0 whitespace-nowrap ${liveTraceScope === 'full' ? 'nav-link-active' : 'pill-subtle'}`}
-                  onClick={() => setLiveTraceScope('full')}
-                >
-                  Full session
-                </button>
-              </div>
-            ) : null}
+            <div className="flex min-w-0 max-w-full flex-col gap-3 sm:flex-[0_1_auto] sm:flex-row sm:items-end sm:gap-3">
+              <div className="flex min-w-0 max-w-full flex-1 flex-row items-end gap-2">
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5" role="group" aria-label={t('agents.view')}>
+                  <span className="eyebrow">{t('agents.view')}</span>
+                  <div className="flex min-w-0 max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-visible sm:pb-0">
+                    <button type="button" aria-pressed={view === 'timeline'} className={`pill pill-button shrink-0 whitespace-nowrap ${view === 'timeline' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setView('timeline')}>
+                      <ListTree className="h-3.5 w-3.5" /> {t('agents.timeline')}
+                    </button>
+                    <button type="button" aria-pressed={view === 'dag'} className={`pill pill-button shrink-0 whitespace-nowrap ${view === 'dag' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setView('dag')}>
+                      <GitBranch className="h-3.5 w-3.5" /> {t('agents.dag')}
+                    </button>
+                  </div>
+                </div>
 
-            {!capabilities.trace.stream ? (
-              <p className="text-xs text-warning sm:text-right">Compatibility mode: live SSE stream unavailable, using polling fallback.</p>
-            ) : null}
+                <div className="flex shrink-0 flex-col gap-1.5" role="group" aria-label={t('agents.stream')}>
+                  <span className="eyebrow">{t('agents.stream')}</span>
+                  <button type="button" aria-pressed={liveMode} className={`pill pill-button shrink-0 whitespace-nowrap ${liveMode ? 'status-online' : 'pill-subtle'}`} onClick={() => setLiveMode((v) => !v)}>
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${liveMode ? 'bg-positive animate-pulse' : 'bg-text-subtle'}`} />
+                    {liveMode ? t('agents.live') : t('agents.post')}
+                  </button>
+                  {!capabilities.trace.stream ? (
+                    <p className="max-w-[14rem] text-[10px] leading-4 text-warning">Compatibility mode: live SSE stream unavailable, using polling fallback.</p>
+                  ) : null}
+                </div>
+              </div>
+
+              {liveMode ? (
+                <div className="flex min-w-0 flex-col gap-1.5 sm:flex-1" role="group" aria-label={t('agents.scope')}>
+                  <span className="eyebrow">{t('agents.scope')}</span>
+                  <div className="flex min-w-0 max-w-full flex-nowrap items-center gap-1 overflow-x-auto pb-1 pr-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-x-auto sm:pb-0 sm:pr-4">
+                    <button type="button" aria-pressed={liveTraceScope === 'current'} className={`pill pill-button shrink-0 whitespace-nowrap sm:px-2 sm:text-xs ${liveTraceScope === 'current' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setLiveTraceScope('current')}>
+                      {t('agents.currentTurn')}
+                    </button>
+                    <button type="button" aria-pressed={liveTraceScope === 'last3'} className={`pill pill-button shrink-0 whitespace-nowrap sm:px-2 sm:text-xs ${liveTraceScope === 'last3' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setLiveTraceScope('last3')}>
+                      {t('agents.last3Turns')}
+                    </button>
+                    <button type="button" aria-pressed={liveTraceScope === 'full'} className={`pill pill-button mr-4 shrink-0 whitespace-nowrap sm:px-2 sm:text-xs ${liveTraceScope === 'full' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setLiveTraceScope('full')}>
+                      {t('agents.fullSession')}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
-        <div className="p-4 flex flex-col gap-4">
+        <div className="flex flex-col gap-4 p-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <label className="text-xs text-text-muted shrink-0">{t('provider.session')}</label>
+            <label className="text-xs text-text-muted shrink-0">{t('agents.selectedSession')}</label>
             <select
-              className="w-full min-w-0 rounded-md bg-surface h-9 px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40"
+              className="h-11 w-full min-w-0 rounded-md bg-surface px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:h-9"
               value={selectedSessionId}
               onChange={(event) => selectSession(event.target.value, true)}
               disabled={selectableSessions.length === 0}
             >
               {selectableSessions.length === 0 ? (
                 <option value="">
-                  {selectedAgent
-                    ? liveMode
-                      ? 'No truly live sessions for this agent right now'
-                      : 'No sessions for this agent'
-                    : 'No truly live sessions right now'}
+                  {liveMode ? t('agents.noLiveSessions') : t('agents.noSessions')}
                 </option>
               ) : null}
               {selectableSessions.map((session) => (
@@ -1011,12 +853,12 @@ export function AgentsRoute() {
             <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium text-text">Action taxonomy</span>
-                  <span className="text-[11px] text-text-subtle">Select one or more event classes to filter Timeline and DAG.</span>
+                  <span className="text-sm font-semibold text-text">{t('agents.actionTaxonomy')}</span>
+                  <span className="text-[11px] text-text-subtle">{t('agents.actionTaxonomyHint')}</span>
                 </div>
                 {actionFilterActive ? (
                   <button type="button" className="pill pill-subtle pill-button text-[11px]" onClick={() => setSelectedActionFilters([])}>
-                    Clear filters
+                    {t('agents.clearFilters')}
                   </button>
                 ) : (
                   <Badge variant="default">{t('ui.allActions')}</Badge>
@@ -1030,12 +872,13 @@ export function AgentsRoute() {
                     <button
                       key={filter.id}
                       type="button"
+                      aria-pressed={active}
                       className={`pill pill-button shrink-0 justify-center whitespace-nowrap text-[11px] ${active ? 'nav-link-active' : 'pill-subtle'}`}
                       onClick={() => toggleActionFilter(filter.id)}
                       disabled={count === 0 && !active}
                       title={`${getTraceActionLabel(filter.id)} events`}
                     >
-                      {filter.label}
+                      {t(TRACE_ACTION_LABEL_KEYS[filter.id])}
                       <span className="text-text-subtle">{count}</span>
                     </button>
                   );
@@ -1224,8 +1067,6 @@ export function AgentsRoute() {
           ) : null}
         </div>
       </Card>
-
-      <AgentRegistryCard registry={registry} selectedAgentId={selectedAgentId} />
 
       <Modal
         open={Boolean(selectedEvent)}

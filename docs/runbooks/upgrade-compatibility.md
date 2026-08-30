@@ -26,7 +26,8 @@ Keep Mission Control usable across Hermes updates without touching core internal
    - Live toggle works
    - Timeline renders
    - DAG renders
-5. Open `/agents/:agentId` and verify single-agent filter and KPIs.
+5. Open `/sessions`, select a session, and use `Trace` to open `/agents?session=<sessionId>`.
+   - Agents is the session trace cockpit; historical source/model filtering stays in Sessions.
 
 ## Expected compatibility behavior
 - If `/mission-control/capabilities` is missing (404), frontend uses built-in v1 defaults.

@@ -30,7 +30,6 @@ function App() {
               </Route>
               <Route path="sessions" element={<SessionsRoute />} />
               <Route path="agents" element={<AgentsRoute />} />
-              <Route path="agents/:agentId" element={<AgentsRoute />} />
               <Route path="usage" element={<UsageRoute />} />
               <Route path="knowledge" element={<KnowledgeRoute />} />
               <Route path="tools" element={<ToolsRoute />} />

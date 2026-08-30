@@ -377,34 +377,6 @@ export type MissionControlSessionPreviewMessage = {
   timestamp: number | null;
 };
 
-export type MissionControlAgentRegistryItem = {
-  agentId: string;
-  source: string;
-  model: string;
-  label: string;
-  totalSessions: number;
-  liveSessions: number;
-  lastActiveAt: number | null;
-  traceMode: MissionControlTraceMode;
-};
-
-export type MissionControlAgentsSnapshot = {
-  success: boolean;
-  schemaVersion: string;
-  available: boolean;
-  capabilities: {
-    trace:
-      | boolean
-      | {
-          stream?: boolean;
-          compact?: boolean;
-          namedSseTraceEvent?: boolean;
-        };
-    traceModes: MissionControlTraceMode[];
-  };
-  items: MissionControlAgentRegistryItem[];
-};
-
 export type MissionControlAgentSessionItem = {
   sessionId: string;
   agentId: string;
@@ -920,19 +892,6 @@ function normalizeTraceMode(value: unknown): MissionControlTraceMode {
   return value === 'native' || value === 'transcript' || value === 'unavailable' ? value : 'unavailable';
 }
 
-function normalizeAgentRegistryItem(input: Record<string, unknown> | undefined): MissionControlAgentRegistryItem {
-  return {
-    agentId: readString(input?.agentId, getAgentKey(readString(input?.source), readString(input?.model))),
-    source: readString(input?.source, 'unknown'),
-    model: readString(input?.model, 'unknown'),
-    label: readString(input?.label, `${readString(input?.source, 'unknown')} / ${readString(input?.model, 'unknown')}`),
-    totalSessions: readNumber(input?.totalSessions, 0),
-    liveSessions: readNumber(input?.liveSessions, 0),
-    lastActiveAt: input?.lastActiveAt === null || input?.lastActiveAt === undefined ? null : readNumber(input?.lastActiveAt, 0),
-    traceMode: normalizeTraceMode(input?.traceMode),
-  };
-}
-
 function normalizeSessionPreviewMessages(input: unknown): MissionControlSessionPreviewMessage[] {
   if (!Array.isArray(input)) return [];
   return input
@@ -1029,24 +988,6 @@ function normalizeAgentSessionsSnapshot(input: OfficialMissionControlAgentSessio
       limit: readNumber(input?.pagination?.limit, items.length),
       hasMore: Boolean(input?.pagination?.hasMore ?? false),
     },
-  };
-}
-
-function normalizeAgentsSnapshot(input: OfficialMissionControlAgentsPayload | null | undefined): MissionControlAgentsSnapshot {
-  const items = Array.isArray(input?.items) ? input.items.filter(isRecord).map((item) => normalizeAgentRegistryItem(item)) : [];
-  const traceModes = Array.isArray(input?.capabilities?.traceModes)
-    ? input.capabilities.traceModes.map((mode) => normalizeTraceMode(mode))
-    : fallbackCapabilities.traceModes ?? ['native', 'transcript', 'unavailable'];
-
-  return {
-    success: input?.success ?? true,
-    schemaVersion: readString(input?.schemaVersion, '1'),
-    available: input?.available ?? true,
-    capabilities: {
-      trace: typeof input?.capabilities?.trace === 'boolean' ? input.capabilities.trace : true,
-      traceModes,
-    },
-    items,
   };
 }
 
@@ -1442,10 +1383,13 @@ type OfficialMissionControlAgentsPayload = {
   schemaVersion?: string;
   available?: boolean;
   capabilities?: {
-    trace?: boolean;
+    trace?: boolean | {
+      stream?: boolean;
+      compact?: boolean;
+      namedSseTraceEvent?: boolean;
+    };
     traceModes?: string[];
   };
-  items?: Array<Record<string, unknown>>;
 };
 
 type OfficialMissionControlAgentSessionsPayload = {
