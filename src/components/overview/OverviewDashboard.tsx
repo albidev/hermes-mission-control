@@ -14,6 +14,7 @@ import { ProviderUsagePanel } from './ProviderUsagePanel';
 import { DashboardGrid, type DashboardWidget } from './DashboardGrid';
 import { formatRelativeSchedule, formatRelativeTime } from '../../lib/format';
 import { type MissionControlCronJob } from '../../lib/hermes-api';
+import { getSessionActionAvailability } from '../../lib/session-view';
 import { usePullToReload } from '../../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../PullToReloadIndicator';
 
@@ -163,7 +164,9 @@ export function OverviewDashboard() {
         >
           {liveSessionItems.length > 0 ? (
             <div className="flex flex-col gap-3">
-              {liveSessionItems.map((session) => (
+              {liveSessionItems.map((session) => {
+                const actions = getSessionActionAvailability(session);
+                return (
                 <div key={session.id} className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface-sunken/30 p-2.5">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -177,15 +180,17 @@ export function OverviewDashboard() {
                       </div>
                       <p className="mt-1 line-clamp-1 text-xs text-text-muted">{session.preview || t('overview.noPreview')}</p>
                     </div>
-                    <Link
-                      to={`/sessions?chatSession=${encodeURIComponent(session.id)}`}
-                      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--control-radius)] bg-accent text-white transition-colors hover:bg-accent/85 sm:h-auto sm:w-auto sm:gap-1 sm:px-2 sm:py-1 sm:text-[11px] sm:font-medium"
-                      aria-label={t('sessions.resumeAria', { title: session.title })}
-                      title={t('sessions.resumeAria', { title: session.title })}
-                    >
-                      <MessageSquare aria-hidden="true" className="h-4 w-4 sm:h-3 sm:w-3" />
-                      <span className="hidden sm:inline">{t('sessions.resumeChat')}</span>
-                    </Link>
+                    {actions.resumeChat ? (
+                      <Link
+                        to={`/sessions?chatSession=${encodeURIComponent(session.id)}`}
+                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--control-radius)] bg-accent text-white transition-colors hover:bg-accent/85 sm:h-auto sm:w-auto sm:gap-1 sm:px-2 sm:py-1 sm:text-[11px] sm:font-medium"
+                        aria-label={t('sessions.resumeAria', { title: session.title })}
+                        title={t('sessions.resumeAria', { title: session.title })}
+                      >
+                        <MessageSquare aria-hidden="true" className="h-4 w-4 sm:h-3 sm:w-3" />
+                        <span className="hidden sm:inline">{t('sessions.resumeChat')}</span>
+                      </Link>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-subtle">
                     <span className="flex items-center gap-1"><Rocket className="h-3 w-3" />{session.source}</span>
@@ -193,7 +198,8 @@ export function OverviewDashboard() {
                     <span>{formatRelativeTime(session.lastActive)}</span>
                   </div>
                 </div>
-              ))}
+              );
+            })}
             </div>
           ) : (
             <p className="text-sm text-text-muted italic py-1">{t('overview.noActiveSessions')}</p>

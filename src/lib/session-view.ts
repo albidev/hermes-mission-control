@@ -90,10 +90,11 @@ export function getSessionActionAvailability(session: SessionLike): {
   inspect: boolean;
 } {
   const origin = classifySessionOrigin(session);
+  const traceAvailable = session.traceMode !== 'unavailable';
   return {
     resumeChat: origin.resumable,
-    trace: session.traceMode !== 'unavailable',
-    inspect: true,
+    trace: traceAvailable,
+    inspect: traceAvailable,
   };
 }
 
