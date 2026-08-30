@@ -22,7 +22,7 @@ import {
   pendingPromptWasPersisted,
   ConnectionAttemptGate,
 } from '../src/lib/chat-protocol.ts';
-import { deriveTodoPlan } from '../src/lib/todo-plan.ts';
+import { deriveTodoPlan, normalizeTodoPlanSnapshot } from '../src/lib/todo-plan.ts';
 
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit } from '../src/lib/chat-outbox.ts';
 
@@ -187,6 +187,13 @@ const liveTodoPlan = deriveTodoPlan([
 ]);
 assertEqual(liveTodoPlan?.current?.id, 'new');
 assertEqual(liveTodoPlan?.current?.content, 'New active plan');
+
+const gatewayTodoPlan = normalizeTodoPlanSnapshot({
+  revision: 4,
+  todos: [{ id: 'gateway-live', content: 'Use todo.updated directly', status: 'in_progress' }],
+});
+assertEqual(gatewayTodoPlan?.current?.id, 'gateway-live');
+assertEqual(normalizeTodoPlanSnapshot({ revision: 0, todos: [] }), null);
 
 const clearedTodoPlan = deriveTodoPlan([
   {

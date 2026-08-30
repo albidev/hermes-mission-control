@@ -13,6 +13,7 @@ function assertExcludes(source: string, forbidden: string, label: string) {
 }
 
 const component = readFileSync(new URL('../src/components/ChatDrawer.tsx', import.meta.url), 'utf8');
+const chatGateway = readFileSync(new URL('../src/lib/chat-gateway.ts', import.meta.url), 'utf8');
 const composer = readFileSync(new URL('../src/components/ChatComposer.tsx', import.meta.url), 'utf8');
 const messagesComponent = readFileSync(new URL('../src/components/chat-messages.tsx', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
@@ -22,6 +23,8 @@ const todoPlan = readFileSync(new URL('../src/components/chat/ChatTodoPlan.tsx',
 
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
 assertIncludes(component, '<ChatTodoPlan plan={visibleTodoPlan}', 'chat drawer exposes the live TODO plan');
+assertIncludes(component, 'todoPlan: gatewayTodoPlan', 'chat drawer consumes the gateway TODO state');
+assertIncludes(chatGateway, "parsed.event.type === 'todo.updated'", 'chat gateway consumes live TODO updates');
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');

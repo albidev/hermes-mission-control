@@ -234,6 +234,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const pendingCanvasWidthRef = useRef<number | null>(null);
   const {
     messages,
+    todoPlan: gatewayTodoPlan,
     sessionId,
     sessionKey,
     connectionState,
@@ -517,8 +518,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         : statusText;
   const contextWindow = contextMax || estimateContextWindow(modelIdentity?.model);
   const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
-  const todoPlan = deriveTodoPlan(messages);
-  const visibleTodoPlan = preview?.todoPlan ?? todoPlan;
+  const derivedTodoPlan = deriveTodoPlan(messages);
+  const visibleTodoPlan = preview?.todoPlan ?? gatewayTodoPlan ?? derivedTodoPlan;
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);
     const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);

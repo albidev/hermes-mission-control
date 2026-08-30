@@ -35,6 +35,7 @@ import {
   type GatewayCommandDispatch,
   type GatewayInteractionRequest,
 } from './chat-protocol';
+import { deriveTodoPlan, normalizeTodoPlanSnapshot, type TodoPlan } from './todo-plan';
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
 import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
@@ -96,6 +97,7 @@ function persistedRunWasCompleted(): boolean {
 export function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: string | null) {
   const initial = useMemo(readPersistedChat, []);
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
+  const [todoPlan, setTodoPlan] = useState<TodoPlan | null>(() => deriveTodoPlan(initial.messages));
   const [sessionId, setSessionId] = useState<string | null>(initial.sessionId);
   const [sessionKey, setSessionKey] = useState<string | null>(initial.sessionKey);
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
@@ -174,6 +176,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     setSessionKey(requested);
     sessionKeyRef.current = requested;
     setMessages([]);
+    setTodoPlan(null);
     setModelIdentity(null);
     setModelPickerOpen(false);
     setModelPickerRefresh(false);
@@ -351,6 +354,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         const durableTranscript = extractTranscript(resumed);
         durableTranscriptRef.current = durableTranscript;
         const transcript = normalizeTranscript(durableTranscript);
+        const resumedTodoPlan = normalizeTodoPlanSnapshot(isRecord(resumed) ? resumed.todo_state : undefined);
+        setTodoPlan(resumedTodoPlan ?? deriveTodoPlan(transcript));
         const inflight = extractInflightAssistant(resumed);
         if (transcript.length > 0 || inflight) {
           setMessages(
@@ -566,6 +571,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         ].filter((value): value is string => Boolean(value));
         const activeSessionRefs = [sessionIdRef.current, sessionKeyRef.current].filter((value): value is string => Boolean(value));
         if (activeSessionRefs.length > 0 && eventSessionRefs.length > 0 && !eventSessionRefs.some((value) => activeSessionRefs.includes(value))) return;
+        if (parsed.event.type === 'todo.updated') {
+          const liveTodoPlan = normalizeTodoPlanSnapshot(eventPayload);
+          if (liveTodoPlan) setTodoPlan(liveTodoPlan);
+        }
         if (parsed.event.type === 'session.info') {
           adoptModel(eventPayload);
           const activeSessionId = sessionIdRef.current;
@@ -1022,6 +1031,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       }
     }
     setMessages([]);
+    setTodoPlan(null);
     setSessionId(null);
     setSessionKey(null);
     requestedSessionIdRef.current = null;
@@ -1044,6 +1054,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
   return {
     messages,
+    todoPlan,
     sessionId,
     sessionKey,
     connectionState,

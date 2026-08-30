@@ -144,9 +144,13 @@ function buildPlan(payload: { todos: TodoPlanItem[]; revision: number | null }):
 
 /** Normalize a server-provided plan snapshot using the same rules as transcript plans. */
 export function normalizeTodoPlanSnapshot(value: unknown): TodoPlan | null {
-  if (!isRecord(value) || !Array.isArray(value.items)) return null;
-  const payload = readPayload({ todos: value.items, revision: value.revision });
-  return payload ? buildPlan(payload) : null;
+  if (!isRecord(value)) return null;
+  const items = Array.isArray(value.items) ? value.items : value.todos;
+  if (!Array.isArray(items)) return null;
+  const payload = readPayload({ todos: items, revision: value.revision });
+  if (!payload) return null;
+  if (payload.todos.length === 0 && payload.revision === 0) return null;
+  return buildPlan(payload);
 }
 
 /**
