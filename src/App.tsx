@@ -9,7 +9,6 @@ import { OverviewDashboard } from './components/overview/OverviewDashboard';
 const SessionsRoute = lazy(() => import('./routes/SessionsRoute').then((m) => ({ default: m.SessionsRoute })));
 const AgentsRoute = lazy(() => import('./routes/AgentsRoute').then((m) => ({ default: m.AgentsRoute })));
 const UsageRoute = lazy(() => import('./routes/UsageRoute').then((m) => ({ default: m.UsageRoute })));
-const KnowledgeRoute = lazy(() => import('./routes/KnowledgeRoute').then((m) => ({ default: m.KnowledgeRoute })));
 const ToolsRoute = lazy(() => import('./routes/ToolsRoute').then((m) => ({ default: m.ToolsRoute })));
 const CronRoute = lazy(() => import('./routes/CronRoute').then((m) => ({ default: m.CronRoute })));
 const SkillsRoute = lazy(() => import('./routes/SkillsRoute').then((m) => ({ default: m.SkillsRoute })));
@@ -31,7 +30,6 @@ function App() {
               <Route path="sessions" element={<SessionsRoute />} />
               <Route path="agents" element={<AgentsRoute />} />
               <Route path="usage" element={<UsageRoute />} />
-              <Route path="knowledge" element={<KnowledgeRoute />} />
               <Route path="tools" element={<ToolsRoute />} />
               <Route path="cron" element={<CronRoute />} />
               <Route path="skills" element={<SkillsRoute />} />

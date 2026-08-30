@@ -65,7 +65,6 @@ export function MissionControlShell() {
     { to: '/kanban', label: t('nav.kanban'), icon: Kanban },
     { to: '/agents', label: t('nav.agents'), icon: Bot },
     { to: '/usage', label: t('nav.usage'), icon: DollarSign },
-    { to: '/knowledge', label: t('nav.knowledge'), icon: BookOpen },
     { to: '/tools', label: t('nav.tools'), icon: Wrench },
     { to: '/cron', label: t('nav.cron'), icon: Timer },
     { to: '/skills', label: t('nav.skills'), icon: Brain },
