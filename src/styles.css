@@ -3952,6 +3952,7 @@
 
 .chat-plan:not(.is-expanded) .chat-plan-capsule {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  background: transparent;
 }
 
 .chat-plan.is-expanded .chat-plan-capsule,
@@ -3969,6 +3970,11 @@
 .chat-plan.is-expanded .chat-plan-capsule:hover,
 .chat-plan.is-expanded .chat-plan-capsule:focus-visible {
   background: var(--color-surface);
+}
+
+.chat-plan:not(.is-expanded) .chat-plan-capsule:hover,
+.chat-plan:not(.is-expanded) .chat-plan-capsule:focus-visible {
+  background: transparent;
 }
 
 .chat-plan-capsule:focus-visible {
