@@ -29,11 +29,13 @@ assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expan
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');
 assertIncludes(component, '<div className="chat-runtime-footer">', 'runtime footer groups TODO plan and status line');
-assertIncludes(todoPlan, 'chat-plan-title-status', 'TODO capsule exposes the current plan state');
+assertIncludes(todoPlan, 'chat-plan-title">{statusLabel}', 'TODO capsule exposes the current plan state');
 assertIncludes(styles, '.chat-plan {\n  position: absolute;', 'collapsed TODO plan floats above the status line');
 assertIncludes(styles, '.chat-plan.is-expanded {\n  position: static;', 'expanded TODO plan returns to normal flow');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {', 'expanded TODO plan uses the unified footer surface');
 assertIncludes(styles, '.chat-transcript:has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {', 'chat transcript reserves space for the collapsed TODO plan');
+assertIncludes(styles, 'height: 44px;', 'compact TODO capsule keeps a 44px control height');
+assertIncludes(styles, '.chat-plan-capsule .chat-plan-title {', 'compact TODO capsule uses a compact status row');
 assertIncludes(styles, '.chat-plan:not(.is-expanded) {\n  right: auto;\n  left: 50%;\n  width: 50%;', 'collapsed TODO plan is centered and leaves room for the scroll FAB');
 
 assertExcludes(component, '<div className="chat-head-meta">', 'header has no redundant metadata row');
