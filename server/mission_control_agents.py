@@ -587,6 +587,7 @@ def _load_agents_sessions_snapshot_uncached(
     offset: int = 0,
     session_id: str | None = None,
     include_facets: bool = True,
+    include_recent_messages: bool = True,
     filters: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     clamped_limit = max(1, min(limit, 500))
@@ -596,6 +597,7 @@ def _load_agents_sessions_snapshot_uncached(
         offset=offset,
         session_id=session_id,
         filters=filters,
+        include_recent_messages=include_recent_messages,
     )
     if include_facets and not session_id:
         # Facets are collected without recent message previews. This keeps the
@@ -644,6 +646,7 @@ _SESSION_SNAPSHOT_CACHE_TTL_SECONDS = 3.0
 _SESSION_SNAPSHOT_CACHE_LOCK = threading.Lock()
 _SESSION_SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
 _SESSION_SNAPSHOT_INFLIGHT: dict[tuple[Any, ...], threading.Event] = {}
+_SESSION_SNAPSHOT_WORK = threading.BoundedSemaphore(1)
 
 
 def load_agents_sessions_snapshot(
@@ -652,6 +655,7 @@ def load_agents_sessions_snapshot(
     offset: int = 0,
     session_id: str | None = None,
     include_facets: bool = True,
+    include_recent_messages: bool = True,
     filters: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return a short-lived, coalesced snapshot for polling clients.
@@ -668,6 +672,7 @@ def load_agents_sessions_snapshot(
         offset,
         session_id,
         include_facets,
+        include_recent_messages,
         tuple(sorted((filters or {}).items())),
     )
     while True:
@@ -691,6 +696,14 @@ def load_agents_sessions_snapshot(
                 raise TimeoutError("Mission Control session snapshot timed out.")
             continue
 
+        acquired = _SESSION_SNAPSHOT_WORK.acquire(timeout=15)
+        if not acquired:
+            with _SESSION_SNAPSHOT_CACHE_LOCK:
+                if _SESSION_SNAPSHOT_INFLIGHT.get(cache_key) is inflight:
+                    del _SESSION_SNAPSHOT_INFLIGHT[cache_key]
+                    inflight.set()
+            raise TimeoutError("Mission Control session snapshot worker pool is busy.")
+
         try:
             payload = _load_agents_sessions_snapshot_uncached(
                 limit=limit,
@@ -698,6 +711,7 @@ def load_agents_sessions_snapshot(
                 offset=offset,
                 session_id=session_id,
                 include_facets=include_facets,
+                include_recent_messages=include_recent_messages,
                 filters=filters,
             )
         except BaseException:
@@ -706,6 +720,8 @@ def load_agents_sessions_snapshot(
                     del _SESSION_SNAPSHOT_INFLIGHT[cache_key]
                     inflight.set()
             raise
+        finally:
+            _SESSION_SNAPSHOT_WORK.release()
 
         with _SESSION_SNAPSHOT_CACHE_LOCK:
             _SESSION_SNAPSHOT_CACHE[cache_key] = (time.monotonic(), payload)
@@ -913,7 +929,15 @@ def load_sessions_usage(live_window_seconds: int = 300) -> dict[str, Any]:
 
 
 def load_agents_snapshot(live_window_seconds: int = 300) -> dict[str, Any]:
-    sessions_snapshot = load_agents_sessions_snapshot(limit=10000, live_window_seconds=live_window_seconds, include_facets=False)
+    # Agent registry only needs aggregate fields. Loading four recent messages
+    # for every historical session here needlessly builds a ~1 MB payload and
+    # makes concurrent dashboard polls compete for SessionDB and socket writes.
+    sessions_snapshot = load_agents_sessions_snapshot(
+        limit=10000,
+        live_window_seconds=live_window_seconds,
+        include_facets=False,
+        include_recent_messages=False,
+    )
     groups: dict[str, dict[str, Any]] = {}
     for item in sessions_snapshot["items"]:
         agent_id = item["agentId"]
@@ -1251,7 +1275,7 @@ def _build_trace_from_messages(
 
 
 def _build_trace_from_transcript(session_id: str, limit: int = 300, compact: bool = False) -> dict[str, Any] | None:
-    session_item = next((item for item in _collect_agent_sessions() if item["sessionId"] == session_id), None)
+    session_item = next((item for item in _collect_agent_sessions(include_recent_messages=False) if item["sessionId"] == session_id), None)
     jsonl_rows = _read_session_jsonl(session_id)
     if jsonl_rows:
         messages = [row for row in jsonl_rows if row.get("role") != "session_meta"]
@@ -1285,7 +1309,7 @@ def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False
 def _fallback_unavailable_trace(session_id: str | None, reason: str) -> dict[str, Any]:
     session_item = None
     if session_id:
-        session_item = next((item for item in _collect_agent_sessions() if item["sessionId"] == session_id), None)
+        session_item = next((item for item in _collect_agent_sessions(include_recent_messages=False) if item["sessionId"] == session_id), None)
     return {
         "success": True,
         "schemaVersion": _SCHEMA_VERSION,
@@ -1309,7 +1333,7 @@ def _fallback_unavailable_trace(session_id: str | None, reason: str) -> dict[str
 
 
 def _pick_default_session_id() -> str | None:
-    snapshot = load_agents_sessions_snapshot(limit=10000)
+    snapshot = load_agents_sessions_snapshot(limit=10000, include_recent_messages=False)
     items = snapshot["items"]
     if not items:
         return None

@@ -208,6 +208,19 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertIs(first, second)
         uncached.assert_called_once()
 
+    def test_agent_registry_skips_recent_messages(self):
+        snapshot = {"success": True, "items": []}
+        with patch.object(mission_control_agents, "load_agents_sessions_snapshot", return_value=snapshot) as loader:
+            result = mission_control_agents.load_agents_snapshot()
+
+        self.assertEqual(result["items"], [])
+        loader.assert_called_once_with(
+            limit=10000,
+            live_window_seconds=300,
+            include_facets=False,
+            include_recent_messages=False,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -904,7 +904,12 @@ def _candidates_enabled() -> bool:
     return (os.getenv("MC_ENABLE_BDH_CURATOR") or "").strip().lower() in ("1", "true", "yes")
 
 
-def _collect_status_payload() -> Dict[str, Any]:
+_STATUS_CACHE_LOCK = threading.Lock()
+_STATUS_CACHE: tuple[float, Dict[str, Any]] | None = None
+_STATUS_CACHE_TTL_SECONDS = 2.0
+
+
+def _collect_status_payload_uncached() -> Dict[str, Any]:
     version = _read_version()
     runtime = _read_runtime_status()
     gateway_pid = None
@@ -971,6 +976,18 @@ def _collect_status_payload() -> Dict[str, Any]:
         'active_sessions': active_sessions,
         'candidates_enabled': _candidates_enabled(),
     }
+
+
+def _collect_status_payload() -> Dict[str, Any]:
+    """Return a short-lived status snapshot without duplicate filesystem scans."""
+    global _STATUS_CACHE
+    now = time.monotonic()
+    with _STATUS_CACHE_LOCK:
+        if _STATUS_CACHE and now - _STATUS_CACHE[0] < _STATUS_CACHE_TTL_SECONDS:
+            return _STATUS_CACHE[1]
+        payload = _collect_status_payload_uncached()
+        _STATUS_CACHE = (time.monotonic(), payload)
+        return payload
 
 
 def _collect_model_info() -> Dict[str, Any]:
@@ -1180,7 +1197,12 @@ def _find_skill_md_files(skills_dir: Path) -> list[Path]:
     return results
 
 
-def _collect_skills() -> Dict[str, Any]:
+_SKILLS_CACHE_LOCK = threading.Lock()
+_SKILLS_CACHE: tuple[float, Dict[str, Any]] | None = None
+_SKILLS_CACHE_TTL_SECONDS = 5.0
+
+
+def _collect_skills_uncached() -> Dict[str, Any]:
     """Scan ~/.hermes/skills/ to build an installed skills snapshot.
 
     Recursively discovers all SKILL.md files, parses their YAML frontmatter
@@ -1284,6 +1306,18 @@ def _collect_skills() -> Dict[str, Any]:
         "skills": skills_list,
         "categories": categories,
     }
+
+
+def _collect_skills() -> Dict[str, Any]:
+    """Return a short-lived skills snapshot without duplicate YAML scans."""
+    global _SKILLS_CACHE
+    now = time.monotonic()
+    with _SKILLS_CACHE_LOCK:
+        if _SKILLS_CACHE and now - _SKILLS_CACHE[0] < _SKILLS_CACHE_TTL_SECONDS:
+            return _SKILLS_CACHE[1]
+        payload = _collect_skills_uncached()
+        _SKILLS_CACHE = (time.monotonic(), payload)
+        return payload
 
 
 def _collect_skills_catalog(query: str = "", source: str = "all", limit: int = 500) -> Dict[str, Any]:
@@ -1590,6 +1624,18 @@ def _collect_logs(max_files: int = 10, max_lines: int = 160) -> Dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def setup(self) -> None:  # noqa: D401
+        """Set a finite socket deadline so abandoned clients cannot pin a thread."""
+        super().setup()
+        self.connection.settimeout(15.0)
+
+    def handle(self) -> None:  # noqa: D401
+        """Treat disconnected/idle clients as normal request termination."""
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError, socket.timeout):
+            return
+
     def _cors_headers(self) -> Dict[str, str]:
         configured_origin = (os.getenv("MISSION_CONTROL_ALLOWED_ORIGIN") or "").strip()
         request_origin = (self.headers.get("Origin") or "").strip()
@@ -2521,6 +2567,10 @@ def main() -> None:
     start_gateway_watcher()
 
     server = ThreadingHTTPServer((host, port), Handler)
+    # Client handlers must not keep the process alive after the listener is
+    # restarted while a browser/proxy still owns an abandoned connection.
+    server.daemon_threads = True
+    server.block_on_close = False
     print(f"[mission-control-local-telemetry] listening on http://{host}:{port}", flush=True)
     server.serve_forever()
 
