@@ -1,40 +1,17 @@
 import { useI18n } from '../lib/i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, FileText, FolderTree, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/Modal';
+import { PageHeader } from '../components/PageHeader';
 import { formatTimestamp } from '../lib/format';
 import { MissionControlAuthError, loadMissionControlKnowledgeFile } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
-
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string;
-  hint: string;
-}) {
-  return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-text-muted">{label}</span>
-        <Icon className="h-4 w-4 text-text-subtle" />
-      </div>
-      <p className="text-lg font-semibold text-text mt-2 truncate">{value}</p>
-      <p className="text-xs text-text-subtle mt-1">{hint}</p>
-    </Card>
-  );
-}
 
 function MarkdownDetail({ content }: { content: string }) {
   return (
@@ -71,19 +48,24 @@ export function KnowledgeRoute() {
     onReload: async () => {
       if (selectedItem?.sourcePath) {
         const payload = await loadMissionControlKnowledgeFile(selectedItem.sourcePath, storedToken || undefined);
-        setFullContent(payload.content || 'No file preview available.');
+        setFullContent(payload.content || t('knowledge.noPreview'));
       }
     },
   });
 
+  const visibleSections = useMemo(
+    () => knowledge.sections.filter((section) => section.id !== 'user' && section.id !== 'vault-notes'),
+    [knowledge.sections],
+  );
+
   const allItems = useMemo(() => {
-    const items = knowledge.sections.flatMap((section) => section.items);
+    const items = visibleSections.flatMap((section) => section.items);
     const unique = new Map<string, (typeof items)[number]>();
     for (const item of items) {
       if (!unique.has(item.id)) unique.set(item.id, item);
     }
     return [...unique.values()];
-  }, [knowledge.sections]);
+  }, [visibleSections]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -115,7 +97,7 @@ export function KnowledgeRoute() {
 
     async function loadFullContent() {
       if (!selectedItem?.sourcePath) {
-        setFullContent(selectedItem.contentPreview?.trim() || 'No file preview available.');
+        setFullContent(selectedItem.contentPreview?.trim() || t('knowledge.noPreview'));
         setContentError(null);
         setContentLoading(false);
         return;
@@ -127,15 +109,15 @@ export function KnowledgeRoute() {
       try {
         const payload = await loadMissionControlKnowledgeFile(selectedItem.sourcePath, storedToken || undefined);
         if (cancelled) return;
-        setFullContent(payload.content || 'No file preview available.');
+        setFullContent(payload.content || t('knowledge.noPreview'));
       } catch (error) {
         if (cancelled) return;
         if (error instanceof MissionControlAuthError) {
-          setContentError('Access token required to read full file content.');
+          setContentError(t('knowledge.authRequired'));
         } else {
-          setContentError(error instanceof Error ? error.message : 'Failed to load full file content.');
+          setContentError(error instanceof Error ? error.message : t('knowledge.failedLoad'));
         }
-        setFullContent(selectedItem.contentPreview?.trim() || 'No file preview available.');
+        setFullContent(selectedItem.contentPreview?.trim() || t('knowledge.noPreview'));
       } finally {
         if (!cancelled) {
           setContentLoading(false);
@@ -148,9 +130,9 @@ export function KnowledgeRoute() {
     return () => {
       cancelled = true;
     };
-  }, [selectedItem, storedToken]);
+  }, [selectedItem, storedToken, t]);
 
-  const markdownContent = fullContent?.trim() || selectedItem.contentPreview?.trim() || 'No file preview available.';
+  const markdownContent = fullContent?.trim() || selectedItem.contentPreview?.trim() || t('knowledge.noPreview');
 
   const handleSelectItem = (itemId: string) => {
     setSelectedId(itemId);
@@ -160,44 +142,31 @@ export function KnowledgeRoute() {
   };
 
   return (
-    <div ref={containerRef} className="route-page-scroll flex flex-col gap-6 h-full overflow-y-auto">
+    <div ref={containerRef} className="route-page-scroll flex h-full flex-col gap-5 overflow-y-auto sm:gap-6">
       <PullToReloadIndicator state={pullState} />
-      <Card padding="none">
-        <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">{t('nav.knowledge')}</span>
-            <h2 className="text-sm font-semibold text-text">{t('knowledge.title')}</h2>
-          </div>
+      <PageHeader
+        eyebrow={t('knowledge.eyebrow')}
+        title={t('knowledge.title')}
+        description={`${t('knowledge.indexed', { count: allItems.length })} · ${knowledge.updatedAt ? t('knowledge.updated', { time: formatTimestamp(knowledge.updatedAt) }) : t('knowledge.noTimestamp')}`}
+        meta={(
           <Badge variant={knowledge.available ? 'positive' : 'warning'}>
-            {knowledge.available ? 'synced' : 'fallback'}
+            {knowledge.available ? t('knowledge.synced') : t('knowledge.fallback')}
           </Badge>
-        </div>
+        )}
+      />
 
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-          <MetricCard icon={BookOpen} label="Knowledge root" value={knowledge.vaultPath} hint="active source root" />
-          <MetricCard icon={FileText} label="Files" value={String(knowledge.items.length)} hint="indexed markdown notes" />
-          <MetricCard icon={FolderTree} label="Sections" value={String(knowledge.sections.length)} hint="knowledge partitions" />
-          <MetricCard
-            icon={Sparkles}
-            label="Primary note"
-            value={knowledge.primary.title}
-            hint={knowledge.updatedAt ? `updated ${formatTimestamp(knowledge.updatedAt)}` : 'no timestamp'}
-          />
-        </div>
-      </Card>
-
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card padding="none" className="xl:col-span-1">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
             <div className="flex flex-col gap-0.5">
               <span className="eyebrow">{t('knowledge.files')}</span>
               <h3 className="text-sm font-semibold text-text">{t('knowledge.openDetails')}</h3>
             </div>
-            <span className="text-xs text-text-subtle">{allItems.length} indexed</span>
+            <span className="text-xs text-text-subtle">{t('knowledge.indexed', { count: allItems.length })}</span>
           </div>
 
           <div className="divide-y divide-border-subtle max-h-[760px] overflow-y-auto">
-            {knowledge.sections.map((section) => (
+            {visibleSections.map((section) => (
               <div key={section.id} className="px-4 py-3">
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{section.title}</p>
@@ -256,7 +225,7 @@ export function KnowledgeRoute() {
               ) : null}
             </div>
 
-            <p className="text-sm text-text-muted">{selectedItem.excerpt || 'No excerpt available.'}</p>
+            <p className="text-sm text-text-muted">{selectedItem.excerpt || t('knowledge.noExcerpt')}</p>
 
             <Card variant="sunken" className="p-3 max-h-[460px] overflow-y-auto">
               {contentLoading ? <p className="text-xs text-text-subtle mb-2">{t('knowledge.loadingFull')}</p> : null}
@@ -289,7 +258,7 @@ export function KnowledgeRoute() {
             ) : null}
           </div>
 
-          <p className="text-sm text-text-muted">{selectedItem.excerpt || 'No excerpt available.'}</p>
+          <p className="text-sm text-text-muted">{selectedItem.excerpt || t('knowledge.noExcerpt')}</p>
 
           <Card variant="sunken" className="p-3 max-h-[56vh] overflow-y-auto">
             {contentLoading ? <p className="text-xs text-text-subtle mb-2">{t('knowledge.loadingFull')}</p> : null}
