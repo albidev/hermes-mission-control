@@ -24,6 +24,7 @@ import { formatRelativeTime, formatTimestamp } from '../lib/format';
 import { useMissionControl } from '../lib/mission-control-store';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
+import { PageHeader } from '../components/PageHeader';
 import {
   loadMissionControlAgentSessions,
   type MissionControlAgentSessionItem,
@@ -460,19 +461,15 @@ export function SessionsRoute() {
     <div ref={containerRef} className="route-page-scroll flex flex-col gap-4 sm:gap-5">
       <PullToReloadIndicator state={pullState} />
       <Card padding="none" className="!border-0">
-        <div className="flex flex-wrap items-start justify-between gap-2 px-2 pb-2 pt-2 sm:gap-4 sm:px-4 sm:pb-4 sm:pt-4">
-          <div className="min-w-0">
-            <span className="eyebrow">{t('nav.sessions')}</span>
-            <h2 className="mt-1 truncate text-base font-semibold text-text">{t('sessions.controlTitle')}</h2>
-            <p className="mt-1 hidden text-xs text-text-muted sm:block">{t('sessions.description')}</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 text-xs text-text-subtle sm:gap-3">
-            <span className="hidden sm:inline">{lastSyncedAt ? t('sessions.updated', { time: formatRelativeTime(lastSyncedAt / 1000) }) : t('sessions.notSynced')}</span>
-            <button type="button" onClick={() => void loadSessions()} className="inline-flex items-center justify-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text !px-0 sm:!px-2.5" aria-label={t('sessions.refresh')} title={t('sessions.refresh')} disabled={loading}>
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /><span className="hidden sm:inline">{t('sessions.refresh')}</span>
-            </button>
-          </div>
-        </div>
+        <PageHeader
+          eyebrow={t('nav.sessions')}
+          title={t('sessions.controlTitle')}
+          description={t('sessions.description')}
+          meta={lastSyncedAt ? t('sessions.updated', { time: formatRelativeTime(lastSyncedAt / 1000) }) : t('sessions.notSynced')}
+          actions={<button type="button" onClick={() => void loadSessions()} className="inline-flex items-center justify-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text !px-0 sm:!px-2.5" aria-label={t('sessions.refresh')} title={t('sessions.refresh')} disabled={loading}>
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /><span className="hidden sm:inline">{t('sessions.refresh')}</span>
+          </button>}
+        />
         <div className="grid grid-cols-4 gap-1.5 p-2 sm:grid-cols-4 sm:gap-3 sm:p-4 xl:grid-cols-6">
           <MetricCard icon={MessagesSquare} label={t('sessions.total')} value={String(totalSessions)} hint={t('sessions.trackedLabel')} compact />
           <MetricCard icon={Activity} label={t('sessions.liveNow')} value={String(liveCount)} hint={t('sessions.active')} compact />

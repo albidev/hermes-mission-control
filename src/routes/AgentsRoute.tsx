@@ -1,10 +1,11 @@
 import { useI18n } from '../lib/i18n';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Activity, Bot, Clock3, Cpu, Gauge, GitBranch, Layers, ListTree, Workflow } from 'lucide-react';
+import { Activity, Bot, Clock3, Cpu, Gauge, GitBranch, Layers, ListTree, RefreshCw, Workflow } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/Modal';
+import { PageHeader } from '../components/PageHeader';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
 import {
   getFallbackCapabilities,
@@ -38,20 +39,22 @@ function MetricCard({
   label,
   value,
   hint,
+  compact = false,
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
   hint: string;
+  compact?: boolean;
 }) {
   return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-text-muted">{label}</span>
-        <Icon className="h-4 w-4 text-text-subtle" />
+    <Card className={`p-3 sm:p-4 ${compact ? 'px-2 py-2 sm:p-4' : ''}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={`min-w-0 text-xs text-text-muted ${compact ? 'truncate text-[10px] sm:text-xs' : ''}`}>{label}</span>
+        <Icon className={`h-4 w-4 shrink-0 text-text-subtle ${compact ? 'h-3.5 w-3.5 sm:h-4 sm:w-4' : ''}`} />
       </div>
-      <p className="text-lg font-semibold text-text mt-2">{value}</p>
-      <p className="text-xs text-text-subtle mt-1">{hint}</p>
+      <p className={`mt-2 text-lg font-semibold text-text tabular-nums ${compact ? 'mt-1 text-sm sm:mt-2 sm:text-lg' : ''}`}>{value}</p>
+      <p className={`mt-1 text-xs text-text-subtle ${compact ? 'hidden sm:block' : ''}`}>{hint}</p>
     </Card>
   );
 }
@@ -280,6 +283,7 @@ export function AgentsRoute() {
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentSessionItem[]>([]);
   const [trace, setTrace] = useState<MissionControlAgentTraceSnapshot | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [capabilities, setCapabilities] = useState<MissionControlCapabilities>(getFallbackCapabilities());
   const [sseFallbackToPolling, setSseFallbackToPolling] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<MissionControlAgentTraceEvent | null>(null);
@@ -291,9 +295,9 @@ export function AgentsRoute() {
   const traceCompactAvailable = capabilities.trace.compact;
   const traceNamedSseEventAvailable = capabilities.trace.namedSseTraceEvent;
 
-  const { state: pullState } = usePullToReload({
-    containerRef,
-    onReload: async () => {
+  const refreshPage = async () => {
+    setRefreshing(true);
+    try {
       try {
         const resolved = await loadMissionControlCapabilities(storedToken);
         setCapabilities(resolved);
@@ -319,7 +323,14 @@ export function AgentsRoute() {
           setTrace(null);
         }
       }
-    },
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const { state: pullState } = usePullToReload({
+    containerRef,
+    onReload: refreshPage,
   });
 
   useEffect(() => {
@@ -846,45 +857,50 @@ export function AgentsRoute() {
   }, [selectedSessionId, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
 
   return (
-    <div ref={containerRef} className="route-page-scroll flex flex-col gap-6 h-full overflow-y-auto">
+    <div ref={containerRef} className="route-page-scroll flex min-w-0 flex-col gap-6 h-full overflow-x-hidden overflow-y-auto">
       <PullToReloadIndicator state={pullState} />
       <Card padding="none">
-        <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <span className="eyebrow">{t('nav.agents')}</span>
-            <h2 className="text-sm font-semibold text-text">
-              {selectedAgent ? `Agent cockpit · ${selectedAgent.source}` : 'Runtime + trace chain (Timeline and DAG)'}
-            </h2>
-          </div>
-          <Badge variant={selectedAgent ? 'warning' : registry.some((agent) => agent.liveSessions > 0) ? 'positive' : 'default'} dot>
-            {selectedAgent ? 'single-agent view' : `${registry.filter((agent) => agent.liveSessions > 0).length} active`}
-          </Badge>
-        </div>
+        <PageHeader
+          eyebrow={t('nav.agents')}
+          title={selectedAgent ? `Agent cockpit · ${selectedAgent.source}` : 'Runtime + trace chain (Timeline and DAG)'}
+          description={selectedAgent ? t('agents.singleDescription') : t('agents.description')}
+          meta={selectedAgent ? t('agents.singleView') : t('agents.activeCount', { count: registry.filter((agent) => agent.liveSessions > 0).length })}
+          actions={<button type="button" onClick={() => void refreshPage()} className="inline-flex items-center justify-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text !px-0 sm:!px-2.5" aria-label={t('common.refresh')} title={t('common.refresh')} disabled={refreshing}>
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /><span className="hidden sm:inline">{t('common.refresh')}</span>
+          </button>}
+        />
 
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="px-4 pt-1 sm:pt-0">
+          <span className="eyebrow">{t('agents.statsTitle')}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 p-4 pt-3 sm:grid-cols-4 sm:gap-3 sm:pt-4">
           <MetricCard
             icon={Bot}
-            label={selectedAgent ? 'Agent sessions' : 'Active agents'}
+            compact
+            label={selectedAgent ? t('agents.agentSessions') : t('agents.activeAgents')}
             value={selectedAgent ? String(selectedAgent.totalSessions) : String(registry.filter((agent) => agent.liveSessions > 0).length)}
-            hint={selectedAgent ? `${selectedAgent.model}` : 'agents with live sessions'}
+            hint={selectedAgent ? t('agents.modelHint', { model: selectedAgent.model }) : t('agents.activeAgentsHint')}
           />
           <MetricCard
             icon={Activity}
-            label={selectedAgent ? 'Agent live sessions' : 'Live sessions'}
+            compact
+            label={selectedAgent ? t('agents.agentLiveSessions') : t('agents.liveSessions')}
             value={selectedAgent ? String(selectedAgent.liveSessions) : String(trulyLiveSessions.length)}
-            hint="active in last 5 min"
+            hint={t('agents.liveSessionsHint')}
           />
           <MetricCard
             icon={Clock3}
-            label={selectedAgent ? 'Avg messages/session' : 'In-flight queue'}
+            compact
+            label={selectedAgent ? t('agents.avgMessages') : t('agents.inFlightQueue')}
             value={selectedAgent ? selectedAgentAvgMessages.toFixed(1) : String(snapshot.queuedJobs)}
-            hint={selectedAgent ? 'session depth' : 'scheduled/pending jobs'}
+            hint={selectedAgent ? t('agents.sessionDepth') : t('agents.inFlightQueueHint')}
           />
           <MetricCard
             icon={Gauge}
-            label={selectedAgent ? 'Last active' : 'Tracked sessions'}
+            compact
+            label={selectedAgent ? t('agents.lastActiveCard') : t('agents.trackedSessions')}
             value={selectedAgent ? formatRelativeTime(selectedAgent.lastActive) : String(orderedSessions.length)}
-            hint={selectedAgent ? formatTimestamp(selectedAgent.lastActive) : 'filesystem + session adapter'}
+            hint={selectedAgent ? formatTimestamp(selectedAgent.lastActive) : t('agents.trackedSessionsHint')}
           />
         </div>
       </Card>
@@ -915,59 +931,61 @@ export function AgentsRoute() {
 
       <Card padding="none">
         <div className="px-4 pt-4 pb-3 border-b border-border-subtle flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-col gap-0.5">
+          <div className="min-w-0 flex flex-col gap-0.5">
             <span className="eyebrow">Execution trace</span>
             <h3 className="text-sm font-semibold text-text">
               {selectedAgent ? 'Single-agent flow: thoughts, tools, skills, responses' : 'Full chain: thoughts, tools, skills, responses'}
             </h3>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button className={`pill ${view === 'timeline' ? 'nav-link-active' : 'pill-subtle'} pill-button`} onClick={() => setView('timeline')}>
-              <ListTree className="h-3.5 w-3.5" /> Timeline
-            </button>
-            <button className={`pill ${view === 'dag' ? 'nav-link-active' : 'pill-subtle'} pill-button`} onClick={() => setView('dag')}>
-              <GitBranch className="h-3.5 w-3.5" /> DAG
-            </button>
-            <button className={`pill ${liveMode ? 'status-online' : 'pill-subtle'} pill-button`} onClick={() => setLiveMode((v) => !v)}>
-              <Workflow className="h-3.5 w-3.5" /> {liveMode ? 'Live' : 'Post'}
-            </button>
-          </div>
-
-          {liveMode ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="text-text-subtle">Scope</span>
-              <button
-                className={`pill pill-button ${liveTraceScope === 'current' ? 'nav-link-active' : 'pill-subtle'}`}
-                onClick={() => setLiveTraceScope('current')}
-              >
-                Current turn
+          <div className="flex min-w-0 flex-col gap-2 sm:items-end">
+            <div className="flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
+              <button className={`pill shrink-0 whitespace-nowrap ${view === 'timeline' ? 'nav-link-active' : 'pill-subtle'} pill-button`} onClick={() => setView('timeline')}>
+                <ListTree className="h-3.5 w-3.5" /> Timeline
               </button>
-              <button
-                className={`pill pill-button ${liveTraceScope === 'last3' ? 'nav-link-active' : 'pill-subtle'}`}
-                onClick={() => setLiveTraceScope('last3')}
-              >
-                Last 3 turns
+              <button className={`pill shrink-0 whitespace-nowrap ${view === 'dag' ? 'nav-link-active' : 'pill-subtle'} pill-button`} onClick={() => setView('dag')}>
+                <GitBranch className="h-3.5 w-3.5" /> DAG
               </button>
-              <button
-                className={`pill pill-button ${liveTraceScope === 'full' ? 'nav-link-active' : 'pill-subtle'}`}
-                onClick={() => setLiveTraceScope('full')}
-              >
-                Full session
+              <button className={`pill shrink-0 whitespace-nowrap ${liveMode ? 'status-online' : 'pill-subtle'} pill-button`} onClick={() => setLiveMode((v) => !v)}>
+                <Workflow className="h-3.5 w-3.5" /> {liveMode ? 'Live' : 'Post'}
               </button>
             </div>
-          ) : null}
 
-          {!capabilities.trace.stream ? (
-            <p className="text-xs text-warning">Compatibility mode: live SSE stream unavailable, using polling fallback.</p>
-          ) : null}
+            {liveMode ? (
+              <div className="flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
+                <span className="shrink-0 text-text-subtle">Scope</span>
+                <button
+                  className={`pill pill-button shrink-0 whitespace-nowrap ${liveTraceScope === 'current' ? 'nav-link-active' : 'pill-subtle'}`}
+                  onClick={() => setLiveTraceScope('current')}
+                >
+                  Current turn
+                </button>
+                <button
+                  className={`pill pill-button shrink-0 whitespace-nowrap ${liveTraceScope === 'last3' ? 'nav-link-active' : 'pill-subtle'}`}
+                  onClick={() => setLiveTraceScope('last3')}
+                >
+                  Last 3 turns
+                </button>
+                <button
+                  className={`pill pill-button shrink-0 whitespace-nowrap ${liveTraceScope === 'full' ? 'nav-link-active' : 'pill-subtle'}`}
+                  onClick={() => setLiveTraceScope('full')}
+                >
+                  Full session
+                </button>
+              </div>
+            ) : null}
+
+            {!capabilities.trace.stream ? (
+              <p className="text-xs text-warning sm:text-right">Compatibility mode: live SSE stream unavailable, using polling fallback.</p>
+            ) : null}
+          </div>
         </div>
 
         <div className="p-4 flex flex-col gap-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
             <label className="text-xs text-text-muted shrink-0">{t('provider.session')}</label>
             <select
-              className="auth-input py-2 text-sm"
+              className="w-full min-w-0 rounded-md bg-surface h-9 px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40"
               value={selectedSessionId}
               onChange={(event) => selectSession(event.target.value, true)}
               disabled={selectableSessions.length === 0}
@@ -1004,15 +1022,15 @@ export function AgentsRoute() {
                   <Badge variant="default">{t('ui.allActions')}</Badge>
                 )}
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {TRACE_ACTION_FILTERS.map((filter) => {
+              <div className="-mx-3 flex max-w-[calc(100%+1.5rem)] flex-nowrap items-center gap-1.5 overflow-x-auto px-3 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:max-w-none sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {TRACE_ACTION_FILTERS.filter((filter) => (actionFilterCounts.get(filter.id) ?? 0) > 0 || actionFilterSet.has(filter.id)).map((filter) => {
                   const count = actionFilterCounts.get(filter.id) ?? 0;
                   const active = actionFilterSet.has(filter.id);
                   return (
                     <button
                       key={filter.id}
                       type="button"
-                      className={`pill pill-button text-[11px] ${active ? 'nav-link-active' : 'pill-subtle'}`}
+                      className={`pill pill-button shrink-0 justify-center whitespace-nowrap text-[11px] ${active ? 'nav-link-active' : 'pill-subtle'}`}
                       onClick={() => toggleActionFilter(filter.id)}
                       disabled={count === 0 && !active}
                       title={`${getTraceActionLabel(filter.id)} events`}
@@ -1027,31 +1045,37 @@ export function AgentsRoute() {
           ) : null}
 
           {visibleTrace?.session ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs text-text-subtle">
-              <Badge variant={visibleTrace.mode === 'live' ? 'positive' : 'default'}>{visibleTrace.mode}</Badge>
-              <span className="break-all">{visibleTrace.session.title} · {visibleTrace.session.model}</span>
-              <span>{t('ui.turns')} {visibleTrace.stats.turns}</span>
-              <span>{t('ui.tools')} {visibleTrace.stats.toolCalls}</span>
-              <span>{t('ui.skills')} {visibleTrace.stats.skills}</span>
-              <span>{t('ui.thoughts')} {visibleTrace.stats.thoughts}</span>
-              <span>{t('ui.errors')} {visibleTrace.stats.errors}</span>
-              {(() => {
-                const agentSession = orderedSessions.find((s) => s.sessionId === selectedSessionId);
-                if (!agentSession || agentSession.inputTokens + agentSession.outputTokens === 0) return null;
-                return (
-                  <>
-                    <span className="tabular-nums" title={`In: ${agentSession.inputTokens.toLocaleString()} · Out: ${agentSession.outputTokens.toLocaleString()} · Cache: ${agentSession.cacheReadTokens.toLocaleString()} · Reasoning: ${agentSession.reasoningTokens.toLocaleString()}`}>
-                      tokens {formatTokenCount(agentSession.inputTokens + agentSession.outputTokens)}
-                    </span>
-                    {agentSession.estimatedCostUsd > 0 ? (
-                      <span className="tabular-nums">${agentSession.estimatedCostUsd.toFixed(3)}</span>
-                    ) : null}
-                  </>
-                );
-              })()}
-              <Badge variant={liveMode && !sseFallbackToPolling ? 'positive' : 'default'}>
-                {liveMode && !sseFallbackToPolling ? 'transport: sse' : 'transport: polling'}
-              </Badge>
+            <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-subtle">
+                <Badge variant={visibleTrace.mode === 'live' ? 'positive' : 'default'}>{visibleTrace.mode}</Badge>
+                <span className="min-w-0 flex-1 truncate">{visibleTrace.session.title} · {visibleTrace.session.model}</span>
+              </div>
+              <div className="-mx-1 flex max-w-[calc(100% + 0.5rem)] flex-nowrap items-center gap-1.5 overflow-x-auto px-1 pb-1 text-[11px] text-text-subtle [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:max-w-none sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                <span className="shrink-0 rounded-full bg-surface px-2 py-0.5">{t('ui.turns')} {visibleTrace.stats.turns}</span>
+                <span className="shrink-0 rounded-full bg-surface px-2 py-0.5">{t('ui.tools')} {visibleTrace.stats.toolCalls}</span>
+                <span className="shrink-0 rounded-full bg-surface px-2 py-0.5">{t('ui.skills')} {visibleTrace.stats.skills}</span>
+                <span className="shrink-0 rounded-full bg-surface px-2 py-0.5">{t('ui.thoughts')} {visibleTrace.stats.thoughts}</span>
+                <span className="shrink-0 rounded-full bg-surface px-2 py-0.5">{t('ui.errors')} {visibleTrace.stats.errors}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-subtle">
+                {(() => {
+                  const agentSession = orderedSessions.find((s) => s.sessionId === selectedSessionId);
+                  if (!agentSession || agentSession.inputTokens + agentSession.outputTokens === 0) return null;
+                  return (
+                    <>
+                      <span className="tabular-nums" title={`In: ${agentSession.inputTokens.toLocaleString()} · Out: ${agentSession.outputTokens.toLocaleString()} · Cache: ${agentSession.cacheReadTokens.toLocaleString()} · Reasoning: ${agentSession.reasoningTokens.toLocaleString()}`}>
+                        tokens {formatTokenCount(agentSession.inputTokens + agentSession.outputTokens)}
+                      </span>
+                      {agentSession.estimatedCostUsd > 0 ? (
+                        <span className="tabular-nums">${agentSession.estimatedCostUsd.toFixed(3)}</span>
+                      ) : null}
+                    </>
+                  );
+                })()}
+                <Badge variant={liveMode && !sseFallbackToPolling ? 'positive' : 'default'}>
+                  {liveMode && !sseFallbackToPolling ? 'transport: sse' : 'transport: polling'}
+                </Badge>
+              </div>
             </div>
           ) : null}
 
@@ -1093,14 +1117,14 @@ export function AgentsRoute() {
                         {statusBadge ? <Badge variant={statusBadge.variant} className={statusBadge.className}>{getEventStatusLabel(event, completedToolCallIds)}</Badge> : null}
                         <span className="text-xs text-text-subtle ml-auto">{formatRelativeTime(event.timestamp)}</span>
                       </div>
-                      <p className="text-xs text-text-muted break-words">{summarizeEventPreview(event.detail)}</p>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-subtle">
-                        <span>{t('ui.turn')} {event.turnId}</span>
-                        {event.toolName ? <span>{t('ui.tool')} {event.toolName}</span> : null}
-                        {event.skillName ? <span>{t('ui.skills')} {event.skillName}</span> : null}
-                        {event.callId ? <span>{t('ui.call')} {event.callId}</span> : null}
-                        <span>{formatTimestamp(event.timestamp)}</span>
-                        <span className="text-text-muted">{t('knowledge.openDetails')}</span>
+                      <p className="line-clamp-2 text-xs text-text-muted break-words">{summarizeEventPreview(event.detail)}</p>
+                      <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 text-[11px] text-text-subtle [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                        <span className="shrink-0">{t('ui.turn')} {event.turnId}</span>
+                        {event.toolName ? <span className="max-w-[12rem] shrink-0 truncate">{t('ui.tool')} {event.toolName}</span> : null}
+                        {event.skillName ? <span className="max-w-[12rem] shrink-0 truncate">{t('ui.skills')} {event.skillName}</span> : null}
+                        {event.callId ? <span className="max-w-[12rem] shrink-0 truncate">{t('ui.call')} {event.callId}</span> : null}
+                        <span className="shrink-0">{formatTimestamp(event.timestamp)}</span>
+                        <span className="shrink-0 text-text-muted">{t('knowledge.openDetails')}</span>
                       </div>
                     </button>
                   );
