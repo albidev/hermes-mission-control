@@ -22,6 +22,7 @@ import {
   pendingPromptWasPersisted,
   ConnectionAttemptGate,
 } from '../src/lib/chat-protocol.ts';
+import { deriveTodoPlan } from '../src/lib/todo-plan.ts';
 
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit } from '../src/lib/chat-outbox.ts';
 
@@ -159,6 +160,43 @@ assertEqual(semanticTranscript[0].kind, 'reasoning');
 assertEqual(semanticTranscript[1].kind, 'assistant');
 assertEqual(semanticTranscript[2].kind, 'tool');
 assertEqual(semanticTranscript[2].toolName, 'shell');
+
+const restoredTodoPlan = deriveTodoPlan([
+  {
+    id: 'todo-1', role: 'tool', kind: 'tool', toolName: 'todo',
+    text: '', output: '{"todos":[{"id":"inspect","content":"Inspect the drawer","status":"completed"},{"id":"build","content":"Build the capsule","status":"in_progress"},{"id":"verify","content":"Verify mobile behavior","status":"pending"}],"revision":2}',
+    status: 'complete', createdAt: 1100,
+  },
+]);
+assertEqual(restoredTodoPlan?.total, 3);
+assertEqual(restoredTodoPlan?.completed, 1);
+assertEqual(restoredTodoPlan?.current?.id, 'build');
+assertEqual(restoredTodoPlan?.next?.id, 'verify');
+
+const liveTodoPlan = deriveTodoPlan([
+  {
+    id: 'todo-old', role: 'tool', kind: 'tool', toolName: 'todo',
+    text: '', output: '{"todos":[{"id":"old","content":"Old plan","status":"pending"}]}',
+    status: 'complete', createdAt: 1101,
+  },
+  {
+    id: 'todo-live', role: 'tool', kind: 'tool', toolName: 'todo',
+    text: '', toolInput: '{"todos":[{"id":"new","content":"New active plan","status":"in_progress"}]}',
+    status: 'streaming', createdAt: 1102,
+  },
+]);
+assertEqual(liveTodoPlan?.current?.id, 'new');
+assertEqual(liveTodoPlan?.current?.content, 'New active plan');
+
+const clearedTodoPlan = deriveTodoPlan([
+  {
+    id: 'todo-clear', role: 'tool', kind: 'tool', toolName: 'todo',
+    text: '', output: '```json\n{"todos":[],"revision":3}\n```',
+    status: 'complete', createdAt: 1103,
+  },
+]);
+assertEqual(clearedTodoPlan?.items.length, 0);
+assertEqual(clearedTodoPlan?.status, 'idle');
 
 let messages = applyGatewayEvent([], { type: 'message.start' }, 2000);
 messages = applyGatewayEvent(messages, { type: 'message.delta', payload: { text: 'A' } }, 2001);

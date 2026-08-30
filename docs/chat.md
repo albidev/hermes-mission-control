@@ -13,7 +13,8 @@ React Chat UI (ChatDrawer / chat-messages)
         ├─ chat-presence.ts     → presence pill (localStorage + BroadcastChannel)
         ├─ chat-persistence.ts  → transcript save/restore (localStorage + server)
         ├─ chat-interactions.ts → interaction request titles
-        └─ chat-commands.ts     → slash command dispatch
+        ├─ chat-commands.ts     → slash command dispatch
+        └─ todo-plan.ts         → derives the latest TODO snapshot for the live plan capsule
         │
         ▼
 GET /api/ws  (Hermes gateway)
@@ -33,6 +34,7 @@ The chat connects to the gateway's WebSocket endpoint, not to the telemetry side
 | Interactions | `src/lib/chat-interactions.ts` | Interaction-request titles |
 | Commands | `src/lib/chat-commands.ts` | Slash-command output |
 | Rendering | `src/components/chat-messages.tsx` | Message bubbles, reasoning bubble, attachments |
+| Live plan | `src/lib/todo-plan.ts` + `src/components/chat/ChatTodoPlan.tsx` | Derives and displays the current `todo` tool snapshot |
 
 ## Connection & auth
 
@@ -59,6 +61,14 @@ Key behaviours (all validated end-to-end):
 ## Streaming & reasoning
 
 Events streamed over the socket update the transcript live (`chat-protocol.ts`). Reasoning and response are separate streams — if the gateway delivers the reasoning **after** the completed response, the reasoning bubble is inserted *before* the last complete assistant reply rather than appended at the end, so it never appears as an afterthought.
+
+## Live TODO mission capsule
+
+When the gateway transcript contains a `todo` tool result, the ChatDrawer renders a compact mission capsule immediately above the statusline. It shows the completed/total count and current task; tapping it expands the full plan with the current and next task, progress bar, nested subtasks, and semantic item states.
+
+`src/lib/todo-plan.ts` walks the normalized transcript backwards because each `todo` invocation returns the complete list. Completed tool results are authoritative; while a TODO call is streaming, its `toolInput` is used as a live preview. An empty TODO list hides the capsule. This is frontend-only and does not add an endpoint or modify Hermes Core.
+
+The capsule is responsive: it remains inline in the desktop drawer and keeps a 44px-friendly touch target on narrow screens. All labels and accessibility copy are localized through the EN/IT catalogs.
 
 ## Whiteboard link
 

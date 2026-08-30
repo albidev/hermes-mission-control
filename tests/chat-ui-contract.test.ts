@@ -18,8 +18,13 @@ const messagesComponent = readFileSync(new URL('../src/components/chat-messages.
 const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 const buttonComponent = readFileSync(new URL('../src/components/ui/Button.tsx', import.meta.url), 'utf8');
 const tldraw = readFileSync(new URL('../src/components/TLDrawCanvas.tsx', import.meta.url), 'utf8');
+const todoPlan = readFileSync(new URL('../src/components/chat/ChatTodoPlan.tsx', import.meta.url), 'utf8');
 
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
+assertIncludes(component, '<ChatTodoPlan plan={todoPlan}', 'chat drawer exposes the live TODO plan');
+assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
+assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
+assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');
 assertExcludes(component, '<div className="chat-head-meta">', 'header has no redundant metadata row');
 assertExcludes(component, '<p className="chat-preview">{lastPreview}</p>', 'composer has no redundant last-message strip');
 assertIncludes(composer, 'chat-composer-attach', 'attachment uses shared touch-target contract');

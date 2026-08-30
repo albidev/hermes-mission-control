@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatComposer } from './ChatComposer';
+import { ChatTodoPlan } from './chat/ChatTodoPlan';
 import { Modal } from './Modal';
 import { Button } from './ui/Button';
 import type { ChatSlashPopoverHandle } from './ChatSlashPopover';
@@ -55,6 +56,7 @@ import {
   type MissionControlAgentSessionItem,
   type MissionControlSessionPreviewMessage,
 } from '../lib/hermes-api';
+import { deriveTodoPlan } from '../lib/todo-plan';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -515,6 +517,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         : statusText;
   const contextWindow = contextMax || estimateContextWindow(modelIdentity?.model);
   const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
+  const todoPlan = deriveTodoPlan(messages);
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);
     const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);
@@ -973,6 +976,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           </div>
         ) : null}
 
+        <ChatTodoPlan plan={todoPlan} waitingForInput={Boolean(interaction)} />
         <div className="chat-status-line" role="status">
           <span className={`chat-status-line-verb ${running ? 'is-streaming' : statusLineLabel === 'Ready' ? 'is-ready' : ''}`}>
             {running ? (
