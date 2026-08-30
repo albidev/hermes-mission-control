@@ -3921,7 +3921,7 @@
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: transparent;
 }
 
 .chat-plan:not(.is-expanded) {
@@ -3952,12 +3952,16 @@
 
 .chat-plan:not(.is-expanded) .chat-plan-capsule {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
-  background: transparent;
+  background: var(--color-surface-raised);
 }
 
-.chat-plan.is-expanded .chat-plan-capsule,
+.chat-plan.is-expanded .chat-plan-capsule {
+  background: var(--color-surface-raised);
+  box-shadow: none;
+}
+
 .chat-plan.is-expanded .chat-plan-expanded {
-  background: var(--color-surface);
+  background: transparent;
   box-shadow: none;
 }
 
@@ -3974,7 +3978,7 @@
 
 .chat-plan:not(.is-expanded) .chat-plan-capsule:hover,
 .chat-plan:not(.is-expanded) .chat-plan-capsule:focus-visible {
-  background: transparent;
+  background: var(--color-surface-raised);
 }
 
 .chat-plan-capsule:focus-visible {
@@ -4091,7 +4095,6 @@
   animation: chat-plan-reveal 160ms ease-out;
 }
 
-.chat-plan.is-expanded .chat-plan-expanded,
 .chat-plan.is-expanded .chat-plan-focus,
 .chat-plan.is-expanded .chat-plan-focus.is-next {
   background: var(--color-surface);
