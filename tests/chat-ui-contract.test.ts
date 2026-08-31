@@ -20,6 +20,7 @@ const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8
 const buttonComponent = readFileSync(new URL('../src/components/ui/Button.tsx', import.meta.url), 'utf8');
 const tldraw = readFileSync(new URL('../src/components/TLDrawCanvas.tsx', import.meta.url), 'utf8');
 const todoPlan = readFileSync(new URL('../src/components/chat/ChatTodoPlan.tsx', import.meta.url), 'utf8');
+const toolMessage = readFileSync(new URL('../src/components/chat/ToolMessage.tsx', import.meta.url), 'utf8');
 
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
 assertIncludes(component, '<ChatTodoPlan plan={visibleTodoPlan}', 'chat drawer exposes the live TODO plan');
@@ -53,6 +54,13 @@ assertExcludes(component, '<div className="chat-head-meta">', 'header has no red
 assertExcludes(component, '<p className="chat-preview">{lastPreview}</p>', 'composer has no redundant last-message strip');
 assertIncludes(composer, 'chat-composer-attach', 'attachment uses shared touch-target contract');
 assertIncludes(composer, 'chat-composer-action chat-send', 'send uses shared touch-target contract');
+assertIncludes(messagesComponent, "import { ToolMessage } from './chat/ToolMessage';", 'chat messages use the family-aware tool renderer');
+assertIncludes(messagesComponent, '<ToolMessage message={message} />', 'tool messages are delegated to the family-aware renderer');
+assertIncludes(toolMessage, 'export function classifyTool(toolName: string | undefined): ToolFamily', 'tool renderer classifies tool families');
+assertIncludes(toolMessage, 'const FAMILY_META: Record<ToolFamily, FamilyMeta>', 'tool renderer covers the approved tool families');
+assertIncludes(toolMessage, 'chat-tool-sources', 'research tools expose source links');
+assertIncludes(toolMessage, 'chat-tool-payload', 'tool payloads are collapsible');
+assertExcludes(toolMessage, 'browser_vision', 'tool renderer does not add screenshot handling yet');
 assertIncludes(messagesComponent, 'function ChatMarkdown', 'chat messages expose one shared Markdown renderer');
 assertIncludes(messagesComponent, '<ChatMarkdown', 'message cards use the shared Markdown renderer');
 assertIncludes(messagesComponent, 'text={message.text}', 'streaming and completed text use Markdown renderer');
