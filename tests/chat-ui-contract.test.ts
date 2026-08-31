@@ -24,7 +24,10 @@ const todoPlan = readFileSync(new URL('../src/components/chat/ChatTodoPlan.tsx',
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
 assertIncludes(component, '<ChatTodoPlan plan={visibleTodoPlan}', 'chat drawer exposes the live TODO plan');
 assertIncludes(component, 'todoPlan: gatewayTodoPlan', 'chat drawer consumes the gateway TODO state');
+assertIncludes(component, 'const [previewTodoPlan, setPreviewTodoPlan] = useState<TodoPlan | null>(null);', 'preview TODO state survives explicit resume');
+assertIncludes(component, 'const visibleTodoPlan = gatewayTodoPlan ?? previewTodoPlan ?? derivedTodoPlan;', 'gateway TODO state has priority over preview fallback');
 assertIncludes(chatGateway, "parsed.event.type === 'todo.updated'", 'chat gateway consumes live TODO updates');
+assertIncludes(chatGateway, "!open || !storedToken || initialSessionId?.trim()", 'explicit session resume is not overridden by the global last-chat pointer');
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');

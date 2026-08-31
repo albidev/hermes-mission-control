@@ -224,7 +224,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   // session, adopt the server's pointer so desktop and mobile open the SAME
   // conversation. The transcript itself is rehydrated by the resume flow.
   useEffect(() => {
-    if (!open || !storedToken) return;
+    if (!open || !storedToken || initialSessionId?.trim()) return;
     let cancelled = false;
     void fetchServerLastChat(storedToken).then((serverChat) => {
       if (cancelled || !serverChat?.sessionId) return;
@@ -245,7 +245,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       requestedSessionIdRef.current = serverChat.sessionId;
     });
     return () => { cancelled = true; };
-  }, [open, storedToken]);
+  }, [open, storedToken, initialSessionId]);
 
   const rejectPending = useCallback((message: string) => {
     for (const pending of pendingRef.current.values()) {

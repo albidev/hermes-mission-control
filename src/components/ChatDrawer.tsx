@@ -56,7 +56,7 @@ import {
   type MissionControlAgentSessionItem,
   type MissionControlSessionPreviewMessage,
 } from '../lib/hermes-api';
-import { deriveTodoPlan } from '../lib/todo-plan';
+import { deriveTodoPlan, type TodoPlan } from '../lib/todo-plan';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -288,10 +288,19 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   }, [isExpanded]);
 
   const [preview, setPreview] = useState<MissionControlAgentSessionItem | null>(null);
+  const [previewTodoPlan, setPreviewTodoPlan] = useState<TodoPlan | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
-    if (!previewMode || !initialSessionId) {
+    if (!initialSessionId) {
+      setPreview(null);
+      setPreviewTodoPlan(null);
+      setPreviewLoading(false);
+      return;
+    }
+    // Keep the sanitized preview plan available as a fallback during an
+    // explicit Resume: older live runtimes may not return todo_state.
+    if (!previewMode) {
       setPreview(null);
       setPreviewLoading(false);
       return;
@@ -309,6 +318,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     loadMissionControlSessionPreview(token, initialSessionId).then((item) => {
       if (!cancelled) {
         setPreview(item);
+        setPreviewTodoPlan(item?.todoPlan ?? null);
         setPreviewLoading(false);
       }
     }).catch(() => {
@@ -519,7 +529,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const contextWindow = contextMax || estimateContextWindow(modelIdentity?.model);
   const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
   const derivedTodoPlan = deriveTodoPlan(messages);
-  const visibleTodoPlan = preview?.todoPlan ?? gatewayTodoPlan ?? derivedTodoPlan;
+  const visibleTodoPlan = gatewayTodoPlan ?? previewTodoPlan ?? derivedTodoPlan;
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);
     const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);
