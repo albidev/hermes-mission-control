@@ -4728,8 +4728,10 @@
   }
 
   .chat-status-line-verb {
-    flex: 0 1 4rem;
-    max-width: 4rem;
+    flex: 0 0 auto;
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .chat-status-line-model {

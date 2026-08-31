@@ -49,6 +49,7 @@ assertIncludes(styles, '.chat-status-line {\n  min-width: 0;', 'status line can 
 assertIncludes(styles, '@media (max-width: 640px)', 'chat status line has a narrow-screen layout');
 assertIncludes(styles, 'flex-wrap: nowrap;', 'mobile status line keeps every metric on one row');
 assertIncludes(styles, '.chat-status-line-bar {\n    display: none;', 'mobile status line replaces the linear bar with the ring');
+assertIncludes(styles, '.chat-status-line-verb {\n    flex: 0 0 auto;\n    max-width: none;\n    overflow: visible;', 'mobile status verb stays fully readable');
 assertIncludes(component, "chat-transcript ${previewMode ? 'is-preview' : ''} ${visibleTodoPlan ? 'has-todo-plan' : ''}", 'preview transcript exposes explicit TODO inset state');
 assertIncludes(styles, '.chat-transcript.is-preview.has-todo-plan .chat-resume-button {\n  margin-bottom: 4.5rem;', 'mobile resume clearance does not depend on relational selectors');
 assertIncludes(todoPlan, 'chat-plan-title">{statusLabel}', 'TODO capsule exposes the current plan state');
