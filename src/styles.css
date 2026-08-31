@@ -4724,7 +4724,8 @@
   }
 
   .chat-status-line-separator {
-    display: none;
+    display: inline;
+    flex: 0 0 auto;
   }
 
   .chat-status-line-verb {
