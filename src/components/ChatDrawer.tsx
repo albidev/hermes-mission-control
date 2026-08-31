@@ -883,7 +883,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           />
         ) : null}
 
-        <div ref={scrollRef} onScroll={handleTranscriptScroll} className={`chat-transcript ${isDragging ? 'is-dragging' : ''}`} aria-live="polite">
+        <div ref={scrollRef} onScroll={handleTranscriptScroll} className={`chat-transcript ${previewMode ? 'is-preview' : ''} ${visibleTodoPlan ? 'has-todo-plan' : ''} ${isDragging ? 'is-dragging' : ''}`} aria-live="polite">
           {isDragging ? (
             <div className="chat-drop-hint"><Paperclip size={20} /><span>{t('chatDrawer.dropFiles')}</span></div>
           ) : null}

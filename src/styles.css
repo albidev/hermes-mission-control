@@ -4179,9 +4179,22 @@
   scroll-padding-bottom: 4.25rem;
 }
 
+.chat-transcript.is-preview.has-todo-plan {
+  padding-bottom: 7rem;
+  scroll-padding-bottom: 7rem;
+}
+
+.chat-transcript.is-preview.has-todo-plan .chat-resume-button {
+  margin-bottom: 4.5rem;
+}
+
 .chat-transcript:has(.chat-preview-surface):has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {
   padding-bottom: 7rem;
   scroll-padding-bottom: 7rem;
+}
+
+.chat-transcript:has(.chat-preview-surface):has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) .chat-resume-button {
+  margin-bottom: 4.5rem;
 }
 
 .chat-empty {
