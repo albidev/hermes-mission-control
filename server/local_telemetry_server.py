@@ -68,7 +68,7 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
-from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, user_message_dedupe_key
+from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
 import kanban_bridge as kanban_bridge_mod
 from kanban_bridge import KanbanError as KanbanBridgeError
 import cron_bridge as cron_bridge_mod
@@ -1961,13 +1961,18 @@ class Handler(BaseHTTPRequestHandler):
             event_id = str(payload.get("event_id") or "").strip()
             dedupe_key = core_event_dedupe_key(session_id, event, event_id)
             relay_payload = event
-        elif kind == "user_message":
+        elif kind in {"user_message", "system_message"}:
             message = payload.get("message")
-            if not isinstance(message, dict) or not str(message.get("id") or "").strip():
-                self._json(400, {"error": "bad_request", "detail": "user_message requires a message with an id."})
+            expected_role = "user" if kind == "user_message" else "system"
+            if not isinstance(message, dict) or not str(message.get("id") or "").strip() or message.get("role") != expected_role:
+                self._json(400, {"error": "bad_request", "detail": f"{kind} requires a {expected_role} message with an id."})
                 return
             message = dict(message)
-            dedupe_key = user_message_dedupe_key(session_id, str(message["id"]))
+            dedupe_key = (
+                user_message_dedupe_key(session_id, str(message["id"]))
+                if kind == "user_message"
+                else system_message_dedupe_key(session_id, str(message["id"]))
+            )
             relay_payload = message
         else:
             self._json(400, {"error": "bad_request", "detail": f"Unsupported sync kind: {kind}."})

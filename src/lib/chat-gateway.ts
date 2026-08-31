@@ -41,7 +41,7 @@ import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover
 import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
-import { applySyncedUserMessage, chatSyncStreamUrl, mergeDurableChatMessages, publishChatSync, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
+import { applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, mergeDurableChatMessages, publishChatSync, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
 import { interactionTitle } from './chat-interactions';
@@ -419,10 +419,13 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         return;
       }
 
-      if (envelope.kind === 'user_message') {
+      if (envelope.kind === 'user_message' || envelope.kind === 'system_message') {
         const message = envelope.payload as unknown as ChatMessage;
-        if (message.role !== 'user' || typeof message.id !== 'string' || typeof message.text !== 'string') return;
-        setMessages((current) => applySyncedUserMessage(current, message));
+        const expectedRole = envelope.kind === 'user_message' ? 'user' : 'system';
+        if (message.role !== expectedRole || typeof message.id !== 'string' || typeof message.text !== 'string') return;
+        setMessages((current) => envelope.kind === 'user_message'
+          ? applySyncedUserMessage(current, message)
+          : applySyncedChatMessage(current, message));
       }
     };
 
@@ -942,17 +945,20 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const appendSystemMessage = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    setMessages((current) => [
-      ...current,
-      {
-        id: `system-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        role: 'system',
-        text: trimmed,
-        status: 'complete',
-        createdAt: Date.now(),
-      },
-    ]);
-  }, []);
+    const systemMessage: ChatMessage = {
+      id: `system-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      role: 'system',
+      kind: 'system',
+      text: trimmed,
+      status: 'complete',
+      createdAt: Date.now(),
+    };
+    setMessages((current) => [...current, systemMessage]);
+    const activeSessionId = sessionIdRef.current;
+    if (activeSessionId) {
+      void publishChatSync(storedToken, activeSessionId, 'system_message', systemMessage as unknown as Record<string, unknown>);
+    }
+  }, [storedToken]);
 
   const submitAgentPrompt = useCallback(async (
     text: string,

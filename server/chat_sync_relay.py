@@ -181,6 +181,10 @@ def user_message_dedupe_key(session_id: str, message_id: str) -> str:
     return f"user:{session_id}:{str(message_id or '').strip()}"
 
 
+def system_message_dedupe_key(session_id: str, message_id: str) -> str:
+    return f"system:{session_id}:{str(message_id or '').strip()}"
+
+
 chat_sync_relay = ChatSyncRelay()
 
 __all__ = [
@@ -188,4 +192,5 @@ __all__ = [
     "chat_sync_relay",
     "core_event_dedupe_key",
     "user_message_dedupe_key",
+    "system_message_dedupe_key",
 ]

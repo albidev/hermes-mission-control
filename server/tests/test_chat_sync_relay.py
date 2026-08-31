@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from chat_sync_relay import ChatSyncRelay, core_event_dedupe_key, user_message_dedupe_key
+from chat_sync_relay import ChatSyncRelay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
 
 
 class ChatSyncRelayTest(unittest.TestCase):
@@ -53,6 +53,20 @@ class ChatSyncRelayTest(unittest.TestCase):
         key = user_message_dedupe_key("s1", "user-123")
         self.assertEqual(key, "user:s1:user-123")
         self.assertEqual(key, user_message_dedupe_key("s1", "user-123"))
+
+    def test_system_message_is_broadcast_and_deduplicated(self) -> None:
+        _sender, _replay, _latest = self.relay.subscribe("s1", "desktop")
+        receiver, _replay, _latest = self.relay.subscribe("s1", "mobile")
+        message = {"id": "system-1", "role": "system", "text": "steer queued"}
+        key = system_message_dedupe_key("s1", message["id"])
+        self.relay.publish("s1", "desktop", "system_message", message, key)
+        duplicate = self.relay.publish("s1", "desktop", "system_message", message, key)
+        self.assertTrue(duplicate["deduplicated"])
+        received = self.relay.wait(receiver, timeout=0.01)
+        if received is None:
+            self.fail("mobile did not receive the steer system message")
+        self.assertEqual(received["kind"], "system_message")
+        self.assertEqual(received["payload"]["text"], "steer queued")
 
 
 if __name__ == "__main__":

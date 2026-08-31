@@ -36,7 +36,9 @@ assertIncludes(chatGateway, "parsed.event.type === 'todo.updated'", 'chat gatewa
 assertIncludes(chatGateway, 'publishChatSync(storedToken, parsed.event.session_id, \'gateway_event\'', 'chat gateway mirrors core events into the sidecar relay');
 assertIncludes(chatGateway, 'new EventSource(chatSyncStreamUrl', 'chat gateway subscribes to sidecar fan-out');
 assertIncludes(chatGateway, 'publishChatSync(storedToken, activeSessionId, \'user_message\'', 'chat gateway mirrors user messages into the sidecar relay');
-assertIncludes(chatSync, 'export function applySyncedUserMessage', 'chat sync deduplicates mirrored user messages');
+assertIncludes(chatGateway, 'publishChatSync(storedToken, activeSessionId, \'system_message\'', 'chat gateway mirrors steer acknowledgements into the sidecar relay');
+assertIncludes(chatSync, 'export type ChatSyncEnvelope', 'chat sync envelope supports control acknowledgements');
+assertIncludes(chatSync, 'export function applySyncedChatMessage', 'chat sync deduplicates mirrored messages');
 assertIncludes(chatSync, 'let publishQueue: Promise<void> = Promise.resolve();', 'chat sync serializes publishes to preserve event order');
 assertIncludes(chatGateway, "!open || !storedToken || initialSessionId?.trim()", 'explicit session resume is not overridden by the global last-chat pointer');
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');

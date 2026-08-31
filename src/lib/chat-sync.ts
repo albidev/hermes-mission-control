@@ -4,7 +4,7 @@ export type ChatSyncEnvelope = {
   session_id: string;
   relay_seq: number;
   dedupe_key: string;
-  kind: 'gateway_event' | 'user_message';
+  kind: 'gateway_event' | 'user_message' | 'system_message';
   payload: Record<string, unknown>;
 };
 
@@ -49,7 +49,7 @@ export function chatSyncStreamUrl(sessionId: string, accessToken: string, since?
 export function publishChatSync(
   accessToken: string,
   sessionId: string,
-  kind: 'gateway_event' | 'user_message',
+  kind: 'gateway_event' | 'user_message' | 'system_message',
   payload: Record<string, unknown>,
   dedupeKey?: string,
 ): Promise<void> {
@@ -80,10 +80,12 @@ export function publishChatSync(
   return publishQueue;
 }
 
-export function applySyncedUserMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
+export function applySyncedChatMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
   if (messages.some((candidate) => candidate.id === message.id)) return messages;
   return [...messages, message];
 }
+
+export const applySyncedUserMessage = applySyncedChatMessage;
 
 function messageKey(message: ChatMessage): string {
   if (message.kind === 'tool' || message.role === 'tool') {
