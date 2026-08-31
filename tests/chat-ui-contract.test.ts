@@ -43,6 +43,12 @@ assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expan
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');
 assertIncludes(component, '<div className="chat-runtime-footer">', 'runtime footer groups TODO plan and status line');
+assertIncludes(component, 'chat-status-line-ring', 'mobile status line exposes compact circular context progress');
+assertIncludes(styles, '.chat-status-line-ring {', 'circular context progress has a dedicated visual treatment');
+assertIncludes(styles, '.chat-status-line {\n  min-width: 0;', 'status line can shrink as one mobile row');
+assertIncludes(styles, '@media (max-width: 640px)', 'chat status line has a narrow-screen layout');
+assertIncludes(styles, 'flex-wrap: nowrap;', 'mobile status line keeps every metric on one row');
+assertIncludes(styles, '.chat-status-line-bar {\n    display: none;', 'mobile status line replaces the linear bar with the ring');
 assertIncludes(component, "chat-transcript ${previewMode ? 'is-preview' : ''} ${visibleTodoPlan ? 'has-todo-plan' : ''}", 'preview transcript exposes explicit TODO inset state');
 assertIncludes(styles, '.chat-transcript.is-preview.has-todo-plan .chat-resume-button {\n  margin-bottom: 4.5rem;', 'mobile resume clearance does not depend on relational selectors');
 assertIncludes(todoPlan, 'chat-plan-title">{statusLabel}', 'TODO capsule exposes the current plan state');

@@ -2,6 +2,7 @@ import { useI18n } from '../lib/i18n';
 import {
   Component,
   type ClipboardEvent,
+  type CSSProperties,
   type DragEvent,
   type FormEvent,
   type ErrorInfo,
@@ -1021,6 +1022,16 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             >
               <span className="chat-status-line-bar-fill" style={{ width: `${contextPercent}%` }} />
             </span>
+            <span
+              className="chat-status-line-ring"
+              role="progressbar"
+              aria-label={t('chatDrawer.contextWindowUsage')}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(contextPercent)}
+              style={{ '--chat-context-progress': `${contextPercent}%` } as CSSProperties}
+              title={contextTokens == null ? 'Context usage not available yet' : `${Math.round(contextPercent)}% of context window`}
+            />
             <span className="chat-status-line-percent">{contextTokens == null ? '—' : `${Math.round(contextPercent)}%`}</span>
           </div>
         </div>
