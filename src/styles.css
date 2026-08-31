@@ -3207,18 +3207,47 @@
 }
 
 .chat-tool-payload > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(5.5rem, auto) 1rem;
+  align-items: center;
   cursor: pointer;
   list-style: none;
 }
 
 .chat-tool-payload > summary::-webkit-details-marker { display: none; }
-.chat-tool-payload > summary::after {
-  margin-left: auto;
+
+.chat-tool-section-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 5.5rem;
+  margin-left: 0 !important;
+  gap: 0.2rem;
+  overflow: hidden;
   color: var(--color-text-subtle);
-  content: '⌄';
-  font-size: 0.75rem;
+  font-size: 0.58rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-align: right;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
 }
-.chat-tool-payload[open] > summary::after { content: '⌃'; }
+
+.chat-tool-payload-chevron {
+  justify-self: end;
+  color: var(--color-text-subtle);
+  transition: transform 160ms ease, color 160ms ease;
+}
+
+.chat-tool-payload:hover .chat-tool-payload-chevron,
+.chat-tool-payload:focus-within .chat-tool-payload-chevron {
+  color: var(--chat-tool-family-color);
+}
+
+.chat-tool-payload[open] .chat-tool-payload-chevron {
+  transform: rotate(180deg);
+}
 
 .chat-tool-summary,
 .chat-tool-execution-meta,

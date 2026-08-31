@@ -68,6 +68,11 @@ assertIncludes(toolMessage, 'chat-tool-delegation-list', 'delegation renders a p
 assertIncludes(toolMessage, 'delegationResults', 'delegation binds live results to the task panel');
 assertIncludes(styles, '.chat-tool-delegation-list', 'delegation list has a dedicated visual surface');
 assertIncludes(toolMessage, 'duration_seconds', 'delegation exposes child duration when provided');
+assertIncludes(toolMessage, 'chat-tool-payload-chevron', 'tool payload sections use a consistent chevron control');
+assertIncludes(toolMessage, 'chat-tool-section-meta', 'tool payload metadata has a dedicated alignment column');
+assertIncludes(styles, 'grid-template-columns: minmax(0, 1fr) minmax(5.5rem, auto) 1rem;', 'tool payload headers align labels metadata and chevrons');
+assertIncludes(styles, '.chat-tool-payload[open] .chat-tool-payload-chevron {\n  transform: rotate(180deg);', 'tool payload chevrons reflect open state');
+assertExcludes(styles, ".chat-tool-payload > summary::after {\n  margin-left: auto;", 'tool payload chevrons do not rely on competing pseudo-element auto margins');
 assertExcludes(toolMessage, 'browser_vision', 'tool renderer does not add screenshot handling yet');
 assertIncludes(messagesComponent, 'function ChatMarkdown', 'chat messages expose one shared Markdown renderer');
 assertIncludes(messagesComponent, '<ChatMarkdown', 'message cards use the shared Markdown renderer');

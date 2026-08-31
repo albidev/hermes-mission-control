@@ -3,6 +3,7 @@ import {
   Archive,
   Bot,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   ExternalLink,
   FolderOpen,
@@ -255,7 +256,11 @@ function PayloadBlock({
 }) {
   return (
     <details className="chat-tool-section chat-tool-payload" open={open}>
-      <summary className="chat-tool-section-label"><span>{label}</span>{detail}</summary>
+      <summary className="chat-tool-section-label">
+        <span>{label}</span>
+        <span className="chat-tool-section-meta">{detail}</span>
+        <ChevronDown className="chat-tool-payload-chevron" size={14} aria-hidden />
+      </summary>
       <pre>{value}</pre>
     </details>
   );
@@ -336,7 +341,7 @@ export function ToolMessage({ message }: { message: ChatMessage }) {
         <PayloadBlock
           label={family === 'execution' ? 'Command / input' : 'Input'}
           value={input}
-          detail={message.toolId ? <span>#{message.toolId.slice(-8)}</span> : <span>request</span>}
+          detail={message.toolId ? `#${message.toolId.slice(-8)}` : 'request'}
         />
       ) : null}
 
@@ -354,7 +359,7 @@ export function ToolMessage({ message }: { message: ChatMessage }) {
           label="Output"
           value={message.output}
           open={running || failed}
-          detail={<span>{duration ? <><Clock3 size={11} /> {duration}</> : 'result'}</span>}
+          detail={duration ? <><Clock3 size={11} aria-hidden /> {duration}</> : 'result'}
         />
       ) : running ? (
         <div className="chat-tool-waiting"><Loader2 size={13} className="chat-spin" /> Waiting for tool result…</div>
