@@ -77,6 +77,7 @@ export type ChatModelSwitchResult = {
 export type GatewayEvent = {
   type: string;
   session_id?: string;
+  seq?: number;
   payload?: Record<string, unknown>;
 };
 
@@ -227,6 +228,7 @@ export function parseGatewayFrame(raw: unknown): ParsedGatewayFrame {
           event: {
             type: params.type,
             session_id: typeof params.session_id === 'string' ? params.session_id : undefined,
+            seq: typeof params.seq === 'number' && Number.isFinite(params.seq) ? params.seq : undefined,
             payload: isRecord(params.payload) ? params.payload : undefined,
           },
         };

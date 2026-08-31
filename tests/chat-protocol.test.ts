@@ -43,12 +43,12 @@ function assertDeepEqual(actual: unknown, expected: unknown) {
 const eventFrame = JSON.stringify({
   jsonrpc: '2.0',
   method: 'event',
-  params: { type: 'message.delta', session_id: 'sid', payload: { text: 'hello' } },
+  params: { type: 'message.delta', session_id: 'sid', seq: 7, payload: { text: 'hello' } },
 });
 
 assertDeepEqual(parseGatewayFrame(eventFrame), {
   kind: 'event',
-  event: { type: 'message.delta', session_id: 'sid', payload: { text: 'hello' } },
+  event: { type: 'message.delta', session_id: 'sid', seq: 7, payload: { text: 'hello' } },
 });
 
 assertEqual(parseGatewayFrame('{nope').kind, 'malformed');

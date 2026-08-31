@@ -12,6 +12,7 @@ React Chat UI (ChatDrawer / chat-messages)
         ├─ chat-transport.ts    → WS URL, auth ticket minting, reconnection
         ├─ chat-presence.ts     → presence pill (localStorage + BroadcastChannel)
         ├─ chat-persistence.ts  → transcript save/restore (localStorage + server)
+        ├─ chat-sync.ts         → snapshot merge + monotonic event watermarks/replay
         ├─ chat-interactions.ts → interaction request titles
         ├─ chat-commands.ts     → slash command dispatch
         ├─ todo-plan.ts         → derives and normalizes the live plan snapshot
@@ -58,6 +59,12 @@ Key behaviours (all validated end-to-end):
 ## Persistence
 
 `chat-persistence.ts` stores the transcript under `mission-control-chat-drawer-v1` in `localStorage` (session id/key, model identity, messages, `updatedAt`) and syncs the last chat to the server (`/api/local/chat/last`) so it can be restored across devices/browser restarts.
+
+## Cross-device convergence
+
+Two Mission Control clients can keep the same session open (for example desktop + iPhone). `chat-protocol.ts` preserves the gateway event `seq`; `chat-sync.ts` rejects duplicate/out-of-order events and merges authoritative `session.resume` snapshots without dropping a local optimistic user message or an in-flight assistant/tool stream. After reconnect, MC replays missed events through `session.events.since` and detects a backend restart through `replay_epoch`. While both clients are connected, a lightweight two-second `session.resume` reconciliation closes the gap for viewers that do not receive the session's primary live transport.
+
+The backend transcript remains authoritative. The local copy is a cache, and transient token cadence cannot be guaranteed after an arbitrarily long offline period; durable messages and tool results converge after replay or resume.
 
 ## Streaming & reasoning
 

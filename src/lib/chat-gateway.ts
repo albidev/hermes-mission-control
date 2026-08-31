@@ -33,6 +33,7 @@ import {
   type ChatModelIdentity,
   type ChatModelSwitchResult,
   type GatewayCommandDispatch,
+  type GatewayEvent,
   type GatewayInteractionRequest,
 } from './chat-protocol';
 import { deriveTodoPlan, normalizeTodoPlanSnapshot, type TodoPlan } from './todo-plan';
@@ -40,6 +41,7 @@ import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover
 import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
+import { mergeDurableChatMessages, shouldApplySequencedEvent } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
 import { interactionTitle } from './chat-interactions';
@@ -143,6 +145,11 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const previewModeRef = useRef<boolean>(Boolean(initialSessionId?.trim()));
   const connectRef = useRef<() => Promise<void>>(async () => {});
   const readyResolveRef = useRef<(() => void) | null>(null);
+  const eventWatermarksRef = useRef(new Map<string, number>());
+  const replayEpochRef = useRef<string | null>(null);
+  const replayHoldRef = useRef<Map<string, GatewayEvent[]> | null>(null);
+  const eventReplayInFlightRef = useRef(false);
+  const snapshotSyncInFlightRef = useRef(false);
 
   useEffect(() => {
     setMessages((current) => {
@@ -278,6 +285,87 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       }
     });
   }, []);
+
+  const prepareEventReplay = useCallback((): { sessionId: string; lastSeen: number } | null => {
+    if (eventReplayInFlightRef.current || replayHoldRef.current) return null;
+    const activeSessionId = sessionIdRef.current;
+    if (!activeSessionId) return null;
+    const lastSeen = eventWatermarksRef.current.get(activeSessionId);
+    if (lastSeen === undefined) return null;
+    replayHoldRef.current = new Map([[activeSessionId, []]]);
+    return { sessionId: activeSessionId, lastSeen };
+  }, []);
+
+  const finishEventReplay = useCallback(async (replay: { sessionId: string; lastSeen: number } | null) => {
+    if (!replay || eventReplayInFlightRef.current) return;
+    eventReplayInFlightRef.current = true;
+    let replayEvents: GatewayEvent[] = [];
+    try {
+      const result = await request<unknown>('session.events.since', {
+        session_id: replay.sessionId,
+        last_seen: replay.lastSeen,
+      });
+      if (isRecord(result)) {
+        const epoch = typeof result.epoch === 'string' ? result.epoch : null;
+        if (epoch && replayEpochRef.current && epoch !== replayEpochRef.current) {
+          eventWatermarksRef.current.clear();
+          replayEvents = [];
+        } else if (!result.truncated && Array.isArray(result.events)) {
+          replayEvents = result.events.filter((event): event is GatewayEvent => isRecord(event) && typeof event.type === 'string');
+        }
+        if (epoch) replayEpochRef.current = epoch;
+      }
+    } catch {
+      // Resume reconciliation below remains the authoritative fallback.
+    } finally {
+      const heldEvents = replayHoldRef.current?.get(replay.sessionId) || [];
+      const candidates = [...replayEvents, ...heldEvents];
+      const accepted = candidates.filter((event) => shouldApplySequencedEvent(eventWatermarksRef.current, event));
+      if (accepted.length > 0) {
+        setMessages((current) => accepted.reduce((messages, event) => applyGatewayEvent(messages, event), current));
+      }
+      replayHoldRef.current = null;
+      eventReplayInFlightRef.current = false;
+    }
+  }, [request]);
+
+  const reconcileSessionSnapshot = useCallback(async (activeSessionId: string) => {
+    try {
+      const resumed = await request<unknown>('session.resume', {
+        session_id: activeSessionId,
+        cols: 80,
+        eager_build: true,
+        source: 'mission-control',
+      });
+      const durableTranscript = extractTranscript(resumed);
+      if (durableTranscript.length > 0) {
+        durableTranscriptRef.current = durableTranscript;
+        const transcript = normalizeTranscript(durableTranscript);
+        const inflight = extractInflightAssistant(resumed);
+        const snapshot = inflight
+          ? [...transcript, { id: `inflight-sync-${Date.now()}`, role: 'assistant' as const, kind: 'assistant' as const, text: inflight, status: 'streaming' as const, createdAt: Date.now() }]
+          : transcript;
+        setMessages((current) => mergeDurableChatMessages(current, snapshot));
+        const resumedTodoPlan = normalizeTodoPlanSnapshot(isRecord(resumed) ? resumed.todo_state : undefined);
+        setTodoPlan(resumedTodoPlan ?? deriveTodoPlan(transcript));
+      }
+    } catch {
+      // A disconnected or busy gateway is retried by the next reconciliation tick.
+    }
+  }, [request]);
+
+  useEffect(() => {
+    if (!open || previewMode || connectionState !== 'connected') return;
+    const timer = window.setInterval(() => {
+      const activeSessionId = sessionIdRef.current;
+      if (!activeSessionId || snapshotSyncInFlightRef.current) return;
+      snapshotSyncInFlightRef.current = true;
+      void reconcileSessionSnapshot(activeSessionId).finally(() => {
+        snapshotSyncInFlightRef.current = false;
+      });
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [connectionState, open, previewMode, reconcileSessionSnapshot]);
 
   const adoptModel = useCallback((result: unknown) => {
     const next = extractSessionModel(result);
@@ -560,6 +648,11 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
         if (parsed.event.type === 'gateway.ready') {
           setStatusText('Gateway ready');
+          const epoch = parsed.event.payload && typeof parsed.event.payload.replay_epoch === 'string'
+            ? parsed.event.payload.replay_epoch
+            : null;
+          if (epoch && replayEpochRef.current && epoch !== replayEpochRef.current) eventWatermarksRef.current.clear();
+          if (epoch) replayEpochRef.current = epoch;
           readyResolveRef.current?.();
           return;
         }
@@ -571,6 +664,14 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         ].filter((value): value is string => Boolean(value));
         const activeSessionRefs = [sessionIdRef.current, sessionKeyRef.current].filter((value): value is string => Boolean(value));
         if (activeSessionRefs.length > 0 && eventSessionRefs.length > 0 && !eventSessionRefs.some((value) => activeSessionRefs.includes(value))) return;
+        if (parsed.event.session_id && parsed.event.seq !== undefined) {
+          const heldEvents = replayHoldRef.current?.get(parsed.event.session_id);
+          if (heldEvents) {
+            heldEvents.push(parsed.event);
+            return;
+          }
+          if (!shouldApplySequencedEvent(eventWatermarksRef.current, parsed.event)) return;
+        }
         if (parsed.event.type === 'todo.updated') {
           const liveTodoPlan = normalizeTodoPlanSnapshot(eventPayload);
           if (liveTodoPlan) setTodoPlan(liveTodoPlan);
@@ -658,11 +759,13 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           // When a session was picked from the list, stay in preview mode until
           // the user clicks "Resume session".
           if (previewModeRef.current) return;
-          void ensureSession().then((activeSessionId) => {
+          const eventReplay = prepareEventReplay();
+          void ensureSession().then((activeSessionId) => finishEventReplay(eventReplay).then(() => {
             void refreshModel(activeSessionId);
             void refreshContext(activeSessionId);
             void replayPendingPrompt(activeSessionId);
-          }).catch((err: unknown) => {
+          })).catch((err: unknown) => {
+            void finishEventReplay(eventReplay);
             setError(err instanceof Error ? err.message : 'Failed to create or resume chat session.');
           });
         });
@@ -698,7 +801,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       setStatusText('Connection failed');
       setError(err instanceof Error ? err.message : 'Chat connection failed.');
     }
-  }, [adoptModel, ensureSession, open, refreshContext, refreshModel, refreshReasoning, rejectPending, replayPendingPrompt, scheduleReconnect, storedToken]);
+  }, [adoptModel, ensureSession, finishEventReplay, open, prepareEventReplay, refreshContext, refreshModel, refreshReasoning, rejectPending, replayPendingPrompt, scheduleReconnect, storedToken]);
 
   useEffect(() => {
     connectRef.current = connect;
