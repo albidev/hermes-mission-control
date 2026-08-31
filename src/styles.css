@@ -4370,7 +4370,8 @@
   text-decoration: line-through;
 }
 
-.chat-plan-expanded .chat-plan-item-pending .chat-plan-item-icon {
+.chat-plan-expanded .chat-plan-item-pending .chat-plan-item-icon,
+.chat-plan-expanded .chat-plan-item-in_progress .chat-plan-item-icon {
   border: 0;
 }
 

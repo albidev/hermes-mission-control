@@ -46,7 +46,7 @@ assertIncludes(styles, '.chat-runtime-footer {\n  position: relative;\n  z-index
 assertIncludes(styles, '.chat-plan:not(.is-expanded) .chat-plan-capsule {\n  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);\n  background: var(--color-surface-raised);', 'collapsed TODO plan keeps its filled capsule surface');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {\n  background: transparent;', 'expanded TODO container has no outer fill');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-focus.is-next {', 'expanded TODO plan keeps one internal background surface');
-assertIncludes(styles, '.chat-plan-expanded .chat-plan-item-pending .chat-plan-item-icon {\n  border: 0;', 'expanded pending TODO dots use a single ring');
+assertIncludes(styles, '.chat-plan-expanded .chat-plan-item-pending .chat-plan-item-icon,\n.chat-plan-expanded .chat-plan-item-in_progress .chat-plan-item-icon {\n  border: 0;', 'expanded pending and running TODO dots use a single ring');
 assertIncludes(styles, '.chat-plan-item-completed {\n  color: var(--color-positive);', 'completed TODO items use the positive green text color');
 assertIncludes(styles, '.chat-plan:not(.is-expanded) {\n  right: auto;\n  left: 50%;\n  width: 50%;', 'collapsed TODO plan is centered and leaves room for the scroll FAB');
 
@@ -56,6 +56,8 @@ assertIncludes(composer, 'chat-composer-attach', 'attachment uses shared touch-t
 assertIncludes(composer, 'chat-composer-action chat-send', 'send uses shared touch-target contract');
 assertIncludes(messagesComponent, "import { ToolMessage } from './chat/ToolMessage';", 'chat messages use the family-aware tool renderer');
 assertIncludes(messagesComponent, '<ToolMessage message={message} />', 'tool messages are delegated to the family-aware renderer');
+assertIncludes(messagesComponent, "const isTodoTool = isTool && message.toolName?.trim().toLowerCase() === 'todo';", 'TODO tool output is owned by the mission capsule');
+assertIncludes(messagesComponent, 'if (isTodoTool) return null;', 'TODO tool stream is hidden from the transcript');
 assertIncludes(toolMessage, 'export function classifyTool(toolName: string | undefined): ToolFamily', 'tool renderer classifies tool families');
 assertIncludes(toolMessage, 'const FAMILY_META: Record<ToolFamily, FamilyMeta>', 'tool renderer covers the approved tool families');
 assertIncludes(toolMessage, 'chat-tool-sources', 'research tools expose source links');

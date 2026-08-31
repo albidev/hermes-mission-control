@@ -47,7 +47,9 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
   const { t } = useI18n();
   const visualKind = message.kind ?? message.role;
   const isTool = visualKind === 'tool';
+  const isTodoTool = isTool && message.toolName?.trim().toLowerCase() === 'todo';
   const isReasoning = visualKind === 'reasoning';
+  if (isTodoTool) return null;
   const label = visualKind === 'assistant'
     ? 'Hermes'
     : visualKind === 'user'
