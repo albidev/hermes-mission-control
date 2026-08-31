@@ -4654,6 +4654,14 @@
   user-select: none;
 }
 
+.chat-status-line-model-group {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+  gap: 0.35rem;
+}
+
 .chat-status-line-model,
 .chat-status-line-reasoning {
   min-width: 0;

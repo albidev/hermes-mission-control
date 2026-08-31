@@ -999,12 +999,14 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               {statusLineLabel}
             </span>
             <span className="chat-status-line-separator">|</span>
-            <span className="chat-status-line-model" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Model not available'}>
-              {modelIdentity?.model || 'Model unavailable'}
-            </span>
-            <span className="chat-status-line-separator">|</span>
-            <span className="chat-status-line-reasoning">
-              {modelIdentity?.reasoningEffort || '—'}
+            <span className="chat-status-line-model-group">
+              <span className="chat-status-line-model" title={modelIdentity ? `${modelIdentity.model}${modelIdentity.provider ? ` via ${modelIdentity.provider}` : ''}` : 'Model not available'}>
+                {modelIdentity?.model || 'Model unavailable'}
+              </span>
+              <span className="chat-status-line-separator">|</span>
+              <span className="chat-status-line-reasoning">
+                {modelIdentity?.reasoningEffort || '—'}
+              </span>
             </span>
             <span className="chat-status-line-separator">|</span>
             <span className="chat-status-line-ctx" title={contextTokens == null ? 'Context usage not available yet' : `${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} context tokens`}>
