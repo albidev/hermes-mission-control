@@ -62,6 +62,12 @@ assertIncludes(toolMessage, 'export function classifyTool(toolName: string | und
 assertIncludes(toolMessage, 'const FAMILY_META: Record<ToolFamily, FamilyMeta>', 'tool renderer covers the approved tool families');
 assertIncludes(toolMessage, 'chat-tool-sources', 'research tools expose source links');
 assertIncludes(toolMessage, 'chat-tool-payload', 'tool payloads are collapsible');
+assertIncludes(toolMessage, 'function parseDelegationResults', 'delegation results are parsed from the real tool payload');
+assertIncludes(toolMessage, 'function DelegationPanel', 'delegation has a dedicated live panel');
+assertIncludes(toolMessage, 'chat-tool-delegation-list', 'delegation renders a per-task result list');
+assertIncludes(toolMessage, 'delegationResults', 'delegation binds live results to the task panel');
+assertIncludes(styles, '.chat-tool-delegation-list', 'delegation list has a dedicated visual surface');
+assertIncludes(toolMessage, 'duration_seconds', 'delegation exposes child duration when provided');
 assertExcludes(toolMessage, 'browser_vision', 'tool renderer does not add screenshot handling yet');
 assertIncludes(messagesComponent, 'function ChatMarkdown', 'chat messages expose one shared Markdown renderer');
 assertIncludes(messagesComponent, '<ChatMarkdown', 'message cards use the shared Markdown renderer');

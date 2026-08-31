@@ -3270,6 +3270,136 @@
   color: var(--color-text-subtle);
 }
 
+.chat-tool-delegation {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--chat-tool-family-color) 22%, var(--color-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chat-tool-family-color) 5%, var(--color-surface));
+}
+
+.chat-tool-delegation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  color: var(--chat-tool-family-color);
+  font-size: 0.6rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chat-tool-delegation-header span {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0.3rem;
+}
+
+.chat-tool-delegation-header span:last-child {
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.chat-tool-delegation-list {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-tool-delegation-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.38rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+}
+
+.chat-tool-delegation-icon {
+  display: inline-flex;
+  padding-top: 0.1rem;
+  color: var(--color-text-subtle);
+}
+
+.chat-tool-delegation-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.chat-tool-delegation-copy strong {
+  color: var(--color-text);
+  font-size: 0.64rem;
+}
+
+.chat-tool-delegation-copy span,
+.chat-tool-delegation-copy small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-tool-delegation-copy small {
+  color: var(--color-text-subtle);
+}
+
+.chat-tool-delegation-copy .chat-tool-delegation-error {
+  color: var(--color-negative);
+}
+
+.chat-tool-delegation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.15rem 0.35rem;
+  max-width: 12rem;
+  color: var(--color-text-subtle);
+  font-size: 0.55rem;
+  text-align: right;
+}
+
+.chat-tool-delegation-meta span:first-child {
+  color: var(--chat-tool-family-color);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.chat-tool-delegation-row.is-completed .chat-tool-delegation-icon { color: var(--color-positive); }
+.chat-tool-delegation-row.is-failed .chat-tool-delegation-icon { color: var(--color-negative); }
+.chat-tool-delegation-row.is-running .chat-tool-delegation-icon { color: var(--chat-tool-family-color); }
+.chat-tool-delegation-row.is-interrupted .chat-tool-delegation-icon { color: var(--color-warning); }
+
+@media (max-width: 640px) {
+  .chat-tool-delegation-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .chat-tool-delegation-meta {
+    grid-column: 2;
+    justify-content: flex-start;
+    max-width: none;
+    text-align: left;
+  }
+}
+
 .chat-tool-sources {
   display: flex;
   flex-direction: column;

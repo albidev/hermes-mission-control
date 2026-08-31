@@ -87,6 +87,145 @@ function extractUrls(value: string): string[] {
   return [...new Set(matches.map((url) => url.replace(/[.,;:]+$/, '')))];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseJsonValue(value: string): unknown {
+  const text = value.trim();
+  if (!text) return null;
+  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const candidates = fenced?.[1] ? [fenced[1].trim(), text] : [text];
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch {
+      // Delegation output is normally JSON, but older gateways may add a prefix.
+    }
+  }
+  return null;
+}
+
+type DelegationTask = { taskIndex: number; goal: string };
+type DelegationResult = {
+  taskIndex: number;
+  status: string;
+  summary: string;
+  model: string;
+  durationSeconds: number | null;
+  error: string;
+  tokens: number | null;
+};
+
+function parseDelegationTasks(value: string): DelegationTask[] {
+  const parsed = parseJsonValue(value);
+  if (!isRecord(parsed)) return [];
+  if (Array.isArray(parsed.tasks)) {
+    return parsed.tasks.flatMap((task, index) => {
+      if (!isRecord(task) || typeof task.goal !== 'string' || !task.goal.trim()) return [];
+      return [{ taskIndex: index, goal: task.goal.trim() }];
+    });
+  }
+  if (typeof parsed.goal === 'string' && parsed.goal.trim()) return [{ taskIndex: 0, goal: parsed.goal.trim() }];
+  return [];
+}
+
+function parseDelegationResults(value: string): DelegationResult[] {
+  const parsed = parseJsonValue(value);
+  const rows = isRecord(parsed) && Array.isArray(parsed.results)
+    ? parsed.results
+    : Array.isArray(parsed) ? parsed : [];
+  return rows.flatMap((row) => {
+    if (!isRecord(row) || !Number.isInteger(row.task_index)) return [];
+    const tokens = isRecord(row.tokens) ? row.tokens : null;
+    const inputTokens = typeof tokens?.input === 'number' ? tokens.input : 0;
+    const outputTokens = typeof tokens?.output === 'number' ? tokens.output : 0;
+    return [{
+      taskIndex: row.task_index as number,
+      status: typeof row.status === 'string' ? row.status.toLowerCase() : 'unknown',
+      summary: typeof row.summary === 'string' ? row.summary.trim() : '',
+      model: typeof row.model === 'string' ? row.model.trim() : '',
+      durationSeconds: typeof row.duration_seconds === 'number' && Number.isFinite(row.duration_seconds) ? row.duration_seconds : null,
+      error: typeof row.error === 'string' ? row.error.trim() : '',
+      tokens: tokens ? inputTokens + outputTokens : null,
+    }];
+  });
+}
+
+function delegationStatus(status: string): 'completed' | 'failed' | 'running' | 'interrupted' | 'planned' {
+  if (status === 'completed') return 'completed';
+  if (status === 'failed' || status === 'error' || status === 'timeout') return 'failed';
+  if (status === 'running' || status === 'streaming') return 'running';
+  if (status === 'interrupted') return 'interrupted';
+  return 'planned';
+}
+
+function formatDelegationDuration(seconds: number | null): string | null {
+  if (seconds === null) return null;
+  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
+  return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+}
+
+function delegationStatusIcon(status: ReturnType<typeof delegationStatus>) {
+  if (status === 'completed') return <CheckCircle2 size={13} aria-hidden />;
+  if (status === 'failed' || status === 'interrupted') return <XCircle size={13} aria-hidden />;
+  if (status === 'running') return <Loader2 size={13} className="chat-spin" aria-hidden />;
+  return <Clock3 size={13} aria-hidden />;
+}
+
+function DelegationPanel({
+  tasks,
+  results,
+  running,
+}: {
+  tasks: DelegationTask[];
+  results: DelegationResult[];
+  running: boolean;
+}) {
+  const byTask = new Map(results.map((result) => [result.taskIndex, result]));
+  const indices = [...new Set([
+    ...tasks.map((task) => task.taskIndex),
+    ...results.map((result) => result.taskIndex),
+  ])].sort((a, b) => a - b);
+  if (indices.length === 0) return null;
+
+  const completed = results.filter((result) => delegationStatus(result.status) === 'completed').length;
+  const failed = results.filter((result) => delegationStatus(result.status) === 'failed').length;
+  return (
+    <div className="chat-tool-delegation">
+      <div className="chat-tool-delegation-header">
+        <span><Bot size={12} aria-hidden /> Child agents</span>
+        <span>{running ? 'Dispatching' : `${completed}/${indices.length} completed`}{failed ? ` · ${failed} failed` : ''}</span>
+      </div>
+      <ul className="chat-tool-delegation-list">
+        {indices.map((taskIndex) => {
+          const task = tasks.find((candidate) => candidate.taskIndex === taskIndex);
+          const result = byTask.get(taskIndex);
+          const status = delegationStatus(result?.status || (running ? 'planned' : 'unknown'));
+          const duration = formatDelegationDuration(result?.durationSeconds ?? null);
+          return (
+            <li key={taskIndex} className={`chat-tool-delegation-row is-${status}`}>
+              <span className="chat-tool-delegation-icon">{delegationStatusIcon(status)}</span>
+              <div className="chat-tool-delegation-copy">
+                <strong>Task {taskIndex + 1}</strong>
+                <span>{task?.goal || result?.summary || 'Delegated task'}</span>
+                {result?.summary && task?.goal ? <small>{result.summary}</small> : null}
+                {result?.error ? <small className="chat-tool-delegation-error">{result.error}</small> : null}
+              </div>
+              <div className="chat-tool-delegation-meta">
+                <span>{status}</span>
+                {result?.model ? <span title={result.model}>{compactText(result.model, 26)}</span> : null}
+                {duration ? <span>{duration}</span> : null}
+                {result?.tokens !== null && result?.tokens !== undefined ? <span>{result.tokens.toLocaleString()} tok</span> : null}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function familySummary(family: ToolFamily, message: ChatMessage, urls: string[]): string | null {
   const payload = [message.toolInput, message.detail, message.output, message.text].filter(Boolean).join('\n');
   if (family === 'execution') {
@@ -160,6 +299,8 @@ export function ToolMessage({ message }: { message: ChatMessage }) {
   const input = message.toolInput || message.text;
   const payload = [message.toolInput, message.detail, message.output, message.text].filter(Boolean).join('\n');
   const urls = extractUrls(payload);
+  const delegationTasks = family === 'delegation' ? parseDelegationTasks(input) : [];
+  const delegationResults = family === 'delegation' ? parseDelegationResults(message.output || message.detail || '') : [];
   const duration = typeof message.durationS === 'number' && Number.isFinite(message.durationS)
     ? message.durationS < 1 ? `${Math.round(message.durationS * 1000)}ms` : `${message.durationS.toFixed(message.durationS < 10 ? 1 : 0)}s`
     : null;
@@ -185,7 +326,7 @@ export function ToolMessage({ message }: { message: ChatMessage }) {
         <div className="chat-tool-execution-meta"><FolderOpen size={12} aria-hidden /><span>{extractWorkdir(payload)}</span></div>
       ) : null}
 
-      {family === 'delegation' ? <div className="chat-tool-family-note"><Bot size={12} aria-hidden /> Child agent run</div> : null}
+      {family === 'delegation' ? <DelegationPanel tasks={delegationTasks} results={delegationResults} running={running} /> : null}
       {family === 'scheduler' ? <div className="chat-tool-family-note"><Timer size={12} aria-hidden /> Schedule operation</div> : null}
       {family === 'context' ? <div className="chat-tool-family-note"><ServerCog size={12} aria-hidden /> Context provenance</div> : null}
       {family === 'media' ? <div className="chat-tool-family-note"><Music2 size={12} aria-hidden /> Preview deferred — result remains downloadable</div> : null}
