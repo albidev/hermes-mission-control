@@ -46,6 +46,7 @@ assertIncludes(styles, '.chat-plan:not(.is-expanded) .chat-plan-capsule {\n  box
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {\n  background: transparent;', 'expanded TODO container has no outer fill');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-focus.is-next {', 'expanded TODO plan keeps one internal background surface');
 assertIncludes(styles, '.chat-plan-expanded .chat-plan-item-pending .chat-plan-item-icon {\n  border: 0;', 'expanded pending TODO dots use a single ring');
+assertIncludes(styles, '.chat-plan-item-completed {\n  color: var(--color-positive);', 'completed TODO items use the positive green text color');
 assertIncludes(styles, '.chat-plan:not(.is-expanded) {\n  right: auto;\n  left: 50%;\n  width: 50%;', 'collapsed TODO plan is centered and leaves room for the scroll FAB');
 
 assertExcludes(component, '<div className="chat-head-meta">', 'header has no redundant metadata row');

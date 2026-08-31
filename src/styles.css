@@ -4228,7 +4228,7 @@
 }
 
 .chat-plan-item-completed {
-  color: var(--color-text-muted);
+  color: var(--color-positive);
   opacity: 0.78;
 }
 
