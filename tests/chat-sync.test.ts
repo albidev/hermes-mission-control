@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import type { ChatMessage, GatewayEvent } from '../src/lib/chat-protocol.ts';
-import { mergeDurableChatMessages, shouldApplySequencedEvent } from '../src/lib/chat-sync.ts';
+import { applySyncedUserMessage, mergeDurableChatMessages, shouldApplySequencedEvent } from '../src/lib/chat-sync.ts';
 
 const message = (partial: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'role' | 'text'>): ChatMessage => ({
   createdAt: 1,
@@ -20,6 +20,10 @@ assert.equal(merged.at(-1)?.text, localStream.text);
 
 const duplicate = mergeDurableChatMessages([remoteUser], [remoteUser]);
 assert.equal(duplicate.length, 1);
+
+const syncedUser = message({ id: 'user-shared-1', role: 'user', kind: 'user', text: 'shared across devices' });
+assert.equal(applySyncedUserMessage([], syncedUser).length, 1);
+assert.equal(applySyncedUserMessage([syncedUser], syncedUser).length, 1);
 
 const watermarks = new Map<string, number>();
 const event = (seq: number): GatewayEvent => ({ type: 'message.delta', session_id: 'session-1', seq });

@@ -6,6 +6,7 @@ export type PendingChatSubmit = {
   attachments: ChatAttachmentSummary[];
   baselineUserCount: number;
   sessionKey: string | null;
+  messageId?: string;
 };
 
 const OUTBOX_STORAGE_KEY = 'mission-control-chat-outbox-v1';
@@ -41,6 +42,7 @@ export function readPendingChatSubmit(): PendingChatSubmit | null {
       }),
       baselineUserCount: Math.max(0, Math.floor(parsed.baselineUserCount)),
       sessionKey: parsed.sessionKey,
+      ...(typeof parsed.messageId === 'string' && parsed.messageId.trim() ? { messageId: parsed.messageId.trim() } : {}),
     };
   } catch {
     return null;

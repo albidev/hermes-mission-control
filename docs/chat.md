@@ -62,9 +62,11 @@ Key behaviours (all validated end-to-end):
 
 ## Cross-device convergence
 
-Two Mission Control clients can keep the same session open (for example desktop + iPhone). `chat-protocol.ts` preserves the gateway event `seq`; `chat-sync.ts` rejects duplicate/out-of-order events and merges authoritative `session.resume` snapshots without dropping a local optimistic user message or an in-flight assistant/tool stream. After reconnect, MC replays missed events through `session.events.since` and detects a backend restart through `replay_epoch`. While both clients are connected, a lightweight two-second `session.resume` reconciliation closes the gap for viewers that do not receive the session's primary live transport.
+Two Mission Control clients can keep the same session open (for example desktop + iPhone). `chat-protocol.ts` preserves the gateway event `seq`; `chat-sync.ts` rejects duplicate/out-of-order events, serializes relay publishes, and merges authoritative `session.resume` snapshots without dropping a local optimistic user message or an in-flight assistant/tool stream. After reconnect, MC replays missed gateway events through `session.events.since` and detects a backend restart through `replay_epoch`.
 
-The backend transcript remains authoritative. The local copy is a cache, and transient token cadence cannot be guaranteed after an arbitrarily long offline period; durable messages and tool results converge after replay or resume.
+While both clients are connected, each MC client mirrors the gateway events it receives and its submitted user messages to the Mission Control telemetry sidecar (`/api/local/chat/sync`). The sidecar keeps a bounded per-session ring, deduplicates core events by `session_id + seq`, and fans them out over an authenticated SSE stream to the other viewers. This provides live convergence for user messages, reasoning deltas, assistant deltas, and tool start/progress/complete events without modifying Hermes Core. If the sidecar is temporarily unavailable, the direct gateway remains authoritative and the normal resume/replay path remains the fallback.
+
+The backend transcript remains authoritative. The local copy is a cache, and transient token cadence cannot be guaranteed after an arbitrarily long offline period; durable messages and tool results converge after relay, replay, or resume.
 
 ## Streaming & reasoning
 

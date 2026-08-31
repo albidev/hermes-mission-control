@@ -68,6 +68,7 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
+from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, user_message_dedupe_key
 import kanban_bridge as kanban_bridge_mod
 from kanban_bridge import KanbanError as KanbanBridgeError
 import cron_bridge as cron_bridge_mod
@@ -1903,6 +1904,77 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._cron_error(exc)
 
+    def _stream_chat_sync(self, session_id: str, client_id: str, since: Optional[int]) -> None:
+        queue, replay, latest = chat_sync_relay.subscribe(session_id, client_id, since=since)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        for key, value in self._cors_headers().items():
+            self.send_header(key, value)
+        self.end_headers()
+
+        def send_event(event_name: str, payload: Dict[str, Any]) -> None:
+            frame = (
+                f"event: {event_name}\n"
+                f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            ).encode("utf-8")
+            self.wfile.write(frame)
+            self.wfile.flush()
+
+        try:
+            send_event("chat-sync-ready", {
+                "session_id": session_id,
+                "client_id": client_id,
+                "latest_seq": latest,
+                "replayed": len(replay),
+            })
+            for item in replay:
+                send_event("chat-sync", item)
+            while True:
+                item = chat_sync_relay.wait(queue)
+                if item is None:
+                    self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.flush()
+                else:
+                    send_event("chat-sync", item)
+        except (BrokenPipeError, ConnectionResetError, socket.timeout):
+            return
+        finally:
+            chat_sync_relay.unsubscribe(session_id, client_id)
+
+    def _chat_sync_post(self, payload: Dict[str, Any]) -> None:
+        session_id = str(payload.get("session_id") or "").strip()
+        client_id = str(payload.get("client_id") or "").strip()
+        kind = str(payload.get("kind") or "").strip()
+        if not session_id or not client_id or not kind:
+            self._json(400, {"error": "bad_request", "detail": "session_id, client_id and kind are required."})
+            return
+        if kind == "gateway_event":
+            event = payload.get("event")
+            if not isinstance(event, dict):
+                self._json(400, {"error": "bad_request", "detail": "gateway_event requires an event object."})
+                return
+            event = dict(event)
+            event.setdefault("session_id", session_id)
+            event_id = str(payload.get("event_id") or "").strip()
+            dedupe_key = core_event_dedupe_key(session_id, event, event_id)
+            relay_payload = event
+        elif kind == "user_message":
+            message = payload.get("message")
+            if not isinstance(message, dict) or not str(message.get("id") or "").strip():
+                self._json(400, {"error": "bad_request", "detail": "user_message requires a message with an id."})
+                return
+            message = dict(message)
+            dedupe_key = user_message_dedupe_key(session_id, str(message["id"]))
+            relay_payload = message
+        else:
+            self._json(400, {"error": "bad_request", "detail": f"Unsupported sync kind: {kind}."})
+            return
+        result = chat_sync_relay.publish(session_id, client_id, kind, relay_payload, dedupe_key)
+        self._json(200, {"success": True, "relay": result})
+
     def _stream_trace(self, session_id: str | None, limit: int, compact: bool, interval: float) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -1940,6 +2012,25 @@ class Handler(BaseHTTPRequestHandler):
                 "source": "local-psutil",
                 "push": push_status(),
             })
+            return
+        if parsed.path == "/api/local/chat/sync/stream":
+            if not _is_authorized(self, allow_query_token=True):
+                self._unauthorized()
+                return
+            session_id = str((params.get("session_id") or [""])[0]).strip()
+            client_id = str((params.get("client_id") or [""])[0]).strip()
+            if not session_id or not client_id:
+                self._json(400, {"error": "bad_request", "detail": "session_id and client_id are required."})
+                return
+            since_raw = (params.get("since") or [None])[0]
+            since = None if since_raw in (None, "") else _parse_int(since_raw, default=0, minimum=0, maximum=2_000_000_000)
+            self._stream_chat_sync(session_id, client_id, since)
+            return
+        if parsed.path == "/api/local/chat/sync/stats":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, chat_sync_relay.stats())
             return
         if parsed.path == "/api/local/system":
             if not _is_authorized(self):
@@ -2376,6 +2467,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "bad_request", "detail": f"invalid JSON: {exc}"})
                 return
             self._kanban_post(parsed, payload)
+            return
+        if parsed.path == '/api/local/chat/sync/publish':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            try:
+                self._chat_sync_post(payload)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+            except Exception as exc:  # defensive: relay must not kill the sidecar worker
+                self._json(500, {'error': 'chat_sync_failed', 'detail': str(exc)[:240]})
             return
         if parsed.path == '/api/local/gateway/restart':
             if not _is_authorized(self):

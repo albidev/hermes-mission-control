@@ -41,7 +41,7 @@ import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover
 import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
-import { mergeDurableChatMessages, shouldApplySequencedEvent } from './chat-sync';
+import { applySyncedUserMessage, chatSyncStreamUrl, mergeDurableChatMessages, publishChatSync, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
 import { interactionTitle } from './chat-interactions';
@@ -150,6 +150,9 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const replayHoldRef = useRef<Map<string, GatewayEvent[]> | null>(null);
   const eventReplayInFlightRef = useRef(false);
   const snapshotSyncInFlightRef = useRef(false);
+  const chatSyncSourceRef = useRef<EventSource | null>(null);
+  const chatSyncReconnectTimerRef = useRef<number | null>(null);
+  const chatSyncRelaySeqRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     setMessages((current) => {
@@ -367,6 +370,94 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     return () => window.clearInterval(timer);
   }, [connectionState, open, previewMode, reconcileSessionSnapshot]);
 
+  useEffect(() => {
+    const activeSessionId = sessionId;
+    if (!open || previewMode || connectionState !== 'connected' || !activeSessionId || !storedToken.trim()) {
+      chatSyncSourceRef.current?.close();
+      chatSyncSourceRef.current = null;
+      if (chatSyncReconnectTimerRef.current !== null) window.clearTimeout(chatSyncReconnectTimerRef.current);
+      chatSyncReconnectTimerRef.current = null;
+      return;
+    }
+
+    let disposed = false;
+    let source: EventSource | null = null;
+
+    const handleEnvelope = (raw: Event) => {
+      let value: unknown;
+      try {
+        value = JSON.parse((raw as MessageEvent<string>).data) as unknown;
+      } catch {
+        return;
+      }
+      if (!isRecord(value) || value.session_id !== activeSessionId || typeof value.relay_seq !== 'number' || !isRecord(value.payload)) return;
+      const envelope = value as unknown as ChatSyncEnvelope;
+      const previousRelaySeq = chatSyncRelaySeqRef.current.get(activeSessionId) ?? 0;
+      if (envelope.relay_seq <= previousRelaySeq) return;
+      chatSyncRelaySeqRef.current.set(activeSessionId, envelope.relay_seq);
+
+      if (envelope.kind === 'gateway_event') {
+        const relayedEvent = envelope.payload as unknown as GatewayEvent;
+        if (relayedEvent.session_id && relayedEvent.session_id !== activeSessionId) return;
+        if (!relayedEvent.session_id) relayedEvent.session_id = activeSessionId;
+        if (!shouldApplySequencedEvent(eventWatermarksRef.current, relayedEvent)) return;
+        if (relayedEvent.type === 'todo.updated') {
+          const relayedTodo = normalizeTodoPlanSnapshot(relayedEvent.payload);
+          if (relayedTodo) setTodoPlan(relayedTodo);
+        }
+        const relayedActivity = eventActivity(relayedEvent);
+        if (relayedActivity) {
+          setActivity(relayedActivity);
+          if (relayedActivity.state === 'running') setRunning(true);
+          if (relayedActivity.state === 'complete') {
+            setRunning(false);
+            setCompleted(true);
+          }
+          if (relayedActivity.state === 'error') setRunning(false);
+        }
+        setMessages((current) => applyGatewayEvent(current, relayedEvent));
+        return;
+      }
+
+      if (envelope.kind === 'user_message') {
+        const message = envelope.payload as unknown as ChatMessage;
+        if (message.role !== 'user' || typeof message.id !== 'string' || typeof message.text !== 'string') return;
+        setMessages((current) => applySyncedUserMessage(current, message));
+      }
+    };
+
+    const connectRelay = () => {
+      if (disposed) return;
+      const since = chatSyncRelaySeqRef.current.get(activeSessionId);
+      const nextSource = new EventSource(chatSyncStreamUrl(activeSessionId, storedToken, since));
+      source = nextSource;
+      chatSyncSourceRef.current = nextSource;
+      nextSource.addEventListener('chat-sync-ready', (event) => {
+        try {
+          const ready = JSON.parse((event as MessageEvent<string>).data) as { latest_seq?: unknown };
+          if (since === undefined && typeof ready.latest_seq === 'number') chatSyncRelaySeqRef.current.set(activeSessionId, ready.latest_seq);
+        } catch {
+          // A malformed readiness event must not disable the direct gateway.
+        }
+      });
+      nextSource.addEventListener('chat-sync', handleEnvelope);
+      nextSource.onerror = () => {
+        nextSource.close();
+        if (disposed) return;
+        chatSyncReconnectTimerRef.current = window.setTimeout(connectRelay, 1000);
+      };
+    };
+
+    connectRelay();
+    return () => {
+      disposed = true;
+      source?.close();
+      if (chatSyncSourceRef.current === source) chatSyncSourceRef.current = null;
+      if (chatSyncReconnectTimerRef.current !== null) window.clearTimeout(chatSyncReconnectTimerRef.current);
+      chatSyncReconnectTimerRef.current = null;
+    };
+  }, [connectionState, open, previewMode, sessionId, storedToken]);
+
   const adoptModel = useCallback((result: unknown) => {
     const next = extractSessionModel(result);
     if (next) setModelIdentity((current) => ({ ...current, ...next }));
@@ -504,19 +595,27 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     setSubmitting(true);
     setRunning(true);
     setError(null);
+    const replayedUserMessage: ChatMessage = {
+      id: pending.messageId || `user-replay-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      role: 'user',
+      kind: 'user',
+      text: pending.displayText,
+      attachments: pending.attachments,
+      status: 'complete',
+      createdAt: Date.now(),
+    };
+    if (!pending.messageId) {
+      const persistedPending = { ...pending, messageId: replayedUserMessage.id };
+      pendingPromptRef.current = persistedPending;
+      persistPendingChatSubmit(persistedPending);
+    }
     setMessages((current) => {
       const userMessages = current.filter((message) => message.role === 'user');
       const lastUser = userMessages.at(-1);
       if (userMessages.length > pending.baselineUserCount && lastUser?.text === pending.displayText) return current;
-      return [...current, {
-        id: `user-replay-${Date.now()}`,
-        role: 'user',
-        text: pending.displayText,
-        attachments: pending.attachments,
-        status: 'complete',
-        createdAt: Date.now(),
-      }];
+      return [...current, replayedUserMessage];
     });
+    void publishChatSync(storedToken, activeSessionId, 'user_message', replayedUserMessage as unknown as Record<string, unknown>);
     try {
       await request('prompt.submit', { session_id: activeSessionId, text: pending.text });
       clearPendingPrompt();
@@ -530,7 +629,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       replayInFlightRef.current = false;
       setSubmitting(false);
     }
-  }, [clearPendingPrompt, refreshModel, request]);
+  }, [clearPendingPrompt, refreshModel, request, storedToken]);
 
   useEffect(() => {
     if (!open || !initialSessionId || wsRef.current?.readyState !== WebSocket.OPEN) return;
@@ -664,6 +763,9 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         ].filter((value): value is string => Boolean(value));
         const activeSessionRefs = [sessionIdRef.current, sessionKeyRef.current].filter((value): value is string => Boolean(value));
         if (activeSessionRefs.length > 0 && eventSessionRefs.length > 0 && !eventSessionRefs.some((value) => activeSessionRefs.includes(value))) return;
+        if (parsed.event.session_id && parsed.event.type !== 'gateway.ready') {
+          void publishChatSync(storedToken, parsed.event.session_id, 'gateway_event', parsed.event as unknown as Record<string, unknown>);
+        }
         if (parsed.event.session_id && parsed.event.seq !== undefined) {
           const heldEvents = replayHoldRef.current?.get(parsed.event.session_id);
           if (heldEvents) {
@@ -885,26 +987,28 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
       const promptText = [trimmed, ...attachmentRefs].filter(Boolean).join('\n\n') || 'Please analyze the attached files.';
       const summaries = attachments.map(({ dataUrl: _dataUrl, ...summary }) => summary);
+      const userMessageId = `user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const pendingPrompt: PendingPrompt = {
         text: promptText,
         displayText: displayText.trim() || trimmed || 'Attached files',
         attachments: summaries,
         baselineUserCount: durableTranscriptRef.current.filter((message) => message.role === 'user').length,
         sessionKey: sessionKeyRef.current || activeSessionId,
+        messageId: userMessageId,
       };
       pendingPromptRef.current = pendingPrompt;
       persistPendingChatSubmit(pendingPrompt);
-      setMessages((current) => [
-        ...current,
-        {
-          id: `user-${Date.now()}`,
-          role: 'user',
-          text: displayText.trim() || trimmed || 'Attached files',
-          attachments: summaries,
-          status: 'complete',
-          createdAt: Date.now(),
-        },
-      ]);
+      const userMessage: ChatMessage = {
+        id: userMessageId,
+        role: 'user',
+        kind: 'user',
+        text: displayText.trim() || trimmed || 'Attached files',
+        attachments: summaries,
+        status: 'complete',
+        createdAt: Date.now(),
+      };
+      setMessages((current) => [...current, userMessage]);
+      void publishChatSync(storedToken, activeSessionId, 'user_message', userMessage as unknown as Record<string, unknown>);
       setRunning(true);
       await request('prompt.submit', { session_id: activeSessionId, text: promptText });
       clearPendingPrompt();

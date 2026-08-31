@@ -21,6 +21,7 @@ const buttonComponent = readFileSync(new URL('../src/components/ui/Button.tsx', 
 const tldraw = readFileSync(new URL('../src/components/TLDrawCanvas.tsx', import.meta.url), 'utf8');
 const todoPlan = readFileSync(new URL('../src/components/chat/ChatTodoPlan.tsx', import.meta.url), 'utf8');
 const toolMessage = readFileSync(new URL('../src/components/chat/ToolMessage.tsx', import.meta.url), 'utf8');
+const chatSync = readFileSync(new URL('../src/lib/chat-sync.ts', import.meta.url), 'utf8');
 
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
 assertIncludes(component, '<ChatTodoPlan plan={visibleTodoPlan}', 'chat drawer exposes the live TODO plan');
@@ -32,6 +33,11 @@ assertIncludes(chatGateway, 'shouldApplySequencedEvent', 'chat gateway deduplica
 assertIncludes(chatGateway, 'mergeDurableChatMessages', 'chat gateway merges remote snapshots without dropping local streaming state');
 assertIncludes(chatGateway, 'replay_epoch', 'chat gateway detects replay epoch changes after backend restart');
 assertIncludes(chatGateway, "parsed.event.type === 'todo.updated'", 'chat gateway consumes live TODO updates');
+assertIncludes(chatGateway, 'publishChatSync(storedToken, parsed.event.session_id, \'gateway_event\'', 'chat gateway mirrors core events into the sidecar relay');
+assertIncludes(chatGateway, 'new EventSource(chatSyncStreamUrl', 'chat gateway subscribes to sidecar fan-out');
+assertIncludes(chatGateway, 'publishChatSync(storedToken, activeSessionId, \'user_message\'', 'chat gateway mirrors user messages into the sidecar relay');
+assertIncludes(chatSync, 'export function applySyncedUserMessage', 'chat sync deduplicates mirrored user messages');
+assertIncludes(chatSync, 'let publishQueue: Promise<void> = Promise.resolve();', 'chat sync serializes publishes to preserve event order');
 assertIncludes(chatGateway, "!open || !storedToken || initialSessionId?.trim()", 'explicit session resume is not overridden by the global last-chat pointer');
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
