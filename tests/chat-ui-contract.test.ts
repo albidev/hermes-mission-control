@@ -43,6 +43,7 @@ assertIncludes(styles, '.chat-plan {\n  position: absolute;', 'collapsed TODO pl
 assertIncludes(styles, '.chat-plan.is-expanded {\n  position: static;', 'expanded TODO plan returns to normal flow');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {', 'expanded TODO plan uses the unified footer surface');
 assertIncludes(styles, '.chat-transcript:has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {', 'chat transcript reserves space for the collapsed TODO plan');
+assertIncludes(styles, '.chat-transcript:has(.chat-preview-surface):has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {\n  padding-bottom: 7rem;\n  scroll-padding-bottom: 7rem;', 'session resume preview reserves space for the collapsed TODO plan');
 assertIncludes(styles, 'height: 44px;', 'compact TODO capsule keeps a 44px control height');
 assertIncludes(styles, '.chat-plan-capsule .chat-plan-title {', 'compact TODO capsule uses a compact status row');
 assertIncludes(styles, '.chat-plan-complete.is-expanded {', 'completed expanded TODO plan keeps a uniform state border');

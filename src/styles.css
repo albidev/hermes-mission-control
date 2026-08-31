@@ -4179,6 +4179,11 @@
   scroll-padding-bottom: 4.25rem;
 }
 
+.chat-transcript:has(.chat-preview-surface):has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {
+  padding-bottom: 7rem;
+  scroll-padding-bottom: 7rem;
+}
+
 .chat-empty {
   min-height: 100%;
   gap: 0.55rem;
