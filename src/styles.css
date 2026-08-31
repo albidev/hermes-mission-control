@@ -4209,6 +4209,11 @@
   background: transparent;
 }
 
+.chat-runtime-footer.has-interaction {
+  display: flex;
+  flex-direction: column;
+}
+
 .chat-plan {
   position: absolute;
   right: 1rem;

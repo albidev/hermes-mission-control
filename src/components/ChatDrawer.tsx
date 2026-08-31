@@ -906,90 +906,88 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           ) : null}
         </div>
 
-        {interaction ? (
-          <section className={`chat-interaction chat-interaction-${interaction.kind}`} aria-label={interactionTitle(interaction)}>
-            <div className="chat-interaction-heading">
-              <span className="chat-interaction-icon">
-                {interaction.kind === 'approval' ? <ShieldCheck size={16} /> : <KeyRound size={16} />}
-              </span>
-              <div>
-                <strong>{interactionTitle(interaction)}</strong>
-                <span>{t('interaction.unblocks')}</span>
-              </div>
+        <div className={`chat-runtime-footer ${interaction ? 'has-interaction' : ''}`}>
+          {error ? (
+            <div className="chat-error" role="alert">
+              <span>{error}</span>
+              <button type="button" onClick={() => void connect()}>{t('chatDrawer.retry')}</button>
             </div>
-            {interaction.kind === 'approval' ? (
-              <>
-                {approvalDescription ? <p className="chat-interaction-copy">{approvalDescription}</p> : null}
-                {approvalCommand ? <code className="chat-command-preview">{approvalCommand}</code> : null}
-                <div className="chat-choice-row">
-                  {(interactionChoices.length ? interactionChoices : ['once', 'deny']).map((choice) => (
-                    <button key={choice} type="button" className={`chat-choice ${choice === 'deny' ? 'is-danger' : ''}`} onClick={() => void respondInteraction(choice, choice, choice === 'always')}>
-                      {choice === 'deny' ? 'Deny' : choice === 'always' ? 'Always allow' : choice === 'session' ? 'This session' : 'Allow once'}
-                    </button>
-                  ))}
+          ) : null}
+          {interaction ? (
+            <section className={`chat-interaction chat-interaction-${interaction.kind}`} aria-label={interactionTitle(interaction)}>
+              <div className="chat-interaction-heading">
+                <span className="chat-interaction-icon">
+                  {interaction.kind === 'approval' ? <ShieldCheck size={16} /> : <KeyRound size={16} />}
+                </span>
+                <div>
+                  <strong>{interactionTitle(interaction)}</strong>
+                  <span>{t('interaction.unblocks')}</span>
                 </div>
-              </>
-            ) : interaction.kind === 'clarify' ? (
-              <>
-                <p className="chat-interaction-copy">{interactionQuestion || 'Hermes is asking for a decision.'}</p>
-                {interactionChoices.length ? (
+              </div>
+              {interaction.kind === 'approval' ? (
+                <>
+                  {approvalDescription ? <p className="chat-interaction-copy">{approvalDescription}</p> : null}
+                  {approvalCommand ? <code className="chat-command-preview">{approvalCommand}</code> : null}
                   <div className="chat-choice-row">
-                    {interactionChoices.map((choice) => {
-                      const selected = selectedChoices.includes(choice);
-                      return (
-                        <button
-                          key={choice}
-                          type="button"
-                          className={`chat-choice ${selected ? 'is-selected' : ''}`}
-                          onClick={() => {
-                            if (multiSelect) setSelectedChoices((current) => selected ? current.filter((item) => item !== choice) : [...current, choice]);
-                            else void respondInteraction(choice);
-                          }}
-                        >
-                          {selected ? <Check size={14} /> : null}{choice}
-                        </button>
-                      );
-                    })}
+                    {(interactionChoices.length ? interactionChoices : ['once', 'deny']).map((choice) => (
+                      <button key={choice} type="button" className={`chat-choice ${choice === 'deny' ? 'is-danger' : ''}`} onClick={() => void respondInteraction(choice, choice, choice === 'always')}>
+                        {choice === 'deny' ? 'Deny' : choice === 'always' ? 'Always allow' : choice === 'session' ? 'This session' : 'Allow once'}
+                      </button>
+                    ))}
                   </div>
-                ) : null}
-                <div className="chat-interaction-input-row">
-                  <input value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={t('interaction.typeAnswer')} aria-label={t('interaction.answerHermes')} />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim() && (!multiSelect || selectedChoices.length === 0)} onClick={() => void respondInteraction(interactionDraft.trim() || selectedChoices.join(', '))}>{t('kanban.send')}</button>
-                </div>
-              </>
-            ) : interaction.kind === 'terminal_read' ? (
-              <>
-                <p className="chat-interaction-copy">{interactionPrompt || 'Paste the requested terminal output.'}</p>
-                <div className="chat-interaction-input-row">
-                  <textarea value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={t('interaction.pasteOutputPlaceholder')} aria-label={t('interaction.terminalOutputAria')} rows={3} />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim()} onClick={() => void respondInteraction(interactionDraft.trim())}>{t('kanban.send')}</button>
-                </div>
-              </>
-            ) : (
-              <>
-                {interaction.kind === 'secret' ? (
-                  <p className="chat-interaction-copy">
-                    {interactionPrompt || 'Hermes needs a secret to continue.'}
-                    {secretEnvVar ? <><br /><code>{secretEnvVar}</code></> : null}
-                  </p>
-                ) : null}
-                <div className="chat-interaction-input-row">
-                  <input type="password" value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={interaction.kind === 'sudo' ? 'Password' : secretEnvVar || 'Secret value'} aria-label={interaction.kind === 'sudo' ? 'Sudo password' : interactionPrompt || 'Secret value'} autoComplete="off" />
-                  <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => void respondInteraction(interactionDraft)}>{t('kanban.send')}</button>
-                </div>
-              </>
-            )}
-          </section>
-        ) : null}
-
-        {error ? (
-          <div className="chat-error" role="alert">
-            <span>{error}</span>
-            <button type="button" onClick={() => void connect()}>{t('chatDrawer.retry')}</button>
-          </div>
-        ) : null}
-
-        <div className="chat-runtime-footer">
+                </>
+              ) : interaction.kind === 'clarify' ? (
+                <>
+                  <p className="chat-interaction-copy">{interactionQuestion || 'Hermes is asking for a decision.'}</p>
+                  {interactionChoices.length ? (
+                    <div className="chat-choice-row">
+                      {interactionChoices.map((choice) => {
+                        const selected = selectedChoices.includes(choice);
+                        return (
+                          <button
+                            key={choice}
+                            type="button"
+                            className={`chat-choice ${selected ? 'is-selected' : ''}`}
+                            onClick={() => {
+                              if (multiSelect) setSelectedChoices((current) => selected ? current.filter((item) => item !== choice) : [...current, choice]);
+                              else void respondInteraction(choice);
+                            }}
+                          >
+                            {selected ? <Check size={14} /> : null}{choice}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <div className="chat-interaction-input-row">
+                    <input value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={t('interaction.typeAnswer')} aria-label={t('interaction.answerHermes')} />
+                    <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim() && (!multiSelect || selectedChoices.length === 0)} onClick={() => void respondInteraction(interactionDraft.trim() || selectedChoices.join(', '))}>{t('kanban.send')}</button>
+                  </div>
+                </>
+              ) : interaction.kind === 'terminal_read' ? (
+                <>
+                  <p className="chat-interaction-copy">{interactionPrompt || 'Paste the requested terminal output.'}</p>
+                  <div className="chat-interaction-input-row">
+                    <textarea value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={t('interaction.pasteOutputPlaceholder')} aria-label={t('interaction.terminalOutputAria')} rows={3} />
+                    <button type="button" className="chat-choice is-primary" disabled={!interactionDraft.trim()} onClick={() => void respondInteraction(interactionDraft.trim())}>{t('kanban.send')}</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {interaction.kind === 'secret' ? (
+                    <p className="chat-interaction-copy">
+                      {interactionPrompt || 'Hermes needs a secret to continue.'}
+                      {secretEnvVar ? <><br /><code>{secretEnvVar}</code></> : null}
+                    </p>
+                  ) : null}
+                  <div className="chat-interaction-input-row">
+                    <input type="password" value={interactionDraft} onChange={(event) => setInteractionDraft(event.target.value)} placeholder={interaction.kind === 'sudo' ? 'Password' : secretEnvVar || 'Secret value'} aria-label={interaction.kind === 'sudo' ? 'Sudo password' : interactionPrompt || 'Secret value'} autoComplete="off" />
+                    <button type="button" className="chat-choice is-primary" disabled={!interactionDraft} onClick={() => void respondInteraction(interactionDraft)}>{t('kanban.send')}</button>
+                  </div>
+                </>
+              )}
+            </section>
+          ) : null}
           <ChatTodoPlan plan={visibleTodoPlan} waitingForInput={Boolean(interaction)} />
           <div className="chat-status-line" role="status">
             <span className={`chat-status-line-verb ${running ? 'is-streaming' : statusLineLabel === 'Ready' ? 'is-ready' : ''}`}>

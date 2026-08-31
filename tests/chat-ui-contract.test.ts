@@ -44,7 +44,9 @@ assertIncludes(chatGateway, "!open || !storedToken || initialSessionId?.trim()",
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');
-assertIncludes(component, '<div className="chat-runtime-footer">', 'runtime footer groups TODO plan and status line');
+assertIncludes(component, "className={`chat-runtime-footer ${interaction ? 'has-interaction' : ''}`}>", 'runtime footer accounts for approval and clarify surfaces');
+assertIncludes(component, '{error ? (', 'runtime footer keeps errors below the TODO plan');
+assertIncludes(styles, '.chat-runtime-footer.has-interaction {', 'todo plan reserves a layer above interaction surfaces');
 assertIncludes(component, 'chat-status-line-ring', 'mobile status line exposes compact circular context progress');
 assertIncludes(styles, '.chat-status-line-ring {', 'circular context progress has a dedicated visual treatment');
 assertIncludes(styles, '.chat-status-line {\n  min-width: 0;', 'status line can shrink as one mobile row');
