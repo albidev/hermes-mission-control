@@ -51,6 +51,7 @@ assertIncludes(styles, 'flex-wrap: nowrap;', 'mobile status line keeps every met
 assertIncludes(styles, '.chat-status-line-bar {\n    display: none;', 'mobile status line replaces the linear bar with the ring');
 assertIncludes(styles, '.chat-status-line-separator {\n    display: inline;', 'mobile status line keeps separators between adjacent metadata');
 assertIncludes(styles, '.chat-status-line-verb {\n    flex: 0 0 auto;\n    max-width: none;\n    overflow: visible;', 'mobile status verb stays fully readable');
+assertIncludes(styles, '.chat-status-line-model {\n    flex: 0 1 auto;\n    min-width: 0;', 'mobile reasoning stays attached to the model');
 assertIncludes(component, "chat-transcript ${previewMode ? 'is-preview' : ''} ${visibleTodoPlan ? 'has-todo-plan' : ''}", 'preview transcript exposes explicit TODO inset state');
 assertIncludes(styles, '.chat-transcript.is-preview.has-todo-plan .chat-resume-button {\n  margin-bottom: 4.5rem;', 'mobile resume clearance does not depend on relational selectors');
 assertIncludes(todoPlan, 'chat-plan-title">{statusLabel}', 'TODO capsule exposes the current plan state');
