@@ -4242,6 +4242,10 @@
   text-decoration: line-through;
 }
 
+.chat-plan-expanded .chat-plan-item-pending .chat-plan-item-icon {
+  border: 0;
+}
+
 .chat-plan-item-in_progress {
   color: var(--color-text);
   font-weight: 650;

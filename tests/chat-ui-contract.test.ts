@@ -45,6 +45,7 @@ assertIncludes(styles, '.chat-runtime-footer {\n  position: relative;\n  z-index
 assertIncludes(styles, '.chat-plan:not(.is-expanded) .chat-plan-capsule {\n  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);\n  background: var(--color-surface-raised);', 'collapsed TODO plan keeps its filled capsule surface');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {\n  background: transparent;', 'expanded TODO container has no outer fill');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-focus.is-next {', 'expanded TODO plan keeps one internal background surface');
+assertIncludes(styles, '.chat-plan-expanded .chat-plan-item-pending .chat-plan-item-icon {\n  border: 0;', 'expanded pending TODO dots use a single ring');
 assertIncludes(styles, '.chat-plan:not(.is-expanded) {\n  right: auto;\n  left: 50%;\n  width: 50%;', 'collapsed TODO plan is centered and leaves room for the scroll FAB');
 
 assertExcludes(component, '<div className="chat-head-meta">', 'header has no redundant metadata row');
