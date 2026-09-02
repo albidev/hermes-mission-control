@@ -728,6 +728,7 @@
   border-right: 1px solid var(--color-border);
 }
 
+.canvas-addon-panel,
 .tldraw-canvas-panel {
   position: fixed;
   top: 0;
@@ -749,6 +750,7 @@
 
 /* Hidden-but-mounted: keep the editor state alive across open/close while
    display:none stops tldraw's WebGL layer from competing with chat input. */
+.canvas-addon-panel:not(.is-expanded),
 .tldraw-canvas-panel:not(.is-expanded) {
   display: none;
 }

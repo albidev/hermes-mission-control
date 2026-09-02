@@ -2035,7 +2035,13 @@ class Handler(BaseHTTPRequestHandler):
             if not session_id:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
                 return
-            self._json(200, get_whiteboard(session_id, fallback_session_id))
+            try:
+                self._json(200, handle_tldraw(session_id, {
+                    'action': 'get',
+                    'sessionKey': fallback_session_id,
+                }))
+            except Exception as exc:
+                self._json(500, {'error': 'internal_error', 'detail': str(exc)})
             return
         if parsed.path == '/api/local/candidates':
             if not _is_authorized(self):
@@ -2302,37 +2308,16 @@ class Handler(BaseHTTPRequestHandler):
             if not session_id:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
                 return
-            if data.get('action') == 'enqueue':
-                command = data.get('command')
-                if not isinstance(command, dict) or not str(command.get('type') or '').strip():
-                    self._json(400, {'error': 'bad_request', 'detail': 'Missing command.'})
-                    return
-                mode = str(data.get('mode') or '').strip()
-                if mode:
-                    command = {**command, 'mode': mode}
-                self._json(202, {'command': enqueue_command(session_id, command)})
-                return
-            if data.get('action') == 'mode':
-                # Record the active agent mode so the canvas can adapt behavior.
-                mode = str(data.get('mode') or '').strip()
-                if mode not in ('draw', 'review', 'arrange', 'explain', ''):
-                    self._json(400, {'error': 'bad_request', 'detail': f'Unknown mode {mode}.'})
-                    return
-                state = load_state()
-                state.setdefault(session_id, {})['agentMode'] = mode
-                state[session_id]['updatedAt'] = int(time.time() * 1000)
-                save_state(state)
-                self._json(200, {'success': True, 'mode': mode})
-                return
-            if data.get('action') == 'ack':
-                ids = data.get('commandIds')
-                if not isinstance(ids, list):
-                    self._json(400, {'error': 'bad_request', 'detail': 'Missing commandIds.'})
-                    return
-                acknowledge_commands(session_id, [str(item) for item in ids])
-                self._json(200, {'success': True})
-                return
-            self._json(200, save_snapshot(session_id, data.get('snapshot')))
+            try:
+                response = handle_tldraw(session_id, {
+                    **data,
+                    'sessionKey': fallback_session_id,
+                })
+                self._json(200, response)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+            except Exception as exc:
+                self._json(500, {'error': 'internal_error', 'detail': str(exc)})
             return
         if parsed.path.startswith('/api/local/chat/canvas/'):
             # Generic canvas addon dispatcher
@@ -2349,6 +2334,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {'error': 'bad_request', 'detail': f'Unknown canvas addon: {addon_id}'})
                 return
             length = int(self.headers.get('Content-Length', 0))
+            if length > 8 * 1024 * 1024:
+                self._json(413, {'error': 'payload_too_large', 'detail': 'Request body too large.'})
+                return
             try:
                 data = json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
             except json.JSONDecodeError:
