@@ -5,3 +5,4 @@
 # (pywebpush + websockets). Without them push is explicitly disabled and
 # reported via /health (push.reason = missing_dependency).
 psutil>=6.0.0
+PyYAML>=6.0.0
