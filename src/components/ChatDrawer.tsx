@@ -97,53 +97,6 @@ function estimateContextWindow(model: string | null | undefined): number {
   return DEFAULT_CONTEXT_WINDOW;
 }
 
-function TLDrawLoadingShell({ onClose, error, onRetry, width }: { onClose: () => void; error?: boolean; onRetry?: () => void; width?: number | null }) {
-  const { t } = useI18n();
-  return (
-    <section className="tldraw-canvas-panel is-expanded" aria-label={error ? 'TLDrawCanvas unavailable' : 'TLDrawCanvas loading'}>
-      <header className="tldraw-canvas-head">
-        <div className="tldraw-canvas-title">
-          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title={t('chatDrawer.backToChat')} aria-label={t('chatDrawer.backToChat')}>
-            <ArrowLeft size={18} />
-          </button>
-          <div>
-            <span className="eyebrow">{t('tldraw.sessionCanvas')}</span>
-            <h3>TLDrawCanvas</h3>
-            <span className="tldraw-canvas-linked-session">{error ? t('chatDrawer.canvasUnavailable') : t('chatDrawer.preparingWorkspace')}</span>
-          </div>
-        </div>
-      </header>
-      <div className="tldraw-canvas-loading" role={error ? 'alert' : 'status'}>
-        {error ? <XCircle size={24} aria-hidden /> : <Loader2 size={24} className="chat-spin" />}
-        <strong>{error ? t('tldraw.unavailable') : t('tldraw.opening')}</strong>
-        <span>{error ? t('tldraw.checkConnection') : t('tldraw.preparingWorkspace')}</span>
-        {error && onRetry ? <button type="button" className="chat-control" onClick={onRetry}>{t('chatDrawer.retry')}</button> : null}
-      </div>
-    </section>
-  );
-}
-
-class TLDrawErrorBoundary extends Component<{
-  children: ReactNode;
-  onClose: () => void;
-  onRetry: () => void;
-  width?: number | null;
-}, { hasError: boolean }> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, _info: ErrorInfo) {
-    console.error('[TLDrawCanvas] failed to load:', error);
-  }
-
-  render() {
-    if (!this.state.hasError) return this.props.children;
-    return <TLDrawLoadingShell onClose={this.props.onClose} error onRetry={this.props.onRetry} width={this.props.width} />;
-  }
-}
 
 const TUI_VERBS = [
   'pondering',
@@ -219,7 +172,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   });
   const [canvasWidth, setCanvasWidth] = useState<number | null>(() => {
     if (typeof window === 'undefined') return null;
-    const stored = window.localStorage.getItem('mission-control-tldraw-width');
+    const stored = window.localStorage.getItem('mission-control-canvas-width');
     const parsed = stored ? Number(stored) : NaN;
     return Number.isFinite(parsed) && parsed >= 420 && parsed <= 1000 ? parsed : null;
   });
@@ -736,7 +689,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       const width = Math.min(Math.max(viewportWidth - moveEvent.clientX, 420), maxCanvasWidth);
       const chatWidth = Math.max(360, Math.min(720, Math.round(720 - (width - window.innerWidth * 0.44))));
       pendingCanvasWidthRef.current = width;
-      document.documentElement.style.setProperty('--mission-control-tldraw-width', `${width}px`);
+      document.documentElement.style.setProperty('--mission-control-canvas-width', `${width}px`);
       document.documentElement.style.setProperty('--mission-control-expanded-chat-width', `${chatWidth}px`);
       document.documentElement.style.setProperty('--mission-control-expanded-chat-right', `${width}px`);
     };
@@ -745,7 +698,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       const finalWidth = pendingCanvasWidthRef.current;
       if (finalWidth != null) {
         setCanvasWidth(finalWidth);
-        try { window.localStorage.setItem('mission-control-tldraw-width', String(finalWidth)); } catch { /* storage unavailable */ }
+        try { window.localStorage.setItem('mission-control-canvas-width', String(finalWidth)); } catch { /* storage unavailable */ }
       }
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
@@ -789,14 +742,14 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
 
     useEffect(() => {
     if (!activeAddon) {
-      document.documentElement.style.removeProperty('--mission-control-tldraw-width');
+      document.documentElement.style.removeProperty('--mission-control-canvas-width');
       document.documentElement.style.removeProperty('--mission-control-expanded-chat-width');
       document.documentElement.style.removeProperty('--mission-control-expanded-chat-right');
       return;
     }
     const width = canvasWidth ?? Math.round(window.innerWidth * 0.44);
     const chatWidth = Math.max(360, Math.min(720, Math.round(720 - (width - window.innerWidth * 0.44))));
-    document.documentElement.style.setProperty('--mission-control-tldraw-width', `${width}px`);
+    document.documentElement.style.setProperty('--mission-control-canvas-width', `${width}px`);
     document.documentElement.style.setProperty('--mission-control-expanded-chat-width', `${chatWidth}px`);
     document.documentElement.style.setProperty('--mission-control-expanded-chat-right', `${width}px`);
   }, [canvasWidth, activeAddon]);

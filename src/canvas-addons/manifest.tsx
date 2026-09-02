@@ -9,6 +9,9 @@ export const CANVAS_ADDONS: CanvasAddonDescriptor[] = [
     description: 'Whiteboard collaborativa con bridge agent',
     icon: '◉',
     component: lazy(() => import('./tldraw/TLDrawAddon').then(({ TLDrawAddon }) => ({ default: TLDrawAddon }))),
+    lifecycleTimeout: 15000,
+    supportsPersistence: true,
+    supportsCommands: true,
   },
 ];
 

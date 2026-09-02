@@ -46,4 +46,16 @@ export interface CanvasAddonDescriptor {
   errorBoundary?: ComponentType<{ onClose: () => void; onRetry: () => void; width: number | null }>;
   /** Custom loading shell — falls back to GenericLoadingShell. */
   loadingShell?: ComponentType<{ onClose: () => void; width: number | null }>;
+  /** Lifecycle timeout in ms — host shows error if addon doesn't call onReady in time. */
+  lifecycleTimeout?: number;
+  /** Whether this addon supports persistence (snapshot save/load). */
+  supportsPersistence?: boolean;
+  /** Whether this addon supports agent commands. */
+  supportsCommands?: boolean;
+  /** Whether this addon supports attachments (screenshots, etc.). */
+  supportsAttachments?: boolean;
+  /** Whether this addon is resizable. */
+  resizable?: boolean;
+  /** Whether this addon supports mobile layout. */
+  mobileSupport?: boolean;
 }

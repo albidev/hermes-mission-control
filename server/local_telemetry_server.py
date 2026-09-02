@@ -1777,6 +1777,37 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
+        if parsed.path.startswith('/api/local/chat/canvas/'):
+            # Generic canvas addon GET dispatcher
+            # Path format: /api/local/chat/canvas/:addonId?sessionId=...&sessionKey=...
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            addon_id = parsed.path.split('/api/local/chat/canvas/', 1)[1].strip('/')
+            if not addon_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing addon ID in path.'})
+                return
+            handler = CANVAS_DISPATCH.get(addon_id)
+            if handler is None:
+                self._json(400, {'error': 'bad_request', 'detail': f'Unknown canvas addon: {addon_id}'})
+                return
+            session_id = (params.get('sessionId') or [''])[0].strip()
+            if not session_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
+                return
+            try:
+                response = handler(session_id, {
+                    'action': 'get',
+                    'sessionKey': (params.get('sessionKey') or [''])[0].strip(),
+                })
+                self._json(200, response)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+            except Exception:
+                import logging
+                logging.exception('Canvas addon GET handler error for %s', addon_id)
+                self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
+            return
         if parsed.path == "/health":
             self._json(200, {
                 "ok": True,
@@ -2330,8 +2361,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 response = handler(session_id, data)
                 self._json(200, response)
-            except Exception as exc:
-                self._json(500, {'error': 'internal_error', 'detail': str(exc)})
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+            except Exception:
+                import logging
+                logging.exception('Canvas addon handler error for %s', addon_id)
+                self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
             return
         if parsed.path == '/api/local/skills/toggle':
             if not _is_authorized(self):
