@@ -2810,6 +2810,10 @@ class Handler(BaseHTTPRequestHandler):
             if not cid:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
                 return
+            if not candidates_mod.can_curate(vault):
+                self._json(403, {'error': 'vault_not_curable',
+                                 'detail': 'Candidate mutations are disabled for this vault.'})
+                return
             cand = candidates_mod.approve(cid, vault, filename)
             if not cand:
                 self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
@@ -2840,6 +2844,10 @@ class Handler(BaseHTTPRequestHandler):
             vault = data.get('vault') or None
             if not cid:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
+                return
+            if not candidates_mod.can_curate(vault):
+                self._json(403, {'error': 'vault_not_curable',
+                                 'detail': 'Candidate mutations are disabled for this vault.'})
                 return
             cand = candidates_mod.reject(cid, reason, vault, filename)
             if not cand:

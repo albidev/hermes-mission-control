@@ -29,7 +29,7 @@ SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
-from hermes_paths import hermes_vault_dir
+from hermes_paths import get_hermes_home, hermes_vault_dir
 
 
 def _vault_brain_dir() -> Path:
@@ -46,45 +46,110 @@ def _vaults_file() -> Path:
     return _vault_brain_dir() / "curate-vaults.yaml"
 
 
+def _routing_file() -> Path:
+    return get_hermes_home() / "vault-routing.yaml"
+
+
 DEFAULT_CANDIDATES_DIR = _default_candidates_dir()
 DEFAULT_QUARANTINE_DAYS = float(os.environ.get("VB_QUARANTINE_DAYS", "1"))
-VAULTS_FILE = _vaults_file()
 
 
-def _load_vaults() -> Dict[str, Dict[str, str]]:
-    """Load the local per-vault candidate map (gitignored, outside the public
-    MC repo). Returns {vault_id: {label, candidates_dir}}."""
-    if not VAULTS_FILE.exists():
+def _load_vaults() -> Dict[str, Dict[str, Any]]:
+    """Load the local candidate map used by Curate."""
+    path = _vaults_file()
+    if not path.exists():
         return {}
     try:
         import yaml
-        data = yaml.safe_load(VAULTS_FILE.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return {str(k): dict(v) for k, v in (data.get("vaults") or {}).items()}
     except Exception:
         return {}
 
 
-def _candidates_dir(vault: Optional[str] = None) -> Path:
-    """Resolve the candidate dir for a vault. With no vault (or 'core'), keeps
-    the classic behaviour: VB_CANDIDATES env or the default dir."""
+def _load_routing_vaults() -> Dict[str, Dict[str, Any]]:
+    """Load the broader evidence-routing registry, if configured."""
+    path = _routing_file()
+    if not path.exists():
+        return {}
+    try:
+        import yaml
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return {str(k): dict(v) for k, v in (data.get("vaults") or {}).items()}
+    except Exception:
+        return {}
+
+
+def _candidates_dir(vault: Optional[str] = None) -> Optional[Path]:
+    """Resolve a candidate directory without falling back to Core for known
+    non-candidate vaults."""
     if vault and vault != "core":
         mapping = _load_vaults().get(vault)
         if mapping and mapping.get("candidates_dir"):
             return Path(os.path.expanduser(str(mapping["candidates_dir"])))
+        return None
     return Path(os.environ.get("VB_CANDIDATES", str(DEFAULT_CANDIDATES_DIR)))
 
 
+def _as_bool(value: Any, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _display_vault_label(vault_id: str) -> str:
+    return vault_id.replace("-", " ").title()
+
+
 def list_vaults() -> List[Dict[str, Any]]:
-    """Return the vaults the Curate page can switch between. Always includes
-    the default 'core' vault; the rest come from the local map."""
-    mapping = _load_vaults()
-    out = [{"id": "core", "label": "Core", "candidates_dir": str(_candidates_dir(None))}]
-    for vid, m in mapping.items():
-        if vid == "core":
-            continue
-        out.append({"id": vid, "label": m.get("label", vid),
-                    "candidates_dir": str(_candidates_dir(vid))})
+    """Return every configured routing vault plus candidate capabilities."""
+    candidate_map = _load_vaults()
+    routing_map = _load_routing_vaults()
+    vault_ids = list(dict.fromkeys(["core", *routing_map.keys(), *candidate_map.keys()]))
+    out: List[Dict[str, Any]] = []
+    for vid in vault_ids:
+        candidate_config = candidate_map.get(vid) or {}
+        routing_config = routing_map.get(vid) or {}
+        routes = routing_config.get("routes")
+        routes = routes if isinstance(routes, dict) else {}
+        candidate_enabled = vid == "core" or bool(candidate_config.get("candidates_dir"))
+        writable = _as_bool(routing_config.get("writable"), default=True)
+        candidate_dir = _candidates_dir(vid) if candidate_enabled else None
+        candidates = list_candidates(vault=vid) if candidate_enabled else []
+        review_enabled = "review_inbox" in routes
+        if candidate_enabled:
+            mode = "candidates"
+        elif not writable:
+            mode = "read_only"
+        elif review_enabled:
+            mode = "review_only"
+        else:
+            mode = "storage_only"
+        out.append({
+            "id": vid,
+            "label": candidate_config.get("label") or routing_config.get("name") or _display_vault_label(vid),
+            "candidates_dir": str(candidate_dir) if candidate_dir else "",
+            "candidate_enabled": candidate_enabled,
+            "review_enabled": review_enabled,
+            "writable": writable,
+            "read_only": not writable,
+            "mode": mode,
+            "candidate_count": len(candidates),
+            "pending_count": sum(1 for c in candidates if c.get("status") == "pending"),
+            "reviewed_count": sum(1 for c in candidates if c.get("status") != "pending"),
+        })
     return out
+
+
+def can_curate(vault: Optional[str] = None) -> bool:
+    """Return whether approve/reject mutations are allowed for a vault."""
+    vault_id = vault or "core"
+    if _candidates_dir(vault_id) is None:
+        return False
+    routing_config = _load_routing_vaults().get(vault_id) or {}
+    return _as_bool(routing_config.get("writable"), default=True)
 
 
 def _parse_frontmatter(text: str) -> Dict[str, Any]:
@@ -150,7 +215,7 @@ def _write_candidate(path: Path, meta: Dict[str, Any], body: str) -> None:
 
 def list_candidates(status: Optional[str] = None, vault: Optional[str] = None) -> List[Dict[str, Any]]:
     d = _candidates_dir(vault)
-    if not d.exists():
+    if d is None or not d.exists():
         return []
     out = []
     for p in sorted(d.glob("*.md")):
@@ -162,7 +227,7 @@ def list_candidates(status: Optional[str] = None, vault: Optional[str] = None) -
 
 def _find_by_id(cid: str, vault: Optional[str] = None, filename: Optional[str] = None) -> Optional[Path]:
     d = _candidates_dir(vault)
-    if not d.exists():
+    if d is None or not d.exists():
         return None
     if filename:
         exact = d / Path(filename).name
@@ -222,9 +287,9 @@ def reject(cid: str, reason: str = "", vault: Optional[str] = None, filename: Op
 
 
 def _all_candidate_dirs() -> List[Path]:
-    """All candidate dirs to scan for promote/rejection-feedback: the default
-    dir plus every per-vault dir from the local map."""
-    dirs = [_candidates_dir(None)]
+    """All configured candidate dirs to scan for promote/rejection-feedback."""
+    default = _candidates_dir(None)
+    dirs = [default] if default is not None else []
     for m in _load_vaults().values():
         if m.get("candidates_dir"):
             d = Path(os.path.expanduser(str(m["candidates_dir"])))

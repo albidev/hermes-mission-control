@@ -22,6 +22,19 @@ const STATUS_COLORS: Record<string, string> = {
   promoted: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
 };
 
+function vaultModeLabel(vault: MissionControlVaultInfo) {
+  switch (vault.mode) {
+    case 'candidates':
+      return 'Candidate queue';
+    case 'review_only':
+      return 'Review only';
+    case 'read_only':
+      return 'Read-only';
+    default:
+      return 'Storage only';
+  }
+}
+
 function statusBadge(status: string) {
   const cls = STATUS_COLORS[status] ?? 'bg-surface text-foreground/70 border-border';
   return <Badge className={`${cls} border`}>{status}</Badge>;
@@ -68,6 +81,9 @@ export function CurateRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 
+  const selectedVault = vaults.find((item) => item.id === vault);
+  const canCurate = selectedVault?.candidate_enabled === true && selectedVault.writable !== false;
+
   const handleVaultChange = (v: string) => {
     setVault(v);
     const nextParams = new URLSearchParams(searchParams);
@@ -77,6 +93,7 @@ export function CurateRoute() {
   };
 
   const handleApprove = async (c: MissionControlCandidate) => {
+    if (!canCurate) return;
     try {
       await approveCandidate(storedToken ?? undefined, c.id, vault, c._filename);
       await refresh();
@@ -86,6 +103,7 @@ export function CurateRoute() {
   };
 
   const handleReject = async (c: MissionControlCandidate) => {
+    if (!canCurate) return;
     const reason = rejectReason[c.id] ?? '';
     try {
       await rejectCandidate(storedToken ?? undefined, c.id, reason, vault, c._filename);
@@ -119,7 +137,7 @@ export function CurateRoute() {
             >
               {vaults.map((v) => (
                 <option key={v.id} value={v.id}>
-                  {v.label}
+                  {v.label} — {vaultModeLabel(v)}
                 </option>
               ))}
             </select>
@@ -130,6 +148,18 @@ export function CurateRoute() {
           </Button>
         </div>
       </div>
+      {selectedVault && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface/50 px-3 py-2 text-xs text-foreground/60">
+          <span className="font-medium text-foreground">{selectedVault.label}</span>
+          <Badge className="border border-border bg-surface text-foreground/70">
+            {vaultModeLabel(selectedVault)}
+          </Badge>
+          <span>
+            {selectedVault.candidate_count ?? candidates.length} candidates ·{' '}
+            {selectedVault.pending_count ?? pending.length} pending
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
@@ -151,7 +181,9 @@ export function CurateRoute() {
             {pending.length === 0 ? (
               <Card className="flex items-center gap-3 p-6 text-foreground/50">
                 <Inbox className="h-5 w-5" />
-                No candidates awaiting approval.
+                {canCurate
+                  ? 'No candidates awaiting approval.'
+                  : `${selectedVault ? vaultModeLabel(selectedVault) : 'Storage only'} vault — no candidate approval queue is configured.`}
               </Card>
             ) : (
               <div className="space-y-3">
@@ -171,7 +203,7 @@ export function CurateRoute() {
                         </pre>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-2">
-                        <Button size="sm" onClick={() => void handleApprove(c)}>
+                        <Button size="sm" onClick={() => void handleApprove(c)} disabled={!canCurate}>
                           <CheckCircle2 className="h-4 w-4" />
                           Approve
                         </Button>
@@ -186,7 +218,7 @@ export function CurateRoute() {
                               }
                             />
                             <div className="flex gap-1">
-                              <Button size="sm" variant="danger" onClick={() => void handleReject(c)}>
+                              <Button size="sm" variant="danger" onClick={() => void handleReject(c)} disabled={!canCurate}>
                                 <XCircle className="h-4 w-4" />
                                 Reject
                               </Button>

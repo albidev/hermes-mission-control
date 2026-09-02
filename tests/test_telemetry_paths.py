@@ -160,11 +160,58 @@ class TelemetryPathResolutionTests(unittest.TestCase):
             self._hermes_home / "logs" / "mission-control-client.log",
         )
 
-    def test_candidate_vault_follows_configured_vault_path(self):
-        vault = self._tmp / "vault"
-        os.environ["MISSION_CONTROL_VAULT_PATH"] = str(vault)
-
-        self.assertEqual(candidates_module.vault_dir_for("core"), vault.resolve())
+    def test_list_vaults_exposes_routing_vaults_and_capabilities(self):
+        curate_file = self._hermes_home / "vault-brain" / "curate-vaults.yaml"
+        curate_file.parent.mkdir(parents=True, exist_ok=True)
+        curate_file.write_text(
+            "vaults:\n"
+            "  core:\n"
+            "    label: Core\n"
+            "  crossnection:\n"
+            "    label: Crossconnection\n"
+            "    candidates_dir: /tmp/crossnection-candidates\n",
+            encoding="utf-8",
+        )
+        (self._hermes_home / "vault-routing.yaml").write_text(
+            "vaults:\n"
+            "  core:\n"
+            "    writable: true\n"
+            "    routes:\n"
+            "      decision: projects\n"
+            "  episodic:\n"
+            "    writable: true\n"
+            "    routes:\n"
+            "      review_inbox: memory/inbox\n"
+            "  crossnection:\n"
+            "    name: Crossconnection\n"
+            "    writable: true\n"
+            "    routes:\n"
+            "      bdh_candidate: memory/learned\n"
+            "  morning-signal:\n"
+            "    writable: false\n"
+            "    routes: {}\n",
+            encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"VB_CANDIDATES": str(self._tmp / "core-candidates")}):
+            vaults = candidates_module.list_vaults()
+        self.assertEqual(
+            [vault["id"] for vault in vaults],
+            ["core", "episodic", "crossnection", "morning-signal"],
+        )
+        by_id = {vault["id"]: vault for vault in vaults}
+        self.assertEqual(by_id["core"]["mode"], "candidates")
+        self.assertTrue(by_id["core"]["candidate_enabled"])
+        self.assertEqual(by_id["episodic"]["mode"], "review_only")
+        self.assertTrue(by_id["episodic"]["review_enabled"])
+        self.assertFalse(by_id["episodic"]["candidate_enabled"])
+        self.assertEqual(by_id["crossnection"]["mode"], "candidates")
+        self.assertEqual(by_id["morning-signal"]["mode"], "read_only")
+        self.assertTrue(by_id["morning-signal"]["read_only"])
+        self.assertTrue(candidates_module.can_curate("core"))
+        self.assertTrue(candidates_module.can_curate("crossnection"))
+        self.assertFalse(candidates_module.can_curate("episodic"))
+        self.assertFalse(candidates_module.can_curate("morning-signal"))
+        self.assertEqual(candidates_module.list_candidates(vault="episodic"), [])
 
 
 if __name__ == "__main__":

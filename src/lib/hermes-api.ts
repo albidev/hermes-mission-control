@@ -2531,6 +2531,14 @@ export interface MissionControlVaultInfo {
   id: string;
   label: string;
   candidates_dir: string;
+  candidate_enabled?: boolean;
+  review_enabled?: boolean;
+  writable?: boolean;
+  read_only?: boolean;
+  mode?: 'candidates' | 'review_only' | 'read_only' | 'storage_only';
+  candidate_count?: number;
+  pending_count?: number;
+  reviewed_count?: number;
 }
 
 export async function loadMissionControlVaults(
