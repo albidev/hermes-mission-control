@@ -220,7 +220,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
           // Persistence is best-effort; the board remains usable if storage is full.
         }
         if (sessionId) {
-          void fetch('/api/local/chat/whiteboard', {
+          void fetch('/api/local/chat/canvas/tldraw', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}) },
             body: JSON.stringify({ sessionId, sessionKey, snapshot }),
@@ -261,7 +261,7 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
     const applyRemoteState = async () => {
       if (!expanded) return;
       try {
-        const response = await fetch(`/api/local/chat/whiteboard?sessionKey=${encodeURIComponent(sessionKey || '')}&sessionId=${encodeURIComponent(sessionId)}`, { headers });
+        const response = await fetch(`/api/local/chat/canvas/tldraw?sessionKey=${encodeURIComponent(sessionKey || '')}&sessionId=${encodeURIComponent(sessionId)}`, { headers });
         if (!response.ok || cancelled) return;
         const remote = await response.json() as { snapshot?: TLStoreSnapshot & { session?: unknown }; commands?: BridgeCommand[] };
         if (!remote.snapshot) {
@@ -589,24 +589,24 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
   };
 
   return (
-    <section className={`tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
-      <header className="tldraw-canvas-head">
-        <div className="tldraw-canvas-title">
+    <section className={`canvas-addon-panel tldraw-canvas-panel ${expanded ? 'is-expanded' : ''}`} aria-label="TLDrawCanvas">
+      <header className="canvas-addon-head tldraw-canvas-head">
+        <div className="canvas-addon-title tldraw-canvas-title">
           <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title={t('chatDrawer.backToChat')} aria-label={t('chatDrawer.backToChat')}>
             <ArrowLeft size={18} />
           </button>
-          <div className="tldraw-canvas-heading">
+          <div className="canvas-addon-heading tldraw-canvas-heading">
             <span className="eyebrow">{t('tldraw.sessionCanvas')}</span>
             <h3>TLDrawCanvas</h3>
-            <span className="tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
+            <span className="canvas-addon-linked-session tldraw-canvas-linked-session" title={sessionId || 'Session is still being created'}>
               {sessionTitle} · {sessionId ? sessionId.slice(0, 12) : 'pending'}
               {lints.length > 0 ? ` · ⚠ ${lints.length}` : ''}
             </span>
           </div>
         </div>
-        <div className="tldraw-canvas-toolbar">
+        <div className="canvas-addon-toolbar tldraw-canvas-toolbar">
           <select
-            className="tldraw-canvas-select"
+            className="canvas-addon-select tldraw-canvas-select"
             value=""
             onChange={(event) => {
               const format = event.target.value as 'png' | 'svg' | 'json' | '';
@@ -621,23 +621,23 @@ export const TLDrawCanvas = memo(function TLDrawCanvas({ sessionId, sessionKey, 
             <option value="svg">SVG</option>
             <option value="json">JSON</option>
           </select>
-          <span className="tldraw-canvas-sep" />
+          <span className="canvas-addon-sep tldraw-canvas-sep" />
           <button type="button" className="chat-icon-button" onClick={() => void sendSelection(true)} title={t('ui.screenshotToChat')} aria-label={t('ui.screenshotToChat')}>
             <Camera size={16} />
           </button>
           <button type="button" className="chat-icon-button" onClick={() => void sendSelection(false)} title={t('ui.sendSelectionToChat')} aria-label={t('ui.sendSelectionToChat')}>
             <Send size={16} />
           </button>
-          {toastMessage ? <div className="tldraw-canvas-toast" role="status">{toastMessage}</div> : null}
+          {toastMessage ? <div className="canvas-addon-toast tldraw-canvas-toast" role="status">{toastMessage}</div> : null}
           <button type="button" className="chat-icon-button" onClick={clearBoard} title={t('ui.clearBoard')} aria-label={t('ui.clearBoard')}>
             <RotateCcw size={16} />
           </button>
         </div>
       </header>
-      <div className="tldraw-canvas-canvas" ref={canvasContainerRef}>
+      <div className="canvas-addon-surface tldraw-canvas-canvas" ref={canvasContainerRef}>
         <Tldraw colorScheme={resolvedTheme} onMount={handleMount} />
         {loading ? (
-          <div className="tldraw-canvas-loading" role="status">
+          <div className="canvas-addon-inner-loading tldraw-canvas-loading" role="status">
             <Loader2 size={24} className="chat-spin" />
             <span>{t('tldraw.loading')}</span>
           </div>
