@@ -624,6 +624,10 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       }
       return;
     }
+    // Non intercettare frecce quando il focus è su un campo di testo
+    // (il cursore deve muoversi, non ridimensionare il pannello).
+    const target = event.target as HTMLElement | null;
+    if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       setDrawerWidth(prev => 
