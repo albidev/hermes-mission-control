@@ -2040,8 +2040,10 @@ class Handler(BaseHTTPRequestHandler):
                     'action': 'get',
                     'sessionKey': fallback_session_id,
                 }))
-            except Exception as exc:
-                self._json(500, {'error': 'internal_error', 'detail': str(exc)})
+            except Exception:
+                import logging
+                logging.exception('Legacy whiteboard GET handler error for session %s', session_id)
+                self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
             return
         if parsed.path == '/api/local/candidates':
             if not _is_authorized(self):
@@ -2316,8 +2318,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, response)
             except ValueError as exc:
                 self._json(400, {'error': 'bad_request', 'detail': str(exc)})
-            except Exception as exc:
-                self._json(500, {'error': 'internal_error', 'detail': str(exc)})
+            except Exception:
+                import logging
+                logging.exception('Legacy whiteboard POST handler error for session %s', session_id)
+                self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
             return
         if parsed.path.startswith('/api/local/chat/canvas/'):
             # Generic canvas addon dispatcher
