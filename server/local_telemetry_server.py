@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from statistics import median
+from collections.abc import Callable
 from typing import Any, Deque, Dict, Optional
 
 import psutil
@@ -74,6 +75,49 @@ from kanban_bridge import KanbanError as KanbanBridgeError
 import cron_bridge as cron_bridge_mod
 from cron_bridge import CronBridgeError
 from whiteboard_store import acknowledge_commands, enqueue_command, get_whiteboard, load_state, save_snapshot, save_state, get_agent_mode
+
+CANVAS_DISPATCH: dict[str, Callable[[str, dict], dict]] = {}
+
+
+def register_canvas_handler(addon_id: str):
+    """Register a handler for a canvas addon protocol."""
+    def decorator(fn: Callable[[str, dict], dict]):
+        CANVAS_DISPATCH[addon_id] = fn
+        return fn
+    return decorator
+
+
+@register_canvas_handler('tldraw')
+def handle_tldraw(session_id: str, data: dict) -> dict:
+    """Protocol handler for tldraw addon (whiteboard-v2)."""
+    action = data.get('action')
+    if action == 'get':
+        fallback = str(data.get('sessionKey') or '').strip()
+        return get_whiteboard(session_id, fallback)
+    if action == 'enqueue':
+        command = data.get('command')
+        if not isinstance(command, dict) or not str(command.get('type') or '').strip():
+            raise ValueError('Missing command')
+        mode = str(data.get('mode') or '').strip()
+        if mode:
+            command = {**command, 'mode': mode}
+        return {'command': enqueue_command(session_id, command)}
+    if action == 'mode':
+        mode = str(data.get('mode') or '').strip()
+        if mode not in ('draw', 'review', 'arrange', 'explain', ''):
+            raise ValueError(f'Unknown mode {mode}')
+        state = load_state()
+        state.setdefault(session_id, {})['agentMode'] = mode
+        state[session_id]['updatedAt'] = int(time.time() * 1000)
+        save_state(state)
+        return {'success': True, 'mode': mode}
+    if action == 'ack':
+        ids = data.get('commandIds')
+        if not isinstance(ids, list):
+            raise ValueError('Missing commandIds')
+        acknowledge_commands(session_id, [str(item) for item in ids])
+        return {'success': True}
+    return save_snapshot(session_id, data.get('snapshot'))
 
 
 def gb(value: float) -> float:
@@ -2002,6 +2046,37 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
+        if parsed.path.startswith('/api/local/chat/canvas/'):
+            # Generic canvas addon GET dispatcher
+            # Path format: /api/local/chat/canvas/:addonId?sessionId=...&sessionKey=...
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            addon_id = parsed.path.split('/api/local/chat/canvas/', 1)[1].strip('/')
+            if not addon_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing addon ID in path.'})
+                return
+            handler = CANVAS_DISPATCH.get(addon_id)
+            if handler is None:
+                self._json(400, {'error': 'bad_request', 'detail': f'Unknown canvas addon: {addon_id}'})
+                return
+            session_id = (params.get('sessionId') or [''])[0].strip()
+            if not session_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
+                return
+            try:
+                response = handler(session_id, {
+                    'action': 'get',
+                    'sessionKey': (params.get('sessionKey') or [''])[0].strip(),
+                })
+                self._json(200, response)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+            except Exception:
+                import logging
+                logging.exception('Canvas addon GET handler error for %s', addon_id)
+                self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
+            return
         if parsed.path == "/health":
             self._json(200, {
                 "ok": True,
@@ -2261,7 +2336,15 @@ class Handler(BaseHTTPRequestHandler):
             if not session_id:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
                 return
-            self._json(200, get_whiteboard(session_id, fallback_session_id))
+            try:
+                self._json(200, handle_tldraw(session_id, {
+                    'action': 'get',
+                    'sessionKey': fallback_session_id,
+                }))
+            except Exception:
+                import logging
+                logging.exception('Legacy whiteboard GET handler error for session %s', session_id)
+                self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
             return
         if parsed.path == '/api/local/candidates':
             if not _is_authorized(self):
@@ -2542,37 +2625,55 @@ class Handler(BaseHTTPRequestHandler):
             if not session_id:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
                 return
-            if data.get('action') == 'enqueue':
-                command = data.get('command')
-                if not isinstance(command, dict) or not str(command.get('type') or '').strip():
-                    self._json(400, {'error': 'bad_request', 'detail': 'Missing command.'})
-                    return
-                mode = str(data.get('mode') or '').strip()
-                if mode:
-                    command = {**command, 'mode': mode}
-                self._json(202, {'command': enqueue_command(session_id, command)})
+            try:
+                response = handle_tldraw(session_id, {
+                    **data,
+                    'sessionKey': fallback_session_id,
+                })
+                self._json(200, response)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+            except Exception:
+                import logging
+                logging.exception('Legacy whiteboard POST handler error for session %s', session_id)
+                self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
+            return
+        if parsed.path.startswith('/api/local/chat/canvas/'):
+            # Generic canvas addon dispatcher
+            # Path format: /api/local/chat/canvas/:addonId
+            if not _is_authorized(self):
+                self._unauthorized()
                 return
-            if data.get('action') == 'mode':
-                # Record the active agent mode so the canvas can adapt behavior.
-                mode = str(data.get('mode') or '').strip()
-                if mode not in ('draw', 'review', 'arrange', 'explain', ''):
-                    self._json(400, {'error': 'bad_request', 'detail': f'Unknown mode {mode}.'})
-                    return
-                state = load_state()
-                state.setdefault(session_id, {})['agentMode'] = mode
-                state[session_id]['updatedAt'] = int(time.time() * 1000)
-                save_state(state)
-                self._json(200, {'success': True, 'mode': mode})
+            addon_id = parsed.path.split('/api/local/chat/canvas/', 1)[1].strip('/')
+            if not addon_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing addon ID in path.'})
                 return
-            if data.get('action') == 'ack':
-                ids = data.get('commandIds')
-                if not isinstance(ids, list):
-                    self._json(400, {'error': 'bad_request', 'detail': 'Missing commandIds.'})
-                    return
-                acknowledge_commands(session_id, [str(item) for item in ids])
-                self._json(200, {'success': True})
+            handler = CANVAS_DISPATCH.get(addon_id)
+            if handler is None:
+                self._json(400, {'error': 'bad_request', 'detail': f'Unknown canvas addon: {addon_id}'})
                 return
-            self._json(200, save_snapshot(session_id, data.get('snapshot')))
+            length = int(self.headers.get('Content-Length', 0))
+            if length > 8 * 1024 * 1024:
+                self._json(413, {'error': 'payload_too_large', 'detail': 'Request body too large.'})
+                return
+            try:
+                data = json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            session_id = str(data.get('sessionId') or data.get('sessionKey') or '').strip()
+            if not session_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
+                return
+            try:
+                response = handler(session_id, data)
+                self._json(200, response)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+            except Exception:
+                import logging
+                logging.exception('Canvas addon handler error for %s', addon_id)
+                self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
             return
         if parsed.path == '/api/local/skills/install':
             if not _is_authorized(self):

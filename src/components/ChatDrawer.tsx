@@ -39,7 +39,11 @@ import { ChatTodoPlan } from './chat/ChatTodoPlan';
 import { Modal } from './Modal';
 import { Button } from './ui/Button';
 import type { ChatSlashPopoverHandle } from './ChatSlashPopover';
-import type { CanvasScreenshotAttachment } from './TLDrawCanvas';
+import type { CanvasAddonId } from '../canvas-addons/types';
+import { CANVAS_ADDONS, ADDON_INDEX } from '../canvas-addons/manifest';
+import { CanvasAddonHost } from '../canvas-addons/CanvasAddonHost';
+import { CanvasAddonPicker } from '../canvas-addons/CanvasAddonPicker';
+import type { CanvasAttachment } from '../canvas-addons/types';
 import { ChatMessageCard } from './chat-messages';
 import {
   MAX_ATTACHMENTS,
@@ -96,55 +100,6 @@ function estimateContextWindow(model: string | null | undefined): number {
   return DEFAULT_CONTEXT_WINDOW;
 }
 
-const LazyTLDrawCanvas = lazy(() => import('./TLDrawCanvas').then(({ TLDrawCanvas }) => ({ default: TLDrawCanvas })));
-
-function TLDrawLoadingShell({ onClose, error, onRetry, width }: { onClose: () => void; error?: boolean; onRetry?: () => void; width?: number | null }) {
-  const { t } = useI18n();
-  return (
-    <section className="tldraw-canvas-panel is-expanded" aria-label={error ? 'TLDrawCanvas unavailable' : 'TLDrawCanvas loading'}>
-      <header className="tldraw-canvas-head">
-        <div className="tldraw-canvas-title">
-          <button type="button" className="chat-icon-button tldraw-canvas-back" onClick={onClose} title={t('chatDrawer.backToChat')} aria-label={t('chatDrawer.backToChat')}>
-            <ArrowLeft size={18} />
-          </button>
-          <div>
-            <span className="eyebrow">{t('tldraw.sessionCanvas')}</span>
-            <h3>TLDrawCanvas</h3>
-            <span className="tldraw-canvas-linked-session">{error ? t('chatDrawer.canvasUnavailable') : t('chatDrawer.preparingWorkspace')}</span>
-          </div>
-        </div>
-      </header>
-      <div className="tldraw-canvas-loading" role={error ? 'alert' : 'status'}>
-        {error ? <XCircle size={24} aria-hidden /> : <Loader2 size={24} className="chat-spin" />}
-        <strong>{error ? t('tldraw.unavailable') : t('tldraw.opening')}</strong>
-        <span>{error ? t('tldraw.checkConnection') : t('tldraw.preparingWorkspace')}</span>
-        {error && onRetry ? <button type="button" className="chat-control" onClick={onRetry}>{t('chatDrawer.retry')}</button> : null}
-      </div>
-    </section>
-  );
-}
-
-class TLDrawErrorBoundary extends Component<{
-  children: ReactNode;
-  onClose: () => void;
-  onRetry: () => void;
-  width?: number | null;
-}, { hasError: boolean }> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, _info: ErrorInfo) {
-    console.error('[TLDrawCanvas] failed to load:', error);
-  }
-
-  render() {
-    if (!this.state.hasError) return this.props.children;
-    return <TLDrawLoadingShell onClose={this.props.onClose} error onRetry={this.props.onRetry} width={this.props.width} />;
-  }
-}
 
 const TUI_VERBS = [
   'pondering',
@@ -171,10 +126,6 @@ const TUI_KAOMOJI = [
   '◉_◉', '(°_°)', '(˘_˘)♡', '(>_>)', '(o‿o)', '(◉_◉)',
   '(¬_¬)', '(ಠ_ಠ)', 'ಠ_ಠ',
 ];
-
-function TldrawMark({ size = 16 }: { size?: number }) {
-  return <span className="tldraw-brand-icon" aria-hidden="true" style={{ width: size, height: size }} />;
-}
 
 function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewMessage }) {
   const isUser = message.role === 'user';
@@ -209,7 +160,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
   const [canvasMountReady, setCanvasMountReady] = useState(false);
   // Desktop drawer width, adjustable via the left-edge resize handle.
@@ -224,7 +175,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   });
   const [canvasWidth, setCanvasWidth] = useState<number | null>(() => {
     if (typeof window === 'undefined') return null;
-    const stored = window.localStorage.getItem('mission-control-tldraw-width');
+    const stored = window.localStorage.getItem('mission-control-canvas-width');
     const parsed = stored ? Number(stored) : NaN;
     return Number.isFinite(parsed) && parsed >= 420 && parsed <= 1000 ? parsed : null;
   });
@@ -280,13 +231,13 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   }, [pendingAttachments]);
 
   useEffect(() => {
-    if (!isExpanded) {
+    if (!activeAddon) {
       setCanvasMountReady(false);
       return;
     }
     const frame = window.requestAnimationFrame(() => setCanvasMountReady(true));
     return () => window.cancelAnimationFrame(frame);
-  }, [isExpanded]);
+  }, [activeAddon]);
 
   const [preview, setPreview] = useState<MissionControlAgentSessionItem | null>(null);
   const [previewTodoPlan, setPreviewTodoPlan] = useState<TodoPlan | null>(null);
@@ -559,7 +510,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     if (accepted.length) setPendingAttachments((current) => [...current, ...accepted]);
   }, []);
 
-  const addScreenshotAttachment = useCallback(async (attachment: CanvasScreenshotAttachment): Promise<boolean> => {
+  const addScreenshotAttachment = useCallback(async (attachment: CanvasAttachment): Promise<boolean> => {
     if (running) {
       setAttachmentNotice('Attachments are available after the current response finishes.');
       return false;
@@ -662,16 +613,26 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
     }
-    if (event.key === 'Escape') {
-      if (isExpanded) {
-        setIsExpanded(false);
-        setIsCanvasLoading(false);
-      }
-      else onClose();
-    }
   };
 
   const handleDrawerKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      if (activeAddon) {
+        closeAddon();
+      } else {
+        onClose();
+      }
+      return;
+    }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      setDrawerWidth(prev => 
+        event.key === 'ArrowLeft' 
+          ? Math.max(360, (prev ?? 480) - 20)
+          : Math.min(900, (prev ?? 480) + 20)
+      );
+      return;
+    }
     if (event.key !== 'Tab') return;
     const focusable = Array.from(
       event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'),
@@ -708,7 +669,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   // Desktop resize: drag the left-edge handle to change the drawer width.
   // The drawer is anchored right, so width = viewport width - cursor x.
   const startResize = (event: React.MouseEvent) => {
-    if (isExpanded) return; // expanded mode owns its own geometry
+    if (activeAddon) return; // expanded mode owns its own geometry
     event.preventDefault();
     resizingRef.current = true;
     const onMove = (moveEvent: MouseEvent) => {
@@ -723,12 +684,9 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       // Persist the final width so it survives reloads.
-      setDrawerWidth((current) => {
-        if (current != null) {
-          try { window.localStorage.setItem('mission-control-chat-width', String(current)); } catch { /* storage unavailable */ }
-        }
-        return current;
-      });
+      const finalWidth = drawerRef.current ? Math.min(Math.max(parseInt(drawerRef.current.style.width, 10) || 360, 360), 900) : 360;
+      setDrawerWidth(finalWidth);
+      try { window.localStorage.setItem('mission-control-chat-width', String(finalWidth)); } catch { /* storage unavailable */ }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -737,31 +695,31 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const startCanvasResize = (event: React.MouseEvent) => {
-    if (!isExpanded) return;
+    if (!activeAddon) return;
     event.preventDefault();
     canvasResizingRef.current = true;
     const onMove = (moveEvent: MouseEvent) => {
       if (!canvasResizingRef.current) return;
-      const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 420), Math.min(1000, window.innerWidth - 376));
+      const viewportWidth = window.innerWidth;
+      const maxCanvasWidth = Math.max(420, Math.min(1000, viewportWidth - 376));
+      const width = Math.min(Math.max(viewportWidth - moveEvent.clientX, 420), maxCanvasWidth);
       const chatWidth = Math.max(360, Math.min(720, Math.round(720 - (width - window.innerWidth * 0.44))));
       pendingCanvasWidthRef.current = width;
-      document.documentElement.style.setProperty('--mission-control-tldraw-width', `${width}px`);
+      document.documentElement.style.setProperty('--mission-control-canvas-width', `${width}px`);
       document.documentElement.style.setProperty('--mission-control-expanded-chat-width', `${chatWidth}px`);
       document.documentElement.style.setProperty('--mission-control-expanded-chat-right', `${width}px`);
     };
     const onUp = () => {
       canvasResizingRef.current = false;
-      if (pendingCanvasWidthRef.current != null) setCanvasWidth(pendingCanvasWidthRef.current);
+      const finalWidth = pendingCanvasWidthRef.current;
+      if (finalWidth != null) {
+        setCanvasWidth(finalWidth);
+        try { window.localStorage.setItem('mission-control-canvas-width', String(finalWidth)); } catch { /* storage unavailable */ }
+      }
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      setCanvasWidth((current) => {
-        if (current != null) {
-          try { window.localStorage.setItem('mission-control-tldraw-width', String(current)); } catch { /* storage unavailable */ }
-        }
-        return current;
-      });
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -779,7 +737,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const secretEnvVar = typeof interactionPayload.env_var === 'string' ? interactionPayload.env_var : '';
   const approvalCommand = typeof interactionPayload.command === 'string' ? interactionPayload.command : '';
   const approvalDescription = typeof interactionPayload.description === 'string' ? interactionPayload.description : '';
-  const canvasSendSelection = useCallback(async (text: string, canvasAttachments: CanvasScreenshotAttachment[] = []) => {
+  const canvasSendSelection = useCallback(async (text: string, canvasAttachments: CanvasAttachment[] = []) => {
     if (canvasAttachments.length > 0) {
       return addScreenshotAttachment(canvasAttachments[0]);
     }
@@ -787,38 +745,38 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   }, [addScreenshotAttachment, submitPrompt]);
   const canvasReady = useCallback(() => setIsCanvasLoading(false), []);
   const canvasRetry = useCallback(() => window.location.reload(), []);
-  const openCanvas = useCallback(() => {
+  const closeAddon = useCallback(() => {
+    setActiveAddon(null);
+    setIsCanvasLoading(false);
+    setCanvasMountReady(false);
+  }, []);
+  const openAddon = useCallback((id: CanvasAddonId) => {
     setCanvasMountReady(false);
     setIsCanvasLoading(true);
-    setIsExpanded(true);
+    setActiveAddon(id);
   }, []);
 
-  const canvasClose = useCallback(() => {
-    setCanvasMountReady(false);
-    setIsExpanded(false);
-    setIsCanvasLoading(false);
-  }, []);
-  useEffect(() => {
-    if (!isExpanded) {
-      document.documentElement.style.removeProperty('--mission-control-tldraw-width');
+    useEffect(() => {
+    if (!activeAddon) {
+      document.documentElement.style.removeProperty('--mission-control-canvas-width');
       document.documentElement.style.removeProperty('--mission-control-expanded-chat-width');
       document.documentElement.style.removeProperty('--mission-control-expanded-chat-right');
       return;
     }
     const width = canvasWidth ?? Math.round(window.innerWidth * 0.44);
     const chatWidth = Math.max(360, Math.min(720, Math.round(720 - (width - window.innerWidth * 0.44))));
-    document.documentElement.style.setProperty('--mission-control-tldraw-width', `${width}px`);
+    document.documentElement.style.setProperty('--mission-control-canvas-width', `${width}px`);
     document.documentElement.style.setProperty('--mission-control-expanded-chat-width', `${chatWidth}px`);
     document.documentElement.style.setProperty('--mission-control-expanded-chat-right', `${width}px`);
-  }, [canvasWidth, isExpanded]);
+  }, [canvasWidth, activeAddon]);
 
   return (
     <>
       {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('chatDrawer.close')} onClick={onClose} /> : null}
       <aside
         ref={drawerRef}
-        className={`chat-drawer ${open ? 'is-open' : ''} ${isExpanded ? 'is-expanded' : ''}`}
-        style={drawerWidth && !isExpanded ? { width: drawerWidth } : undefined}
+        className={`chat-drawer ${open ? 'is-open' : ''} ${activeAddon ? 'is-expanded' : ''}`}
+        style={drawerWidth && !activeAddon ? { width: drawerWidth } : undefined}
         role="dialog"
         aria-modal="true"
         aria-label={t('chatDrawer.chatLabel')}
@@ -830,7 +788,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
       >
-        {!isExpanded ? (
+        {!activeAddon ? (
           <div
             className="chat-drawer-resize-handle"
             role="separator"
@@ -863,9 +821,12 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>{t('kanban.new')}</span>
               </button>
-              <button className="chat-control chat-icon-button chat-tldraw-button" type="button" onPointerDown={openCanvas} onClick={openCanvas} title={t('chatDrawer.openTldraw')} aria-label={t('chatDrawer.openTldraw')}>
-                {isCanvasLoading ? <Loader2 size={16} className="chat-spin" /> : <TldrawMark size={34} />}
-              </button>
+              <CanvasAddonPicker
+                addons={CANVAS_ADDONS}
+                activeAddon={activeAddon}
+                onOpen={openAddon}
+                onClose={closeAddon}
+              />
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title={t('chatDrawer.close')} aria-label={t('chatDrawer.close')}>
                 <X size={18} />
               </button>
@@ -1054,14 +1015,23 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           disabled={connectionState !== 'connected'}
         />
       </aside>
-      {open && isExpanded ? (canvasMountReady ? (
-        <TLDrawErrorBoundary onClose={canvasClose} onRetry={canvasRetry} width={canvasWidth}>
-          <Suspense fallback={<TLDrawLoadingShell onClose={canvasClose} width={canvasWidth} />}>
-            <LazyTLDrawCanvas sessionId={sessionId} sessionKey={sessionKey} sessionTitle={headerSessionTitle} storedToken={storedToken} onSendSelection={canvasSendSelection} onActionApplied={appendSystemMessage} onReady={canvasReady} loading={isCanvasLoading} expanded={isExpanded} width={canvasWidth} onClose={canvasClose} />
-          </Suspense>
-        </TLDrawErrorBoundary>
-      ) : <TLDrawLoadingShell onClose={canvasClose} width={canvasWidth} />) : null}
-      {open && isExpanded ? (
+      {open && activeAddon && ADDON_INDEX[activeAddon] ? (canvasMountReady ? (
+        <CanvasAddonHost
+          addon={ADDON_INDEX[activeAddon]}
+          sessionId={sessionId}
+          sessionKey={sessionKey}
+          sessionTitle={headerSessionTitle}
+          storedToken={storedToken}
+          onSendPayload={canvasSendSelection}
+          onActionApplied={appendSystemMessage}
+          onReady={canvasReady}
+          loading={isCanvasLoading}
+          expanded={true}
+          width={canvasWidth}
+          onClose={closeAddon}
+        />
+      ) : null) : null}
+      {open && activeAddon ? (
         <div
           className="tldraw-canvas-resize-handle"
           role="separator"

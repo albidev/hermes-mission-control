@@ -769,6 +769,9 @@
   "slash.commandsAria": "Comandi slash",
 
   "tldraw.sessionCanvas": "Canvas della sessione",
+  "canvasAddon.title": "Canvas addon",
+  "canvasAddon.active": "Addon attivo",
+  "canvasAddon.close": "Chiudi addon",
   "tldraw.opening": "Apertura TLDrawCanvas…",
   "tldraw.working": "Al lavoro…",
   "tldraw.unavailable": "Impossibile caricare TLDrawCanvas",
