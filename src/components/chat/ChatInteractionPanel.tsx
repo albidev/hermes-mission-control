@@ -35,6 +35,7 @@ export function ChatInteractionPanel({
   secretEnvVar,
 }: ChatInteractionPanelProps) {
   const { t } = useI18n();
+  const hasLongChoice = choices.some((choice) => choice.length > 42);
   return (
     <section className={`chat-interaction chat-interaction-${interaction.kind}`} aria-label={interactionTitle(interaction)}>
       <div className="chat-interaction-heading">
@@ -62,7 +63,7 @@ export function ChatInteractionPanel({
         <>
           <p className="chat-interaction-copy">{interactionQuestion || 'Hermes is asking for a decision.'}</p>
           {choices.length ? (
-            <div className="chat-choice-row">
+            <div className={`chat-choice-row ${hasLongChoice ? 'has-long-choice' : ''}`}>
               {choices.map((choice) => {
                 const selected = selectedChoices.includes(choice);
                 return (

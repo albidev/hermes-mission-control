@@ -102,6 +102,9 @@ assertIncludes(styles, 'grid-template-columns: minmax(0, 1fr) minmax(5.5rem, aut
 assertIncludes(styles, '.chat-tool-payload[open] .chat-tool-payload-chevron {\n  transform: rotate(180deg);', 'tool payload chevrons reflect open state');
 assertExcludes(styles, ".chat-tool-payload > summary::after {\n  margin-left: auto;", 'tool payload chevrons do not rely on competing pseudo-element auto margins');
 assertExcludes(toolMessage, 'browser_vision', 'tool renderer does not add screenshot handling yet');
+assertIncludes(styles, '.chat-tool-section pre,\n.chat-tool-live pre {\n  width: 100%;\n  box-sizing: border-box;\n  word-break: break-word;', 'tool payloads cannot widen the chat with unbroken terminal output');
+assertIncludes(styles, '.chat-choice-row.has-long-choice {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);', 'long clarify choices switch from chips to a single readable column');
+assertIncludes(styles, '.chat-choice-row.has-long-choice .chat-choice {\n  width: 100%;\n  min-height: 44px;', 'long clarify choices preserve a full-width mobile touch target');
 assertIncludes(messagesComponent, 'function ChatMarkdown', 'chat messages expose one shared Markdown renderer');
 assertIncludes(messagesComponent, '<ChatMarkdown', 'message cards use the shared Markdown renderer');
 assertIncludes(messagesComponent, 'text={message.text}', 'streaming and completed text use Markdown renderer');
