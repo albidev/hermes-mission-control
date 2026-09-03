@@ -44,7 +44,13 @@ import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit
 import { applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, mergeDurableChatMessages, publishChatSync, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
-import { interactionTitle } from './chat-interactions';
+import {
+  extractClarifyToolContent,
+  interactionTitle,
+  mergeClarifyInteractionContent,
+  normalizeClarifyInteraction,
+  type ClarifyInteractionContent,
+} from './chat-interactions';
 import { recordReloadDiagnostic } from './reload-diagnostics';
 
 // Backward-compatible re-export for ChatDrawer consumers during the gateway split.
@@ -140,6 +146,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const sessionIdRef = useRef(sessionId);
   const sessionKeyRef = useRef(sessionKey);
   const interactionRef = useRef(interaction);
+  const pendingClarifyContentRef = useRef<ClarifyInteractionContent | null>(null);
   const intentionalCloseRef = useRef(false);
   const requestedSessionIdRef = useRef<string | null>(initialSessionId ?? null);
   const previewModeRef = useRef<boolean>(Boolean(initialSessionId?.trim()));
@@ -791,14 +798,38 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           }
         }
 
+        const clarifyToolContent = extractClarifyToolContent(parsed.event);
+        if (clarifyToolContent) {
+          pendingClarifyContentRef.current = clarifyToolContent;
+          const activeInteraction = interactionRef.current;
+          if (activeInteraction?.kind === 'clarify') {
+            const enrichedInteraction = {
+              ...activeInteraction,
+              payload: mergeClarifyInteractionContent(activeInteraction.payload, clarifyToolContent),
+            };
+            interactionRef.current = enrichedInteraction;
+            setInteraction(enrichedInteraction);
+          }
+        }
+
         const incomingInteraction = extractInteractionRequest(parsed.event);
         if (incomingInteraction) {
-          setInteraction(incomingInteraction);
+          const enrichedInteraction = incomingInteraction.kind === 'clarify'
+            ? {
+              ...incomingInteraction,
+              payload: mergeClarifyInteractionContent(incomingInteraction.payload, pendingClarifyContentRef.current),
+            }
+            : incomingInteraction;
+          interactionRef.current = enrichedInteraction;
+          setInteraction(enrichedInteraction);
           setStatusText('Waiting for your input');
         }
         if (parsed.event.type.endsWith('.expire')) {
           const requestId = typeof parsed.event.payload?.request_id === 'string' ? parsed.event.payload.request_id : null;
-          if (!requestId || requestId === interactionRef.current?.requestId) setInteraction(null);
+          if (!requestId || requestId === interactionRef.current?.requestId) {
+            pendingClarifyContentRef.current = null;
+            setInteraction(null);
+          }
         }
 
         const incomingActivity = eventActivity(parsed.event);
@@ -1190,7 +1221,12 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         });
       } else if (pending.kind === 'clarify') {
         if (!pending.requestId) throw new Error('Clarify request is missing its request id.');
-        await request('clarify.respond', { request_id: pending.requestId, answer });
+        const questionId = normalizeClarifyInteraction(pending.payload).questionId;
+        await request('clarify.respond', {
+          request_id: pending.requestId,
+          answer,
+          ...(questionId ? { question_id: questionId } : {}),
+        });
       } else if (pending.kind === 'sudo') {
         if (!pending.requestId) throw new Error('Sudo request is missing its request id.');
         await request('sudo.respond', { request_id: pending.requestId, password: answer });
@@ -1201,6 +1237,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         if (!pending.requestId) throw new Error('Secret request is missing its request id.');
         await request('secret.respond', { request_id: pending.requestId, value: answer });
       }
+      pendingClarifyContentRef.current = null;
       setInteraction(null);
       setStatusText('Connected');
       return true;

@@ -55,6 +55,7 @@ import {
   type PendingAttachment,
 } from '../lib/chat-gateway';
 import { markChatPresenceRead } from '../lib/chat-presence';
+import { normalizeClarifyInteraction } from '../lib/chat-interactions';
 import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';
 import {
   loadMissionControlSessionPreview,
@@ -734,11 +735,13 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   };
 
   const interactionPayload = interaction?.payload ?? {};
-  const interactionChoices = Array.isArray(interactionPayload.choices)
+  const clarifyContent = interaction?.kind === 'clarify' ? normalizeClarifyInteraction(interactionPayload) : null;
+  const interactionChoices = clarifyContent?.choices ?? (Array.isArray(interactionPayload.choices)
     ? interactionPayload.choices.filter((choice): choice is string => typeof choice === 'string' && choice.trim().length > 0)
-    : [];
-  const multiSelect = interactionPayload.multi_select === true;
-  const interactionQuestion = typeof interactionPayload.question === 'string' ? interactionPayload.question : '';
+    : []);
+  const multiSelect = clarifyContent?.multiSelect ?? (interactionPayload.multi_select === true);
+  const interactionQuestion = clarifyContent?.question ?? (typeof interactionPayload.question === 'string' ? interactionPayload.question : '');
+  const hasLongInteractionChoice = interactionChoices.some((choice) => choice.length > 42);
   const interactionPrompt = typeof interactionPayload.prompt === 'string' ? interactionPayload.prompt : '';
   const secretEnvVar = typeof interactionPayload.env_var === 'string' ? interactionPayload.env_var : '';
   const approvalCommand = typeof interactionPayload.command === 'string' ? interactionPayload.command : '';
@@ -907,7 +910,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                 <>
                   <p className="chat-interaction-copy">{interactionQuestion || 'Hermes is asking for a decision.'}</p>
                   {interactionChoices.length ? (
-                    <div className="chat-choice-row">
+                    <div className={`chat-choice-row ${hasLongInteractionChoice ? 'has-long-choice' : ''}`}>
                       {interactionChoices.map((choice) => {
                         const selected = selectedChoices.includes(choice);
                         return (
