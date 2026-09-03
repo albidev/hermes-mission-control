@@ -4174,9 +4174,10 @@
   gap: 0.85rem;
   scroll-padding-bottom: 4rem;
   background: radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--color-accent) 6%, transparent), transparent 30%);
+  transition: padding-bottom 0.18s ease;
 }
 
-.chat-transcript:has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {
+.chat-transcript.has-todo-plan {
   padding-bottom: 4.25rem;
   scroll-padding-bottom: 4.25rem;
 }
@@ -4187,15 +4188,6 @@
 }
 
 .chat-transcript.is-preview.has-todo-plan .chat-resume-button {
-  margin-bottom: 4.5rem;
-}
-
-.chat-transcript:has(.chat-preview-surface):has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {
-  padding-bottom: 7rem;
-  scroll-padding-bottom: 7rem;
-}
-
-.chat-transcript:has(.chat-preview-surface):has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) .chat-resume-button {
   margin-bottom: 4.5rem;
 }
 
@@ -4904,6 +4896,15 @@
   color: var(--color-warning);
 }
 
+.chat-composer-todo.is-active {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.chat-composer-todo.is-active:hover {
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
 .chat-send:not(:disabled) {
   box-shadow: 0 8px 20px color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
@@ -4950,6 +4951,11 @@
 
   .chat-transcript {
     padding: 0.85rem 0.75rem;
+  }
+
+  .chat-transcript.has-todo-plan {
+    padding-bottom: 4.25rem;
+    scroll-padding-bottom: 4.25rem;
   }
 
   .chat-message {

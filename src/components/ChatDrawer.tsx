@@ -482,6 +482,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const contextPercent = contextTokens == null ? 0 : Math.min(100, (contextTokens / contextWindow) * 100);
   const derivedTodoPlan = deriveTodoPlan(messages);
   const visibleTodoPlan = gatewayTodoPlan ?? previewTodoPlan ?? derivedTodoPlan;
+  const [todoPlanVisible, setTodoPlanVisible] = useState(true);
+  const showTodoPlan = todoPlanVisible ? visibleTodoPlan : null;
   const addFiles = useCallback((files: File[]) => {
     setAttachmentNotice(null);
     const available = Math.max(0, MAX_ATTACHMENTS - pendingRef.current.length);
@@ -849,7 +851,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           />
         ) : null}
 
-        <div ref={scrollRef} onScroll={handleTranscriptScroll} className={`chat-transcript ${previewMode ? 'is-preview' : ''} ${visibleTodoPlan ? 'has-todo-plan' : ''} ${isDragging ? 'is-dragging' : ''}`} aria-live="polite">
+        <div ref={scrollRef} onScroll={handleTranscriptScroll} className={`chat-transcript ${previewMode ? 'is-preview' : ''} ${showTodoPlan ? 'has-todo-plan' : ''} ${isDragging ? 'is-dragging' : ''}`} aria-live="polite">
           {isDragging ? (
             <div className="chat-drop-hint"><Paperclip size={20} /><span>{t('chatDrawer.dropFiles')}</span></div>
           ) : null}
@@ -953,7 +955,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               )}
             </section>
           ) : null}
-          <ChatTodoPlan plan={visibleTodoPlan} waitingForInput={Boolean(interaction)} />
+          <ChatTodoPlan plan={showTodoPlan} waitingForInput={Boolean(interaction)} />
           <div className="chat-status-line" role="status">
             <span className={`chat-status-line-verb ${running ? 'is-streaming' : statusLineLabel === 'Ready' ? 'is-ready' : ''}`}>
               {running ? (
@@ -1017,6 +1019,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           running={running}
           submitting={submitting}
           disabled={connectionState !== 'connected'}
+          todoVisible={todoPlanVisible}
+          onToggleTodo={() => setTodoPlanVisible((v) => !v)}
         />
       </aside>
       {open && activeAddon && ADDON_INDEX[activeAddon] ? (canvasMountReady ? (

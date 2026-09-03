@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from 'react';
-import { Loader2, Paperclip, Pause, Send, X } from 'lucide-react';
+import { ListTodo, Loader2, Paperclip, Pause, Send, X } from 'lucide-react';
 import { ChatSlashPopover, type ChatSlashPopoverHandle, type ChatSlashCompletionResponse } from './ChatSlashPopover';
 import { AttachmentIcon } from './chat-messages';
 import type { PendingAttachment } from '../lib/chat-gateway';
@@ -30,6 +30,8 @@ export type ChatComposerProps = {
   running: boolean;
   submitting: boolean;
   disabled: boolean;
+  todoVisible: boolean;
+  onToggleTodo: () => void;
 };
 
 export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(function ChatComposer({
@@ -49,6 +51,8 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
   running,
   submitting,
   disabled,
+  todoVisible,
+  onToggleTodo,
 }, _ref) {
   const { t } = useI18n();
   const canSend = Boolean(draft.trim() || pendingAttachments.length);
@@ -89,6 +93,16 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
             aria-label={running ? 'Steer Hermes' : 'Message Hermes'}
           />
           <div className="chat-composer-toolbar">
+            <button
+              type="button"
+              className={`chat-composer-action chat-composer-todo ${todoVisible ? 'is-active' : ''}`}
+              onClick={onToggleTodo}
+              title={todoVisible ? 'Hide plan' : 'Show plan'}
+              aria-label={todoVisible ? 'Hide plan' : 'Show plan'}
+              aria-pressed={todoVisible}
+            >
+              <ListTodo size={16} />
+            </button>
             <label className="chat-composer-attach" title={t('chatDrawer.attach')} aria-label={t('chatDrawer.attach')}>
               <Paperclip size={16} />
               <input className="chat-file-input" type="file" multiple accept="image/*,application/pdf,*/*" onChange={onFileInput} />
