@@ -24,7 +24,7 @@ const toolMessage = readFileSync(new URL('../src/components/chat/ToolMessage.tsx
 const chatSync = readFileSync(new URL('../src/lib/chat-sync.ts', import.meta.url), 'utf8');
 
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
-assertIncludes(component, '<ChatTodoPlan plan={visibleTodoPlan}', 'chat drawer exposes the live TODO plan');
+assertIncludes(component, '<ChatTodoPlan plan={showTodoPlan}', 'chat drawer exposes the live TODO plan');
 assertIncludes(component, 'todoPlan: gatewayTodoPlan', 'chat drawer consumes the gateway TODO state');
 assertIncludes(component, 'const [previewTodoPlan, setPreviewTodoPlan] = useState<TodoPlan | null>(null);', 'preview TODO state survives explicit resume');
 assertIncludes(component, 'const visibleTodoPlan = gatewayTodoPlan ?? previewTodoPlan ?? derivedTodoPlan;', 'gateway TODO state has priority over preview fallback');
@@ -57,23 +57,23 @@ assertIncludes(styles, '.chat-status-line-separator {\n    display: inline;', 'm
 assertIncludes(styles, '.chat-status-line-verb {\n    flex: 0 0 auto;\n    max-width: none;\n    overflow: visible;', 'mobile status verb stays fully readable');
 assertIncludes(component, 'chat-status-line-model-group', 'model and reasoning share one compact mobile group');
 assertIncludes(styles, '.chat-status-line-model-group {', 'model and reasoning use one compact flex group');
-assertIncludes(component, "chat-transcript ${previewMode ? 'is-preview' : ''} ${visibleTodoPlan ? 'has-todo-plan' : ''}", 'preview transcript exposes explicit TODO inset state');
+assertIncludes(component, "chat-transcript ${previewMode ? 'is-preview' : ''} ${showTodoPlan ? 'has-todo-plan' : ''}", 'preview transcript exposes explicit TODO inset state');
 assertIncludes(styles, '.chat-transcript.is-preview.has-todo-plan .chat-resume-button {\n  margin-bottom: 4.5rem;', 'mobile resume clearance does not depend on relational selectors');
 assertIncludes(todoPlan, 'chat-plan-title">{statusLabel}', 'TODO capsule exposes the current plan state');
 assertIncludes(todoPlan, 'expanded ? <ChevronDown size={15} /> : <ChevronUp size={15} />', 'TODO chevrons reflect collapsed and expanded state');
 assertIncludes(styles, '.chat-plan {\n  position: absolute;', 'collapsed TODO plan floats above the status line');
 assertIncludes(styles, '.chat-plan.is-expanded {\n  position: static;', 'expanded TODO plan returns to normal flow');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {', 'expanded TODO plan uses the unified footer surface');
-assertIncludes(styles, '.chat-transcript:has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {', 'chat transcript reserves space for the collapsed TODO plan');
-assertIncludes(styles, '.chat-transcript:has(.chat-preview-surface):has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) {\n  padding-bottom: 7rem;\n  scroll-padding-bottom: 7rem;', 'session resume preview reserves space in the scroll container');
-assertIncludes(styles, '.chat-transcript:has(.chat-preview-surface):has(+ .chat-runtime-footer .chat-plan:not(.is-expanded)) .chat-resume-button {\n  margin-bottom: 4.5rem;', 'resume button keeps a direct clearance from the collapsed TODO plan');
+assertIncludes(styles, '.chat-transcript.has-todo-plan {', 'chat transcript reserves space for the collapsed TODO plan');
+assertIncludes(styles, '.chat-transcript.is-preview.has-todo-plan {\n  padding-bottom: 7rem;\n  scroll-padding-bottom: 7rem;', 'session resume preview reserves space in the scroll container');
+assertIncludes(styles, '.chat-transcript.is-preview.has-todo-plan .chat-resume-button {\n  margin-bottom: 4.5rem;', 'resume button keeps a direct clearance from the collapsed TODO plan');
 assertIncludes(styles, 'height: 44px;', 'compact TODO capsule keeps a 44px control height');
 assertIncludes(styles, '.chat-plan-capsule .chat-plan-title {', 'compact TODO capsule uses a compact status row');
 assertIncludes(styles, '.chat-plan-complete.is-expanded {', 'completed expanded TODO plan keeps a uniform state border');
 assertIncludes(styles, '.chat-runtime-footer {\n  position: relative;\n  z-index: 2;\n  flex: 0 0 auto;\n  background: transparent;', 'runtime footer stays transparent behind the expanded plan');
 assertIncludes(styles, '.chat-plan:not(.is-expanded) .chat-plan-capsule {\n  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);\n  background: var(--color-surface-raised);', 'collapsed TODO plan keeps its filled capsule surface');
 assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-expanded {\n  background: transparent;', 'expanded TODO container has no outer fill');
-assertIncludes(styles, '.chat-plan.is-expanded .chat-plan-focus.is-next {', 'expanded TODO plan keeps one internal background surface');
+assertExcludes(todoPlan, 'chat-plan-focus', 'expanded TODO plan does not duplicate current and next task cards');
 assertIncludes(styles, '.chat-plan-expanded .chat-plan-item-pending .chat-plan-item-icon,\n.chat-plan-expanded .chat-plan-item-in_progress .chat-plan-item-icon {\n  border: 0;', 'expanded pending and running TODO dots use a single ring');
 assertIncludes(styles, '.chat-plan-item-completed {\n  color: var(--color-positive);', 'completed TODO items use the positive green text color');
 assertIncludes(styles, '.chat-plan:not(.is-expanded) {\n  right: auto;\n  left: 50%;\n  width: 50%;', 'collapsed TODO plan is centered and leaves room for the scroll FAB');

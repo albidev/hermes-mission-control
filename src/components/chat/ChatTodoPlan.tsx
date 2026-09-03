@@ -82,18 +82,6 @@ export function ChatTodoPlan({ plan, waitingForInput = false }: ChatTodoPlanProp
           <div className="chat-plan-progress" role="progressbar" aria-label={t('chatPlan.progressLabel')} aria-valuemin={0} aria-valuemax={plan.total} aria-valuenow={plan.completed}>
             <span style={{ width: `${Math.min(100, (plan.completed / plan.total) * 100)}%` }} />
           </div>
-          {plan.current ? (
-            <div className="chat-plan-focus">
-              <span className="chat-plan-focus-label">{t('chatPlan.current')}</span>
-              <strong>{plan.current.content}</strong>
-            </div>
-          ) : null}
-          {plan.next && plan.next.id !== plan.current?.id ? (
-            <div className="chat-plan-focus is-next">
-              <span className="chat-plan-focus-label">{t('chatPlan.next')}</span>
-              <strong>{plan.next.content}</strong>
-            </div>
-          ) : null}
           <ul className="chat-plan-list">
             {plan.items.map((item) => {
               const itemStatusLabel = item.status === 'completed'
