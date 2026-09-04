@@ -10,7 +10,7 @@
     "dev:telemetry": "./scripts/run-local-telemetry.sh",
     "dev:full": "concurrently -k -n telemetry,vite -c blue,green \"pnpm dev:telemetry\" \"pnpm dev\"",
     "build": "vite build",
-    "test": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test": "python3 -m unittest discover -s tests -p 'test_*.py' && python3 -m unittest discover -s server/tests -p 'test_*.py'",
     "test:vite-config": "node tests/vite-config.test.mjs",
     "test:chat": "node --experimental-strip-types tests/chat-protocol.test.ts && node --experimental-strip-types tests/chat-interactions.test.ts",
     "test:ui": "node --experimental-strip-types tests/chat-ui-contract.test.ts",
@@ -22,6 +22,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.9.0",
+    "@xterm/xterm": "^5.5.0",
     "lucide-react": "^1.7.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

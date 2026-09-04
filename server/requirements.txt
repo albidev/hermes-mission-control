@@ -6,3 +6,4 @@
 # reported via /health (push.reason = missing_dependency).
 psutil>=6.0.0
 PyYAML>=6.0.0
+websockets>=15.0.0
