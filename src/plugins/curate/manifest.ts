@@ -1,4 +1,4 @@
-import type { MCPluginManifest, MCPluginInit } from '../../core/plugins/types';
+import type { MCPluginManifest } from '../../core/plugins/types';
 
 export const curateManifest: MCPluginManifest = {
   id: 'curate',
@@ -7,6 +7,7 @@ export const curateManifest: MCPluginManifest = {
   version: '1.0.0',
   enabled: true,
   navItem: {
+    to: '/curate',
     label: 'nav.curate',
     icon: 'ClipboardCheck',
     showWhen: (ctx) => ctx.snapshot.candidatesEnabled,
@@ -16,17 +17,3 @@ export const curateManifest: MCPluginManifest = {
   lazyRoute: true,
   permissions: [],
 };
-
-export const curateInit: MCPluginInit = (ctx) => {
-  // Dynamic nav/route registration (future: used for external plugins)
-  // For internal plugins, registry reads manifest directly.
-  _registerInternal();
-
-  function _registerInternal() {
-    // Reserved for dynamic registration if needed.
-    // Internal plugins register via manifest in registry.ts
-  }
-};
-
-// Export for registry discovery
-export type { MCPluginManifest as CurateManifest };

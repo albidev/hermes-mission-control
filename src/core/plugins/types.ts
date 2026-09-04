@@ -72,10 +72,10 @@ export interface MCPluginEndpoint {
 }
 
 export interface MCPluginRoute {
-  /** Route path (e.g. '/curate') */
+  /** Route path (e.g. '/curate') — relative to parent Route (no leading slash) */
   path: string;
-  /** React component (lazy or direct) */
-  element: React.ComponentType<any> | React.LazyExoticComponent<React.ComponentType<any>>;
+  /** React element to render (React Router v6 requires an element, not a component fn) */
+  element: React.ReactElement;
   /** Whether this is the index route */
   index?: boolean;
 }

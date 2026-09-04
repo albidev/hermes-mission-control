@@ -1,9 +1,6 @@
 import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import React from 'react';
 import {
-  Brain,
-  BookOpen,
   DollarSign,
   LayoutDashboard,
   LockKeyhole,
@@ -17,7 +14,6 @@ import {
   Timer,
   Wrench,
 } from 'lucide-react';
-import { ClipboardCheck } from 'lucide-react';
 import { ThemeSelector } from './ThemeSelector';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { PushToggle } from './PushToggle';
@@ -28,24 +24,11 @@ import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
 import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 import { Button } from './ui/Button';
-import { PluginRegistry, MCPluginNavItem } from '../core/plugins/registry';
+import { PluginRegistry } from '../core/plugins/registry';
+import type { MCPluginNavItem } from '../core/plugins/types';
 import { resolveIcon } from '../lib/icons';
 
 type ShellProps = { registry: PluginRegistry | null };
-
-const iconMap: Record<string, React.ComponentType<any>> = {
-  LayoutDashboard,
-  MessageSquare,
-  Kanban,
-  Bot: Brain, // temporary — real Bot icon not imported (reuse Brain as placeholder until lucide icon name map built)
-  DollarSign,
-  Wrench,
-  Timer,
-  Brain,
-  Settings,
-  ScrollText,
-  ClipboardCheck,
-};
 
 export function MissionControlShell({ registry }: ShellProps) {
   const location = useLocation();

@@ -1,5 +1,5 @@
 import React from 'react';
-import type { MCPluginManifest, MCPluginNavItem, MCPluginRoute } from '../core/plugins/types';
+import type { MCPluginManifest, MCPluginNavItem, MCPluginRoute } from './types';
 
 /**
  * Internal plugin — manifest + route info.
@@ -11,6 +11,10 @@ export interface InternalPlugin {
   loadRoute: () => Promise<{ default: React.ComponentType<any> }>;
   /** Sync component for non-lazy routes */
   component?: React.ComponentType<any>;
+}
+
+function isNavItem(item: MCPluginNavItem | null | undefined): item is MCPluginNavItem {
+  return item != null;
 }
 
 /**
@@ -44,7 +48,7 @@ export class PluginRegistry {
           to: nav.to ?? p.manifest.routePath ?? `/${p.manifest.id}`,
         };
       })
-      .filter(Boolean)
+      .filter(isNavItem)
       .sort((a, b) => (a.order ?? 50) - (b.order ?? 50))
       .filter((item) => !item.showWhen || item.showWhen(ctx));
 
@@ -59,7 +63,7 @@ export class PluginRegistry {
         path,
         element: p.component
           ? React.createElement(p.component)
-          : (React.lazy(p.loadRoute) as React.LazyExoticComponent<React.ComponentType<any>>),
+          : React.createElement(React.lazy(p.loadRoute)),
         index: false,
       };
     });
