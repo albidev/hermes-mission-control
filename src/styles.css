@@ -318,6 +318,18 @@
   flex: 1;
 }
 
+.side-nav-section-label {
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+  padding: 0 0.5rem;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
 .side-nav-link.is-active {
   background: var(--color-accent-subtle);
   color: var(--color-accent);

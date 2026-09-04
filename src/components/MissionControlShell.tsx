@@ -224,7 +224,7 @@ export function MissionControlShell({ registry }: ShellProps) {
           </div>
 
           <nav className="side-nav" aria-label={t('nav.routesAria')}>
-            {navItems.map((item) => {
+            {defaultNavItems.map((item) => {
               const Icon = resolveIcon(item.icon) ?? ((props: any) => <span {...props} />);
               const label = item.label.includes('.') ? t(item.label) : item.label;
               return (
@@ -242,6 +242,30 @@ export function MissionControlShell({ registry }: ShellProps) {
                 </NavLink>
               );
             })}
+
+            {pluginNavItems.length > 0 ? (
+              <>
+                <div className="side-nav-section-label">PLUGINS</div>
+                {pluginNavItems.map((item) => {
+                  const Icon = resolveIcon(item.icon) ?? ((props: any) => <span {...props} />);
+                  const label = item.label.includes('.') ? t(item.label) : item.label;
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === '/'}
+                      title={label}
+                      className={({ isActive }) => `nav-link side-nav-link ${isActive ? 'nav-link-active is-active' : ''}`}
+                    >
+                      <span className="side-nav-icon" aria-hidden>
+                        <Icon size={16} strokeWidth={2} />
+                      </span>
+                      <span className="side-nav-label">{label}</span>
+                    </NavLink>
+                  );
+                })}
+              </>
+            ) : null}
           </nav>
 
           <div className="side-menu-actions">
