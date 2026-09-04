@@ -1,4 +1,4 @@
-import { CurateRoute } from '../../routes/CurateRoute';
+import { CurateRoute } from './CurateRoute';
 
 /**
  * Curate plugin route wrapper.

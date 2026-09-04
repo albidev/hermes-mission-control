@@ -1,10 +1,10 @@
-import { useI18n } from '../lib/i18n';
+import { useI18n } from '../../lib/i18n';
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, XCircle, RefreshCw, Inbox, ShieldCheck } from 'lucide-react';
-import { Card } from '../components/ui/Card';
-import { Badge } from '../components/ui/Badge';
-import { Button } from '../components/ui/Button';
+import { Card } from '../../components/ui/Card';
+import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
 import {
   loadMissionControlCandidates,
   approveCandidate,
@@ -12,8 +12,8 @@ import {
   loadMissionControlVaults,
   type MissionControlCandidate,
   type MissionControlVaultInfo,
-} from '../lib/hermes-api';
-import { useMissionControl } from '../lib/mission-control-store';
+} from '../../lib/hermes-api';
+import { useMissionControl } from '../../lib/mission-control-store';
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
