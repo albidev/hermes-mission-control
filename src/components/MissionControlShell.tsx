@@ -1,10 +1,6 @@
 import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bot,
-  Brain,
-  BookOpen,
-  ClipboardCheck,
   DollarSign,
   LayoutDashboard,
   LockKeyhole,
@@ -28,8 +24,13 @@ import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
 import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 import { Button } from './ui/Button';
+import { PluginRegistry } from '../core/plugins/registry';
+import type { MCPluginNavItem } from '../core/plugins/types';
+import { resolveIcon } from '../lib/icons';
 
-export function MissionControlShell() {
+type ShellProps = { registry: PluginRegistry | null };
+
+export function MissionControlShell({ registry }: ShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
   useLastRoutePersistence();
@@ -40,6 +41,7 @@ export function MissionControlShell() {
     recordReloadDiagnostic('mission-control-shell-mounted');
     return () => recordReloadDiagnostic('mission-control-shell-unmounted');
   }, []);
+
   const chatButtonLabel = presence.phase === 'running'
     ? t('chat.working')
     : presence.phase === 'completed'
@@ -47,6 +49,7 @@ export function MissionControlShell() {
       : presence.phase === 'waiting'
         ? t('chat.needsYou')
         : t('chat.button');
+
   const {
     authRequired,
     authError,
@@ -59,26 +62,29 @@ export function MissionControlShell() {
     logout,
   } = useMissionControl();
 
-  const navItems = [
-    { to: '/', label: t('nav.overview'), icon: LayoutDashboard },
-    { to: '/sessions', label: t('nav.sessions'), icon: MessageSquare },
-    { to: '/kanban', label: t('nav.kanban'), icon: Kanban },
-    { to: '/agents', label: t('nav.agents'), icon: Bot },
-    { to: '/usage', label: t('nav.usage'), icon: DollarSign },
-    { to: '/tools', label: t('nav.tools'), icon: Wrench },
-    { to: '/cron', label: t('nav.cron'), icon: Timer },
-    { to: '/skills', label: t('nav.skills'), icon: Brain },
-    { to: '/config', label: t('nav.config'), icon: Settings },
-    { to: '/logs', label: t('nav.logs'), icon: ScrollText },
-    ...(snapshot.candidatesEnabled
-      ? [{ to: '/curate', label: t('nav.curate'), icon: ClipboardCheck }]
-      : []),
+  // Default nav items (hardcoded)
+  const defaultNavItems: MCPluginNavItem[] = [
+    { to: '/', label: t('nav.overview'), icon: 'LayoutDashboard', order: 10 },
+    { to: '/sessions', label: t('nav.sessions'), icon: 'MessageSquare', order: 20 },
+    { to: '/kanban', label: t('nav.kanban'), icon: 'Kanban', order: 15 },
+    { to: '/agents', label: t('nav.agents'), icon: 'Bot', order: 30 },
+    { to: '/usage', label: t('nav.usage'), icon: 'DollarSign', order: 40 },
+    { to: '/tools', label: t('nav.tools'), icon: 'Wrench', order: 50 },
+    { to: '/cron', label: t('nav.cron'), icon: 'Timer', order: 60 },
+    { to: '/skills', label: t('nav.skills'), icon: 'Brain', order: 70 },
+    { to: '/config', label: t('nav.config'), icon: 'Settings', order: 80 },
+    { to: '/logs', label: t('nav.logs'), icon: 'ScrollText', order: 90 },
   ];
+
+  // Plugin nav items (from registry)
+  const pluginNavItems = registry?.getNavItems() ?? [];
+
+  // Merge and sort by order
+  const navItems: MCPluginNavItem[] = [...defaultNavItems, ...pluginNavItems]
+    .sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
+
   const [sideOpen, setSideOpen] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
-  // Safari suspends the tab in the background and cold-reloads it on return,
-  // wiping React state. Persist the chat-open flag so the drawer comes back
-  // open exactly as the user left it after the app reloads.
   const [chatOpen, setChatOpenState] = useState<boolean>(() => {
     try { return sessionStorage.getItem('mission-control-chat-open') === '1'; } catch { return false; }
   });
@@ -117,7 +123,6 @@ export function MissionControlShell() {
     window.addEventListener('mission-control:notification-click', handleNotificationClick);
     return () => window.removeEventListener('mission-control:notification-click', handleNotificationClick);
   }, [navigate]);
-
 
   useEffect(() => {
     if (!sideOpen) return;
@@ -202,23 +207,48 @@ export function MissionControlShell() {
           </div>
 
           <nav className="side-nav" aria-label={t('nav.routesAria')}>
-            {navItems.map((item) => {
-              const Icon = item.icon;
+            {defaultNavItems.map((item) => {
+              const Icon = resolveIcon(item.icon) ?? ((props: any) => <span {...props} />);
+              const label = item.label.includes('.') ? t(item.label) : item.label;
               return (
                 <NavLink
                   key={item.to}
                   to={item.to}
                   end={item.to === '/'}
-                  title={item.label}
+                  title={label}
                   className={({ isActive }) => `nav-link side-nav-link ${isActive ? 'nav-link-active is-active' : ''}`}
                 >
                   <span className="side-nav-icon" aria-hidden>
                     <Icon size={16} strokeWidth={2} />
                   </span>
-                  <span className="side-nav-label">{item.label}</span>
+                  <span className="side-nav-label">{label}</span>
                 </NavLink>
               );
             })}
+
+            {pluginNavItems.length > 0 ? (
+              <>
+                <div className="side-nav-section-label">PLUGINS</div>
+                {pluginNavItems.map((item) => {
+                  const Icon = resolveIcon(item.icon) ?? ((props: any) => <span {...props} />);
+                  const label = item.label.includes('.') ? t(item.label) : item.label;
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === '/'}
+                      title={label}
+                      className={({ isActive }) => `nav-link side-nav-link ${isActive ? 'nav-link-active is-active' : ''}`}
+                    >
+                      <span className="side-nav-icon" aria-hidden>
+                        <Icon size={16} strokeWidth={2} />
+                      </span>
+                      <span className="side-nav-label">{label}</span>
+                    </NavLink>
+                  );
+                })}
+              </>
+            ) : null}
           </nav>
 
           <div className="side-menu-actions">
@@ -265,7 +295,7 @@ export function MissionControlShell() {
               />
               <div>
                 <p className="eyebrow">{t('app.workspace')}</p>
-                <h1>{activeNav?.label ?? t('nav.overview')}</h1>
+                <h1>{activeNav ? (activeNav.label.includes('.') ? t(activeNav.label) : activeNav.label) : t('nav.overview')}</h1>
               </div>
             </div>
             <Button
