@@ -126,6 +126,25 @@ class MissionControlSessionOrderTests(unittest.TestCase):
 
         self.assertEqual(todo_plan["current"]["content"], "Live task")
 
+    def test_desktop_session_is_a_resumable_conversation(self):
+        with patch.object(mission_control_agents, "_trace_mode_for_artifacts", return_value="native"):
+            item = mission_control_agents._build_session_item(
+                "desktop-1",
+                None,
+                None,
+                {
+                    "source": "desktop",
+                    "model": "gpt-test",
+                    "title": "Desktop chat",
+                    "last_active": "2026-08-28T10:00:00+00:00",
+                },
+                300,
+            )
+
+        self.assertEqual(item["category"], "conversation")
+        self.assertEqual(item["originLabel"], "Desktop")
+        self.assertTrue(item["isResumable"])
+
     def test_session_item_exposes_canonical_origin_metadata(self):
         with patch.object(mission_control_agents, "_trace_mode_for_artifacts", return_value="native"):
             item = mission_control_agents._build_session_item(

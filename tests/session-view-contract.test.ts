@@ -29,6 +29,11 @@ test('classifies human conversations and automated runs separately', () => {
     label: 'TUI',
     resumable: true,
   });
+  assert.deepEqual(classifySessionOrigin({ ...baseSession, source: 'desktop', platform: 'desktop' }), {
+    category: 'conversation',
+    label: 'Desktop',
+    resumable: true,
+  });
   assert.deepEqual(classifySessionOrigin({ ...baseSession, source: 'kanban', platform: 'kanban' }), {
     category: 'automation',
     label: 'Kanban',
