@@ -1,7 +1,7 @@
 import { useI18n } from '../../lib/i18n';
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CheckCircle2, XCircle, RefreshCw, Inbox, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, XCircle, RefreshCw, Inbox, ShieldCheck, History, RotateCcw } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -12,6 +12,10 @@ import {
   loadMissionControlVaults,
   type MissionControlCandidate,
   type MissionControlVaultInfo,
+  type MissionControlSynthesisActivity,
+  type MissionControlSynthesisOperation,
+  loadMissionControlSynthesisActivity,
+  revertMissionControlSynthesis,
 } from '../../lib/hermes-api';
 import { useMissionControl } from '../../lib/mission-control-store';
 
@@ -20,6 +24,10 @@ const STATUS_COLORS: Record<string, string> = {
   approved: 'bg-sky-500/10 text-sky-400 border-sky-500/30',
   rejected: 'bg-red-500/10 text-red-400 border-red-500/30',
   promoted: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+  applied: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+  reverted: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+  conflict: 'bg-red-500/10 text-red-400 border-red-500/30',
+  prepared: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
 };
 
 function vaultModeLabel(vault: MissionControlVaultInfo) {
@@ -51,6 +59,10 @@ export function CurateRoute() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [activities, setActivities] = useState<MissionControlSynthesisActivity[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [revertingOperation, setRevertingOperation] = useState<string | null>(null);
 
   const refresh = useCallback(async (targetVault?: string) => {
     const v = targetVault ?? vault;
@@ -81,8 +93,27 @@ export function CurateRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 
+  const refreshActivity = useCallback(async () => {
+    setActivityLoading(true);
+    setActivityError(null);
+    try {
+      const snap = await loadMissionControlSynthesisActivity(storedToken ?? undefined, vault);
+      setActivities(snap.activities);
+    } catch (e) {
+      setActivities([]);
+      setActivityError(e instanceof Error ? e.message : 'Failed to load synthesis activity');
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [storedToken, vault]);
+
+  useEffect(() => {
+    void refreshActivity();
+  }, [refreshActivity]);
+
   const selectedVault = vaults.find((item) => item.id === vault);
   const canCurate = selectedVault?.candidate_enabled === true && selectedVault.writable !== false;
+  const canRevert = selectedVault?.writable !== false && selectedVault?.read_only !== true;
 
   const handleVaultChange = (v: string) => {
     setVault(v);
@@ -112,6 +143,24 @@ export function CurateRoute() {
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Reject failed');
+    }
+  };
+
+  const handleRevert = async (operation: MissionControlSynthesisOperation) => {
+    if (!canRevert || operation.status !== 'applied') return;
+    const confirmed = window.confirm(
+      `Revert ${operation.action} operation ${operation.operation_id.slice(0, 8)} in ${vault}?`,
+    );
+    if (!confirmed) return;
+    setRevertingOperation(operation.operation_id);
+    setActivityError(null);
+    try {
+      await revertMissionControlSynthesis(storedToken ?? undefined, operation.operation_id, vault);
+      await Promise.all([refreshActivity(), refresh()]);
+    } catch (e) {
+      setActivityError(e instanceof Error ? e.message : 'Revert failed');
+    } finally {
+      setRevertingOperation(null);
     }
   };
 
@@ -281,6 +330,94 @@ export function CurateRoute() {
               </div>
             </section>
           )}
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-foreground/50">
+                <History className="h-4 w-4" />
+                Synthesis activity ({activities.length})
+              </h2>
+              <Button variant="ghost" size="sm" onClick={() => void refreshActivity()} disabled={activityLoading}>
+                <RefreshCw className={`h-3.5 w-3.5 ${activityLoading ? 'animate-spin' : ''}`} />
+                Refresh activity
+              </Button>
+            </div>
+            {activityError && (
+              <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                {activityError}
+              </div>
+            )}
+            {activityLoading && activities.length === 0 ? (
+              <Card className="flex items-center gap-3 p-6 text-foreground/50">
+                <RefreshCw className="h-5 w-5 animate-spin" />
+                Loading synthesis activity…
+              </Card>
+            ) : activities.length === 0 ? (
+              <Card className="p-6 text-sm text-foreground/50">
+                No session_synthesis operations recorded for this vault.
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {activities.map((activity) => (
+                  <Card key={activity.synthesis_id} className="p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-semibold text-foreground">{activity.outcome}</h3>
+                          {activity.provider && <Badge className="border border-border bg-surface text-foreground/70">{activity.provider}</Badge>}
+                          {activity.model && <span className="font-mono text-xs text-foreground/45">{activity.model}</span>}
+                        </div>
+                        <p className="mt-1 break-all font-mono text-xs text-foreground/50">
+                          synthesis {activity.synthesis_id} · session {activity.session_id ?? '—'}
+                        </p>
+                        <p className="mt-1 text-xs text-foreground/45">
+                          {activity.timestamp ? new Date(activity.timestamp).toLocaleString() : 'Timestamp unavailable'}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {activity.concepts.map((concept) => (
+                            <span
+                              key={concept.id}
+                              className={`rounded border px-2 py-1 font-mono text-xs ${concept.exists ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300/80' : 'border-red-500/20 bg-red-500/5 text-red-300/80'}`}
+                              title={concept.path}
+                            >
+                              {concept.title || concept.id}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    {activity.operations.length > 0 ? (
+                      <div className="mt-4 space-y-2 border-t border-border/60 pt-3">
+                        {activity.operations.map((operation) => (
+                          <div key={operation.operation_id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-surface/60 px-3 py-2 text-xs">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <Badge className="border border-border bg-surface text-foreground/70">{operation.action}</Badge>
+                              {statusBadge(operation.status)}
+                              <span className="truncate font-mono text-foreground/50" title={operation.note_path}>{operation.note_path}</span>
+                            </div>
+                            {operation.status === 'applied' && (
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => void handleRevert(operation)}
+                                disabled={!canRevert || revertingOperation === operation.operation_id}
+                              >
+                                <RotateCcw className={`h-3.5 w-3.5 ${revertingOperation === operation.operation_id ? 'animate-spin' : ''}`} />
+                                {revertingOperation === operation.operation_id ? 'Reverting…' : 'Revert'}
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-3 border-t border-border/60 pt-3 text-xs text-foreground/45">
+                        No reversible operation recorded for this synthesis.
+                      </p>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
+          </section>
         </>
       )}
     </div>

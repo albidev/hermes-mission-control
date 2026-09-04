@@ -47,6 +47,7 @@ def _client_diagnostics_log() -> Path:
     return hermes_logs_dir() / "mission-control-client.log"
 
 import candidates as candidates_mod
+from synthesis_activity_proxy import SynthesisProxyError, load_synthesis_activity, revert_synthesis
 from nous_portal_usage import collect_nous_portal_usage
 from provider_usage_config import apply_provider_display_config, visible_usage_providers
 from provider_usage_contract import normalize_cached_entry, normalize_codexbar_entry
@@ -2346,6 +2347,20 @@ class Handler(BaseHTTPRequestHandler):
                 logging.exception('Legacy whiteboard GET handler error for session %s', session_id)
                 self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
             return
+        if parsed.path == '/api/local/synthesis/activity':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                return
+            vault = (params.get("vault") or [None])[0] or None
+            try:
+                self._json(200, load_synthesis_activity(vault))
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
+            return
         if parsed.path == '/api/local/candidates':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2785,6 +2800,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {'success': False, 'disabled': True, **result})
                 return
             self._json(200, {'success': True, **result})
+            return
+        if parsed.path == '/api/local/synthesis/revert':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            operation_id = str(payload.get('operation_id') or '').strip()
+            if not operation_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing operation_id.'})
+                return
+            vault = str(payload.get('vault') or '').strip() or None
+            try:
+                result = revert_synthesis(operation_id, vault)
+                self._json(200, result)
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_revert_failed', 'detail': str(exc)})
             return
         if parsed.path == '/api/local/candidates/approve':
             if not _is_authorized(self):

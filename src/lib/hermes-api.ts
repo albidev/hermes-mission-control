@@ -2618,9 +2618,83 @@ export async function rejectCandidate(
   return data?.candidate ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Kanban (Mission Control → sidecar /api/local/kanban/* → core kanban_db)
-// ---------------------------------------------------------------------------
+export interface MissionControlSynthesisConcept {
+  id: string;
+  title: string;
+  path: string;
+  exists: boolean;
+}
+
+export interface MissionControlSynthesisOperation {
+  operation_id: string;
+  synthesis_id: string;
+  session_id?: string | null;
+  action: 'created' | 'merged' | string;
+  status: 'applied' | 'reverted' | 'conflict' | 'prepared' | string;
+  note_path: string;
+  before_hash?: string | null;
+  after_hash?: string | null;
+  archived_path?: string | null;
+  timestamp?: string;
+}
+
+export interface MissionControlSynthesisActivity {
+  synthesis_id: string;
+  session_id?: string | null;
+  timestamp?: string;
+  outcome: string;
+  provider?: string | null;
+  model?: string | null;
+  concepts: MissionControlSynthesisConcept[];
+  operations: MissionControlSynthesisOperation[];
+}
+
+export interface MissionControlSynthesisActivitySnapshot {
+  vault_id: string;
+  activities: MissionControlSynthesisActivity[];
+  count: number;
+}
+
+export async function loadMissionControlSynthesisActivity(
+  accessToken?: string,
+  vault?: string,
+): Promise<MissionControlSynthesisActivitySnapshot> {
+  const params = new URLSearchParams();
+  if (vault) params.set('vault', vault);
+  const qs = params.toString();
+  const path = qs ? `/synthesis/activity?${qs}` : '/synthesis/activity';
+  const response = await fetch(localApiUrl(path), {
+    headers: buildHeaders(accessToken),
+    cache: 'no-store',
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Synthesis activity failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  return (await response.json()) as MissionControlSynthesisActivitySnapshot;
+}
+
+export async function revertMissionControlSynthesis(
+  accessToken: string | undefined,
+  operationId: string,
+  vault?: string,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl('/synthesis/revert'), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation_id: operationId, ...(vault ? { vault } : {}) }),
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Revert failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  return payload as Record<string, unknown>;
+}
+
 
 export type MissionControlKanbanTask = {
   id: string;
