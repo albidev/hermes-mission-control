@@ -25,9 +25,15 @@ assert.match(styles, /\.route-stage\s*\{[\s\S]*?overflow:\s*hidden;/);
 assert.match(styles, /\.route-stage:not\(\.is-overview\)\s*\{[\s\S]*?padding:[^;]*0;/);
 
 for (const file of routeFiles) {
-  const path = file === 'OverviewDashboard.tsx'
-    ? new URL('src/components/overview/OverviewDashboard.tsx', root)
-    : new URL(`src/routes/${file}`, root);
+  let path;
+  if (file === 'OverviewDashboard.tsx') {
+    path = new URL('src/components/overview/OverviewDashboard.tsx', root);
+  } else if (file === 'CurateRoute.tsx') {
+    // Curate is a self-contained plugin — its UI lives under src/plugins/curate/
+    path = new URL('src/plugins/curate/CurateRoute.tsx', root);
+  } else {
+    path = new URL(`src/routes/${file}`, root);
+  }
   const source = readFileSync(path, 'utf8');
   assert.match(source, /route-page-scroll/, `${file} must use the shared mobile scroll container`);
 }

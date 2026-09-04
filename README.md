@@ -31,6 +31,13 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 - Mobile-safe task and board creation flows
 - See [docs/kanban.md](docs/kanban.md) for the complete Kanban feature and API reference
 
+### Plugin system
+
+- Abstract plugin architecture: self-contained modules register their own route, sidebar entry, and (future) backend endpoints
+- Plugins appear in a dedicated **PLUGINS** section of the sidebar, below core navigation
+- First plugin: **Curate** (nightly brain candidate approval), fully self-contained under `src/plugins/curate/`
+- See [docs/plugins.md](docs/plugins.md) for the plugin contract and how to add a plugin
+
 ### Chat and agent workspace
 
 - Streaming Chat with presence states, reasoning events, and completion recovery
