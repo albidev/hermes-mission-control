@@ -47,6 +47,12 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path,
         },
+        '/api/terminal': {
+          target: 'http://127.0.0.1:8766',
+          changeOrigin: true,
+          ws: true,
+          rewriteWsOrigin: true,
+        },
         '/api/gateway-root': {
           target: DASHBOARD_TARGET,
           changeOrigin: true,

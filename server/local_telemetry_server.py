@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import json
 import os
+import signal
 import platform
 import re
 import shutil
@@ -75,6 +76,7 @@ from kanban_bridge import KanbanError as KanbanBridgeError
 import cron_bridge as cron_bridge_mod
 from cron_bridge import CronBridgeError
 from whiteboard_store import acknowledge_commands, enqueue_command, get_whiteboard, load_state, save_snapshot, save_state, get_agent_mode
+from terminal_server import issue_ticket, shutdown_terminal_sessions, start_terminal_server
 
 CANVAS_DISPATCH: dict[str, Callable[[str, dict], dict]] = {}
 
@@ -2513,6 +2515,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/local/terminal/ticket":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            token = _extract_bearer_token(self.headers.get("Authorization")) or ""
+            ticket = issue_ticket(token)
+            if not ticket:
+                self._json(401, {"error": "unauthorized", "detail": "Invalid terminal credentials."})
+                return
+            self._json(200, {"ticket": ticket})
+            return
         if parsed.path == "/api/local/client-diagnostics":
             payload = self._read_json_body()
             if payload is None:
@@ -2957,14 +2970,27 @@ def main() -> None:
     sampler.start()
 
     start_gateway_watcher()
+    terminal_thread = start_terminal_server()
 
     server = ThreadingHTTPServer((host, port), Handler)
     # Client handlers must not keep the process alive after the listener is
     # restarted while a browser/proxy still owns an abandoned connection.
     server.daemon_threads = True
     server.block_on_close = False
+    def shutdown(signum: int, _frame: Any) -> None:
+        print(f"[mission-control-local-telemetry] stopping (signal {signum})", flush=True)
+        shutdown_terminal_sessions()
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
     print(f"[mission-control-local-telemetry] listening on http://{host}:{port}", flush=True)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        shutdown_terminal_sessions()
+        terminal_thread.stop()  # type: ignore[attr-defined]
+        terminal_thread.join(timeout=2)
 
 
 if __name__ == "__main__":

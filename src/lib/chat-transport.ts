@@ -3,9 +3,9 @@ import { extractInjectedSessionToken, nextReconnectDelay } from './chat-protocol
 export const RPC_TIMEOUT_MS = 120000;
 export const MAX_RECONNECTS = 6;
 
-export function getWebSocketUrl(credential: { kind: 'ticket' | 'token'; value: string }) {
+export function getWebSocketUrl(credential: { kind: 'ticket' | 'token'; value: string }, path = '/api/ws') {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = new URL('/api/ws', `${protocol}//${window.location.host}`);
+  const url = new URL(path, `${protocol}//${window.location.host}`);
   url.searchParams.set(credential.kind, credential.value);
   return url.toString();
 }
