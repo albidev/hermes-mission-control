@@ -16,11 +16,12 @@ _TRACE_MODE_UNAVAILABLE = "unavailable"
 _SKILL_TOOL_NAMES = {"skill_view", "skills_list", "skill_manage"}
 _SCHEMA_VERSION = "2"
 
-_CONVERSATION_ORIGINS = {"tui", "discord", "telegram", "mission-control"}
+_CONVERSATION_ORIGINS = {"tui", "desktop", "discord", "telegram", "mission-control"}
 _AUTOMATION_ORIGINS = {"cron", "kanban"}
 _SYSTEM_ORIGINS = {"cli", "system", "test", "smoke"}
 _ORIGIN_LABELS = {
     "tui": "TUI",
+    "desktop": "Desktop",
     "discord": "Discord",
     "telegram": "Telegram",
     "mission-control": "Mission Control",
