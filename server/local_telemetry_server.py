@@ -47,7 +47,15 @@ def _client_diagnostics_log() -> Path:
     return hermes_logs_dir() / "mission-control-client.log"
 
 import candidates as candidates_mod
-from synthesis_activity_proxy import SynthesisProxyError, load_synthesis_activity, revert_synthesis
+import session_synthesis_rejections
+from synthesis_activity_proxy import (
+    SynthesisProxyError,
+    apply_synthesis_candidate,
+    get_synthesis_candidate,
+    load_synthesis_activity,
+    load_synthesis_candidates,
+    revert_synthesis,
+)
 from nous_portal_usage import collect_nous_portal_usage
 from provider_usage_config import apply_provider_display_config, visible_usage_providers
 from provider_usage_contract import normalize_cached_entry, normalize_codexbar_entry
@@ -2361,6 +2369,22 @@ class Handler(BaseHTTPRequestHandler):
             except SynthesisProxyError as exc:
                 self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
             return
+        if parsed.path == '/api/local/synthesis/candidates':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                return
+            vault = (params.get("vault") or [None])[0] or None
+            status = (params.get("status") or [None])[0] or None
+            synthesis_id = (params.get("synthesis_id") or [None])[0] or None
+            try:
+                self._json(200, load_synthesis_candidates(vault, status, synthesis_id))
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
+            return
         if parsed.path == '/api/local/candidates':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2822,6 +2846,92 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, result)
             except SynthesisProxyError as exc:
                 self._json(exc.status_code, {'error': 'bdh_revert_failed', 'detail': str(exc)})
+            return
+        if parsed.path == '/api/local/synthesis/apply':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            candidate_id = str(payload.get('candidate_id') or '').strip()
+            vault = str(payload.get('vault') or '').strip() or None
+            if not candidate_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing candidate_id.'})
+                return
+            # Vault isolation + tamper resistance: resolve the candidate from
+            # BDH within the requested vault and forward BDH's own correlation
+            # tuple, never the client-supplied synthesis/session ids.
+            try:
+                candidate = get_synthesis_candidate(candidate_id, vault)
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
+                return
+            if candidate is None:
+                self._json(404, {'error': 'not_found',
+                                 'detail': f'Candidate {candidate_id} not found in vault {vault or "default"}.'})
+                return
+            try:
+                result = apply_synthesis_candidate(
+                    candidate_id=candidate['candidate_id'],
+                    synthesis_id=candidate['synthesis_id'],
+                    session_id=candidate['session_id'],
+                    vault_id=candidate['vault_id'],
+                    source=candidate['source'],
+                )
+                self._json(200, result)
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_apply_failed', 'detail': str(exc)})
+            return
+        if parsed.path == '/api/local/synthesis/reject':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            candidate_id = str(payload.get('candidate_id') or '').strip()
+            reason = str(payload.get('reason') or '').strip()
+            vault = str(payload.get('vault') or '').strip() or None
+            if not candidate_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing candidate_id.'})
+                return
+            # Reject is a local-only record: it never applies to BDH. The
+            # reason is persisted through the existing safe candidate mechanism
+            # (nightly-brain candidates) so it can feed the model's next run.
+            try:
+                candidate = get_synthesis_candidate(candidate_id, vault)
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
+                return
+            if candidate is None:
+                self._json(404, {'error': 'not_found',
+                                 'detail': f'Candidate {candidate_id} not found in vault {vault or "default"}.'})
+                return
+            record = session_synthesis_rejections.record_rejection(
+                candidate_id=candidate_id,
+                vault_id=candidate['vault_id'],
+                synthesis_id=candidate['synthesis_id'],
+                session_id=candidate['session_id'],
+                title=candidate['title'],
+                reason=reason,
+            )
+            self._json(200, {
+                'success': True,
+                'candidate_id': candidate_id,
+                'vault_id': candidate['vault_id'],
+                'status': 'rejected',
+                'reason': reason,
+                'recorded': record,
+            })
             return
         if parsed.path == '/api/local/candidates/approve':
             if not _is_authorized(self):

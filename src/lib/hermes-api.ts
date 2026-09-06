@@ -2695,6 +2695,127 @@ export async function revertMissionControlSynthesis(
   return payload as Record<string, unknown>;
 }
 
+// ---------- Session synthesis candidates (BDH pre-write gate) ----------
+
+export interface MissionControlSessionSynthesisSafeProvenance {
+  session_title: string | null;
+  created_at: string | null;
+  source_ref: string | null;
+  concept_summary: string | null;
+}
+
+export interface MissionControlSessionSynthesisCandidate {
+  source: string;
+  candidate_id: string;
+  synthesis_id: string;
+  session_id: string;
+  vault_id: string;
+  title: string;
+  status: string;
+  accepted_count: number | null;
+  context_only_count: number | null;
+  safe_provenance: MissionControlSessionSynthesisSafeProvenance;
+}
+
+export interface MissionControlSessionSynthesisCandidatesSnapshot {
+  vault_id: string | null;
+  count: number;
+  candidates: MissionControlSessionSynthesisCandidate[];
+}
+
+export interface MissionControlSessionSynthesisApplyResult {
+  candidate_id?: string;
+  synthesis_id?: string;
+  vault_id?: string;
+  status?: string;
+  note_path?: string;
+  operation_id?: string;
+  reason?: string;
+  idempotent?: boolean;
+  applied?: boolean;
+}
+
+function normalizeSessionSynthesisCandidate(
+  input: Partial<MissionControlSessionSynthesisCandidate> | undefined,
+): MissionControlSessionSynthesisCandidate {
+  const provenance: Partial<MissionControlSessionSynthesisSafeProvenance> = input?.safe_provenance ?? {};
+  return {
+    source: input?.source ?? 'session_synthesis',
+    candidate_id: input?.candidate_id ?? '',
+    synthesis_id: input?.synthesis_id ?? '',
+    session_id: input?.session_id ?? '',
+    vault_id: input?.vault_id ?? '',
+    title: input?.title ?? '',
+    status: input?.status ?? 'pending_review',
+    accepted_count: input?.accepted_count ?? null,
+    context_only_count: input?.context_only_count ?? null,
+    safe_provenance: {
+      session_title: provenance.session_title ?? null,
+      created_at: provenance.created_at ?? null,
+      source_ref: provenance.source_ref ?? null,
+      concept_summary: provenance.concept_summary ?? null,
+    },
+  };
+}
+
+export async function loadMissionControlSessionSynthesisCandidates(
+  accessToken?: string,
+  vault?: string,
+  status?: string,
+): Promise<MissionControlSessionSynthesisCandidatesSnapshot> {
+  const params = new URLSearchParams();
+  if (vault) params.set('vault', vault);
+  if (status) params.set('status', status);
+  const qs = params.toString();
+  const path = qs ? `/synthesis/candidates?${qs}` : '/synthesis/candidates';
+  const { payload } = await maybeFetchLocalJson<{
+    vault_id: string | null;
+    count: number;
+    candidates: Partial<MissionControlSessionSynthesisCandidate>[];
+  }>(path, accessToken);
+  const candidates = (payload?.candidates ?? []).map(normalizeSessionSynthesisCandidate);
+  return { vault_id: payload?.vault_id ?? null, count: candidates.length, candidates };
+}
+
+export async function applyMissionControlSessionSynthesisCandidate(
+  accessToken: string | undefined,
+  candidateId: string,
+  vault?: string,
+): Promise<MissionControlSessionSynthesisApplyResult> {
+  const response = await fetch(apiUrl('/synthesis/apply'), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ candidate_id: candidateId, ...(vault ? { vault } : {}) }),
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Apply failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  return payload as MissionControlSessionSynthesisApplyResult;
+}
+
+export async function rejectMissionControlSessionSynthesisCandidate(
+  accessToken: string | undefined,
+  candidateId: string,
+  reason: string,
+  vault?: string,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl('/synthesis/reject'), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ candidate_id: candidateId, reason, ...(vault ? { vault } : {}) }),
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Reject failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  return payload as Record<string, unknown>;
+}
+
 
 export type MissionControlKanbanTask = {
   id: string;

@@ -19,12 +19,16 @@ import { Modal } from '../../components/Modal';
 import { PageHeader } from '../../components/PageHeader';
 import {
   approveCandidate,
+  applyMissionControlSessionSynthesisCandidate,
   loadMissionControlCandidates,
+  loadMissionControlSessionSynthesisCandidates,
   loadMissionControlSynthesisActivity,
   loadMissionControlVaults,
   rejectCandidate,
+  rejectMissionControlSessionSynthesisCandidate,
   revertMissionControlSynthesis,
   type MissionControlCandidate,
+  type MissionControlSessionSynthesisCandidate,
   type MissionControlSynthesisActivity,
   type MissionControlSynthesisOperation,
   type MissionControlVaultInfo,
@@ -42,12 +46,12 @@ const STATUS_COLORS: Record<string, string> = {
   prepared: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
 };
 
-type CurateTab = 'candidates' | 'activity' | 'history';
+type CurateTab = 'candidates' | 'synthesis' | 'activity' | 'history';
 type ActivityOutcome = 'all' | 'created' | 'merged' | 'noop' | 'failed' | 'reverted' | 'conflict';
 type SortDirection = 'newest' | 'oldest';
 
 function parseCurateTab(value: string | null): CurateTab {
-  return value === 'activity' || value === 'history' ? value : 'candidates';
+  return value === 'synthesis' || value === 'activity' || value === 'history' ? value : 'candidates';
 }
 
 function vaultModeLabel(vault: MissionControlVaultInfo) {
@@ -236,6 +240,87 @@ function CandidateRow({
   );
 }
 
+function SessionSynthesisCandidateRow({
+  candidate,
+  canCurate,
+  applying,
+  rejecting,
+  reason,
+  onApply,
+  onRejectStart,
+  onReason,
+  onReject,
+  onCancel,
+}: {
+  candidate: MissionControlSessionSynthesisCandidate;
+  canCurate: boolean;
+  applying: boolean;
+  rejecting: boolean;
+  reason: string;
+  onApply: () => void;
+  onRejectStart: () => void;
+  onReason: (value: string) => void;
+  onReject: () => void;
+  onCancel: () => void;
+}) {
+  const provenance = candidate.safe_provenance;
+  const isPending = candidate.status === 'pending_review';
+  const isConflict = candidate.status === 'conflict';
+  return (
+    <article className="border-b border-border-subtle/60 px-3 py-3 last:border-b-0 sm:px-4">
+      <div className="flex items-start gap-3">
+        <div className="mt-1 shrink-0">
+          <span className={`block h-2.5 w-2.5 rounded-full ${isConflict ? 'bg-negative' : isPending ? 'bg-warning' : 'bg-positive'}`} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h3 className="min-w-0 truncate text-sm font-semibold text-text">{candidate.title || 'Untitled concept'}</h3>
+            {statusBadge(candidate.status)}
+          </div>
+          <p className="mt-1 truncate text-xs text-text-muted">{candidate.source} · {candidate.candidate_id}</p>
+          <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1 text-[11px] text-text-subtle sm:grid-cols-2">
+            <div className="min-w-0"><dt className="inline text-text-muted">synthesis </dt><dd className="inline break-all font-mono">{candidate.synthesis_id}</dd></div>
+            <div className="min-w-0"><dt className="inline text-text-muted">session </dt><dd className="inline break-all font-mono">{candidate.session_id || '—'}</dd></div>
+            <div className="min-w-0"><dt className="inline text-text-muted">vault </dt><dd className="inline break-all font-mono">{candidate.vault_id || '—'}</dd></div>
+            {candidate.accepted_count !== null || candidate.context_only_count !== null ? (
+              <div className="min-w-0"><dt className="inline text-text-muted">concepts </dt><dd className="inline">{candidate.accepted_count ?? 0} accepted · {candidate.context_only_count ?? 0} context-only</dd></div>
+            ) : null}
+          </dl>
+          {provenance.session_title || provenance.created_at || provenance.source_ref || provenance.concept_summary ? (
+            <div className="mt-2 rounded-md bg-surface-sunken/45 px-3 py-2 text-[11px] text-text-muted">
+              {provenance.session_title ? <p className="truncate"><span className="text-text-subtle">Session: </span>{provenance.session_title}</p> : null}
+              {provenance.created_at ? <p className="truncate"><span className="text-text-subtle">Created: </span>{formatActivityTime(provenance.created_at)}</p> : null}
+              {provenance.source_ref ? <p className="truncate"><span className="text-text-subtle">Source: </span>{provenance.source_ref}</p> : null}
+              {provenance.concept_summary ? <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words"><span className="text-text-subtle">Summary: </span>{provenance.concept_summary}</p> : null}
+            </div>
+          ) : null}
+          {isPending ? (
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
+              <Button type="button" size="sm" onClick={onApply} disabled={!canCurate || applying}>
+                <CheckCircle2 size={13} className={applying ? 'animate-spin' : ''} />
+                {applying ? 'Applying…' : 'Approve / Apply'}
+              </Button>
+              {rejecting ? (
+                <div className="flex w-full flex-wrap justify-end gap-1.5 sm:w-auto">
+                  <input className="min-w-0 flex-1 rounded-md bg-surface px-2 py-1 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:w-56 sm:flex-none" placeholder="Reason (optional)" value={reason} onChange={(event) => onReason(event.target.value)} />
+                  <Button type="button" size="sm" variant="danger" onClick={onReject} disabled={!canCurate}><XCircle size={13} />Reject</Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+                </div>
+              ) : (
+                <Button type="button" size="sm" variant="ghost" onClick={onRejectStart}><XCircle size={13} />Reject</Button>
+              )}
+            </div>
+          ) : isConflict ? (
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-1.5">
+              <span className="text-xs text-negative">Conflict — review and re-apply if resolved.</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export function CurateRoute() {
   const { t } = useI18n();
   const { storedToken } = useMissionControl();
@@ -255,6 +340,12 @@ export function CurateRoute() {
   const [activityQuery, setActivityQuery] = useState('');
   const [activityOutcome, setActivityOutcome] = useState<ActivityOutcome>('all');
   const [activitySort, setActivitySort] = useState<SortDirection>('newest');
+  const [synthesisCandidates, setSynthesisCandidates] = useState<MissionControlSessionSynthesisCandidate[]>([]);
+  const [synthesisLoading, setSynthesisLoading] = useState(false);
+  const [synthesisError, setSynthesisError] = useState<string | null>(null);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [synthesisRejectingId, setSynthesisRejectingId] = useState<string | null>(null);
+  const [synthesisRejectReason, setSynthesisRejectReason] = useState<Record<string, string>>({});
 
   const activeTab = parseCurateTab(searchParams.get('tab'));
   const updateTab = (tab: CurateTab) => {
@@ -297,6 +388,22 @@ export function CurateRoute() {
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { void refreshActivity(); }, [refreshActivity]);
+
+  const refreshSynthesis = useCallback(async () => {
+    setSynthesisLoading(true);
+    setSynthesisError(null);
+    try {
+      const snapshot = await loadMissionControlSessionSynthesisCandidates(storedToken ?? undefined, vault);
+      setSynthesisCandidates(snapshot.candidates);
+    } catch (e) {
+      setSynthesisCandidates([]);
+      setSynthesisError(e instanceof Error ? e.message : 'Failed to load session synthesis candidates');
+    } finally {
+      setSynthesisLoading(false);
+    }
+  }, [storedToken, vault]);
+
+  useEffect(() => { void refreshSynthesis(); }, [refreshSynthesis]);
 
   const selectedVault = vaults.find((item) => item.id === vault);
   const canCurate = selectedVault?.candidate_enabled === true && selectedVault.writable !== false;
@@ -355,6 +462,37 @@ export function CurateRoute() {
     finally { setRevertingOperation(null); }
   };
 
+  const handleSynthesisApply = async (candidate: MissionControlSessionSynthesisCandidate) => {
+    if (!canCurate) return;
+    setApplyingId(candidate.candidate_id);
+    setSynthesisError(null);
+    try {
+      const result = await applyMissionControlSessionSynthesisCandidate(storedToken ?? undefined, candidate.candidate_id, vault);
+      if (result.status === 'conflict') {
+        setSynthesisError(`Apply conflict for ${candidate.candidate_id}: ${result.reason || 'unresolvable conflict'}`);
+      } else if (result.status === 'failed') {
+        setSynthesisError(`Apply failed for ${candidate.candidate_id}: ${result.reason || 'BDH reported failure'}`);
+      }
+      await refreshSynthesis();
+    } catch (e) { setSynthesisError(e instanceof Error ? e.message : 'Apply failed'); }
+    finally { setApplyingId(null); }
+  };
+
+  const handleSynthesisReject = async (candidate: MissionControlSessionSynthesisCandidate) => {
+    if (!canCurate) return;
+    try {
+      await rejectMissionControlSessionSynthesisCandidate(
+        storedToken ?? undefined,
+        candidate.candidate_id,
+        synthesisRejectReason[candidate.candidate_id] ?? '',
+        vault,
+      );
+      setSynthesisRejectReason((current) => ({ ...current, [candidate.candidate_id]: '' }));
+      setSynthesisRejectingId(null);
+      await refreshSynthesis();
+    } catch (e) { setSynthesisError(e instanceof Error ? e.message : 'Reject failed'); }
+  };
+
   return (
     <div className="route-page-scroll flex flex-col gap-4 sm:gap-5">
       <Card padding="none" className="!border-0">
@@ -363,7 +501,7 @@ export function CurateRoute() {
           title="Neurogenesis curation"
           description="Review persisted session_synthesis work by vault. Revert is post-commit and conflict-aware."
           meta={selectedVault ? `${selectedVault.label} · ${vaultModeLabel(selectedVault)}` : 'Vault loading'}
-          actions={<div className="flex flex-wrap items-center justify-end gap-2">{vaults.length > 1 ? <select className="min-w-0 rounded-md bg-surface px-3 py-1.5 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" value={vault} onChange={(event) => handleVaultChange(event.target.value)} aria-label="Vault"><option value="core">Core</option>{vaults.filter((item) => item.id !== 'core').map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select> : null}<Button type="button" size="sm" variant="ghost" className="!min-w-0 !border-0 !bg-transparent !px-2 text-text-muted hover:!bg-surface-sunken hover:!text-text" onClick={() => void Promise.all([refresh(), refreshActivity()])} disabled={loading || activityLoading} aria-label="Refresh" title="Refresh"><RefreshCw size={14} className={loading || activityLoading ? 'animate-spin' : ''} /><span className="hidden sm:inline">Refresh</span></Button></div>}
+          actions={<div className="flex flex-wrap items-center justify-end gap-2">{vaults.length > 1 ? <select className="min-w-0 rounded-md bg-surface px-3 py-1.5 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40" value={vault} onChange={(event) => handleVaultChange(event.target.value)} aria-label="Vault"><option value="core">Core</option>{vaults.filter((item) => item.id !== 'core').map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select> : null}<Button type="button" size="sm" variant="ghost" className="!min-w-0 !border-0 !bg-transparent !px-2 text-text-muted hover:!bg-surface-sunken hover:!text-text" onClick={() => void Promise.all([refresh(), refreshActivity(), refreshSynthesis()])} disabled={loading || activityLoading || synthesisLoading} aria-label="Refresh" title="Refresh"><RefreshCw size={14} className={loading || activityLoading || synthesisLoading ? 'animate-spin' : ''} /><span className="hidden sm:inline">Refresh</span></Button></div>}
         />
         <div className="grid grid-cols-2 gap-1.5 p-2 sm:grid-cols-4 sm:gap-3 sm:p-4">
           <MetricCard label="Synthesis" value={String(activities.length)} hint="Recorded in audit" />
@@ -378,16 +516,25 @@ export function CurateRoute() {
       <Card padding="none" className="min-w-0 !border-0">
         <div className="border-b border-border-subtle/60 p-3">
           <div role="tablist" aria-label="Curate views" className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
-            {([['candidates', 'Candidates', pending.length + reviewed.length], ['activity', 'Synthesis activity', activities.length], ['history', 'Reverted / conflicts', historyActivities.length]] as const).map(([tab, label, count]) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} aria-controls="curate-tab-panel" onClick={() => updateTab(tab)} className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === tab ? 'bg-accent text-white' : 'bg-surface-sunken text-text-muted hover:bg-border-subtle hover:text-text'}`}>{label} <span className="ml-1 opacity-70">{count}</span></button>)}
+            {([['candidates', 'Candidates', pending.length + reviewed.length], ['synthesis', 'Session synthesis', synthesisCandidates.length], ['activity', 'Synthesis activity', activities.length], ['history', 'Reverted / conflicts', historyActivities.length]] as const).map(([tab, label, count]) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} aria-controls="curate-tab-panel" onClick={() => updateTab(tab)} className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === tab ? 'bg-accent text-white' : 'bg-surface-sunken text-text-muted hover:bg-border-subtle hover:text-text'}`}>{label} <span className="ml-1 opacity-70">{count}</span></button>)}
           </div>
         </div>
 
-        <div id="curate-tab-panel" role="tabpanel" aria-busy={activeTab === 'candidates' ? loading : activityLoading}>
+        <div id="curate-tab-panel" role="tabpanel" aria-busy={activeTab === 'candidates' ? loading : activeTab === 'synthesis' ? synthesisLoading : activityLoading}>
           {activeTab === 'candidates' ? (
             loading && candidates.length === 0 ? <div className="flex items-center justify-center gap-2 px-4 py-12 text-sm text-text-muted"><RefreshCw size={14} className="animate-spin" />{t('curate.loading')}</div> : <div>
               <div className="flex items-center justify-between bg-surface-sunken/35 px-4 py-2.5"><span className="text-xs font-semibold uppercase tracking-[0.12em] text-text-muted">Pending <span className="ml-1 text-text-subtle">{pending.length}</span></span>{selectedVault && <span className="text-[11px] text-text-subtle">{canCurate ? 'Approval queue enabled' : `${vaultModeLabel(selectedVault)} vault`}</span>}</div>
               {pending.length === 0 ? <div className="flex items-center gap-3 px-4 py-8 text-sm text-text-muted"><Inbox size={17} />No candidates awaiting approval.</div> : pending.map((candidate) => <CandidateRow key={`${candidate.id}:${candidate._filename}`} candidate={candidate} canCurate={canCurate} rejecting={rejectingId === candidate.id} reason={rejectReason[candidate.id] ?? ''} onApprove={() => void handleApprove(candidate)} onRejectStart={() => setRejectingId(candidate.id)} onReason={(value) => setRejectReason((current) => ({ ...current, [candidate.id]: value }))} onReject={() => void handleReject(candidate)} onCancel={() => setRejectingId(null)} />)}
               {reviewed.length > 0 ? <><div className="flex items-center gap-2 bg-surface-sunken/35 px-4 py-2.5"><ChevronDown size={14} className="text-text-subtle" /><span className="text-xs font-semibold uppercase tracking-[0.12em] text-text-muted">Reviewed <span className="ml-1 text-text-subtle">{reviewed.length}</span></span></div>{reviewed.map((candidate) => <CandidateRow key={`${candidate.id}:${candidate._filename}`} candidate={candidate} canCurate={false} rejecting={false} reason="" onApprove={() => undefined} onRejectStart={() => undefined} onReason={() => undefined} onReject={() => undefined} onCancel={() => undefined} />)}</> : null}
+            </div>
+          ) : activeTab === 'synthesis' ? (
+            <div>
+              <div className="flex items-center justify-between bg-surface-sunken/35 px-4 py-2.5">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-text-muted">Session synthesis candidates <span className="ml-1 text-text-subtle">{synthesisCandidates.length}</span></span>
+                {selectedVault && <span className="text-[11px] text-text-subtle">{canCurate ? 'Review gate enabled' : `${vaultModeLabel(selectedVault)} vault`}</span>}
+              </div>
+              {synthesisError ? <div className="m-3 rounded-lg border border-negative/30 bg-negative/10 p-3 text-sm text-negative">{synthesisError}</div> : null}
+              {synthesisLoading && synthesisCandidates.length === 0 ? <div className="flex items-center justify-center gap-2 px-4 py-12 text-sm text-text-muted"><RefreshCw size={14} className="animate-spin" />Loading session synthesis candidates…</div> : synthesisCandidates.length === 0 ? <div className="flex items-center gap-3 px-4 py-8 text-sm text-text-muted"><Inbox size={17} />No session synthesis candidates for this vault.</div> : <div>{synthesisCandidates.map((candidate) => <SessionSynthesisCandidateRow key={candidate.candidate_id} candidate={candidate} canCurate={canCurate} applying={applyingId === candidate.candidate_id} rejecting={synthesisRejectingId === candidate.candidate_id} reason={synthesisRejectReason[candidate.candidate_id] ?? ''} onApply={() => void handleSynthesisApply(candidate)} onRejectStart={() => setSynthesisRejectingId(candidate.candidate_id)} onReason={(value) => setSynthesisRejectReason((current) => ({ ...current, [candidate.candidate_id]: value }))} onReject={() => void handleSynthesisReject(candidate)} onCancel={() => setSynthesisRejectingId(null)} />)}</div>}
             </div>
           ) : (
             <div>

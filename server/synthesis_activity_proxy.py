@@ -50,6 +50,135 @@ def load_synthesis_activity(vault_id: str | None = None) -> dict[str, Any]:
     return _request(f"/api/synthesis-activity{query}")
 
 
+def _safe_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _safe_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_candidate(raw: dict[str, Any]) -> dict[str, Any]:
+    """Map a BDH candidate to the safe MC shape.
+
+    BDH owns the candidate lifecycle and its ``to_dict()`` carries fields MC
+    must never surface (``transcript_sha256``, raw ``provenance``, and the full
+    ``definition``). This projection keeps only the review-safe metadata: the
+    correlation tuple, title, status, optional counts, and a curated
+    ``safe_provenance`` (concept summary, not raw transcript).
+    """
+    provenance = raw.get("provenance") if isinstance(raw.get("provenance"), dict) else {}
+    source_ref = _safe_str(provenance.get("source_ref"))
+    if not source_ref:
+        source_notes = provenance.get("source_notes")
+        if isinstance(source_notes, list):
+            titles: list[str] = []
+            for note in source_notes:
+                title = _safe_str(note)
+                if title:
+                    titles.append(title)
+            source_ref = ", ".join(titles[:3]) or None
+    return {
+        "source": _safe_str(raw.get("source")) or "session_synthesis",
+        "candidate_id": _safe_str(raw.get("candidate_id")) or "",
+        "synthesis_id": _safe_str(raw.get("synthesis_id")) or "",
+        "session_id": _safe_str(raw.get("session_id")) or "",
+        "vault_id": _safe_str(raw.get("vault_id")) or "",
+        "title": _safe_str(raw.get("title")) or "",
+        "status": _safe_str(raw.get("status")) or "pending_review",
+        "accepted_count": _safe_int(raw.get("accepted_count")),
+        "context_only_count": _safe_int(raw.get("context_only_count")),
+        "safe_provenance": {
+            "session_title": _safe_str(provenance.get("session_title")),
+            "created_at": _safe_str(raw.get("created_at")),
+            "source_ref": source_ref,
+            "concept_summary": _safe_str(raw.get("definition")),
+        },
+    }
+
+
+def load_synthesis_candidates(
+    vault_id: str | None = None,
+    status: str | None = None,
+    synthesis_id: str | None = None,
+) -> dict[str, Any]:
+    """List vault-scoped session_synthesis candidates for Curate review.
+
+    Mirrors BDH ``GET /api/synthesis/candidates`` and projects each candidate
+    through :func:`_safe_candidate` so no transcript/definition leakage reaches
+    the frontend.
+    """
+    params: dict[str, str] = {}
+    if vault_id:
+        params["vault_id"] = vault_id
+    if status:
+        params["status"] = status
+    if synthesis_id:
+        params["synthesis_id"] = synthesis_id
+    query = f"?{urllib.parse.urlencode(params)}" if params else ""
+    raw = _request(f"/api/synthesis/candidates{query}")
+    candidates = raw.get("candidates") if isinstance(raw.get("candidates"), list) else []
+    safe = [_safe_candidate(c) for c in candidates if isinstance(c, dict)]
+    return {
+        "vault_id": raw.get("vault_id"),
+        "count": len(safe),
+        "candidates": safe,
+    }
+
+
+def get_synthesis_candidate(
+    candidate_id: str,
+    vault_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Resolve one candidate by id within a vault, or None.
+
+    Used by the apply endpoint to enforce vault isolation and to forward the
+    BDH-owned correlation tuple (never the client-supplied one), so a
+    cross-vault or tampered request cannot reach BDH.
+    """
+    snapshot = load_synthesis_candidates(vault_id=vault_id)
+    for candidate in snapshot["candidates"]:
+        if candidate.get("candidate_id") == candidate_id:
+            return candidate
+    return None
+
+
+def apply_synthesis_candidate(
+    candidate_id: str,
+    synthesis_id: str,
+    session_id: str,
+    vault_id: str,
+    source: str = "session_synthesis",
+) -> dict[str, Any]:
+    """Apply an approved session_synthesis candidate via BDH.
+
+    Mirrors BDH ``POST /api/synthesis/apply``. BDH owns extraction, dedupe,
+    create/merge, Hebbian, audit, and graph refresh; MC only forwards the
+    correlation tuple. The response carries ``status`` in
+    {created, merged, noop, conflict, failed} plus optional ``operation_id`` /
+    ``note_path`` — never transcript content.
+    """
+    return _request(
+        "/api/synthesis/apply",
+        method="POST",
+        payload={
+            "candidate_id": candidate_id,
+            "synthesis_id": synthesis_id,
+            "session_id": session_id,
+            "vault_id": vault_id,
+            "source": source,
+        },
+    )
+
+
 def revert_synthesis(operation_id: str, vault_id: str | None = None) -> dict[str, Any]:
     result = _request(
         "/api/synthesis/revert",
