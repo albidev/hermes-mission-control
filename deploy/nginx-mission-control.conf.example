@@ -1,6 +1,8 @@
+# Render this template with the deployment-specific bind address and hostname,
+# for example: envsubst '$MC_BIND_IP $MC_HOSTNAME' < this-file > mission-control
 server {
-    listen 100.69.227.107:6010;
-    server_name cyclone-ops.taileffc6d.ts.net;
+    listen ${MC_BIND_IP}:6010;
+    server_name ${MC_HOSTNAME};
 
     location /api/local/ {
         proxy_pass http://127.0.0.1:6001;

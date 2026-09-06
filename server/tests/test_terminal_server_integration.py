@@ -8,13 +8,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import terminal_server
 
-try:
-    from websockets.asyncio.client import connect
-except ImportError:  # pragma: no cover - optional in system test Python
-    connect = None
+from websockets.asyncio.client import connect
 
 
-@unittest.skipUnless(connect is not None, "websockets is required for PTY integration tests")
 class TerminalServerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

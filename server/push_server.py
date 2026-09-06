@@ -9,16 +9,16 @@ Provides:
   so notifications arrive while the app is in the background or closed
   (the page's own JS is suspended then and cannot poll).
 
-Optional runtime dependencies (declared in server/requirements-push.txt, not
-in the base server/requirements.txt):
-- pywebpush   — Web Push Protocol delivery.
-- websockets  — the real-time interaction observer (approvals, clarities...).
+Runtime dependencies:
+- websockets  — base dependency for the real-time interaction observer
+  (approvals, clarities...) and the terminal PTY bridge.
+- pywebpush   — optional dependency for Web Push Protocol delivery.
 
 Push is enabled only when ALL of the following hold:
 - MISSION_CONTROL_VAPID_PUBLIC_KEY and MISSION_CONTROL_VAPID_PRIVATE_KEY are
   set (VAPID keypair);
 - MISSION_CONTROL_VAPID_CONTACT is set (required sender identity);
-- pywebpush and websockets are importable.
+- pywebpush is importable; websockets is supplied by the base installation.
 
 Otherwise push is explicitly disabled and push_status() reports a stable
 `reason` so an operator can distinguish an intentional disablement from an
@@ -76,11 +76,12 @@ def vapid_contact() -> Optional[str]:
 
 # --- Optional dependency detection ------------------------------------------
 #
-# pywebpush and websockets are declared in server/requirements-push.txt.
+# pywebpush is optional and declared in server/requirements-push.txt.
+# websockets is a required base dependency from server/requirements.txt.
 # Importability is checked with importlib.util.find_spec so the module works
 # (and reports a precise reason) when the packages are absent.
 
-_PUSH_DEPENDENCIES = ("pywebpush", "websockets")
+_PUSH_DEPENDENCIES = ("pywebpush",)
 
 
 def _missing_push_dependencies() -> List[str]:

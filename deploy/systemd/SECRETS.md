@@ -65,6 +65,7 @@ ls -l ~/.config/mission-control/env   # -rw------- 1 albi albi ...
 | `API_SERVER_KEY` | yes | Same value as `MISSION_CONTROL_TOKEN` (the dashboard API accepts it as fallback credential; the telemetry server accepts it when `MISSION_CONTROL_TOKEN` is unset). |
 | `VITE_MISSION_CONTROL_TOKEN` | yes | Same value as `MISSION_CONTROL_TOKEN`. Used by the frontend to bootstrap auth into `localStorage` on first visit. |
 
+
 All three should be the same random value for a single-host deployment. Treat
 the value as a password: never log it, never commit it, rotate it with
 `openssl rand -base64 32` if it leaks, and update all three keys together.

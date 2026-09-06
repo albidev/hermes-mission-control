@@ -9,12 +9,16 @@ export function TerminalAddon({ storedToken, sessionTitle, onClose, onReady }: C
   const terminalRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const connectionIdRef = useRef(0);
 
   const [status, setStatus] = useState('Connecting…');
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
 
   useEffect(() => {
     const host = terminalRef.current;
     if (!host) return;
+    const connectionId = connectionIdRef.current + 1;
+    connectionIdRef.current = connectionId;
 
     const terminal = new XTerm({
       cursorBlink: true,
@@ -57,17 +61,22 @@ export function TerminalAddon({ storedToken, sessionTitle, onClose, onReady }: C
         if (!ticketResponse.ok) throw new Error('Terminal authentication failed.');
         const ticketPayload = await ticketResponse.json() as { ticket?: string };
         if (!ticketPayload.ticket) throw new Error('Terminal ticket was not returned.');
-        if (disposed) return;
+        if (disposed || connectionIdRef.current !== connectionId) return;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const socket = new WebSocket(`${protocol}//${window.location.host}/api/terminal?ticket=${encodeURIComponent(ticketPayload.ticket)}`);
         socketRef.current = socket;
         socket.onopen = () => {
+          if (disposed || connectionIdRef.current !== connectionId) {
+            socket.close();
+            return;
+          }
           setStatus('Connected');
           onReady();
           resize();
           terminal.focus();
         };
         socket.onmessage = async (event) => {
+          if (disposed || connectionIdRef.current !== connectionId) return;
           if (typeof event.data === 'string') {
             terminal.write(event.data);
             return;
@@ -77,33 +86,49 @@ export function TerminalAddon({ storedToken, sessionTitle, onClose, onReady }: C
             return;
           }
           if (event.data instanceof Blob) {
-            terminal.write(new Uint8Array(await event.data.arrayBuffer()));
+            const data = new Uint8Array(await event.data.arrayBuffer());
+            if (!disposed && connectionIdRef.current === connectionId) terminal.write(data);
           }
         };
-        socket.onerror = () => setStatus('Connection error');
-        socket.onclose = (event) => setStatus(event.code ? `Disconnected (${event.code})` : 'Disconnected');
+        socket.onerror = () => {
+          if (!disposed && connectionIdRef.current === connectionId) setStatus('Connection error');
+        };
+        socket.onclose = (event) => {
+          if (connectionIdRef.current === connectionId) {
+            if (socketRef.current === socket) socketRef.current = null;
+            if (!disposed) setStatus(event.code ? `Disconnected (${event.code})` : 'Disconnected');
+          }
+        };
         terminal.onData((data) => {
-          if (socket.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
+          if (!disposed && connectionIdRef.current === connectionId && socket.readyState === WebSocket.OPEN) {
+            socket.send(new TextEncoder().encode(data));
+          }
         });
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : 'Unable to connect');
-        onReady();
+        if (!disposed && connectionIdRef.current === connectionId) {
+          setStatus(error instanceof Error ? error.message : 'Unable to connect');
+          onReady();
+        }
       }
     };
     void open();
 
     return () => {
       disposed = true;
+      if (connectionIdRef.current === connectionId) connectionIdRef.current += 1;
       resizeObserver.disconnect();
       socketRef.current?.close();
       socketRef.current = null;
       terminal.dispose();
       xtermRef.current = null;
     };
-  }, [onReady, storedToken]);
+  }, [connectionAttempt, onReady, storedToken]);
 
   const clear = () => xtermRef.current?.clear();
-  const reconnect = () => window.location.reload();
+  const reconnect = () => {
+    setStatus('Connecting…');
+    setConnectionAttempt((attempt) => attempt + 1);
+  };
 
   return (
     <section className="canvas-addon-panel terminal-addon-panel is-expanded" aria-label="Terminal">

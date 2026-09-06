@@ -233,13 +233,15 @@ API responses never include absolute home paths: `sourcePath` and `vaultPath` ar
 ## Web Push (optional)
 
 Web Push lets the browser deliver notifications while the app is in the
-background or closed. It is **opt-in**: the base install (`server/requirements.txt`)
-does not include the required packages, and the sidecar runs fine without them.
+background or closed. It is **opt-in**: the base install includes the
+`websockets` package required by the terminal and interaction observer, while
+the optional `pywebpush` package enables delivery. The sidecar runs fine
+without `pywebpush`.
 
 Enable it with:
 
 ```bash
-python3 -m pip install -r server/requirements-push.txt   # pywebpush + websockets
+python3 -m pip install -r server/requirements-push.txt   # pywebpush only
 ```
 
 then set `MISSION_CONTROL_VAPID_PUBLIC_KEY`, `MISSION_CONTROL_VAPID_PRIVATE_KEY`
@@ -256,7 +258,7 @@ The sidecar reports the push state on every health probe:
 ```
 
 - `reason: "vapid_not_configured"` — keys or contact missing (`missingConfig` lists them): intentional disablement.
-- `reason: "missing_dependency"` — the optional packages are not installed in the interpreter running the sidecar (`missingDependencies` lists them).
+- `reason: "missing_dependency"` — the optional `pywebpush` package is not installed in the interpreter running the sidecar (`missingDependencies` lists it).
 - `reason: "ok"` — configured and importable; per-subscription delivery failures are still possible and are counted in `send_push`'s `failed` field.
 
 Related endpoints: `/api/local/push/vapid-public-key` (serves the public key to

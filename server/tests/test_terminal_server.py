@@ -43,6 +43,7 @@ class TerminalServerTicketTests(unittest.TestCase):
         os.environ["API_SERVER_KEY"] = "api-key"
         self.assertIsNotNone(terminal_server.issue_ticket("api-key"))
 
+
     def test_expired_ticket_is_rejected(self):
         ticket = terminal_server.issue_ticket("terminal-test-token")
         self.assertTrue(ticket)
