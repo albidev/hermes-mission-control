@@ -1030,6 +1030,7 @@
     right: 0;
   }
 
+  .canvas-addon-panel,
   .tldraw-canvas-panel {
     z-index: 65;
     width: 100vw;
@@ -1077,6 +1078,34 @@
     align-items: center;
     gap: 0.6rem;
     min-width: 0;
+  }
+
+  .terminal-addon-head {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+  }
+
+  .terminal-addon-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 0.5rem;
+  }
+
+  .terminal-addon-toolbar {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    overflow: visible;
+  }
+
+  .terminal-addon-heading {
+    min-width: 0;
+  }
+
+  .terminal-addon-linked-session {
+    max-width: 100%;
   }
 
   .tldraw-canvas-back {
