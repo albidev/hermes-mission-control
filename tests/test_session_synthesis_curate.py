@@ -48,6 +48,11 @@ def _candidate(**overrides):
         "vault_id": "core",
         "source": "session_synthesis",
         "title": "Durable concept",
+        "definition": "A full concept definition for review.",
+        "confidence": "low",
+        "created_at": "2026-09-06T00:00:00+00:00",
+        "provenance": {"extractor_model": "model", "source_notes": ["note.md"]},
+        "extra": {"slug": "durable-concept"},
         "status": "pending_review",
         "accepted_count": 2,
         "context_only_count": 1,
@@ -118,7 +123,7 @@ class SessionSynthesisCurateTests(unittest.TestCase):
         payload = json.loads(exc.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "feature_disabled")
 
-    def test_candidates_lists_safe_fields_only(self):
+    def test_candidates_expose_review_safe_detail_fields_without_transcript(self):
         with mock.patch.object(
             local_telemetry_server, "load_synthesis_candidates", return_value={
                 "vault_id": "core", "count": 1, "candidates": [_candidate()],
@@ -130,9 +135,11 @@ class SessionSynthesisCurateTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         candidate = payload["candidates"][0]
         self.assertEqual(candidate["candidate_id"], "cand-1")
+        self.assertEqual(candidate["definition"], "A full concept definition for review.")
+        self.assertEqual(candidate["confidence"], "low")
+        self.assertEqual(candidate["provenance"]["extractor_model"], "model")
+        self.assertEqual(candidate["extra"]["slug"], "durable-concept")
         self.assertNotIn("transcript_sha256", candidate)
-        self.assertNotIn("definition", candidate)
-        self.assertNotIn("provenance", candidate)
 
     def test_apply_rejects_missing_candidate_id(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:

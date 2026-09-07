@@ -66,14 +66,18 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
-def _safe_candidate(raw: dict[str, Any]) -> dict[str, Any]:
-    """Map a BDH candidate to the safe MC shape.
+def _safe_detail_map(raw: Any, *, allowed: set[str]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    return {key: raw[key] for key in allowed if key in raw and isinstance(raw[key], (str, int, float, bool, list, dict, type(None)))}
 
-    BDH owns the candidate lifecycle and its ``to_dict()`` carries fields MC
-    must never surface (``transcript_sha256``, raw ``provenance``, and the full
-    ``definition``). This projection keeps only the review-safe metadata: the
-    correlation tuple, title, status, optional counts, and a curated
-    ``safe_provenance`` (concept summary, not raw transcript).
+
+def _safe_candidate(raw: dict[str, Any]) -> dict[str, Any]:
+    """Map a BDH candidate to the full review-safe MC shape.
+
+    The modal may show the complete concept definition and provenance useful
+    for human review, but never receives transcript hashes, raw transcript,
+    prompts, or model request payloads.
     """
     provenance = raw.get("provenance") if isinstance(raw.get("provenance"), dict) else {}
     source_ref = _safe_str(provenance.get("source_ref"))
@@ -86,6 +90,11 @@ def _safe_candidate(raw: dict[str, Any]) -> dict[str, Any]:
                 if title:
                     titles.append(title)
             source_ref = ", ".join(titles[:3]) or None
+    provenance_detail = _safe_detail_map(provenance, allowed={
+        "session_title", "source_ref", "source_notes", "source_node_ids",
+        "activated_note_count", "extractor_model", "extractor_provider",
+        "merge_similarity", "source", "would_conflict",
+    })
     return {
         "source": _safe_str(raw.get("source")) or "session_synthesis",
         "candidate_id": _safe_str(raw.get("candidate_id")) or "",
@@ -93,9 +102,14 @@ def _safe_candidate(raw: dict[str, Any]) -> dict[str, Any]:
         "session_id": _safe_str(raw.get("session_id")) or "",
         "vault_id": _safe_str(raw.get("vault_id")) or "",
         "title": _safe_str(raw.get("title")) or "",
+        "definition": _safe_str(raw.get("definition")) or "",
+        "confidence": _safe_str(raw.get("confidence")) or "",
         "status": _safe_str(raw.get("status")) or "pending_review",
+        "created_at": _safe_str(raw.get("created_at")),
         "accepted_count": _safe_int(raw.get("accepted_count")),
         "context_only_count": _safe_int(raw.get("context_only_count")),
+        "provenance": provenance_detail,
+        "extra": _safe_detail_map(raw.get("extra"), allowed={"activated_from", "slug"}),
         "safe_provenance": {
             "session_title": _safe_str(provenance.get("session_title")),
             "created_at": _safe_str(raw.get("created_at")),
