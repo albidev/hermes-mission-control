@@ -122,6 +122,32 @@ class IdleSignalForwarderTests(unittest.TestCase):
         self.assertEqual(seen["body"], signal)
         self.assertEqual(seen["timeout"], 5.0)
 
+    def test_default_forward_target_matches_core_idle_endpoint(self):
+        seen = {}
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def fake_urlopen(request, timeout):
+            seen["url"] = request.full_url
+            return FakeResponse()
+
+        signal = {"event": "session_idle", "session_id": "s1", "transition_key": "k", "occurred_at": 1.0}
+        with mock.patch.object(sit.urllib.request, "urlopen", fake_urlopen):
+            result = sit.forward_idle_signal(signal, token="tok")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(seen["url"], "http://127.0.0.1:8642/api/sessions/s1/idle")
+
     def test_forward_http_error_is_handled(self):
         import urllib.error
 

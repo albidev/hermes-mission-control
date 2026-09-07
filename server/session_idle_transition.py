@@ -30,17 +30,19 @@ import threading
 import urllib.error
 import urllib.request
 from typing import Any
+from urllib.parse import quote
 
 from mission_control_agents import _collect_agent_sessions, _is_live
 
 # Default gateway control endpoint. The core hook consumes this contract; the
 # operator can override it via the environment.
-_DEFAULT_IDLE_SIGNAL_URL = "http://127.0.0.1:9119/api/gateway/session-idle"
+_DEFAULT_IDLE_SIGNAL_URL = "http://127.0.0.1:8642/api/sessions/{session_id}/idle"
 _IDLE_SIGNAL_TIMEOUT_SECONDS = 5.0
 
 
-def _idle_signal_url() -> str:
-    return os.environ.get("MISSION_CONTROL_IDLE_SIGNAL_URL", _DEFAULT_IDLE_SIGNAL_URL).rstrip("/")
+def _idle_signal_url(session_id: str = "") -> str:
+    url = os.environ.get("MISSION_CONTROL_IDLE_SIGNAL_URL", _DEFAULT_IDLE_SIGNAL_URL).rstrip("/")
+    return url.replace("{session_id}", quote(str(session_id), safe=""))
 
 
 def _idle_signal_token() -> str:
@@ -126,7 +128,7 @@ def forward_idle_signal(signal: dict[str, Any], *, base_url: str | None = None, 
     Returns ``{ok: True, status: <int>}`` on success or ``{ok: False, ...}`` on
     any failure. Never raises: a gateway outage must not break session polling.
     """
-    url = (base_url or _idle_signal_url()).rstrip("/")
+    url = ((base_url if base_url is not None else _idle_signal_url(signal.get("session_id", ""))).rstrip("/"))
     auth_token = token if token is not None else _idle_signal_token()
     body = json.dumps(signal).encode("utf-8")
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
