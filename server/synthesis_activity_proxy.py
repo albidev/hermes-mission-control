@@ -8,6 +8,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+import session_synthesis_rejections
+
 
 class SynthesisProxyError(RuntimeError):
     def __init__(self, message: str, status_code: int = 502):
@@ -140,7 +142,18 @@ def load_synthesis_candidates(
     query = f"?{urllib.parse.urlencode(params)}" if params else ""
     raw = _request(f"/api/synthesis/candidates{query}")
     candidates = raw.get("candidates") if isinstance(raw.get("candidates"), list) else []
-    safe = [_safe_candidate(c) for c in candidates if isinstance(c, dict)]
+    rejected_ids = {
+        str(entry.get("candidate_id"))
+        for entry in (session_synthesis_rejections.list_rejections() or [])
+        if isinstance(entry, dict)
+        and (not vault_id or str(entry.get("vault_id") or "") == vault_id)
+    }
+    safe = [
+        _safe_candidate(candidate)
+        for candidate in candidates
+        if isinstance(candidate, dict)
+        and str(candidate.get("candidate_id") or "") not in rejected_ids
+    ]
     return {
         "vault_id": raw.get("vault_id"),
         "count": len(safe),

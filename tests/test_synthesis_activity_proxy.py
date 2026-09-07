@@ -126,6 +126,23 @@ class SynthesisActivityProxyTests(unittest.TestCase):
         self.assertNotIn("raw_transcript", candidate["provenance"])
         self.assertNotIn("raw_transcript", candidate["safe_provenance"])
 
+    def test_load_candidates_hides_locally_rejected_ids(self):
+        payload = {
+            "vault_id": "core",
+            "candidates": [
+                {"candidate_id": "cand-kept", "vault_id": "core", "title": "Kept", "definition": "D"},
+                {"candidate_id": "cand-rejected", "vault_id": "core", "title": "Rejected", "definition": "D"},
+            ],
+        }
+        with mock.patch("synthesis_activity_proxy._request", return_value=payload), \
+             mock.patch(
+                 "synthesis_activity_proxy.session_synthesis_rejections.list_rejections",
+                 return_value=[{"candidate_id": "cand-rejected", "vault_id": "core"}],
+             ):
+            result = load_synthesis_candidates("core")
+        self.assertEqual(result["count"], 1)
+        self.assertEqual([c["candidate_id"] for c in result["candidates"]], ["cand-kept"])
+
     def test_apply_forwards_correlation_tuple(self):
         seen = []
 
