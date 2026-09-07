@@ -22,7 +22,7 @@ export type ChatMessage = {
   kind?: ChatMessageKind;
   text: string;
   status?: 'streaming' | 'complete' | 'error' | 'interrupted';
-  createdAt: number;
+  createdAt: number | null;
   attachments?: ChatAttachmentSummary[];
   detail?: string;
   output?: string;
@@ -35,6 +35,7 @@ export type ChatMessage = {
 
 export type GatewayTranscriptMessage = {
   role?: unknown;
+  timestamp?: unknown;
   text?: unknown;
   content?: unknown;
   name?: unknown;
@@ -188,6 +189,22 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+export function parseChatTimestamp(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.abs(value) >= 1e11 ? value : value * 1000;
+  }
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) {
+    return Math.abs(numeric) >= 1e11 ? numeric : numeric * 1000;
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function todoToolCalls(message: GatewayTranscriptMessage): Array<{ name: string; arguments: string }> {
   if (!Array.isArray(message.tool_calls)) return [];
   return message.tool_calls.flatMap((call) => {
@@ -286,13 +303,14 @@ export function isSystemNotification(text: string): boolean {
   return SYSTEM_NOTIFICATION_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
-export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = Date.now()): ChatMessage[] {
+export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now = Date.now()): ChatMessage[] {
   const normalized: ChatMessage[] = [];
   messages.forEach((message, index) => {
     const sourceRole = safeRole(message.role);
     const rawText = textFromContent(message.text) || textFromContent(message.content);
     const role = sourceRole === 'user' && isSystemNotification(rawText) ? 'system' : sourceRole;
     const displayKind = stringValue(message.display_kind);
+    const createdAt = parseChatTimestamp(message.timestamp);
     if (displayKind === 'hidden') return;
 
     if (displayKind === 'model_switch' || displayKind === 'auto_continue' || displayKind === 'async_delegation_complete') {
@@ -302,12 +320,12 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = 
         async_delegation_complete: 'Background agent work finished',
       };
       normalized.push({
-        id: `restored-event-${now}-${index}`,
+        id: `restored-event-${_now}-${index}`,
         role: 'system',
         kind: 'event',
         text: labels[displayKind],
         status: 'complete',
-        createdAt: now + index,
+        createdAt: createdAt,
       });
       return;
     }
@@ -322,7 +340,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = 
         || structuredText(message.result);
       const durationS = typeof message.duration_s === 'number' ? message.duration_s : undefined;
       normalized.push({
-        id: `restored-tool-${now}-${index}`,
+        id: `restored-tool-${_now}-${index}`,
         role: 'tool',
         kind: 'tool',
         toolName,
@@ -332,7 +350,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = 
         output: output || undefined,
         durationS,
         status: 'complete',
-        createdAt: now + index,
+        createdAt: createdAt,
       });
       return;
     }
@@ -341,27 +359,121 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], now = 
     const todoCalls = role === 'assistant' ? todoToolCalls(message) : [];
     if (reasoning) {
       normalized.push({
-        id: `restored-reasoning-${now}-${index}`,
+        id: `restored-reasoning-${_now}-${index}`,
         role: 'tool',
         kind: 'reasoning',
         text: reasoning,
         status: 'complete',
-        createdAt: now + index,
+        createdAt: createdAt,
       });
     }
 
     if (!rawText.trim() && role !== 'assistant' && role !== 'user') return;
     normalized.push({
-      id: `restored-${now}-${index}`,
+      id: `restored-${_now}-${index}`,
       role,
       kind: role === 'assistant' || role === 'user' || role === 'system' ? role : undefined,
       text: rawText,
       status: 'complete',
-      createdAt: now + index,
+      createdAt: createdAt,
       ...(todoCalls.length ? { toolCalls: todoCalls } : {}),
     });
   });
   return normalized;
+}
+
+export type ChatTimestampMetadata = {
+  role?: unknown;
+  content?: unknown;
+  text?: unknown;
+  tool_name?: unknown;
+  toolName?: unknown;
+  tool_call_id?: unknown;
+  toolId?: unknown;
+  tool_calls?: unknown;
+  toolCalls?: unknown;
+  context?: unknown;
+  args_text?: unknown;
+  toolInput?: unknown;
+  result?: unknown;
+  result_text?: unknown;
+  output?: unknown;
+  summary?: unknown;
+  inline_diff?: unknown;
+  timestamp?: unknown;
+  display_kind?: unknown;
+};
+
+function metadataString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function messageToolName(message: GatewayTranscriptMessage | ChatTimestampMetadata): string {
+  const record = message as Record<string, unknown>;
+  return metadataString(record.tool_name) || metadataString(record.toolName) || metadataString(record.name);
+}
+
+function messageIdentityVariants(message: GatewayTranscriptMessage | ChatTimestampMetadata): string[] {
+  const role = safeRole(message.role);
+  const text = textFromContent(message.text) || textFromContent(message.content);
+  if (role !== 'tool') return [`${role}:content:${text}`];
+
+  const record = message as Record<string, unknown>;
+  const toolName = messageToolName(message);
+  const toolId = metadataString(record.tool_call_id) || metadataString(record.toolId);
+  const input = metadataString(record.args_text) || metadataString(record.toolInput) || metadataString(record.context) || text;
+  const output = metadataString(record.result_text)
+    || metadataString(record.output)
+    || metadataString(record.summary)
+    || metadataString(record.inline_diff)
+    || structuredText(record.result);
+  const variants = [
+    `tool:content:${text}`,
+    `tool:shape:${toolName}:${input}:${output}`,
+    `tool:name-input:${toolName}:${input}`,
+    `tool:name-output:${toolName}:${output}`,
+  ];
+  if (toolId) variants.unshift(`tool:id:${toolId}`);
+  return variants;
+}
+
+/** Apply canonical sidecar timestamps to a resume transcript without relying on array ids. */
+export function reconcileTranscriptTimestamps(
+  transcript: GatewayTranscriptMessage[],
+  metadata: ChatTimestampMetadata[],
+): GatewayTranscriptMessage[] {
+  const buckets = new Map<string, Array<{ index: number; item: ChatTimestampMetadata }>>();
+  metadata.forEach((item, index) => {
+    for (const key of messageIdentityVariants(item)) {
+      const bucket = buckets.get(key) ?? [];
+      bucket.push({ index, item });
+      buckets.set(key, bucket);
+    }
+  });
+  const consumed = new Set<number>();
+
+  return transcript.map((message) => {
+    let matched: { index: number; item: ChatTimestampMetadata } | undefined;
+    for (const key of messageIdentityVariants(message)) {
+      const bucket = buckets.get(key) ?? [];
+      matched = bucket.find((candidate) => !consumed.has(candidate.index));
+      if (matched) break;
+    }
+    if (!matched && safeRole(message.role) === 'tool') {
+      const toolName = messageToolName(message);
+      matched = metadata
+        .map((item, index) => ({ item, index }))
+        .find((candidate) => {
+          if (consumed.has(candidate.index) || safeRole(candidate.item.role) !== 'tool') return false;
+          const candidateName = messageToolName(candidate.item);
+          return !toolName || !candidateName || candidateName === toolName;
+        });
+    }
+    const timestamp = matched ? parseChatTimestamp(matched.item.timestamp) : null;
+    if (!matched || timestamp === null) return message;
+    consumed.add(matched.index);
+    return { ...message, timestamp };
+  });
 }
 
 export function extractSessionId(result: unknown): string | null {

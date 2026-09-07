@@ -14,6 +14,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import type { AttachmentKind, ChatMessage } from '../lib/chat-protocol';
+import { formatChatMessageTime } from '../lib/chat-time';
 import { ToolMessage } from './chat/ToolMessage';
 
 export function AttachmentIcon({ kind }: { kind: AttachmentKind }) {
@@ -49,6 +50,8 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
   const isTool = visualKind === 'tool';
   const isTodoTool = isTool && message.toolName?.trim().toLowerCase() === 'todo';
   const isReasoning = visualKind === 'reasoning';
+  const messageTimestamp = typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) ? message.createdAt : null;
+  const messageTime = messageTimestamp === null ? '' : formatChatMessageTime(messageTimestamp);
   if (isTodoTool) return null;
   const label = visualKind === 'assistant'
     ? 'Hermes'
@@ -68,9 +71,9 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
             <span>{label}</span>
             {message.status === 'streaming'
               ? <Loader2 size={12} className="chat-spin" aria-label={t('chatDrawer.streaming')} />
-              : message.createdAt ? (
-                <time className="chat-message-time" dateTime={new Date(message.createdAt).toISOString()}>
-                  {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              : messageTime ? (
+                <time className="chat-message-time" dateTime={new Date(messageTimestamp ?? 0).toISOString()}>
+                  {messageTime}
                 </time>
               ) : null}
           </div>

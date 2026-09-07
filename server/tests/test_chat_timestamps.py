@@ -1,0 +1,33 @@
+"""Canonical SessionDB timestamp bridge tests."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from hermes_state import SessionDB
+import mission_control_agents
+
+
+def test_load_chat_message_timestamps_reads_resolved_sessiondb_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    writable = SessionDB(db_path=db_path)
+    writable.create_session("session-parent", "tui", session_key="chat-key")
+    writable.append_message("session-parent", role="user", content="repeat", timestamp=100.0)
+    writable.append_message("session-parent", role="assistant", content="same answer", timestamp=101.0)
+    writable.append_message("session-parent", role="user", content="repeat", timestamp=200.0)
+    writable.close()
+
+    def open_fixture_db():
+        return SessionDB(db_path=db_path, read_only=True)
+
+    monkeypatch.setattr(mission_control_agents, "_try_get_session_db", open_fixture_db)
+    payload = mission_control_agents.load_chat_message_timestamps(session_key="chat-key")
+
+    assert payload["sessionId"] == "session-parent"
+    assert payload["sessionKey"] == "chat-key"
+    assert [row["timestamp"] for row in payload["messages"]] == [100.0, 101.0, 200.0]
+    assert [row["content"] for row in payload["messages"]] == ["repeat", "same answer", "repeat"]

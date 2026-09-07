@@ -23,6 +23,8 @@ import {
   parseCommandDispatch,
   parseSlash,
   normalizeTranscript,
+  parseChatTimestamp,
+  reconcileTranscriptTimestamps,
   parseGatewayFrame,
   pendingPromptWasPersisted,
   shouldCloseBackendSessionForNewChat,
@@ -40,8 +42,9 @@ import { deriveTodoPlan, normalizeTodoPlanSnapshot, type TodoPlan } from './todo
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
 import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
+import { canClaimLastChatPointer, createChatBootstrapGuard, shouldAdoptServerPointer, type LastChatClaimAction, type ServerLastChat } from './chat-bootstrap';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
-import { applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, mergeDurableChatMessages, publishChatSync, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
+import { applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, fetchChatTimestampMetadata, mergeDurableChatMessages, publishChatSync, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
 import {
@@ -102,6 +105,17 @@ function persistedRunWasCompleted(): boolean {
   return hasVisibleCompletedAssistant || (!hasStreamingAssistant && hasCompletedAssistant);
 }
 
+async function reconcileResumeTimestamps(
+  accessToken: string,
+  sessionId: string | null,
+  sessionKey: string | null,
+  transcript: ReturnType<typeof extractTranscript>,
+): Promise<ReturnType<typeof extractTranscript>> {
+  if (!transcript.some((message) => parseChatTimestamp(message.timestamp) === null)) return transcript;
+  const metadata = await fetchChatTimestampMetadata(accessToken, sessionId, sessionKey);
+  return metadata.length ? reconcileTranscriptTimestamps(transcript, metadata) : transcript;
+}
+
 export function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: string | null) {
   const initial = useMemo(readPersistedChat, []);
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
@@ -130,6 +144,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [modelPickerRefresh, setModelPickerRefresh] = useState(false);
   const [commandPrefill, setCommandPrefill] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<boolean>(Boolean(initialSessionId?.trim()));
+  const [pointerRevision, setPointerRevision] = useState<number | null>(initial.revision);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef(new Map<string, PendingRpc>());
   const pendingPromptRef = useRef<PendingPrompt | null>(readPendingChatSubmit());
@@ -160,6 +175,14 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const chatSyncSourceRef = useRef<EventSource | null>(null);
   const chatSyncReconnectTimerRef = useRef<number | null>(null);
   const chatSyncRelaySeqRef = useRef(new Map<string, number>());
+  const pointerRef = useRef<ServerLastChat | null>(initial.sessionId && initial.revision ? {
+    sessionId: initial.sessionId,
+    sessionKey: initial.sessionKey,
+    modelIdentity: initial.modelIdentity,
+    revision: initial.revision,
+  } : null);
+  const pointerBootstrapPromiseRef = useRef<Promise<void> | null>(null);
+  const pointerBootstrapGuardRef = useRef(createChatBootstrapGuard());
 
   useEffect(() => {
     setMessages((current) => {
@@ -202,9 +225,54 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   }, [initialSessionId]);
 
   useEffect(() => {
-    persistChat(sessionId, sessionKey, modelIdentity, messages);
-    syncLastChatToServer(sessionId, sessionKey, modelIdentity, storedToken);
-  }, [messages, modelIdentity, sessionId, sessionKey]);
+    persistChat(sessionId, sessionKey, modelIdentity, messages, pointerRevision);
+  }, [messages, modelIdentity, pointerRevision, sessionId, sessionKey]);
+
+  const adoptServerPointer = useCallback((serverChat: ServerLastChat) => {
+    pointerRef.current = serverChat;
+    setPointerRevision(serverChat.revision);
+    const currentSessionId = sessionIdRef.current;
+    if (currentSessionId !== serverChat.sessionId) {
+      setSessionId(serverChat.sessionId);
+      sessionIdRef.current = serverChat.sessionId;
+      setSessionKey(serverChat.sessionKey ?? serverChat.sessionId);
+      sessionKeyRef.current = serverChat.sessionKey ?? serverChat.sessionId;
+      setModelIdentity(serverChat.modelIdentity ?? null);
+      requestedSessionIdRef.current = serverChat.sessionId;
+      return;
+    }
+    if (serverChat.sessionKey) {
+      setSessionKey(serverChat.sessionKey);
+      sessionKeyRef.current = serverChat.sessionKey;
+    }
+    if (serverChat.modelIdentity) setModelIdentity(serverChat.modelIdentity);
+  }, []);
+
+  // Generic drawer open is a read/adopt barrier. It never claims the shared
+  // pointer; only an explicit create/resume/submit action may do that.
+  const bootstrapPointer = useCallback(async (): Promise<void> => {
+    if (initialSessionId?.trim()) return;
+    const existing = pointerBootstrapPromiseRef.current;
+    if (existing) {
+      await existing;
+      return;
+    }
+    const attempt = pointerBootstrapGuardRef.current.begin();
+    const bootstrap = fetchServerLastChat(storedToken, attempt.signal).then((serverChat) => {
+      if (!pointerBootstrapGuardRef.current.isCurrent(attempt) || !serverChat) return;
+      const local = readPersistedChat();
+      if (shouldAdoptServerPointer({ sessionId: local.sessionId, revision: local.revision }, serverChat)) {
+        adoptServerPointer(serverChat);
+      } else {
+        pointerRef.current = serverChat;
+        setPointerRevision(serverChat.revision);
+      }
+    }).finally(() => {
+      if (pointerBootstrapPromiseRef.current === bootstrap) pointerBootstrapPromiseRef.current = null;
+    });
+    pointerBootstrapPromiseRef.current = bootstrap;
+    return bootstrap;
+  }, [adoptServerPointer, initialSessionId, storedToken]);
 
   useEffect(() => {
     if (presenceTimerRef.current !== null) window.clearTimeout(presenceTimerRef.current);
@@ -237,32 +305,16 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     return () => window.removeEventListener(CHAT_PRESENCE_EVENT, handlePresenceAck);
   }, []);
 
-  // (fresh browser) or its local copy is older than the server's last active
-  // session, adopt the server's pointer so desktop and mobile open the SAME
-  // conversation. The transcript itself is rehydrated by the resume flow.
   useEffect(() => {
-    if (!open || !storedToken || initialSessionId?.trim()) return;
-    let cancelled = false;
-    void fetchServerLastChat(storedToken).then((serverChat) => {
-      if (cancelled || !serverChat?.sessionId) return;
-      if (sessionIdRef.current) {
-        // A live/known local session wins unless the server moved on later.
-        const local = readPersistedChat();
-        const localUpdatedAt = Number.isFinite(local.updatedAt) ? local.updatedAt : 0;
-        const serverUpdatedAt = typeof serverChat.updatedAt === 'number' ? serverChat.updatedAt : 0;
-        if (localUpdatedAt >= serverUpdatedAt && local.sessionId === sessionIdRef.current) return;
-        if (local.sessionId === serverChat.sessionId) return;
-      }
-      setSessionId(serverChat.sessionId);
-      sessionIdRef.current = serverChat.sessionId;
-      if (serverChat.sessionKey) {
-        setSessionKey(serverChat.sessionKey);
-        sessionKeyRef.current = serverChat.sessionKey;
-      }
-      requestedSessionIdRef.current = serverChat.sessionId;
-    });
-    return () => { cancelled = true; };
-  }, [open, storedToken, initialSessionId]);
+    if (!open || initialSessionId?.trim()) return;
+    void bootstrapPointer();
+    return () => {
+      // A closed drawer starts a new bootstrap lifecycle on reopen. Do not let
+      // the old GET adopt its response, even if the transport ignores abort.
+      pointerBootstrapGuardRef.current.invalidate();
+      pointerBootstrapPromiseRef.current = null;
+    };
+  }, [bootstrapPointer, initialSessionId, open]);
 
   const rejectPending = useCallback((message: string) => {
     for (const pending of pendingRef.current.values()) {
@@ -295,6 +347,22 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       }
     });
   }, []);
+
+  const claimLastChatPointer = useCallback(async (
+    action: LastChatClaimAction,
+    activeSessionId: string,
+  ): Promise<string> => {
+    if (!canClaimLastChatPointer(action)) return activeSessionId;
+    const result = await syncLastChatToServer(
+      activeSessionId,
+      sessionKeyRef.current || activeSessionId,
+      modelIdentity,
+      storedToken,
+      pointerRef.current?.revision ?? null,
+    );
+    if (result.lastChat) adoptServerPointer(result.lastChat);
+    return result.lastChat?.sessionId ?? activeSessionId;
+  }, [adoptServerPointer, modelIdentity, storedToken]);
 
   const prepareEventReplay = useCallback((): { sessionId: string; lastSeen: number } | null => {
     if (eventReplayInFlightRef.current || replayHoldRef.current) return null;
@@ -339,6 +407,36 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     }
   }, [request]);
 
+  const hydrateSessionSnapshot = useCallback(async (
+    resumed: unknown,
+    activeSessionId: string | null = null,
+    activeSessionKey: string | null = null,
+  ) => {
+    const rawTranscript = extractTranscript(resumed);
+    const resolvedSessionId = activeSessionId ?? extractSessionId(resumed);
+    const resolvedSessionKey = activeSessionKey ?? extractSessionKey(resumed) ?? resolvedSessionId;
+    const durableTranscript = await reconcileResumeTimestamps(storedToken, resolvedSessionId, resolvedSessionKey, rawTranscript);
+    const transcript = normalizeTranscript(durableTranscript);
+    const inflight = extractInflightAssistant(resumed);
+    const snapshot = inflight
+      ? [...transcript, {
+        id: `inflight-sync-${Date.now()}`,
+        role: 'assistant' as const,
+        kind: 'assistant' as const,
+        text: inflight,
+        status: 'streaming' as const,
+        createdAt: Date.now(),
+      }]
+      : transcript;
+
+    if (durableTranscript.length > 0) durableTranscriptRef.current = durableTranscript;
+    if (snapshot.length > 0) setMessages((current) => mergeDurableChatMessages(current, snapshot));
+    const resumedTodoPlan = normalizeTodoPlanSnapshot(isRecord(resumed) ? resumed.todo_state : undefined);
+    if (resumedTodoPlan) setTodoPlan(resumedTodoPlan);
+    else if (transcript.length > 0) setTodoPlan(deriveTodoPlan(transcript));
+    return { transcript, inflight };
+  }, [storedToken]);
+
   const reconcileSessionSnapshot = useCallback(async (activeSessionId: string) => {
     try {
       const resumed = await request<unknown>('session.resume', {
@@ -347,22 +445,11 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         eager_build: true,
         source: 'mission-control',
       });
-      const durableTranscript = extractTranscript(resumed);
-      if (durableTranscript.length > 0) {
-        durableTranscriptRef.current = durableTranscript;
-        const transcript = normalizeTranscript(durableTranscript);
-        const inflight = extractInflightAssistant(resumed);
-        const snapshot = inflight
-          ? [...transcript, { id: `inflight-sync-${Date.now()}`, role: 'assistant' as const, kind: 'assistant' as const, text: inflight, status: 'streaming' as const, createdAt: Date.now() }]
-          : transcript;
-        setMessages((current) => mergeDurableChatMessages(current, snapshot));
-        const resumedTodoPlan = normalizeTodoPlanSnapshot(isRecord(resumed) ? resumed.todo_state : undefined);
-        setTodoPlan(resumedTodoPlan ?? deriveTodoPlan(transcript));
-      }
+      await hydrateSessionSnapshot(resumed, activeSessionId, sessionKeyRef.current ?? activeSessionId);
     } catch {
       // A disconnected or busy gateway is retried by the next reconciliation tick.
     }
-  }, [request]);
+  }, [hydrateSessionSnapshot, request]);
 
   useEffect(() => {
     if (!open || previewMode || connectionState !== 'connected') return;
@@ -540,19 +627,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         sessionIdRef.current = resolvedSessionId;
         setSessionKey(resolvedSessionKey);
         sessionKeyRef.current = resolvedSessionKey;
-        const durableTranscript = extractTranscript(resumed);
-        durableTranscriptRef.current = durableTranscript;
-        const transcript = normalizeTranscript(durableTranscript);
-        const resumedTodoPlan = normalizeTodoPlanSnapshot(isRecord(resumed) ? resumed.todo_state : undefined);
-        setTodoPlan(resumedTodoPlan ?? deriveTodoPlan(transcript));
-        const inflight = extractInflightAssistant(resumed);
-        if (transcript.length > 0 || inflight) {
-          setMessages(
-            inflight
-              ? [...transcript, { id: `inflight-${Date.now()}`, role: 'assistant', text: inflight, status: 'streaming', createdAt: Date.now() }]
-              : transcript,
-          );
-        }
+        const { inflight } = await hydrateSessionSnapshot(resumed, resolvedSessionId, resolvedSessionKey);
         setRunning(Boolean(inflight) || extractSessionRunning(resumed));
         return resolvedSessionId;
       } catch (err) {
@@ -584,7 +659,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     sessionKeyRef.current = createdSessionKey;
     setRunning(false);
     return createdSessionId;
-  }, [request, adoptModel]);
+  }, [adoptModel, hydrateSessionSnapshot, request]);
 
   const clearPendingPrompt = useCallback(() => {
     pendingPromptRef.current = null;
@@ -655,8 +730,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     previewModeRef.current = false;
     setPreviewMode(false);
     try {
-      const activeSessionId = await ensureSession();
+      let activeSessionId = await ensureSession();
       if (activeSessionId) {
+        const canonicalSessionId = await claimLastChatPointer('resume', activeSessionId);
+        if (canonicalSessionId !== activeSessionId) activeSessionId = await ensureSession();
         void refreshModel(activeSessionId);
         void refreshContext(activeSessionId);
         void replayPendingPrompt(activeSessionId);
@@ -666,7 +743,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       setError(err instanceof Error ? err.message : 'Failed to resume the selected session.');
       return null;
     }
-  }, [ensureSession, refreshContext, refreshModel, replayPendingPrompt]);
+  }, [claimLastChatPointer, ensureSession, refreshContext, refreshModel, replayPendingPrompt]);
 
   const scheduleReconnect = useCallback(() => {
     if (intentionalCloseRef.current || reconnectAttemptsRef.current >= MAX_RECONNECTS) {
@@ -687,6 +764,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
   const connect = useCallback(async () => {
     if (!open) return;
+    if (!initialSessionId?.trim()) await bootstrapPointer();
+    if (!open || intentionalCloseRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
     if (!connectionAttemptGateRef.current.tryAcquire()) return;
     const attemptGeneration = ++connectionGenerationRef.current;
@@ -937,7 +1016,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       setStatusText('Connection failed');
       setError(err instanceof Error ? err.message : 'Chat connection failed.');
     }
-  }, [adoptModel, ensureSession, finishEventReplay, open, prepareEventReplay, refreshContext, refreshModel, refreshReasoning, rejectPending, replayPendingPrompt, scheduleReconnect, storedToken]);
+  }, [adoptModel, bootstrapPointer, ensureSession, finishEventReplay, initialSessionId, open, prepareEventReplay, refreshContext, refreshModel, refreshReasoning, rejectPending, replayPendingPrompt, scheduleReconnect, storedToken]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -1001,7 +1080,11 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     setSubmitting(true);
     setError(null);
     try {
-      const activeSessionId = await ensureSession();
+      let activeSessionId = await ensureSession();
+      const canonicalSessionId = await claimLastChatPointer('submit', activeSessionId);
+      if (canonicalSessionId !== activeSessionId) {
+        activeSessionId = await ensureSession();
+      }
       const attachmentRefs: string[] = [];
       for (const attachment of attachments) {
         const method = attachmentRpcMethod(attachment.kind);
@@ -1061,7 +1144,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     } finally {
       setSubmitting(false);
     }
-  }, [clearPendingPrompt, ensureSession, refreshModel, request, submitting]);
+  }, [claimLastChatPointer, clearPendingPrompt, ensureSession, refreshModel, request, submitting]);
 
   const closeModelPicker = useCallback(() => {
     setModelPickerOpen(false);
@@ -1294,13 +1377,17 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     setInteraction(null);
     setActivity(null);
     clearPendingPrompt();
-    persistChat(null, null, null, []);
+    persistChat(null, null, null, [], pointerRevision);
     try {
-      await ensureSession();
+      let activeSessionId = await ensureSession();
+      if (activeSessionId) {
+        const canonicalSessionId = await claimLastChatPointer('create', activeSessionId);
+        if (canonicalSessionId !== activeSessionId) activeSessionId = await ensureSession();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create a new chat.');
     }
-  }, [clearPendingPrompt, ensureSession, request]);
+  }, [claimLastChatPointer, clearPendingPrompt, ensureSession, pointerRevision, request]);
 
   return {
     messages,

@@ -268,6 +268,90 @@ def _get_db_messages(db: Any, session_id: str) -> list[dict[str, Any]] | None:
         return None
 
 
+def _resolve_chat_session(db: Any, session_ref: str) -> tuple[str, str]:
+    """Resolve a gateway session id/key to the SessionDB row holding its messages."""
+    reference = str(session_ref or "").strip()
+    if not reference or db is None:
+        return reference, reference
+
+    candidates: list[dict[str, Any]] = []
+    for kwargs in (
+        {"session_key": reference},
+        {"id_query": reference},
+    ):
+        try:
+            rows = db.list_sessions_rich(
+                limit=1,
+                offset=0,
+                include_children=True,
+                include_archived=True,
+                order_by_last_active=True,
+                compact_rows=True,
+                **kwargs,
+            )
+            if isinstance(rows, list):
+                candidates = [row for row in rows if isinstance(row, dict)]
+            if candidates:
+                break
+        except Exception:
+            continue
+
+    candidate = candidates[0] if candidates else {}
+    candidate_id = str(candidate.get("id") or reference).strip()
+    try:
+        resolved_id = str(db.resolve_resume_session_id(candidate_id) or candidate_id).strip()
+    except Exception:
+        resolved_id = candidate_id
+    return resolved_id, str(candidate.get("session_key") or reference).strip()
+
+
+def load_chat_message_timestamps(
+    session_id: str | None = None,
+    session_key: str | None = None,
+) -> dict[str, Any]:
+    """Return canonical SessionDB message metadata for Mission Control resume repair.
+
+    The gateway resume payload is intentionally not treated as the timestamp authority:
+    this endpoint reads the read-only SessionDB projection after resolving compression
+    lineage and exposes only fields needed to match transcript rows by role/content/tool
+    identity and occurrence order.
+    """
+    reference = str(session_key or session_id or "").strip()
+    if not reference:
+        return {"sessionId": "", "sessionKey": "", "messages": []}
+
+    db = _try_get_session_db()
+    try:
+        resolved_id, resolved_key = _resolve_chat_session(db, reference)
+        rows = _get_db_messages(db, resolved_id) or []
+        metadata: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            timestamp = _parse_timestamp(row.get("timestamp"))
+            if timestamp is None:
+                continue
+            metadata.append({
+                "role": row.get("role"),
+                "content": row.get("content"),
+                "tool_name": row.get("tool_name"),
+                "tool_call_id": row.get("tool_call_id"),
+                "tool_calls": row.get("tool_calls"),
+                "timestamp": timestamp,
+                "display_kind": row.get("display_kind"),
+            })
+        return {
+            "sessionId": resolved_id,
+            "sessionKey": resolved_key,
+            "messages": metadata,
+        }
+    except Exception:
+        _log.debug("Failed to load chat timestamps for %s", reference, exc_info=True)
+        return {"sessionId": reference, "sessionKey": reference, "messages": []}
+    finally:
+        _close_session_db(db)
+
+
 def _first_user_content(messages: list[dict[str, Any]] | None) -> str:
     if not messages:
         return ""

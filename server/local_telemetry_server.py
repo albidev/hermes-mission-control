@@ -56,6 +56,7 @@ from mission_control_agents import (
     load_agent_trace_snapshot,
     load_agents_sessions_snapshot,
     load_agents_snapshot,
+    load_chat_message_timestamps,
     load_sessions_usage,
 )
 
@@ -2322,6 +2323,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {'subscriptions': list_subscriptions()})
             return
+        if parsed.path in ('/api/local/chat/timestamps', '/api/local/chat/message-timestamps'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            session_id = ((params.get('session_id') or params.get('sessionId') or [''])[0]).strip() or None
+            session_key = ((params.get('session_key') or params.get('sessionKey') or [''])[0]).strip() or None
+            if not session_id and not session_key:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id or session_key.'})
+                return
+            self._json(200, load_chat_message_timestamps(session_id, session_key))
+            return
         if parsed.path == '/api/local/chat/last':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2619,11 +2631,27 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
                 return
+            if not isinstance(data, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
             if not str(data.get('sessionId', '')).strip():
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
                 return
-            saved = set_last_chat(data)
-            self._json(200, {'success': True, 'lastChat': saved})
+            expected_revision = data.get('expectedRevision')
+            if expected_revision is not None and (
+                isinstance(expected_revision, bool) or not isinstance(expected_revision, int)
+            ):
+                self._json(400, {'error': 'bad_request', 'detail': 'expectedRevision must be an integer.'})
+                return
+            saved = set_last_chat(data, expected_revision=expected_revision)
+            if not saved['accepted']:
+                self._json(409, {
+                    'error': 'revision_conflict',
+                    'detail': 'Last-chat pointer changed since it was read.',
+                    'lastChat': saved['lastChat'],
+                })
+                return
+            self._json(200, {'success': True, 'lastChat': saved['lastChat']})
             return
         if parsed.path == '/api/local/chat/whiteboard':
             if not _is_authorized(self):
