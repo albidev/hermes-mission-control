@@ -2711,9 +2711,14 @@ export interface MissionControlSessionSynthesisCandidate {
   session_id: string;
   vault_id: string;
   title: string;
+  definition: string;
+  confidence: string;
   status: string;
+  created_at: string | null;
   accepted_count: number | null;
   context_only_count: number | null;
+  provenance: Record<string, unknown>;
+  extra: Record<string, unknown>;
   safe_provenance: MissionControlSessionSynthesisSafeProvenance;
 }
 
@@ -2746,9 +2751,14 @@ function normalizeSessionSynthesisCandidate(
     session_id: input?.session_id ?? '',
     vault_id: input?.vault_id ?? '',
     title: input?.title ?? '',
+    definition: input?.definition ?? '',
+    confidence: input?.confidence ?? '',
     status: input?.status ?? 'pending_review',
+    created_at: input?.created_at ?? null,
     accepted_count: input?.accepted_count ?? null,
     context_only_count: input?.context_only_count ?? null,
+    provenance: input?.provenance ?? {},
+    extra: input?.extra ?? {},
     safe_provenance: {
       session_title: provenance.session_title ?? null,
       created_at: provenance.created_at ?? null,

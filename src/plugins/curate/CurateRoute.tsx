@@ -251,6 +251,7 @@ function SessionSynthesisCandidateRow({
   onReason,
   onReject,
   onCancel,
+  onInspect,
 }: {
   candidate: MissionControlSessionSynthesisCandidate;
   canCurate: boolean;
@@ -262,6 +263,7 @@ function SessionSynthesisCandidateRow({
   onReason: (value: string) => void;
   onReject: () => void;
   onCancel: () => void;
+  onInspect: (candidate: MissionControlSessionSynthesisCandidate) => void;
 }) {
   const provenance = candidate.safe_provenance;
   const isPending = candidate.status === 'pending_review';
@@ -278,6 +280,11 @@ function SessionSynthesisCandidateRow({
             {statusBadge(candidate.status)}
           </div>
           <p className="mt-1 truncate text-xs text-text-muted">{candidate.source} · {candidate.candidate_id}</p>
+          <div className="mt-2 flex justify-end">
+            <Button type="button" size="sm" variant="ghost" className="!min-w-0 !border-0 !bg-transparent !px-2 text-xs text-text-muted hover:!bg-surface-sunken hover:!text-text" onClick={() => onInspect(candidate)}>
+              View details
+            </Button>
+          </div>
           <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1 text-[11px] text-text-subtle sm:grid-cols-2">
             <div className="min-w-0"><dt className="inline text-text-muted">synthesis </dt><dd className="inline break-all font-mono">{candidate.synthesis_id}</dd></div>
             <div className="min-w-0"><dt className="inline text-text-muted">session </dt><dd className="inline break-all font-mono">{candidate.session_id || '—'}</dd></div>
@@ -321,6 +328,59 @@ function SessionSynthesisCandidateRow({
   );
 }
 
+function SessionSynthesisCandidateDetails({
+  candidate,
+  onClose,
+}: {
+  candidate: MissionControlSessionSynthesisCandidate;
+  onClose: () => void;
+}) {
+  const provenance = Object.entries(candidate.provenance ?? {});
+  const extra = Object.entries(candidate.extra ?? {});
+  return (
+    <Modal
+      open
+      title={candidate.title || 'Session synthesis candidate'}
+      subtitle={`${candidate.source} · ${candidate.status}`}
+      onClose={onClose}
+      borderless
+      footer={<span className="text-xs text-text-subtle">Read-only candidate details · approval actions remain in the queue</span>}
+    >
+      <div className="flex flex-col gap-4">
+        <div className="rounded-lg border border-border-subtle bg-surface-sunken/35 p-3">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-subtle">Definition</p>
+          <p className="whitespace-pre-wrap break-words text-sm leading-6 text-text">{candidate.definition || 'No definition recorded.'}</p>
+        </div>
+        <dl className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+          {[['Candidate ID', candidate.candidate_id], ['Synthesis ID', candidate.synthesis_id], ['Session ID', candidate.session_id || '—'], ['Vault', candidate.vault_id || '—'], ['Source', candidate.source], ['Confidence', candidate.confidence || '—'], ['Created', candidate.created_at ? formatActivityTime(candidate.created_at) : '—'], ['Accepted turns', candidate.accepted_count ?? '—'], ['Context-only turns', candidate.context_only_count ?? '—']].map(([label, value]) => (
+            <div key={String(label)} className="min-w-0 rounded-md bg-surface-sunken/35 px-3 py-2">
+              <dt className="text-text-subtle">{label}</dt>
+              <dd className="mt-1 break-all font-mono text-text">{String(value)}</dd>
+            </div>
+          ))}
+        </dl>
+        {candidate.safe_provenance.session_title || candidate.safe_provenance.source_ref || candidate.safe_provenance.concept_summary ? (
+          <div className="rounded-lg border border-border-subtle bg-surface-sunken/35 p-3 text-xs">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-subtle">Safe provenance</p>
+            {candidate.safe_provenance.session_title ? <p><span className="text-text-subtle">Session: </span>{candidate.safe_provenance.session_title}</p> : null}
+            {candidate.safe_provenance.source_ref ? <p className="mt-1 break-all"><span className="text-text-subtle">Source: </span>{candidate.safe_provenance.source_ref}</p> : null}
+            {candidate.safe_provenance.concept_summary ? <p className="mt-2 whitespace-pre-wrap break-words text-text-muted">{candidate.safe_provenance.concept_summary}</p> : null}
+          </div>
+        ) : null}
+        {provenance.length > 0 ? <details open className="rounded-lg border border-border-subtle bg-surface-sunken/35 p-3">
+          <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-[0.12em] text-text-subtle">Full provenance</summary>
+          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-surface px-3 py-2 text-[11px] text-text-muted">{JSON.stringify(Object.fromEntries(provenance), null, 2)}</pre>
+        </details> : null}
+        {extra.length > 0 ? <details className="rounded-lg border border-border-subtle bg-surface-sunken/35 p-3">
+          <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-[0.12em] text-text-subtle">Additional metadata</summary>
+          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-surface px-3 py-2 text-[11px] text-text-muted">{JSON.stringify(Object.fromEntries(extra), null, 2)}</pre>
+        </details> : null}
+      </div>
+    </Modal>
+  );
+}
+
+
 export function CurateRoute() {
   const { t } = useI18n();
   const { storedToken } = useMissionControl();
@@ -346,6 +406,7 @@ export function CurateRoute() {
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [synthesisRejectingId, setSynthesisRejectingId] = useState<string | null>(null);
   const [synthesisRejectReason, setSynthesisRejectReason] = useState<Record<string, string>>({});
+  const [selectedSynthesisCandidate, setSelectedSynthesisCandidate] = useState<MissionControlSessionSynthesisCandidate | null>(null);
 
   const activeTab = parseCurateTab(searchParams.get('tab'));
   const updateTab = (tab: CurateTab) => {
@@ -534,7 +595,7 @@ export function CurateRoute() {
                 {selectedVault && <span className="text-[11px] text-text-subtle">{canCurate ? 'Review gate enabled' : `${vaultModeLabel(selectedVault)} vault`}</span>}
               </div>
               {synthesisError ? <div className="m-3 rounded-lg border border-negative/30 bg-negative/10 p-3 text-sm text-negative">{synthesisError}</div> : null}
-              {synthesisLoading && synthesisCandidates.length === 0 ? <div className="flex items-center justify-center gap-2 px-4 py-12 text-sm text-text-muted"><RefreshCw size={14} className="animate-spin" />Loading session synthesis candidates…</div> : synthesisCandidates.length === 0 ? <div className="flex items-center gap-3 px-4 py-8 text-sm text-text-muted"><Inbox size={17} />No session synthesis candidates for this vault.</div> : <div>{synthesisCandidates.map((candidate) => <SessionSynthesisCandidateRow key={candidate.candidate_id} candidate={candidate} canCurate={canCurate} applying={applyingId === candidate.candidate_id} rejecting={synthesisRejectingId === candidate.candidate_id} reason={synthesisRejectReason[candidate.candidate_id] ?? ''} onApply={() => void handleSynthesisApply(candidate)} onRejectStart={() => setSynthesisRejectingId(candidate.candidate_id)} onReason={(value) => setSynthesisRejectReason((current) => ({ ...current, [candidate.candidate_id]: value }))} onReject={() => void handleSynthesisReject(candidate)} onCancel={() => setSynthesisRejectingId(null)} />)}</div>}
+              {synthesisLoading && synthesisCandidates.length === 0 ? <div className="flex items-center justify-center gap-2 px-4 py-12 text-sm text-text-muted"><RefreshCw size={14} className="animate-spin" />Loading session synthesis candidates…</div> : synthesisCandidates.length === 0 ? <div className="flex items-center gap-3 px-4 py-8 text-sm text-text-muted"><Inbox size={17} />No session synthesis candidates for this vault.</div> : <div>{synthesisCandidates.map((candidate) => <SessionSynthesisCandidateRow key={candidate.candidate_id} candidate={candidate} canCurate={canCurate} applying={applyingId === candidate.candidate_id} rejecting={synthesisRejectingId === candidate.candidate_id} reason={synthesisRejectReason[candidate.candidate_id] ?? ''} onApply={() => void handleSynthesisApply(candidate)} onRejectStart={() => setSynthesisRejectingId(candidate.candidate_id)} onReason={(value) => setSynthesisRejectReason((current) => ({ ...current, [candidate.candidate_id]: value }))} onReject={() => void handleSynthesisReject(candidate)} onCancel={() => setSynthesisRejectingId(null)} onInspect={setSelectedSynthesisCandidate} />)}</div>}
             </div>
           ) : (
             <div>
@@ -551,6 +612,7 @@ export function CurateRoute() {
       </Card>
 
       {selectedActivity ? <SynthesisDetails activity={selectedActivity} canRevert={canRevert} revertingOperation={revertingOperation} onClose={() => setSelectedActivity(null)} onRevert={(operation) => void handleRevert(operation)} /> : null}
+      {selectedSynthesisCandidate ? <SessionSynthesisCandidateDetails candidate={selectedSynthesisCandidate} onClose={() => setSelectedSynthesisCandidate(null)} /> : null}
     </div>
   );
 }
