@@ -56,7 +56,6 @@ from synthesis_activity_proxy import (
     load_synthesis_candidates,
     revert_synthesis,
 )
-from session_idle_transition import start_idle_watcher
 from nous_portal_usage import collect_nous_portal_usage
 from provider_usage_config import apply_provider_display_config, visible_usage_providers
 from provider_usage_contract import normalize_cached_entry, normalize_codexbar_entry
@@ -3105,7 +3104,6 @@ def main() -> None:
     sampler.start()
 
     start_gateway_watcher()
-    start_idle_watcher()
 
     server = ThreadingHTTPServer((host, port), Handler)
     # Client handlers must not keep the process alive after the listener is
