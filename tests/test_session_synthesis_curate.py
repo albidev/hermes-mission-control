@@ -160,6 +160,7 @@ class SessionSynthesisCurateTests(unittest.TestCase):
     def test_apply_forwards_bdh_correlation_tuple(self):
         candidate = _candidate()
         with mock.patch.object(local_telemetry_server, "get_synthesis_candidate", return_value=candidate), \
+             mock.patch.object(local_telemetry_server, "approve_synthesis_candidate", return_value={"status": "approved"}) as approve_mock, \
              mock.patch.object(
                  local_telemetry_server, "apply_synthesis_candidate",
                  return_value={"status": "created", "note_path": "wiki/concepts/foo.md", "operation_id": "op-9"},
@@ -173,6 +174,13 @@ class SessionSynthesisCurateTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 payload = json.loads(response.read().decode("utf-8"))
         self.assertEqual(payload["status"], "created")
+        approve_mock.assert_called_once_with(
+            candidate_id="cand-1",
+            synthesis_id="syn-1",
+            session_id="sess-1",
+            vault_id="core",
+            source="session_synthesis",
+        )
         apply_mock.assert_called_once_with(
             candidate_id="cand-1",
             synthesis_id="syn-1",
@@ -184,6 +192,7 @@ class SessionSynthesisCurateTests(unittest.TestCase):
     def test_apply_conflict_is_not_marked_applied(self):
         candidate = _candidate()
         with mock.patch.object(local_telemetry_server, "get_synthesis_candidate", return_value=candidate), \
+             mock.patch.object(local_telemetry_server, "approve_synthesis_candidate", return_value={"status": "approved"}), \
              mock.patch.object(
                  local_telemetry_server, "apply_synthesis_candidate",
                  return_value={"status": "conflict", "reason": "conflicts with existing note"},

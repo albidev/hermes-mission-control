@@ -51,6 +51,7 @@ import session_synthesis_rejections
 from synthesis_activity_proxy import (
     SynthesisProxyError,
     apply_synthesis_candidate,
+    approve_synthesis_candidate,
     get_synthesis_candidate,
     load_synthesis_activity,
     load_synthesis_candidates,
@@ -2876,6 +2877,13 @@ class Handler(BaseHTTPRequestHandler):
                                  'detail': f'Candidate {candidate_id} not found in vault {vault or "default"}.'})
                 return
             try:
+                approve_synthesis_candidate(
+                    candidate_id=candidate['candidate_id'],
+                    synthesis_id=candidate['synthesis_id'],
+                    session_id=candidate['session_id'],
+                    vault_id=candidate['vault_id'],
+                    source=candidate['source'],
+                )
                 result = apply_synthesis_candidate(
                     candidate_id=candidate['candidate_id'],
                     synthesis_id=candidate['synthesis_id'],

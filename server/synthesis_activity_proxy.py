@@ -178,6 +178,27 @@ def get_synthesis_candidate(
     return None
 
 
+def approve_synthesis_candidate(
+    candidate_id: str,
+    synthesis_id: str,
+    session_id: str,
+    vault_id: str,
+    source: str = "session_synthesis",
+) -> dict[str, Any]:
+    """Record human approval in BDH before the apply call."""
+    return _request(
+        "/api/synthesis/approve",
+        method="POST",
+        payload={
+            "candidate_id": candidate_id,
+            "synthesis_id": synthesis_id,
+            "session_id": session_id,
+            "vault_id": vault_id,
+            "source": source,
+        },
+    )
+
+
 def apply_synthesis_candidate(
     candidate_id: str,
     synthesis_id: str,

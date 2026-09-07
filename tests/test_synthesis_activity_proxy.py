@@ -10,6 +10,7 @@ if str(SERVER_DIR) not in sys.path:
 
 from synthesis_activity_proxy import (  # noqa: E402
     apply_synthesis_candidate,
+    approve_synthesis_candidate,
     get_synthesis_candidate,
     load_synthesis_activity,
     load_synthesis_candidates,
@@ -142,6 +143,22 @@ class SynthesisActivityProxyTests(unittest.TestCase):
             result = load_synthesis_candidates("core")
         self.assertEqual(result["count"], 1)
         self.assertEqual([c["candidate_id"] for c in result["candidates"]], ["cand-kept"])
+
+    def test_approve_forwards_correlation_tuple(self):
+        seen = []
+
+        def fake_request(path, *, method="GET", payload=None):
+            seen.append((path, method, payload))
+            return {"status": "approved", "candidate_id": "cand-1"}
+
+        with mock.patch("synthesis_activity_proxy._request", fake_request):
+            result = approve_synthesis_candidate("cand-1", "syn-1", "sess-1", "core")
+
+        self.assertEqual(result["status"], "approved")
+        self.assertEqual(seen, [("/api/synthesis/approve", "POST", {
+            "candidate_id": "cand-1", "synthesis_id": "syn-1", "session_id": "sess-1",
+            "vault_id": "core", "source": "session_synthesis",
+        })])
 
     def test_apply_forwards_correlation_tuple(self):
         seen = []
