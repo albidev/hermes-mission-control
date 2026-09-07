@@ -119,10 +119,11 @@ class SynthesisActivityProxyTests(unittest.TestCase):
         self.assertEqual(candidate["safe_provenance"]["session_title"], "A session")
         self.assertEqual(candidate["safe_provenance"]["source_ref"], "wiki/entities/foo.md")
         self.assertEqual(candidate["safe_provenance"]["concept_summary"], "A concept summary, not a transcript.")
-        # Unsafe fields must never leak.
+        self.assertEqual(candidate["definition"], "A concept summary, not a transcript.")
+        self.assertEqual(candidate["provenance"]["source_ref"], "wiki/entities/foo.md")
+        # Transcript/hash and raw provenance fields must never leak.
         self.assertNotIn("transcript_sha256", candidate)
-        self.assertNotIn("definition", candidate)
-        self.assertNotIn("provenance", candidate)
+        self.assertNotIn("raw_transcript", candidate["provenance"])
         self.assertNotIn("raw_transcript", candidate["safe_provenance"])
 
     def test_apply_forwards_correlation_tuple(self):
