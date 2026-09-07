@@ -10,6 +10,7 @@ returned as ``{ok: False, ...}`` so normal session polling is unaffected.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -147,6 +148,10 @@ class IdleSignalForwarderTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(seen["url"], "http://127.0.0.1:8642/api/sessions/s1/idle")
+
+    def test_idle_signal_token_prefers_dedicated_gateway_secret(self):
+        with mock.patch.dict(os.environ, {"MISSION_CONTROL_IDLE_SIGNAL_TOKEN": "gateway", "API_SERVER_KEY": "ui"}):
+            self.assertEqual(sit._idle_signal_token(), "gateway")
 
     def test_forward_http_error_is_handled(self):
         import urllib.error

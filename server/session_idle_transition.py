@@ -46,7 +46,11 @@ def _idle_signal_url(session_id: str = "") -> str:
 
 
 def _idle_signal_token() -> str:
-    return (os.environ.get("MISSION_CONTROL_TOKEN") or os.environ.get("API_SERVER_KEY") or "").strip()
+    return (
+        os.environ.get("MISSION_CONTROL_IDLE_SIGNAL_TOKEN")
+        or os.environ.get("API_SERVER_KEY")
+        or ""
+    ).strip()
 
 
 def _collect_session_facts() -> list[dict[str, Any]]:
