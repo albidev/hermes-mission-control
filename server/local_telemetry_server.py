@@ -991,12 +991,15 @@ def _read_version() -> str:
     return '0.0.0'
 
 
-def _candidates_enabled() -> bool:
-    """Curate (BDH candidate curation) is an OPTIONAL feature. It is compiled into
-    MC but only exposed when MC_ENABLE_BDH_CURATOR is truthy. Default OFF so the
-    public Mission Control repo ships clean without the private nightly-brain
-    dependency. The real logic lives in the bdh-nightly-brain sidecar."""
-    return (os.getenv("MC_ENABLE_BDH_CURATOR") or "").strip().lower() in ("1", "true", "yes")
+def _candidates_plugin_loaded() -> bool:
+    """Curate is enabled when the 'curate' plugin is loaded (internal or external).
+    No env var needed — if the plugin is installed, it's active."""
+    try:
+        from plugins.loader import get_loader
+        loader = get_loader()
+        return loader.get_manifest("curate") is not None
+    except Exception:
+        return False
 
 
 _STATUS_CACHE_LOCK = threading.Lock()
@@ -1069,7 +1072,7 @@ def _collect_status_payload_uncached() -> Dict[str, Any]:
         'gateway_exit_reason': gateway_exit_reason,
         'gateway_updated_at': gateway_updated_at,
         'active_sessions': active_sessions,
-        'candidates_enabled': _candidates_enabled(),
+        'candidates_enabled': _candidates_plugin_loaded(),
     }
 
 
@@ -2384,9 +2387,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             vault = (params.get("vault") or [None])[0] or None
             try:
@@ -2398,9 +2401,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             vault = (params.get("vault") or [None])[0] or None
             status = (params.get("status") or [None])[0] or None
@@ -2860,9 +2863,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -2882,9 +2885,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -2929,9 +2932,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             payload = self._read_json_body()
             if payload is None:
