@@ -30,8 +30,28 @@ export interface MCPluginManifest {
   permissions?: string[];
   /** Backend endpoints this plugin registers on telemetry server */
   endpoints?: MCPluginEndpoint[];
+  /** Optional host surfaces contributed by the plugin. */
+  surfaces?: MCPluginSurfaces;
   /** Plugin-specific configuration schema (for future settings UI) */
   configSchema?: Record<string, unknown>;
+}
+
+export interface MCPluginSurfaces {
+  attention?: {
+    enabled?: boolean;
+    order?: number;
+  };
+}
+
+export interface MCPluginAttentionProps {
+  /** Plugin reports its current actionable item count to the host. */
+  onActiveChange: (count: number) => void;
+}
+
+export interface MCPluginAttentionContributor {
+  id: string;
+  order?: number;
+  component: React.ComponentType<MCPluginAttentionProps>;
 }
 
 export interface MCPluginNavItem {

@@ -1,10 +1,12 @@
 import React from 'react';
-import type { MCPluginManifest, MCPluginNavItem, MCPluginRoute, MCPluginEndpoint } from './types';
+import type { MCPluginAttentionContributor, MCPluginManifest, MCPluginNavItem, MCPluginRoute, MCPluginEndpoint } from './types';
+
 
 export interface InternalPlugin {
   manifest: MCPluginManifest;
   loadRoute: () => Promise<{ default: React.ComponentType<any> }>;
   component?: React.ComponentType<any>;
+  attention?: React.ComponentType<any>;
 }
 
 function isNavItem(item: MCPluginNavItem | null | undefined): item is MCPluginNavItem {
@@ -69,6 +71,16 @@ export class PluginRegistry {
 
   getNavItems(): MCPluginNavItem[] {
     return this.navItems;
+  }
+
+  getAttentionContributors(): MCPluginAttentionContributor[] {
+    const contributors: MCPluginAttentionContributor[] = [];
+    for (const plugin of this.plugins) {
+      if (plugin.manifest.surfaces?.attention?.enabled === false) continue;
+      const component = (plugin as InternalPlugin & { attention?: React.ComponentType<any> }).attention;
+      if (component) contributors.push({ id: plugin.manifest.id, order: plugin.manifest.surfaces?.attention?.order ?? 50, component });
+    }
+    return contributors.sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
   }
 
   getRoutes(): MCPluginRoute[] {
