@@ -30,8 +30,9 @@ const durableAssistant = message({
 });
 const provisionalAssistant = { ...durableAssistant, id: 'assistant-live', status: 'streaming' as const, createdAt: Date.parse('2026-09-08T10:30:00.000Z') };
 const reconciled = mergeDurableChatMessages([provisionalAssistant], [durableAssistant]);
-assert.equal(reconciled[0].createdAt, durableAssistant.createdAt);
-assert.equal(reconciled[0].status, 'streaming');
+assert.equal(reconciled.length, 2);
+assert.equal(reconciled.some((entry) => entry.id === durableAssistant.id), true);
+assert.equal(reconciled.some((entry) => entry.id === provisionalAssistant.id), true);
 
 // A resume snapshot can race a relay event and be partial. Hydration must be
 // monotonic: every already-visible message survives, while a user row already
@@ -78,8 +79,8 @@ const repeatedHydration = mergeDurableChatMessages(
 );
 assert.equal(repeatedHydration.filter((entry) => entry.id === streamingOnly.id).length, 1);
 
-// Matching by text must still preserve two legitimate identical user turns;
-// each durable row may consume at most one local row.
+// Identical text is not an identity key. Without a stable DB id, the
+// canonical rows and local rows remain distinct until canonical replacement.
 const repeatedPrompt = message({ id: 'local-repeat', role: 'user', kind: 'user', text: 'same prompt', createdAt: 60 });
 const repeatedPromptAgain = message({ id: 'local-repeat-again', role: 'user', kind: 'user', text: 'same prompt', createdAt: 70 });
 const repeatedPromptUnion = mergeDurableChatMessages(
@@ -89,7 +90,8 @@ const repeatedPromptUnion = mergeDurableChatMessages(
     message({ id: 'restored-repeat-again', role: 'user', kind: 'user', text: 'same prompt', createdAt: 70 }),
   ],
 );
-assert.equal(repeatedPromptUnion.filter((entry) => entry.role === 'user' && entry.text === 'same prompt').length, 2);
+assert.equal(repeatedPromptUnion.filter((entry) => entry.role === 'user' && entry.text === 'same prompt').length, 4);
+assert.equal(new Set(repeatedPromptUnion.map((entry) => entry.id)).size, 4);
 
 const syncedUser = message({ id: 'user-shared-1', role: 'user', kind: 'user', text: 'shared across devices' });
 assert.equal(applySyncedUserMessage([], syncedUser).length, 1);

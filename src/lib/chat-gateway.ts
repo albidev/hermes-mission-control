@@ -23,8 +23,6 @@ import {
   parseCommandDispatch,
   parseSlash,
   normalizeTranscript,
-  parseChatTimestamp,
-  reconcileTranscriptTimestamps,
   parseGatewayFrame,
   pendingPromptWasPersisted,
   shouldCloseBackendSessionForNewChat,
@@ -44,7 +42,7 @@ import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPres
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { canClaimLastChatPointer, createChatBootstrapGuard, shouldAdoptServerPointer, type LastChatClaimAction, type ServerLastChat } from './chat-bootstrap';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
-import { applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, fetchChatTimestampMetadata, mergeDurableChatMessages, publishChatSync, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
+import { applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, fetchChatTranscript, publishChatSync, replaceWithCanonicalChatMessages, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, resultText } from './chat-commands';
 import {
@@ -105,21 +103,27 @@ function persistedRunWasCompleted(): boolean {
   return hasVisibleCompletedAssistant || (!hasStreamingAssistant && hasCompletedAssistant);
 }
 
-async function reconcileResumeTimestamps(
+async function loadCanonicalTranscript(
   accessToken: string,
   sessionId: string | null,
   sessionKey: string | null,
-  transcript: ReturnType<typeof extractTranscript>,
-): Promise<ReturnType<typeof extractTranscript>> {
-  if (!transcript.some((message) => parseChatTimestamp(message.timestamp) === null)) return transcript;
-  const metadata = await fetchChatTimestampMetadata(accessToken, sessionId, sessionKey);
-  return metadata.length ? reconcileTranscriptTimestamps(transcript, metadata) : transcript;
+): Promise<ChatMessage[] | null> {
+  const payload = await fetchChatTranscript(accessToken, sessionId, sessionKey);
+  if (!payload?.complete) return null;
+  return normalizeTranscript(payload.messages);
+}
+
+function applyLiveGatewayEvent(messages: ChatMessage[], event: GatewayEvent): ChatMessage[] {
+  const existingIds = new Set(messages.map((message) => message.id));
+  return applyGatewayEvent(messages, event).map((message) => existingIds.has(message.id)
+    ? message
+    : { ...message, source: 'live' as const });
 }
 
 export function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: string | null) {
   const initial = useMemo(readPersistedChat, []);
-  const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
-  const [todoPlan, setTodoPlan] = useState<TodoPlan | null>(() => deriveTodoPlan(initial.messages));
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [todoPlan, setTodoPlan] = useState<TodoPlan | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(initial.sessionId);
   const [sessionKey, setSessionKey] = useState<string | null>(initial.sessionKey);
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
@@ -149,6 +153,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const pendingRef = useRef(new Map<string, PendingRpc>());
   const pendingPromptRef = useRef<PendingPrompt | null>(readPendingChatSubmit());
   const durableTranscriptRef = useRef<ReturnType<typeof extractTranscript>>([]);
+  const transcriptReadyRef = useRef(false);
   const replayInFlightRef = useRef(false);
   const connectionAttemptGateRef = useRef(new ConnectionAttemptGate());
   const connectionGenerationRef = useRef(0);
@@ -217,6 +222,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     sessionKeyRef.current = requested;
     setMessages([]);
     setTodoPlan(null);
+    transcriptReadyRef.current = false;
     setModelIdentity(null);
     setModelPickerOpen(false);
     setModelPickerRefresh(false);
@@ -225,6 +231,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   }, [initialSessionId]);
 
   useEffect(() => {
+    if (!transcriptReadyRef.current) return;
     persistChat(sessionId, sessionKey, modelIdentity, messages, pointerRevision);
   }, [messages, modelIdentity, pointerRevision, sessionId, sessionKey]);
 
@@ -400,7 +407,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       const candidates = [...replayEvents, ...heldEvents];
       const accepted = candidates.filter((event) => shouldApplySequencedEvent(eventWatermarksRef.current, event));
       if (accepted.length > 0) {
-        setMessages((current) => accepted.reduce((messages, event) => applyGatewayEvent(messages, event), current));
+        setMessages((current) => accepted.reduce((messages, event) => applyLiveGatewayEvent(messages, event), current));
       }
       replayHoldRef.current = null;
       eventReplayInFlightRef.current = false;
@@ -415,22 +422,29 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     const rawTranscript = extractTranscript(resumed);
     const resolvedSessionId = activeSessionId ?? extractSessionId(resumed);
     const resolvedSessionKey = activeSessionKey ?? extractSessionKey(resumed) ?? resolvedSessionId;
-    const durableTranscript = await reconcileResumeTimestamps(storedToken, resolvedSessionId, resolvedSessionKey, rawTranscript);
-    const transcript = normalizeTranscript(durableTranscript);
+    const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey);
+    const transcript = canonicalTranscript ?? [];
     const inflight = extractInflightAssistant(resumed);
-    const snapshot = inflight
-      ? [...transcript, {
+    const inflightMessage: ChatMessage | null = inflight
+      ? {
         id: `inflight-sync-${Date.now()}`,
-        role: 'assistant' as const,
-        kind: 'assistant' as const,
+        role: 'assistant',
+        kind: 'assistant',
         text: inflight,
-        status: 'streaming' as const,
+        status: 'streaming',
+        source: 'live',
         createdAt: Date.now(),
-      }]
-      : transcript;
+      }
+      : null;
 
-    if (durableTranscript.length > 0) durableTranscriptRef.current = durableTranscript;
-    if (snapshot.length > 0) setMessages((current) => mergeDurableChatMessages(current, snapshot));
+    durableTranscriptRef.current = rawTranscript;
+    transcriptReadyRef.current = canonicalTranscript !== null;
+    if (canonicalTranscript !== null) {
+      setMessages((current) => {
+        const next = replaceWithCanonicalChatMessages(current, transcript);
+        return inflightMessage ? [...next, inflightMessage] : next;
+      });
+    }
     const resumedTodoPlan = normalizeTodoPlanSnapshot(isRecord(resumed) ? resumed.todo_state : undefined);
     if (resumedTodoPlan) setTodoPlan(resumedTodoPlan);
     else if (transcript.length > 0) setTodoPlan(deriveTodoPlan(transcript));
@@ -462,6 +476,28 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       });
     }, 2000);
     return () => window.clearInterval(timer);
+  }, [connectionState, open, previewMode, reconcileSessionSnapshot]);
+
+  useEffect(() => {
+    if (!open || previewMode || connectionState !== 'connected') return;
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'hidden') return;
+      const activeSessionId = sessionIdRef.current;
+      if (!activeSessionId || snapshotSyncInFlightRef.current) return;
+      snapshotSyncInFlightRef.current = true;
+      void reconcileSessionSnapshot(activeSessionId).finally(() => {
+        snapshotSyncInFlightRef.current = false;
+      });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshOnReturn();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pageshow', refreshOnReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pageshow', refreshOnReturn);
+    };
   }, [connectionState, open, previewMode, reconcileSessionSnapshot]);
 
   useEffect(() => {
@@ -509,7 +545,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           }
           if (relayedActivity.state === 'error') setRunning(false);
         }
-        setMessages((current) => applyGatewayEvent(current, relayedEvent));
+        setMessages((current) => applyLiveGatewayEvent(current, relayedEvent));
         return;
       }
 
@@ -684,6 +720,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       id: pending.messageId || `user-replay-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       role: 'user',
       kind: 'user',
+      source: 'live',
       text: pending.displayText,
       attachments: pending.attachments,
       status: 'complete',
@@ -960,7 +997,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
             void refreshReasoning(activeSessionId);
           }
         }
-        setMessages((current) => applyGatewayEvent(current, parsed.event));
+        setMessages((current) => applyLiveGatewayEvent(current, parsed.event));
       });
 
       ws.addEventListener('open', () => {
@@ -1059,6 +1096,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       id: `system-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       role: 'system',
       kind: 'system',
+      source: 'live',
       text: trimmed,
       status: 'complete',
       createdAt: Date.now(),
@@ -1122,6 +1160,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         id: userMessageId,
         role: 'user',
         kind: 'user',
+        source: 'live',
         text: displayText.trim() || trimmed || 'Attached files',
         attachments: summaries,
         status: 'complete',
@@ -1365,6 +1404,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     }
     setMessages([]);
     setTodoPlan(null);
+    transcriptReadyRef.current = false;
     setSessionId(null);
     setSessionKey(null);
     requestedSessionIdRef.current = null;

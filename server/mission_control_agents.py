@@ -305,24 +305,101 @@ def _resolve_chat_session(db: Any, session_ref: str) -> tuple[str, str]:
     return resolved_id, str(candidate.get("session_key") or reference).strip()
 
 
+def _resolve_chat_reference(
+    db: Any,
+    session_id: str | None = None,
+    session_key: str | None = None,
+) -> tuple[str, str]:
+    reference = str(session_key or session_id or "").strip()
+    if not reference:
+        return "", ""
+    return _resolve_chat_session(db, reference)
+
+
+def load_chat_transcript(
+    session_id: str | None = None,
+    session_key: str | None = None,
+) -> dict[str, Any]:
+    """Return the complete, canonical Mission Control display transcript.
+
+    This deliberately uses Hermes' own SessionDB display projection rather than
+    the gateway's bounded resume payload.  ``_row_id`` is the durable identity;
+    clients must never infer identity from repeated content.
+    """
+    reference = str(session_key or session_id or "").strip()
+    if not reference:
+        return {"sessionId": "", "sessionKey": "", "messages": [], "complete": True, "count": 0}
+
+    db = _try_get_session_db()
+    try:
+        resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
+        display_rows = db.get_resume_conversations(resolved_id)[1] if db is not None else []
+        messages: list[dict[str, Any]] = []
+        for row in display_rows:
+            if not isinstance(row, dict):
+                continue
+            row_id = row.get("_row_id")
+            if row_id is None:
+                # A display row without a DB id cannot satisfy the canonical
+                # identity contract, so do not expose it as a durable message.
+                continue
+            message: dict[str, Any] = {
+                "id": f"db:{row_id}",
+                "canonical_id": f"db:{row_id}",
+                "session_id": resolved_id,
+                "role": row.get("role"),
+                "content": row.get("content"),
+                "timestamp": _parse_timestamp(row.get("timestamp")),
+            }
+            for key in (
+                "tool_call_id",
+                "tool_name",
+                "tool_calls",
+                "reasoning",
+                "reasoning_content",
+                "reasoning_details",
+                "codex_reasoning_items",
+                "codex_message_items",
+                "display_kind",
+                "display_metadata",
+                "message_id",
+                "effect_disposition",
+            ):
+                if row.get(key) is not None:
+                    message[key] = row[key]
+            messages.append(message)
+        return {
+            "sessionId": resolved_id,
+            "sessionKey": resolved_key,
+            "messages": messages,
+            "complete": True,
+            "count": len(messages),
+        }
+    except Exception:
+        _log.debug("Failed to load canonical chat transcript for %s", reference, exc_info=True)
+        return {
+            "sessionId": reference,
+            "sessionKey": reference,
+            "messages": [],
+            "complete": False,
+            "count": 0,
+        }
+    finally:
+        _close_session_db(db)
+
+
 def load_chat_message_timestamps(
     session_id: str | None = None,
     session_key: str | None = None,
 ) -> dict[str, Any]:
-    """Return canonical SessionDB message metadata for Mission Control resume repair.
-
-    The gateway resume payload is intentionally not treated as the timestamp authority:
-    this endpoint reads the read-only SessionDB projection after resolving compression
-    lineage and exposes only fields needed to match transcript rows by role/content/tool
-    identity and occurrence order.
-    """
+    """Return canonical SessionDB message metadata for legacy resume repair."""
     reference = str(session_key or session_id or "").strip()
     if not reference:
         return {"sessionId": "", "sessionKey": "", "messages": []}
 
     db = _try_get_session_db()
     try:
-        resolved_id, resolved_key = _resolve_chat_session(db, reference)
+        resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
         rows = _get_db_messages(db, resolved_id) or []
         metadata: list[dict[str, Any]] = []
         for row in rows:

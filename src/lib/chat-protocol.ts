@@ -18,6 +18,9 @@ export type ChatAttachmentUpload = ChatAttachmentSummary & {
 
 export type ChatMessage = {
   id: string;
+  /** Stable SessionDB identity for canonical rows; absent on ephemeral live rows. */
+  canonicalId?: string;
+  source?: 'canonical' | 'resume' | 'live';
   role: ChatRole;
   kind?: ChatMessageKind;
   text: string;
@@ -34,6 +37,9 @@ export type ChatMessage = {
 };
 
 export type GatewayTranscriptMessage = {
+  id?: unknown;
+  canonical_id?: unknown;
+  session_id?: unknown;
   role?: unknown;
   timestamp?: unknown;
   text?: unknown;
@@ -311,6 +317,11 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
     const role = sourceRole === 'user' && isSystemNotification(rawText) ? 'system' : sourceRole;
     const displayKind = stringValue(message.display_kind);
     const createdAt = parseChatTimestamp(message.timestamp);
+    const canonicalId = stringValue(message.canonical_id);
+    const source = canonicalId ? 'canonical' as const : 'resume' as const;
+    const messageId = (suffix: string): string => canonicalId
+      ? (suffix === 'message' ? canonicalId : `${canonicalId}:${suffix}`)
+      : `restored-${suffix}-${index}`;
     if (displayKind === 'hidden') return;
 
     if (displayKind === 'model_switch' || displayKind === 'auto_continue' || displayKind === 'async_delegation_complete') {
@@ -320,12 +331,14 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
         async_delegation_complete: 'Background agent work finished',
       };
       normalized.push({
-        id: `restored-event-${_now}-${index}`,
+        id: messageId('event'),
+        ...(canonicalId ? { canonicalId } : {}),
+        source,
         role: 'system',
         kind: 'event',
         text: labels[displayKind],
         status: 'complete',
-        createdAt: createdAt,
+        createdAt,
       });
       return;
     }
@@ -340,7 +353,9 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
         || structuredText(message.result);
       const durationS = typeof message.duration_s === 'number' ? message.duration_s : undefined;
       normalized.push({
-        id: `restored-tool-${_now}-${index}`,
+        id: messageId('tool'),
+        ...(canonicalId ? { canonicalId } : {}),
+        source,
         role: 'tool',
         kind: 'tool',
         toolName,
@@ -350,7 +365,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
         output: output || undefined,
         durationS,
         status: 'complete',
-        createdAt: createdAt,
+        createdAt,
       });
       return;
     }
@@ -359,23 +374,27 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
     const todoCalls = role === 'assistant' ? todoToolCalls(message) : [];
     if (reasoning) {
       normalized.push({
-        id: `restored-reasoning-${_now}-${index}`,
+        id: messageId('reasoning'),
+        ...(canonicalId ? { canonicalId } : {}),
+        source,
         role: 'tool',
         kind: 'reasoning',
         text: reasoning,
         status: 'complete',
-        createdAt: createdAt,
+        createdAt,
       });
     }
 
     if (!rawText.trim() && role !== 'assistant' && role !== 'user') return;
     normalized.push({
-      id: `restored-${_now}-${index}`,
+      id: messageId('message'),
+      ...(canonicalId ? { canonicalId } : {}),
+      source,
       role,
       kind: role === 'assistant' || role === 'user' || role === 'system' ? role : undefined,
       text: rawText,
       status: 'complete',
-      createdAt: createdAt,
+      createdAt,
       ...(todoCalls.length ? { toolCalls: todoCalls } : {}),
     });
   });

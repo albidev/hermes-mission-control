@@ -66,6 +66,7 @@ from mission_control_agents import (
     load_agents_sessions_snapshot,
     load_agents_snapshot,
     load_chat_message_timestamps,
+    load_chat_transcript,
     load_sessions_usage,
 )
 
@@ -2331,6 +2332,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._unauthorized()
                 return
             self._json(200, {'subscriptions': list_subscriptions()})
+            return
+        if parsed.path in ('/api/local/chat/transcript', '/api/local/chat/canonical'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            session_id = ((params.get('session_id') or params.get('sessionId') or [''])[0]).strip() or None
+            session_key = ((params.get('session_key') or params.get('sessionKey') or [''])[0]).strip() or None
+            if not session_id and not session_key:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id or session_key.'})
+                return
+            self._json(200, load_chat_transcript(session_id, session_key))
             return
         if parsed.path in ('/api/local/chat/timestamps', '/api/local/chat/message-timestamps'):
             if not _is_authorized(self):
