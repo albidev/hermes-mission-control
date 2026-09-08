@@ -6,8 +6,7 @@ import { MissionControlShell } from './components/MissionControlShell';
 import { OverviewLayout } from './routes/OverviewRoute';
 import { OverviewDashboard } from './components/overview/OverviewDashboard';
 import { PluginRegistry } from './core/plugins/registry';
-import { CuratePlugin } from './plugins/curate/route';
-import { curateManifest } from './plugins/curate/manifest';
+import { setPluginRegistry } from './core/plugin-registry';
 
 // Busy routes — lazy-loaded
 const SessionsRoute = lazy(() => import('./routes/SessionsRoute').then((m) => ({ default: m.SessionsRoute })));
@@ -20,16 +19,9 @@ const ConfigRoute = lazy(() => import('./routes/ConfigRoute').then((m) => ({ def
 const LogsRoute = lazy(() => import('./routes/LogsRoute').then((m) => ({ default: m.LogsRoute })));
 const KanbanRoute = lazy(() => import('./routes/KanbanRoute').then((m) => ({ default: m.KanbanRoute })));
 
-// Plugin registry — initialized synchronously at module level so routes
-// and nav items exist from the very first render (no async gap).
+// Plugin registry — empty by default. Plugins self-register via setPluginRegistry.
 const registry = new PluginRegistry();
-registry.load([
-  {
-    manifest: curateManifest,
-    component: CuratePlugin,
-    loadRoute: () => Promise.resolve({ default: CuratePlugin }),
-  },
-]);
+setPluginRegistry(registry);
 
 // Default routes (hardcoded, non-plugin)
 const defaultRoutes = [
@@ -44,7 +36,7 @@ const defaultRoutes = [
   { path: 'kanban', element: <KanbanRoute /> },
 ];
 
-// Plugin routes (available from first render)
+// Plugin routes (populated by plugins via registry)
 const pluginRoutes = registry.getRoutes();
 
 function App() {
@@ -60,7 +52,6 @@ function App() {
               {defaultRoutes.map((r) => (
                 <Route key={r.path} path={r.path} element={r.element} />
               ))}
-              {/* Plugin routes */}
               {pluginRoutes.map((r) => (
                 <Route key={r.path} path={r.path} element={r.element} />
               ))}

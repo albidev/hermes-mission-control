@@ -46,8 +46,8 @@ _CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
 def _client_diagnostics_log() -> Path:
     return hermes_logs_dir() / "mission-control-client.log"
 
-import candidates as candidates_mod
 import session_synthesis_rejections
+from plugins.loader import resolve_handler, dispatch_plugin_request
 from synthesis_activity_proxy import (
     SynthesisProxyError,
     apply_synthesis_candidate,
@@ -991,12 +991,15 @@ def _read_version() -> str:
     return '0.0.0'
 
 
-def _candidates_enabled() -> bool:
-    """Curate (BDH candidate curation) is an OPTIONAL feature. It is compiled into
-    MC but only exposed when MC_ENABLE_BDH_CURATOR is truthy. Default OFF so the
-    public Mission Control repo ships clean without the private nightly-brain
-    dependency. The real logic lives in the bdh-nightly-brain sidecar."""
-    return (os.getenv("MC_ENABLE_BDH_CURATOR") or "").strip().lower() in ("1", "true", "yes")
+def _candidates_plugin_loaded() -> bool:
+    """Curate is enabled when the 'curate' plugin is loaded (internal or external).
+    No env var needed — if the plugin is installed, it's active."""
+    try:
+        from plugins.loader import get_loader
+        loader = get_loader()
+        return loader.get_manifest("curate") is not None
+    except Exception:
+        return False
 
 
 _STATUS_CACHE_LOCK = threading.Lock()
@@ -1069,7 +1072,7 @@ def _collect_status_payload_uncached() -> Dict[str, Any]:
         'gateway_exit_reason': gateway_exit_reason,
         'gateway_updated_at': gateway_updated_at,
         'active_sessions': active_sessions,
-        'candidates_enabled': _candidates_enabled(),
+        'candidates_enabled': _candidates_plugin_loaded(),
     }
 
 
@@ -2384,9 +2387,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             vault = (params.get("vault") or [None])[0] or None
             try:
@@ -2398,9 +2401,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             vault = (params.get("vault") or [None])[0] or None
             status = (params.get("status") or [None])[0] or None
@@ -2410,29 +2413,19 @@ class Handler(BaseHTTPRequestHandler):
             except SynthesisProxyError as exc:
                 self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
             return
-        if parsed.path == '/api/local/candidates':
+        # Plugin dispatch — fallback for /api/local/ routes not handled above.
+        # Plugins are self-contained: the telemetry server doesn't know about
+        # specific plugin paths, it just delegates to the loader.
+        if parsed.path.startswith('/api/local/'):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
-                self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+            body = {}
+            handled, response, status = dispatch_plugin_request('GET', parsed.path, body, params)
+            if handled:
+                self._json(status, response)
                 return
-            status = (params.get("status") or [None])[0] or None
-            vault = (params.get("vault") or [None])[0] or None
-            cands = candidates_mod.list_candidates(status=status, vault=vault)
-            self._json(200, {"candidates": cands, "count": len(cands), "vault": vault})
-            return
-        if parsed.path == '/api/local/candidates/vaults':
-            if not _is_authorized(self):
-                self._unauthorized()
-                return
-            if not _candidates_enabled():
-                self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
-                return
-            self._json(200, {"vaults": candidates_mod.list_vaults()})
-            return
+
         self._json(404, {"error": "not_found", "path": self.path})
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -2870,9 +2863,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -2892,9 +2885,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -2939,9 +2932,9 @@ class Handler(BaseHTTPRequestHandler):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
+            if not _candidates_plugin_loaded():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
             payload = self._read_json_body()
             if payload is None:
@@ -2981,75 +2974,20 @@ class Handler(BaseHTTPRequestHandler):
                 'recorded': record,
             })
             return
-        if parsed.path == '/api/local/candidates/approve':
+        # Plugin dispatch — fallback for /api/local/ routes not handled above.
+        # Plugins are self-contained: the telemetry server doesn't know about
+        # specific plugin paths, it just delegates to the loader.
+        if parsed.path.startswith('/api/local/'):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
-                self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+            body = self._read_json_body() or {}
+            params = urllib.parse.parse_qs(parsed.query)
+            handled, response, status = dispatch_plugin_request('POST', parsed.path, body, params)
+            if handled:
+                self._json(status, response)
                 return
-            length = int(self.headers.get('Content-Length', 0))
-            if length == 0:
-                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
-                return
-            body = self.rfile.read(length).decode('utf-8')
-            try:
-                data = json.loads(body)
-            except json.JSONDecodeError:
-                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
-                return
-            cid = data.get('id', '')
-            filename = data.get('filename') or None
-            vault = data.get('vault') or None
-            if not cid:
-                self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
-                return
-            if not candidates_mod.can_curate(vault):
-                self._json(403, {'error': 'vault_not_curable',
-                                 'detail': 'Candidate mutations are disabled for this vault.'})
-                return
-            cand = candidates_mod.approve(cid, vault, filename)
-            if not cand:
-                self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
-                return
-            self._json(200, {'success': True, 'candidate': cand})
-            return
-        if parsed.path == '/api/local/candidates/reject':
-            if not _is_authorized(self):
-                self._unauthorized()
-                return
-            if not _candidates_enabled():
-                self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
-                return
-            length = int(self.headers.get('Content-Length', 0))
-            if length == 0:
-                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
-                return
-            body = self.rfile.read(length).decode('utf-8')
-            try:
-                data = json.loads(body)
-            except json.JSONDecodeError:
-                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
-                return
-            cid = data.get('id', '')
-            filename = data.get('filename') or None
-            reason = data.get('reason', '')
-            vault = data.get('vault') or None
-            if not cid:
-                self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
-                return
-            if not candidates_mod.can_curate(vault):
-                self._json(403, {'error': 'vault_not_curable',
-                                 'detail': 'Candidate mutations are disabled for this vault.'})
-                return
-            cand = candidates_mod.reject(cid, reason, vault, filename)
-            if not cand:
-                self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
-                return
-            self._json(200, {'success': True, 'candidate': cand})
-            return
+
         self._json(404, {'error': 'not_found', 'path': self.path})
 
     def do_PATCH(self) -> None:  # noqa: N802
