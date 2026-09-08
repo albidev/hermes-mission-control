@@ -801,6 +801,9 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
   const connect = useCallback(async () => {
     if (!open) return;
+    // A prior drawer cleanup marks its socket intentional. Clear that stale
+    // marker before awaiting bootstrap; a new cleanup can still set it again.
+    intentionalCloseRef.current = false;
     if (!initialSessionId?.trim()) await bootstrapPointer();
     if (!open || intentionalCloseRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
