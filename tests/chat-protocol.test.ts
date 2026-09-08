@@ -18,13 +18,17 @@ import {
   parseCommandDispatch,
   parseGatewayFrame,
   parseSlash,
+  reconcileTranscriptTimestamps,
   shouldCloseBackendSessionForNewChat,
   pendingPromptWasPersisted,
   ConnectionAttemptGate,
+  type ChatMessage,
 } from '../src/lib/chat-protocol.ts';
 import { deriveTodoPlan, normalizeTodoPlanSnapshot } from '../src/lib/todo-plan.ts';
+import { formatChatMessageTime } from '../src/lib/chat-time.ts';
 
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit } from '../src/lib/chat-outbox.ts';
+import { replaceWithCanonicalChatMessages } from '../src/lib/chat-sync.ts';
 
 function assertEqual<T>(actual: T, expected: T) {
   if (actual !== expected) {
@@ -151,6 +155,70 @@ assertEqual(restored[0].role, 'system');
 assertEqual(restored[1].role, 'user');
 assertEqual(restored[2].text, 'Answer');
 assertEqual(restored[3].text, 'Block one\nBlock two');
+
+const missingResumeTimestamp = normalizeTranscript([{ role: 'user', content: 'No timestamp from resume' }], 1001);
+assertEqual(missingResumeTimestamp[0].createdAt, null);
+
+const repeatedTranscript = [
+  { role: 'user', content: 'repeat' },
+  { role: 'assistant', content: 'same answer' },
+  { role: 'user', content: 'repeat' },
+  { role: 'assistant', content: 'same answer' },
+];
+const reconciledRepeated = reconcileTranscriptTimestamps(repeatedTranscript, [
+  { role: 'user', content: 'repeat', timestamp: 100 },
+  { role: 'assistant', content: 'same answer', timestamp: 101 },
+  { role: 'user', content: 'repeat', timestamp: 200 },
+  { role: 'assistant', content: 'same answer', timestamp: 201 },
+]);
+assertDeepEqual(reconciledRepeated.map((message) => message.timestamp), [100_000, 101_000, 200_000, 201_000]);
+const reconciledTool = reconcileTranscriptTimestamps(
+  [{ role: 'tool', name: 'shell', context: 'pwd', result: 'done' }],
+  [{ role: 'tool', tool_name: 'shell', content: 'done', timestamp: 300 }],
+);
+assertEqual(reconciledTool[0].timestamp, 300_000);
+
+const canonicalLarge = normalizeTranscript(
+  Array.from({ length: 240 }, (_, index) => ({
+    canonical_id: `db:${index + 1}`,
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: index % 3 === 0 ? 'repeat' : 'same answer',
+    timestamp: 100 + index,
+  })),
+);
+assertEqual(canonicalLarge.length, 240);
+assertEqual(new Set(canonicalLarge.map((message) => message.id)).size, 240);
+assertEqual(canonicalLarge[0].id, 'db:1');
+assertEqual(canonicalLarge[1].id, 'db:2');
+assertEqual(canonicalLarge[0].source, 'canonical');
+
+const liveRelay: ChatMessage = {
+  id: 'relay-user',
+  role: 'user',
+  kind: 'user',
+  text: 'repeat',
+  status: 'complete',
+  source: 'live',
+  createdAt: 500_000,
+};
+const canonicalView = replaceWithCanonicalChatMessages([liveRelay], canonicalLarge);
+assertEqual(canonicalView.length, 241);
+assertEqual(canonicalView.at(-1)?.id, 'relay-user');
+assertEqual(canonicalView.filter((message) => message.text === 'repeat').length > 1, true);
+
+const resumedYesterdayAt = Date.parse('2026-09-07T10:30:00.000Z');
+const resumedTodayAt = Date.parse('2026-09-08T10:30:00.000Z');
+const resumedYesterday = normalizeTranscript([
+  { role: 'user', content: 'Yesterday question', timestamp: resumedYesterdayAt / 1000 },
+  { role: 'assistant', content: 'Yesterday answer', timestamp: '2026-09-07T10:31:00.000Z' },
+], resumedTodayAt);
+assertEqual(resumedYesterday[0].createdAt, resumedYesterdayAt);
+assertEqual(resumedYesterday[1].createdAt, Date.parse('2026-09-07T10:31:00.000Z'));
+const yesterdayLabel = formatChatMessageTime(resumedYesterday[0].createdAt!, resumedTodayAt, 'en-US');
+const todayLabel = formatChatMessageTime(resumedTodayAt, resumedTodayAt, 'en-US');
+assertEqual(yesterdayLabel, new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(resumedYesterdayAt)));
+assertEqual(todayLabel, new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit' }).format(new Date(resumedTodayAt)));
+if (yesterdayLabel === todayLabel) throw new Error("A yesterday message must not render with today's time-only label.");
 const semanticTranscript = normalizeTranscript([
   { role: 'assistant', text: 'Answer', reasoning: 'Why this answer is safe.' },
   { role: 'tool', name: 'shell', context: 'pwd' },

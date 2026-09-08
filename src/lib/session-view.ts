@@ -32,12 +32,13 @@ export type SessionOrigin = {
   resumable: boolean;
 };
 
-const CONVERSATION_ORIGINS = new Set(['tui', 'discord', 'telegram', 'mission-control']);
+const CONVERSATION_ORIGINS = new Set(['tui', 'desktop', 'discord', 'telegram', 'mission-control']);
 const AUTOMATION_ORIGINS = new Set(['cron', 'kanban']);
 const SYSTEM_ORIGINS = new Set(['cli', 'system', 'test', 'smoke']);
 
 const ORIGIN_LABELS: Record<string, string> = {
   tui: 'TUI',
+  desktop: 'Desktop',
   discord: 'Discord',
   telegram: 'Telegram',
   'mission-control': 'Mission Control',

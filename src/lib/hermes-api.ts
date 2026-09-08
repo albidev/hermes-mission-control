@@ -1,4 +1,18 @@
 import { normalizeTodoPlanSnapshot, type TodoPlan } from './todo-plan';
+import { getPluginRegistry } from '../core/plugin-registry';
+
+/**
+ * Resolve a plugin endpoint URL from the registry.
+ * Falls back to the hardcoded path if the registry is not available.
+ */
+function resolvePluginPath(pluginId: string, handlerName: string, fallbackPath: string): string {
+  try {
+    const registry = getPluginRegistry();
+    return registry.resolveEndpointUrl(pluginId, handlerName) ?? fallbackPath;
+  } catch {
+    return fallbackPath;
+  }
+}
 
 export type MissionControlMachineStatus = {
   health: 'healthy' | 'degraded' | 'critical' | 'offline';
@@ -2506,121 +2520,214 @@ export function getFallbackCapabilities(): MissionControlCapabilities {
   return fallbackCapabilities;
 }
 
-// ---------- Nightly brain candidates ----------
-
-export interface MissionControlCandidate {
+export interface MissionControlSynthesisConcept {
   id: string;
-  type: string;
   title: string;
-  status: string;
-  created: string;
-  approved_at: string | null;
-  rejected_at: string | null;
-  rejection_reason: string;
-  quarantine_until: string | null;
-  body: string;
-  _filename: string;
+  path: string;
+  exists: boolean;
 }
 
-export interface MissionControlCandidatesSnapshot {
-  candidates: MissionControlCandidate[];
+export interface MissionControlSynthesisOperation {
+  operation_id: string;
+  synthesis_id: string;
+  session_id?: string | null;
+  action: 'created' | 'merged' | string;
+  status: 'applied' | 'reverted' | 'conflict' | 'prepared' | string;
+  note_path: string;
+  before_hash?: string | null;
+  after_hash?: string | null;
+  archived_path?: string | null;
+  timestamp?: string;
+}
+
+export interface MissionControlSynthesisActivity {
+  synthesis_id: string;
+  session_id?: string | null;
+  timestamp?: string;
+  outcome: string;
+  provider?: string | null;
+  model?: string | null;
+  concepts: MissionControlSynthesisConcept[];
+  operations: MissionControlSynthesisOperation[];
+}
+
+export interface MissionControlSynthesisActivitySnapshot {
+  vault_id: string;
+  activities: MissionControlSynthesisActivity[];
   count: number;
 }
 
-export interface MissionControlVaultInfo {
-  id: string;
-  label: string;
-  candidates_dir: string;
-  candidate_enabled?: boolean;
-  review_enabled?: boolean;
-  writable?: boolean;
-  read_only?: boolean;
-  mode?: 'candidates' | 'review_only' | 'read_only' | 'storage_only';
-  candidate_count?: number;
-  pending_count?: number;
-  reviewed_count?: number;
-}
-
-export async function loadMissionControlVaults(
+export async function loadMissionControlSynthesisActivity(
   accessToken?: string,
-): Promise<MissionControlVaultInfo[]> {
-  const { payload } = await maybeFetchLocalJson<{ vaults: MissionControlVaultInfo[] }>(
-    '/candidates/vaults',
-    accessToken,
-  );
-  return payload?.vaults ?? [];
-}
-
-export async function loadMissionControlCandidates(
-  accessToken?: string,
-  status?: string,
   vault?: string,
-): Promise<MissionControlCandidatesSnapshot> {
+): Promise<MissionControlSynthesisActivitySnapshot> {
   const params = new URLSearchParams();
-  if (status) params.set('status', status);
   if (vault) params.set('vault', vault);
   const qs = params.toString();
-  const path = qs ? `/candidates?${qs}` : '/candidates';
-  const { payload } = await maybeFetchLocalJson<MissionControlCandidatesSnapshot>(path, accessToken);
-  return payload ?? { candidates: [], count: 0 };
-}
-
-export async function approveCandidate(
-  accessToken: string | undefined,
-  id: string,
-  vault?: string,
-  filename?: string,
-): Promise<MissionControlCandidate | null> {
-  const response = await fetch(apiUrl('/candidates/approve'), {
-    method: 'POST',
-    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, ...(vault ? { vault } : {}), ...(filename ? { filename } : {}) }),
+  const path = qs ? `/synthesis/activity?${qs}` : '/synthesis/activity';
+  const response = await fetch(localApiUrl(path), {
+    headers: buildHeaders(accessToken),
+    cache: 'no-store',
   });
   if (response.status === 401) throw new MissionControlAuthError();
   if (!response.ok) {
-    let detail = '';
-    try {
-      const payload = await response.json();
-      detail = payload?.detail || payload?.error || '';
-    } catch {
-      // Keep the HTTP status as the useful fallback.
-    }
-    throw new Error(`Approve failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    const payload = await response.json().catch(() => ({}));
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Synthesis activity failed (${response.status})${detail ? `: ${detail}` : ''}`);
   }
-  const data = await response.json();
-  return data?.candidate ?? null;
+  return (await response.json()) as MissionControlSynthesisActivitySnapshot;
 }
 
-export async function rejectCandidate(
+export async function revertMissionControlSynthesis(
   accessToken: string | undefined,
-  id: string,
+  operationId: string,
+  vault?: string,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl('/synthesis/revert'), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation_id: operationId, ...(vault ? { vault } : {}) }),
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Revert failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  return payload as Record<string, unknown>;
+}
+
+// ---------- Session synthesis candidates (BDH pre-write gate) ----------
+
+export interface MissionControlSessionSynthesisSafeProvenance {
+  session_title: string | null;
+  created_at: string | null;
+  source_ref: string | null;
+  concept_summary: string | null;
+}
+
+export interface MissionControlSessionSynthesisCandidate {
+  source: string;
+  candidate_id: string;
+  synthesis_id: string;
+  session_id: string;
+  vault_id: string;
+  title: string;
+  definition: string;
+  confidence: string;
+  status: string;
+  created_at: string | null;
+  accepted_count: number | null;
+  context_only_count: number | null;
+  provenance: Record<string, unknown>;
+  extra: Record<string, unknown>;
+  safe_provenance: MissionControlSessionSynthesisSafeProvenance;
+}
+
+export interface MissionControlSessionSynthesisCandidatesSnapshot {
+  vault_id: string | null;
+  count: number;
+  candidates: MissionControlSessionSynthesisCandidate[];
+}
+
+export interface MissionControlSessionSynthesisApplyResult {
+  candidate_id?: string;
+  synthesis_id?: string;
+  vault_id?: string;
+  status?: string;
+  note_path?: string;
+  operation_id?: string;
+  reason?: string;
+  idempotent?: boolean;
+  applied?: boolean;
+}
+
+function normalizeSessionSynthesisCandidate(
+  input: Partial<MissionControlSessionSynthesisCandidate> | undefined,
+): MissionControlSessionSynthesisCandidate {
+  const provenance: Partial<MissionControlSessionSynthesisSafeProvenance> = input?.safe_provenance ?? {};
+  return {
+    source: input?.source ?? 'session_synthesis',
+    candidate_id: input?.candidate_id ?? '',
+    synthesis_id: input?.synthesis_id ?? '',
+    session_id: input?.session_id ?? '',
+    vault_id: input?.vault_id ?? '',
+    title: input?.title ?? '',
+    definition: input?.definition ?? '',
+    confidence: input?.confidence ?? '',
+    status: input?.status ?? 'pending_review',
+    created_at: input?.created_at ?? null,
+    accepted_count: input?.accepted_count ?? null,
+    context_only_count: input?.context_only_count ?? null,
+    provenance: input?.provenance ?? {},
+    extra: input?.extra ?? {},
+    safe_provenance: {
+      session_title: provenance.session_title ?? null,
+      created_at: provenance.created_at ?? null,
+      source_ref: provenance.source_ref ?? null,
+      concept_summary: provenance.concept_summary ?? null,
+    },
+  };
+}
+
+export async function loadMissionControlSessionSynthesisCandidates(
+  accessToken?: string,
+  vault?: string,
+  status?: string,
+): Promise<MissionControlSessionSynthesisCandidatesSnapshot> {
+  const params = new URLSearchParams();
+  if (vault) params.set('vault', vault);
+  if (status) params.set('status', status);
+  const qs = params.toString();
+  const path = qs ? `/synthesis/candidates?${qs}` : '/synthesis/candidates';
+  const { payload } = await maybeFetchLocalJson<{
+    vault_id: string | null;
+    count: number;
+    candidates: Partial<MissionControlSessionSynthesisCandidate>[];
+  }>(path, accessToken);
+  const candidates = (payload?.candidates ?? []).map(normalizeSessionSynthesisCandidate);
+  return { vault_id: payload?.vault_id ?? null, count: candidates.length, candidates };
+}
+
+export async function applyMissionControlSessionSynthesisCandidate(
+  accessToken: string | undefined,
+  candidateId: string,
+  vault?: string,
+): Promise<MissionControlSessionSynthesisApplyResult> {
+  const response = await fetch(apiUrl('/synthesis/apply'), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ candidate_id: candidateId, ...(vault ? { vault } : {}) }),
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Apply failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  return payload as MissionControlSessionSynthesisApplyResult;
+}
+
+export async function rejectMissionControlSessionSynthesisCandidate(
+  accessToken: string | undefined,
+  candidateId: string,
   reason: string,
   vault?: string,
-  filename?: string,
-): Promise<MissionControlCandidate | null> {
-  const response = await fetch(apiUrl('/candidates/reject'), {
+): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl('/synthesis/reject'), {
     method: 'POST',
     headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, reason, ...(vault ? { vault } : {}), ...(filename ? { filename } : {}) }),
+    body: JSON.stringify({ candidate_id: candidateId, reason, ...(vault ? { vault } : {}) }),
   });
   if (response.status === 401) throw new MissionControlAuthError();
+  const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    let detail = '';
-    try {
-      const payload = await response.json();
-      detail = payload?.detail || payload?.error || '';
-    } catch {
-      // Keep the HTTP status as the useful fallback.
-    }
+    const detail = payload?.detail || payload?.error || '';
     throw new Error(`Reject failed (${response.status})${detail ? `: ${detail}` : ''}`);
   }
-  const data = await response.json();
-  return data?.candidate ?? null;
+  return payload as Record<string, unknown>;
 }
 
-// ---------------------------------------------------------------------------
-// Kanban (Mission Control → sidecar /api/local/kanban/* → core kanban_db)
-// ---------------------------------------------------------------------------
 
 export type MissionControlKanbanTask = {
   id: string;

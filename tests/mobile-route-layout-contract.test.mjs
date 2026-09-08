@@ -15,8 +15,9 @@ const routeFiles = [
   'SkillsRoute.tsx',
   'ConfigRoute.tsx',
   'LogsRoute.tsx',
-  'CurateRoute.tsx',
 ];
+
+// External plugin UIs are not part of the Mission Control repository.
 
 assert.match(styles, /\.route-page-scroll\s*\{[\s\S]*?overflow-x:\s*hidden;/, 'Route pages must not expose a horizontal page scroll');
 assert.match(styles, /scroll-padding-bottom:\s*max\(1rem, env\(safe-area-inset-bottom\)\)/);
@@ -28,9 +29,6 @@ for (const file of routeFiles) {
   let path;
   if (file === 'OverviewDashboard.tsx') {
     path = new URL('src/components/overview/OverviewDashboard.tsx', root);
-  } else if (file === 'CurateRoute.tsx') {
-    // Curate is a self-contained plugin — its UI lives under src/plugins/curate/
-    path = new URL('src/plugins/curate/CurateRoute.tsx', root);
   } else {
     path = new URL(`src/routes/${file}`, root);
   }

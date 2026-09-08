@@ -1,5 +1,8 @@
+import { createRequire } from 'node:module';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+
+const require = createRequire(import.meta.url);
 
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env };
@@ -22,8 +25,24 @@ export default defineConfig(({ mode }) => {
     .filter(Boolean);
 
   const ALL_ALLOWED_HOSTS = [...new Set([...ALLOWED_HOSTS, ...DEV_SERVER_HOSTS])];
+  // External plugin UIs are symlinked under src/plugins/ but their source files
+  // live outside the MC package. Resolve shared peer dependencies from MC's
+  // own node_modules so plugins do not need a second React installation.
+  const hostReact = require.resolve('react', { paths: [process.cwd()] });
+  const hostReactDom = require.resolve('react-dom', { paths: [process.cwd()] });
+  const hostRouter = require.resolve('react-router-dom', { paths: [process.cwd()] });
+  const hostIcons = require.resolve('lucide-react', { paths: [process.cwd()] });
 
   return {
+    resolve: {
+      dedupe: ['react', 'react-dom'],
+      alias: [
+        { find: /^react$/, replacement: hostReact },
+        { find: /^react-dom$/, replacement: hostReactDom },
+        { find: /^react-router-dom$/, replacement: hostRouter },
+        { find: /^lucide-react$/, replacement: hostIcons }
+      ],
+    },
     plugins: [react()],
     server: {
       host: true,

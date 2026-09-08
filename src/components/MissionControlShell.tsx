@@ -28,9 +28,9 @@ import { PluginRegistry } from '../core/plugins/registry';
 import type { MCPluginNavItem } from '../core/plugins/types';
 import { resolveIcon } from '../lib/icons';
 
-type ShellProps = { registry: PluginRegistry | null };
+type ShellProps = { registry: PluginRegistry | null; navItems?: MCPluginNavItem[] };
 
-export function MissionControlShell({ registry }: ShellProps) {
+export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }: ShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
   useLastRoutePersistence();
@@ -77,10 +77,9 @@ export function MissionControlShell({ registry }: ShellProps) {
   ];
 
   // Plugin nav items (from registry)
-  const pluginNavItems = registry?.getNavItems() ?? [];
-
-  // Merge and sort by order
-  const navItems: MCPluginNavItem[] = [...defaultNavItems, ...pluginNavItems]
+  const registryNavItems = registry?.getNavItems() ?? [];
+  // Merge prop navItems (from runtime plugin loader) with registry nav items
+  const navItems: MCPluginNavItem[] = [...defaultNavItems, ...registryNavItems, ...runtimeNavItems]
     .sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
 
   const [sideOpen, setSideOpen] = useState(false);
@@ -226,10 +225,10 @@ export function MissionControlShell({ registry }: ShellProps) {
               );
             })}
 
-            {pluginNavItems.length > 0 ? (
+            {registryNavItems.length > 0 ? (
               <>
                 <div className="side-nav-section-label">PLUGINS</div>
-                {pluginNavItems.map((item) => {
+                {registryNavItems.map((item) => {
                   const Icon = resolveIcon(item.icon) ?? ((props: any) => <span {...props} />);
                   const label = item.label.includes('.') ? t(item.label) : item.label;
                   return (

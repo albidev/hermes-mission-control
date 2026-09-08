@@ -16,11 +16,12 @@ _TRACE_MODE_UNAVAILABLE = "unavailable"
 _SKILL_TOOL_NAMES = {"skill_view", "skills_list", "skill_manage"}
 _SCHEMA_VERSION = "2"
 
-_CONVERSATION_ORIGINS = {"tui", "discord", "telegram", "mission-control"}
+_CONVERSATION_ORIGINS = {"tui", "desktop", "discord", "telegram", "mission-control"}
 _AUTOMATION_ORIGINS = {"cron", "kanban"}
 _SYSTEM_ORIGINS = {"cli", "system", "test", "smoke"}
 _ORIGIN_LABELS = {
     "tui": "TUI",
+    "desktop": "Desktop",
     "discord": "Discord",
     "telegram": "Telegram",
     "mission-control": "Mission Control",
@@ -265,6 +266,167 @@ def _get_db_messages(db: Any, session_id: str) -> list[dict[str, Any]] | None:
         return rows if isinstance(rows, list) and rows else None
     except Exception:
         return None
+
+
+def _resolve_chat_session(db: Any, session_ref: str) -> tuple[str, str]:
+    """Resolve a gateway session id/key to the SessionDB row holding its messages."""
+    reference = str(session_ref or "").strip()
+    if not reference or db is None:
+        return reference, reference
+
+    candidates: list[dict[str, Any]] = []
+    for kwargs in (
+        {"session_key": reference},
+        {"id_query": reference},
+    ):
+        try:
+            rows = db.list_sessions_rich(
+                limit=1,
+                offset=0,
+                include_children=True,
+                include_archived=True,
+                order_by_last_active=True,
+                compact_rows=True,
+                **kwargs,
+            )
+            if isinstance(rows, list):
+                candidates = [row for row in rows if isinstance(row, dict)]
+            if candidates:
+                break
+        except Exception:
+            continue
+
+    candidate = candidates[0] if candidates else {}
+    candidate_id = str(candidate.get("id") or reference).strip()
+    try:
+        resolved_id = str(db.resolve_resume_session_id(candidate_id) or candidate_id).strip()
+    except Exception:
+        resolved_id = candidate_id
+    return resolved_id, str(candidate.get("session_key") or reference).strip()
+
+
+def _resolve_chat_reference(
+    db: Any,
+    session_id: str | None = None,
+    session_key: str | None = None,
+) -> tuple[str, str]:
+    reference = str(session_key or session_id or "").strip()
+    if not reference:
+        return "", ""
+    return _resolve_chat_session(db, reference)
+
+
+def load_chat_transcript(
+    session_id: str | None = None,
+    session_key: str | None = None,
+) -> dict[str, Any]:
+    """Return the complete, canonical Mission Control display transcript.
+
+    This deliberately uses Hermes' own SessionDB display projection rather than
+    the gateway's bounded resume payload.  ``_row_id`` is the durable identity;
+    clients must never infer identity from repeated content.
+    """
+    reference = str(session_key or session_id or "").strip()
+    if not reference:
+        return {"sessionId": "", "sessionKey": "", "messages": [], "complete": True, "count": 0}
+
+    db = _try_get_session_db()
+    try:
+        resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
+        display_rows = db.get_resume_conversations(resolved_id)[1] if db is not None else []
+        messages: list[dict[str, Any]] = []
+        for row in display_rows:
+            if not isinstance(row, dict):
+                continue
+            row_id = row.get("_row_id")
+            if row_id is None:
+                # A display row without a DB id cannot satisfy the canonical
+                # identity contract, so do not expose it as a durable message.
+                continue
+            message: dict[str, Any] = {
+                "id": f"db:{row_id}",
+                "canonical_id": f"db:{row_id}",
+                "session_id": resolved_id,
+                "role": row.get("role"),
+                "content": row.get("content"),
+                "timestamp": _parse_timestamp(row.get("timestamp")),
+            }
+            for key in (
+                "tool_call_id",
+                "tool_name",
+                "tool_calls",
+                "reasoning",
+                "reasoning_content",
+                "reasoning_details",
+                "codex_reasoning_items",
+                "codex_message_items",
+                "display_kind",
+                "display_metadata",
+                "message_id",
+                "effect_disposition",
+            ):
+                if row.get(key) is not None:
+                    message[key] = row[key]
+            messages.append(message)
+        return {
+            "sessionId": resolved_id,
+            "sessionKey": resolved_key,
+            "messages": messages,
+            "complete": True,
+            "count": len(messages),
+        }
+    except Exception:
+        _log.debug("Failed to load canonical chat transcript for %s", reference, exc_info=True)
+        return {
+            "sessionId": reference,
+            "sessionKey": reference,
+            "messages": [],
+            "complete": False,
+            "count": 0,
+        }
+    finally:
+        _close_session_db(db)
+
+
+def load_chat_message_timestamps(
+    session_id: str | None = None,
+    session_key: str | None = None,
+) -> dict[str, Any]:
+    """Return canonical SessionDB message metadata for legacy resume repair."""
+    reference = str(session_key or session_id or "").strip()
+    if not reference:
+        return {"sessionId": "", "sessionKey": "", "messages": []}
+
+    db = _try_get_session_db()
+    try:
+        resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
+        rows = _get_db_messages(db, resolved_id) or []
+        metadata: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            timestamp = _parse_timestamp(row.get("timestamp"))
+            if timestamp is None:
+                continue
+            metadata.append({
+                "role": row.get("role"),
+                "content": row.get("content"),
+                "tool_name": row.get("tool_name"),
+                "tool_call_id": row.get("tool_call_id"),
+                "tool_calls": row.get("tool_calls"),
+                "timestamp": timestamp,
+                "display_kind": row.get("display_kind"),
+            })
+        return {
+            "sessionId": resolved_id,
+            "sessionKey": resolved_key,
+            "messages": metadata,
+        }
+    except Exception:
+        _log.debug("Failed to load chat timestamps for %s", reference, exc_info=True)
+        return {"sessionId": reference, "sessionKey": reference, "messages": []}
+    finally:
+        _close_session_db(db)
 
 
 def _first_user_content(messages: list[dict[str, Any]] | None) -> str:

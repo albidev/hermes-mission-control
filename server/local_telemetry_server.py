@@ -47,7 +47,17 @@ _CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
 def _client_diagnostics_log() -> Path:
     return hermes_logs_dir() / "mission-control-client.log"
 
-import candidates as candidates_mod
+import session_synthesis_rejections
+from plugins.loader import resolve_handler, dispatch_plugin_request
+from synthesis_activity_proxy import (
+    SynthesisProxyError,
+    apply_synthesis_candidate,
+    approve_synthesis_candidate,
+    get_synthesis_candidate,
+    load_synthesis_activity,
+    load_synthesis_candidates,
+    revert_synthesis,
+)
 from nous_portal_usage import collect_nous_portal_usage
 from provider_usage_config import apply_provider_display_config, visible_usage_providers
 from provider_usage_contract import normalize_cached_entry, normalize_codexbar_entry
@@ -56,6 +66,8 @@ from mission_control_agents import (
     load_agent_trace_snapshot,
     load_agents_sessions_snapshot,
     load_agents_snapshot,
+    load_chat_message_timestamps,
+    load_chat_transcript,
     load_sessions_usage,
 )
 
@@ -982,10 +994,20 @@ def _read_version() -> str:
 
 
 def _candidates_enabled() -> bool:
-    """Curate (BDH candidate curation) is an OPTIONAL feature. It is compiled into
-    MC but only exposed when MC_ENABLE_BDH_CURATOR is truthy. Default OFF so the
-    public Mission Control repo ships clean without the private nightly-brain
-    dependency. The real logic lives in the bdh-nightly-brain sidecar."""
+    """Curate/synthesis features are enabled when either:
+    1. The 'curate' plugin is loaded (internal or external), OR
+    2. MC_ENABLE_BDH_CURATOR env var is set (legacy, for MC-core synthesis endpoints)
+
+    Plugin presence takes precedence — if installed, it's always active."""
+    # Check plugin first
+    try:
+        from plugins.loader import get_loader
+        loader = get_loader()
+        if loader.get_manifest("curate") is not None:
+            return True
+    except Exception:
+        pass
+    # Fallback to env var for MC-core endpoints
     return (os.getenv("MC_ENABLE_BDH_CURATOR") or "").strip().lower() in ("1", "true", "yes")
 
 
@@ -2323,6 +2345,37 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {'subscriptions': list_subscriptions()})
             return
+        if parsed.path in ('/api/local/chat/transcript', '/api/local/chat/canonical'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            session_id = ((params.get('session_id') or params.get('sessionId') or [''])[0]).strip() or None
+            session_key = ((params.get('session_key') or params.get('sessionKey') or [''])[0]).strip() or None
+            if not session_id and not session_key:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id or session_key.'})
+                return
+            self._json(200, load_chat_transcript(session_id, session_key))
+            return
+        if parsed.path in ('/api/local/chat/timestamps', '/api/local/chat/message-timestamps'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            session_id = ((params.get('session_id') or params.get('sessionId') or [''])[0]).strip() or None
+            session_key = ((params.get('session_key') or params.get('sessionKey') or [''])[0]).strip() or None
+            if not session_id and not session_key:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id or session_key.'})
+                return
+            self._json(200, load_chat_message_timestamps(session_id, session_key))
+            return
+        if parsed.path == '/api/local/plugins':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            from plugins.loader import get_loader
+            loader = get_loader()
+            plugins = loader.list_plugins()
+            self._json(200, {'plugins': plugins, 'count': len(plugins)})
+            return
         if parsed.path == '/api/local/chat/last':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2348,29 +2401,49 @@ class Handler(BaseHTTPRequestHandler):
                 logging.exception('Legacy whiteboard GET handler error for session %s', session_id)
                 self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
             return
-        if parsed.path == '/api/local/candidates':
+        if parsed.path == '/api/local/synthesis/activity':
             if not _is_authorized(self):
                 self._unauthorized()
                 return
             if not _candidates_enabled():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
-            status = (params.get("status") or [None])[0] or None
             vault = (params.get("vault") or [None])[0] or None
-            cands = candidates_mod.list_candidates(status=status, vault=vault)
-            self._json(200, {"candidates": cands, "count": len(cands), "vault": vault})
+            try:
+                self._json(200, load_synthesis_activity(vault))
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
             return
-        if parsed.path == '/api/local/candidates/vaults':
+        if parsed.path == '/api/local/synthesis/candidates':
             if not _is_authorized(self):
                 self._unauthorized()
                 return
             if not _candidates_enabled():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
-            self._json(200, {"vaults": candidates_mod.list_vaults()})
+            vault = (params.get("vault") or [None])[0] or None
+            status = (params.get("status") or [None])[0] or None
+            synthesis_id = (params.get("synthesis_id") or [None])[0] or None
+            try:
+                self._json(200, load_synthesis_candidates(vault, status, synthesis_id))
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
             return
+        # Plugin dispatch — fallback for /api/local/ routes not handled above.
+        # Plugins are self-contained: the telemetry server doesn't know about
+        # specific plugin paths, it just delegates to the loader.
+        if parsed.path.startswith('/api/local/'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            body = {}
+            handled, response, status = dispatch_plugin_request('GET', parsed.path, body, params)
+            if handled:
+                self._json(status, response)
+                return
+
         self._json(404, {"error": "not_found", "path": self.path})
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -2617,11 +2690,27 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
                 return
+            if not isinstance(data, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
             if not str(data.get('sessionId', '')).strip():
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing sessionId.'})
                 return
-            saved = set_last_chat(data)
-            self._json(200, {'success': True, 'lastChat': saved})
+            expected_revision = data.get('expectedRevision')
+            if expected_revision is not None and (
+                isinstance(expected_revision, bool) or not isinstance(expected_revision, int)
+            ):
+                self._json(400, {'error': 'bad_request', 'detail': 'expectedRevision must be an integer.'})
+                return
+            saved = set_last_chat(data, expected_revision=expected_revision)
+            if not saved['accepted']:
+                self._json(409, {
+                    'error': 'revision_conflict',
+                    'detail': 'Last-chat pointer changed since it was read.',
+                    'lastChat': saved['lastChat'],
+                })
+                return
+            self._json(200, {'success': True, 'lastChat': saved['lastChat']})
             return
         if parsed.path == '/api/local/chat/whiteboard':
             if not _is_authorized(self):
@@ -2799,75 +2888,135 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {'success': True, **result})
             return
-        if parsed.path == '/api/local/candidates/approve':
+        if parsed.path == '/api/local/synthesis/revert':
             if not _is_authorized(self):
                 self._unauthorized()
                 return
             if not _candidates_enabled():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
-            length = int(self.headers.get('Content-Length', 0))
-            if length == 0:
-                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+            payload = self._read_json_body()
+            if payload is None:
                 return
-            body = self.rfile.read(length).decode('utf-8')
+            operation_id = str(payload.get('operation_id') or '').strip()
+            if not operation_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing operation_id.'})
+                return
+            vault = str(payload.get('vault') or '').strip() or None
             try:
-                data = json.loads(body)
-            except json.JSONDecodeError:
-                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
-                return
-            cid = data.get('id', '')
-            filename = data.get('filename') or None
-            vault = data.get('vault') or None
-            if not cid:
-                self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
-                return
-            if not candidates_mod.can_curate(vault):
-                self._json(403, {'error': 'vault_not_curable',
-                                 'detail': 'Candidate mutations are disabled for this vault.'})
-                return
-            cand = candidates_mod.approve(cid, vault, filename)
-            if not cand:
-                self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
-                return
-            self._json(200, {'success': True, 'candidate': cand})
+                result = revert_synthesis(operation_id, vault)
+                self._json(200, result)
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_revert_failed', 'detail': str(exc)})
             return
-        if parsed.path == '/api/local/candidates/reject':
+        if parsed.path == '/api/local/synthesis/apply':
             if not _is_authorized(self):
                 self._unauthorized()
                 return
             if not _candidates_enabled():
                 self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
                 return
-            length = int(self.headers.get('Content-Length', 0))
-            if length == 0:
-                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+            payload = self._read_json_body()
+            if payload is None:
                 return
-            body = self.rfile.read(length).decode('utf-8')
+            candidate_id = str(payload.get('candidate_id') or '').strip()
+            vault = str(payload.get('vault') or '').strip() or None
+            if not candidate_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing candidate_id.'})
+                return
+            # Vault isolation + tamper resistance: resolve the candidate from
+            # BDH within the requested vault and forward BDH's own correlation
+            # tuple, never the client-supplied synthesis/session ids.
             try:
-                data = json.loads(body)
-            except json.JSONDecodeError:
-                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                candidate = get_synthesis_candidate(candidate_id, vault)
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
                 return
-            cid = data.get('id', '')
-            filename = data.get('filename') or None
-            reason = data.get('reason', '')
-            vault = data.get('vault') or None
-            if not cid:
-                self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
+            if candidate is None:
+                self._json(404, {'error': 'not_found',
+                                 'detail': f'Candidate {candidate_id} not found in vault {vault or "default"}.'})
                 return
-            if not candidates_mod.can_curate(vault):
-                self._json(403, {'error': 'vault_not_curable',
-                                 'detail': 'Candidate mutations are disabled for this vault.'})
-                return
-            cand = candidates_mod.reject(cid, reason, vault, filename)
-            if not cand:
-                self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
-                return
-            self._json(200, {'success': True, 'candidate': cand})
+            try:
+                approve_synthesis_candidate(
+                    candidate_id=candidate['candidate_id'],
+                    synthesis_id=candidate['synthesis_id'],
+                    session_id=candidate['session_id'],
+                    vault_id=candidate['vault_id'],
+                    source=candidate['source'],
+                )
+                result = apply_synthesis_candidate(
+                    candidate_id=candidate['candidate_id'],
+                    synthesis_id=candidate['synthesis_id'],
+                    session_id=candidate['session_id'],
+                    vault_id=candidate['vault_id'],
+                    source=candidate['source'],
+                )
+                self._json(200, result)
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_apply_failed', 'detail': str(exc)})
             return
+        if parsed.path == '/api/local/synthesis/reject':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            if not _candidates_enabled():
+                self._json(404, {'error': 'feature_disabled',
+                                 'detail': 'BDH curator plugin is not installed. Clone it into ~/.hermes/mc-plugins/curate/ to enable.'})
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            candidate_id = str(payload.get('candidate_id') or '').strip()
+            reason = str(payload.get('reason') or '').strip()
+            vault = str(payload.get('vault') or '').strip() or None
+            if not candidate_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing candidate_id.'})
+                return
+            # Reject is a local-only record: it never applies to BDH. The
+            # reason is persisted through the existing safe candidate mechanism
+            # (nightly-brain candidates) so it can feed the model's next run.
+            try:
+                candidate = get_synthesis_candidate(candidate_id, vault)
+            except SynthesisProxyError as exc:
+                self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
+                return
+            if candidate is None:
+                self._json(404, {'error': 'not_found',
+                                 'detail': f'Candidate {candidate_id} not found in vault {vault or "default"}.'})
+                return
+            record = session_synthesis_rejections.record_rejection(
+                candidate_id=candidate_id,
+                vault_id=candidate['vault_id'],
+                synthesis_id=candidate['synthesis_id'],
+                session_id=candidate['session_id'],
+                title=candidate['title'],
+                reason=reason,
+            )
+            self._json(200, {
+                'success': True,
+                'candidate_id': candidate_id,
+                'vault_id': candidate['vault_id'],
+                'status': 'rejected',
+                'reason': reason,
+                'recorded': record,
+            })
+            return
+        # Plugin dispatch — fallback for /api/local/ routes not handled above.
+        # Plugins are self-contained: the telemetry server doesn't know about
+        # specific plugin paths, it just delegates to the loader.
+        if parsed.path.startswith('/api/local/'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            body = self._read_json_body() or {}
+            params = urllib.parse.parse_qs(parsed.query)
+            handled, response, status = dispatch_plugin_request('POST', parsed.path, body, params)
+            if handled:
+                self._json(status, response)
+                return
+
         self._json(404, {'error': 'not_found', 'path': self.path})
 
     def do_PATCH(self) -> None:  # noqa: N802
