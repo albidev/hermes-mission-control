@@ -45,7 +45,7 @@ import { canClaimLastChatPointer, createChatBootstrapGuard, shouldAdoptServerPoi
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
 import { applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, fetchChatTranscript, publishChatSync, replaceWithCanonicalChatMessages, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
-import { commandOutput, resultText } from './chat-commands';
+import { commandOutput, executeReasoningSlashCommand, resultText } from './chat-commands';
 import {
   extractClarifyToolContent,
   interactionTitle,
@@ -1284,6 +1284,20 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         const switched = await switchModel(parsed.arg);
         if (!switched.ok) throw new Error(switched.error || 'Could not switch model.');
         return true;
+      }
+      if (parsed.name.toLowerCase() === 'reasoning' && parsed.arg) {
+        const reasoning = await executeReasoningSlashCommand(parsed.arg, activeSessionId, request);
+        if (reasoning) {
+          if (reasoning.updatesEffort) {
+            setModelIdentity((current) => current ? { ...current, reasoningEffort: reasoning.value } : current);
+            const scopeLabel = reasoning.scope === 'global' ? 'saved globally' : 'session-scoped';
+            appendSystemMessage(`✓ Reasoning effort set to '${reasoning.value}' (${scopeLabel})`);
+          } else {
+            appendSystemMessage(`✓ Reasoning display: ${reasoning.value}`);
+          }
+          await refreshModel(activeSessionId);
+          return true;
+        }
       }
       const normalizedCommand = command.trim().replace(/^\/+/, '');
       try {
