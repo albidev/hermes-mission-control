@@ -22,6 +22,7 @@ const tldraw = readFileSync(new URL('../src/components/TLDrawCanvas.tsx', import
 const todoPlan = readFileSync(new URL('../src/components/chat/ChatTodoPlan.tsx', import.meta.url), 'utf8');
 const toolMessage = readFileSync(new URL('../src/components/chat/ToolMessage.tsx', import.meta.url), 'utf8');
 const chatSync = readFileSync(new URL('../src/lib/chat-sync.ts', import.meta.url), 'utf8');
+const chatPersistence = readFileSync(new URL('../src/lib/chat-persistence.ts', import.meta.url), 'utf8');
 
 assertIncludes(component, 'className="chat-head-identity"', 'header groups identity and model metadata');
 assertIncludes(component, '<ChatTodoPlan plan={showTodoPlan}', 'chat drawer exposes the live TODO plan');
@@ -30,7 +31,13 @@ assertIncludes(component, 'const [previewTodoPlan, setPreviewTodoPlan] = useStat
 assertIncludes(component, 'const visibleTodoPlan = gatewayTodoPlan ?? previewTodoPlan ?? derivedTodoPlan;', 'gateway TODO state has priority over preview fallback');
 assertIncludes(chatGateway, "'session.events.since'", 'chat gateway replays missed session events');
 assertIncludes(chatGateway, 'shouldApplySequencedEvent', 'chat gateway deduplicates sequenced events');
-assertIncludes(chatGateway, 'mergeDurableChatMessages', 'chat gateway merges remote snapshots without dropping local streaming state');
+assertIncludes(chatSync, 'mergeDurableChatMessages', 'chat sync merges remote snapshots without dropping local streaming state');
+assertIncludes(chatGateway, 'fetchChatTranscript', 'chat gateway hydrates from the canonical sidecar transcript');
+assertIncludes(chatGateway, 'visibilitychange', 'chat gateway refreshes canonical transcript when mobile returns foreground');
+assertIncludes(chatGateway, "window.addEventListener('pageshow'", 'chat gateway refreshes canonical transcript after pageshow');
+assertIncludes(chatSync, 'replaceWithCanonicalChatMessages', 'canonical transcript replacement is separate from partial resume merging');
+assertExcludes(chatSync, 'messageKey(candidate)', 'durable reconciliation never uses content-only identity');
+assertExcludes(chatPersistence, 'slice(-200)', 'local persistence does not cap the canonical transcript at 200 rows');
 assertIncludes(chatGateway, 'replay_epoch', 'chat gateway detects replay epoch changes after backend restart');
 assertIncludes(chatGateway, "parsed.event.type === 'todo.updated'", 'chat gateway consumes live TODO updates');
 assertIncludes(chatGateway, 'publishChatSync(storedToken, parsed.event.session_id, \'gateway_event\'', 'chat gateway mirrors core events into the sidecar relay');
@@ -40,7 +47,7 @@ assertIncludes(chatGateway, 'publishChatSync(storedToken, activeSessionId, \'sys
 assertIncludes(chatSync, 'export type ChatSyncEnvelope', 'chat sync envelope supports control acknowledgements');
 assertIncludes(chatSync, 'export function applySyncedChatMessage', 'chat sync deduplicates mirrored messages');
 assertIncludes(chatSync, 'let publishQueue: Promise<void> = Promise.resolve();', 'chat sync serializes publishes to preserve event order');
-assertIncludes(chatGateway, "!open || !storedToken || initialSessionId?.trim()", 'explicit session resume is not overridden by the global last-chat pointer');
+assertIncludes(chatGateway, 'if (!open || initialSessionId?.trim()) return;', 'explicit session resume is not overridden by the global last-chat pointer');
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');
@@ -108,6 +115,9 @@ assertIncludes(styles, '.chat-choice-row.has-long-choice .chat-choice {\n  width
 assertIncludes(messagesComponent, 'function ChatMarkdown', 'chat messages expose one shared Markdown renderer');
 assertIncludes(messagesComponent, '<ChatMarkdown', 'message cards use the shared Markdown renderer');
 assertIncludes(messagesComponent, 'text={message.text}', 'streaming and completed text use Markdown renderer');
+assertIncludes(messagesComponent, 'formatChatMessageTime(messageTimestamp)', 'chat timestamps use localized same-day/full-date formatting');
+assertIncludes(messagesComponent, 'dateTime={new Date(messageTimestamp ?? 0).toISOString()}', 'chat timestamps retain canonical machine-readable ISO values');
+assertIncludes(messagesComponent, "import { formatChatMessageTime } from '../lib/chat-time';", 'chat timestamp formatter is shared and pure');
 assertExcludes(messagesComponent, '<div className="chat-streaming-copy">{message.text}</div>', 'streaming text is not rendered as plain text');
 assertExcludes(messagesComponent, '<ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || \'\'}</ReactMarkdown>', 'message cards do not duplicate Markdown renderer branches');
 

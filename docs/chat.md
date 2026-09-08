@@ -58,7 +58,11 @@ Key behaviours (all validated end-to-end):
 
 ## Persistence
 
-`chat-persistence.ts` stores the transcript under `mission-control-chat-drawer-v1` in `localStorage` (session id/key, model identity, messages, `updatedAt`) and syncs the last chat to the server (`/api/local/chat/last`) so it can be restored across devices/browser restarts.
+`chat-persistence.ts` stores the transcript under `mission-control-chat-drawer-v1` in `localStorage` (session id/key, model identity, messages, `updatedAt`, and the last server `revision`). It also syncs the last chat to the server (`/api/local/chat/last`) so it can be restored across devices/browser restarts. A resumed transcript is reconciled against canonical `state.db` message metadata through the authenticated telemetry endpoint `/api/local/chat/timestamps` (the gateway payload may omit timestamps); matching uses role/content/tool identifiers plus occurrence order. Missing historical timestamps remain unknown and hide their label rather than being replaced with receive time. Canonical timestamps are converted from epoch seconds (or ISO) into the `ChatMessage.createdAt` millisecond value; local receive time is only provisional for live events. Chat bubbles show localized `HH:mm` for the local calendar day and a localized date plus time for older messages, while the `<time dateTime>` value remains the canonical ISO instant.
+
+The server-side pointer is the bootstrap authority, not `localStorage`: a generic drawer open reads `/api/local/chat/last` and adopts its canonical session before WebSocket work or any pointer claim. If the sidecar is unavailable, the local transcript remains a best-effort cache/fallback and the direct gateway resume path continues; a failed read never turns stale local state into an authority.
+
+Pointer writes are revisioned compare-and-swap claims. Only an intentional ownership action—successful session creation, explicit session resume/selection, or user submit—may advance the pointer with the revision observed during bootstrap. Passive React mounts, render effects, transcript persistence, and timestamp changes never claim it. A stale claim receives the canonical pointer and must adopt it rather than overwrite it.
 
 ## Cross-device convergence
 
@@ -66,7 +70,7 @@ Two Mission Control clients can keep the same session open (for example desktop 
 
 While both clients are connected, each MC client mirrors the gateway events it receives, its submitted user messages, and local command acknowledgements (including `/steer`) to the Mission Control telemetry sidecar (`/api/local/chat/sync`). The sidecar keeps a bounded per-session ring, deduplicates core events by `session_id + seq`, and fans them out over an authenticated SSE stream to the other viewers. This provides live convergence for user messages, reasoning deltas, assistant deltas, tool start/progress/complete events, and steer acknowledgements without modifying Hermes Core. If the sidecar is temporarily unavailable, the direct gateway remains authoritative and the normal resume/replay path remains the fallback.
 
-The backend transcript remains authoritative. The local copy is a cache, and transient token cadence cannot be guaranteed after an arbitrarily long offline period; durable messages and tool results converge after relay, replay, or resume.
+The backend transcript remains authoritative. The local copy is a cache, and transient token cadence cannot be guaranteed after an arbitrarily long offline period; durable messages and tool results converge after relay, replay, or resume. Hydration is monotonic: an initial or periodic `session.resume` snapshot is merged into the already-visible transcript, never assigned as a replacement. A partial snapshot therefore cannot remove a relay message, optimistic user row, streaming assistant, or tool result received while resume was in flight; matching rows are deduplicated and the final union remains chronological.
 
 ## Streaming & reasoning
 
