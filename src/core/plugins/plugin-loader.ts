@@ -1,103 +1,51 @@
+import React from 'react';
 import type { MCPluginManifest } from './types';
 import type { InternalPlugin } from './registry';
 
 /**
- * Plugin manifest descriptor — known plugins that MC attempts to load.
- * Each entry includes the manifest metadata for UI registration.
+ * External plugin UI modules are linked into src/plugins/<id>/ by
+ * scripts/setup-plugins.sh. The glob is intentionally generic: MC does not
+ * contain a list of plugin IDs and therefore does not know Curate or any
+ * other plugin before installation.
  */
-interface KnownPluginDescriptor {
-  id: string;
-  fallbackManifest: MCPluginManifest;
+const routeModules = import.meta.glob('../../plugins/*/route.ts', { eager: true });
+const manifestModules = import.meta.glob('../../plugins/*/manifest.ts', { eager: true });
+
+function pluginIdFromPath(path: string): string | null {
+  const match = path.match(/\/plugins\/([^/]+)\/(?:route|manifest)\.ts$/);
+  return match?.[1] ?? null;
+}
+
+function moduleExport(module: Record<string, unknown>, id: string, suffix: string): unknown {
+  return module[`${id}${suffix}`] ?? module.default;
 }
 
 /**
- * Known plugins — MC attempts to load these at startup.
- * If a plugin is not installed (symlink missing), the import fails silently
- * and the plugin is not registered.
+ * Load every installed plugin UI discovered by Vite's generic glob.
+ * Missing/invalid plugin modules are skipped without affecting MC startup.
  */
-const KNOWN_PLUGINS: KnownPluginDescriptor[] = [
-  // Curate plugin
-  {
-    id: 'curate',
-    fallbackManifest: {
-      id: 'curate',
-      name: 'Curate',
-      description: 'Nightly brain candidate approval queue',
-      version: '1.0.0',
-      enabled: true,
-      routePath: '/curate',
-      lazyRoute: true,
-      navItem: {
-        to: '/curate',
-        label: 'nav.curate',
-        icon: 'ClipboardCheck',
-        order: 60,
-      },
-      endpoints: [
-        { method: 'GET', path: '/candidates', handler: 'listCandidates', authRequired: true },
-        { method: 'GET', path: '/candidates/vaults', handler: 'listVaults', authRequired: true },
-        { method: 'POST', path: '/candidates/approve', handler: 'approveCandidate', authRequired: true },
-        { method: 'POST', path: '/candidates/reject', handler: 'rejectCandidate', authRequired: true },
-      ],
-    },
-  },
-];
+export function loadPlugins(): InternalPlugin[] {
+  const loaded = new Map<string, InternalPlugin>();
 
-/**
- * Try to load a plugin's UI module.
- * Returns null if the plugin is not installed (symlink missing or import fails).
- */
-async function tryLoadPluginUI(
-  descriptor: KnownPluginDescriptor
-): Promise<InternalPlugin | null> {
-  try {
-    // Attempt dynamic import — works if symlink exists in src/plugins/<id>/
-    const routeModule = await import(`../plugins/${descriptor.id}/route.ts`);
-    const manifestModule = await import(`../plugins/${descriptor.id}/manifest.ts`);
+  for (const [routePath, routeValue] of Object.entries(routeModules)) {
+    const id = pluginIdFromPath(routePath);
+    if (!id) continue;
+    const routeModule = routeValue as Record<string, unknown>;
+    const manifestPath = Object.keys(manifestModules).find((path) => pluginIdFromPath(path) === id);
+    if (!manifestPath) continue;
 
-    const component =
-      routeModule[`${descriptor.id}Plugin`] ||
-      routeModule.default ||
-      null;
+    const manifest = moduleExport(manifestModules[manifestPath] as Record<string, unknown>, id, 'Manifest') as MCPluginManifest | undefined;
+    const component = moduleExport(routeModule, id, 'Plugin') as React.ComponentType<any> | undefined;
+    if (!manifest || !component) continue;
 
-    const manifest: MCPluginManifest =
-      manifestModule[`${descriptor.id}Manifest`] ||
-      manifestModule.default ||
-      descriptor.fallbackManifest;
-
-    if (!component) {
-      console.warn(`Plugin ${descriptor.id}: no UI component found`);
-      return null;
-    }
-
-    return {
+    loaded.set(id, {
       manifest,
       component,
-      loadRoute: async () => {
-        const mod = await import(`../plugins/${descriptor.id}/route.ts`);
-        return { default: mod[`${descriptor.id}Plugin`] ?? mod.default };
-      },
-    };
-  } catch {
-    // Plugin not installed or failed to load — silent skip
-    return null;
+      loadRoute: async () => ({ default: component }),
+    });
   }
-}
 
-/**
- * Load all known plugins at app startup.
- * Returns only plugins that are actually installed.
- */
-export async function loadPlugins(): Promise<InternalPlugin[]> {
-  const loaded: InternalPlugin[] = [];
-  for (const descriptor of KNOWN_PLUGINS) {
-    const plugin = await tryLoadPluginUI(descriptor);
-    if (plugin) {
-      loaded.push(plugin);
-    }
-  }
-  return loaded;
+  return [...loaded.values()].filter((plugin) => plugin.manifest.enabled !== false);
 }
 
 export type { InternalPlugin } from './registry';
-export type { KnownPluginDescriptor };

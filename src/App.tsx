@@ -7,7 +7,7 @@ import { OverviewLayout } from './routes/OverviewRoute';
 import { OverviewDashboard } from './components/overview/OverviewDashboard';
 import { PluginRegistry } from './core/plugins/registry';
 import { setPluginRegistry } from './core/plugin-registry';
-import { loadPlugins, type InternalPlugin } from './core/plugins/plugin-loader';
+import { loadPlugins } from './core/plugins/plugin-loader';
 
 // Busy routes — lazy-loaded
 const SessionsRoute = lazy(() => import('./routes/SessionsRoute').then((m) => ({ default: m.SessionsRoute })));
@@ -43,17 +43,16 @@ function App() {
   const [pluginsLoaded, setPluginsLoaded] = useState(false);
 
   useEffect(() => {
-    loadPlugins().then((plugins) => {
-      if (plugins.length > 0) {
-        registry.load(plugins);
-        const routes = registry.getRoutes().map((r) => (
-          <Route key={r.path} path={r.path} element={r.element} />
-        ));
-        setPluginRoutes(routes);
-        setPluginNavItems(registry.getNavItems());
-      }
-      setPluginsLoaded(true);
-    });
+    const plugins = loadPlugins();
+    if (plugins.length > 0) {
+      registry.load(plugins);
+      const routes = registry.getRoutes().map((r) => (
+        <Route key={r.path} path={r.path} element={r.element} />
+      ));
+      setPluginRoutes(routes);
+      setPluginNavItems(registry.getNavItems());
+    }
+    setPluginsLoaded(true);
   }, []);
 
   if (!pluginsLoaded) {

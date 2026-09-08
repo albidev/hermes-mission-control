@@ -115,10 +115,11 @@ class SessionSynthesisCurateTests(unittest.TestCase):
             self._request("/api/local/synthesis/candidates")
         self.assertEqual(exc.exception.code, 401)
 
-    def test_candidates_disabled_without_feature_gate(self):
+    def test_candidates_disabled_when_curate_plugin_is_unavailable(self):
         os.environ.pop("MC_ENABLE_BDH_CURATOR", None)
-        with self.assertRaises(urllib.error.HTTPError) as exc:
-            self._request("/api/local/synthesis/candidates", token="phase1-secret")
+        with mock.patch.object(local_telemetry_server, "_candidates_enabled", return_value=False):
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self._request("/api/local/synthesis/candidates", token="phase1-secret")
         self.assertEqual(exc.exception.code, 404)
         payload = json.loads(exc.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "feature_disabled")
