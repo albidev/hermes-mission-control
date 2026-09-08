@@ -33,10 +33,12 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 
 ### Plugin system
 
-- Abstract plugin architecture: self-contained modules register their own route, sidebar entry, and (future) backend endpoints
-- Plugins appear in a dedicated **PLUGINS** section of the sidebar, below core navigation
-- First plugin: **Curate** (nightly brain candidate approval), fully self-contained under `src/plugins/curate/`
-- See [docs/plugins.md](docs/plugins.md) for the plugin contract and how to add a plugin
+- External, self-contained plugins: backend, UI, manifest, and tests live in the plugin repository
+- Plugins are installed with `git clone` into `~/.hermes/mc-plugins/<plugin-id>/`
+- Run `scripts/setup-plugins.sh` to link installed plugin UIs for Vite; MC contains no plugin implementation code
+- MC discovers plugin manifests and routes generically at runtime; an uninstalled plugin is invisible and does not affect the host
+- Curate is the first external plugin: [albidev/mc-curate-plugin](https://github.com/albidev/mc-curate-plugin) (private)
+- See [docs/plugins.md](docs/plugins.md) for the complete plugin contract, install flow, and author requirements.
 
 ### Chat and agent workspace
 

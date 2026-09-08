@@ -13,7 +13,7 @@
     "test": "python3 -m unittest discover -s tests -p 'test_*.py'",
     "test:vite-config": "node tests/vite-config.test.mjs",
     "test:chat": "node --experimental-strip-types tests/chat-bootstrap.test.ts && node --experimental-strip-types tests/chat-handoff-contract.test.ts && node --experimental-strip-types tests/chat-protocol.test.ts && node --experimental-strip-types tests/chat-interactions.test.ts && node --experimental-strip-types tests/chat-sync.test.ts",
-    "test:ui": "node --experimental-strip-types tests/chat-ui-contract.test.ts && node tests/curate-synthesis-ui-contract.test.mjs",
+    "test:ui": "node --experimental-strip-types tests/chat-ui-contract.test.ts",
     "test:mobile-route-layout": "node tests/mobile-route-layout-contract.test.mjs",
     "test:provider-usage-ui": "node tests/provider-usage-ui-contract.test.mjs",
     "test:system-health-ui": "node tests/system-health-ui-contract.test.mjs",

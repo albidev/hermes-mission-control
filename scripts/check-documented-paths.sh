@@ -35,6 +35,7 @@ required_paths=(
   "systemd/mission-control.target"
   "patches/hermes-core-mission-control-api_server.patch"
   "docs/runbooks/upgrade-compatibility.md"
+  "docs/plugins.md"
   "docs/contracts/compatibility-matrix.md"
   "docs/contracts/mission-control-capabilities-v1.json"
   "docs/contracts/mission-control-trace-v1.json"

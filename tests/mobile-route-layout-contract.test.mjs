@@ -29,8 +29,6 @@ for (const file of routeFiles) {
   let path;
   if (file === 'OverviewDashboard.tsx') {
     path = new URL('src/components/overview/OverviewDashboard.tsx', root);
-  } else if (file === 'CurateRoute.tsx') {
-    path = new URL('src/plugins/curate/CurateRoute.tsx', root);
   } else {
     path = new URL(`src/routes/${file}`, root);
   }
