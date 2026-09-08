@@ -1,4 +1,12 @@
-import type { ChatMessage, ChatTimestampMetadata, GatewayEvent } from './chat-protocol';
+import type { ChatMessage, ChatTimestampMetadata, GatewayEvent, GatewayTranscriptMessage } from './chat-protocol';
+
+export type CanonicalChatTranscript = {
+  sessionId: string;
+  sessionKey: string;
+  messages: GatewayTranscriptMessage[];
+  complete: boolean;
+  count: number;
+};
 
 export type ChatSyncEnvelope = {
   session_id: string;
@@ -105,31 +113,52 @@ export async function fetchChatTimestampMetadata(
   }
 }
 
+export async function fetchChatTranscript(
+  accessToken: string,
+  sessionId: string | null,
+  sessionKey: string | null,
+): Promise<CanonicalChatTranscript | null> {
+  const params = new URLSearchParams();
+  if (sessionId?.trim()) params.set('session_id', sessionId.trim());
+  if (sessionKey?.trim()) params.set('session_key', sessionKey.trim());
+  if (!params.toString()) return null;
+  try {
+    const response = await fetch(`/api/local/chat/transcript?${params.toString()}`, {
+      headers: accessToken ? { Accept: 'application/json', Authorization: `Bearer ${accessToken}` } : { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as Record<string, unknown>;
+    const rawMessages = Array.isArray(payload.messages) ? payload.messages : [];
+    const sessionIdValue = typeof payload.sessionId === 'string' ? payload.sessionId : sessionId || '';
+    const sessionKeyValue = typeof payload.sessionKey === 'string' ? payload.sessionKey : sessionKey || sessionIdValue;
+    const count = typeof payload.count === 'number' && Number.isFinite(payload.count)
+      ? Math.max(0, Math.floor(payload.count))
+      : rawMessages.length;
+    const complete = payload.complete === true && count === rawMessages.length;
+    return {
+      sessionId: sessionIdValue,
+      sessionKey: sessionKeyValue,
+      messages: rawMessages.filter((item): item is GatewayTranscriptMessage => Boolean(item) && typeof item === 'object') as GatewayTranscriptMessage[],
+      complete,
+      count,
+    };
+  } catch {
+    // Canonical hydration retries on the next resume/visibility/reconnect pass.
+    return null;
+  }
+}
+
 export function applySyncedChatMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
-  if (messages.some((candidate) => candidate.id === message.id)) return messages;
-  return [...messages, message];
+  const liveMessage = { ...message, source: 'live' as const };
+  if (messages.some((candidate) => candidate.id === liveMessage.id)) return messages;
+  return [...messages, liveMessage];
 }
 
 export const applySyncedUserMessage = applySyncedChatMessage;
 
-function messageKey(message: ChatMessage): string {
-  if (message.kind === 'tool' || message.role === 'tool') {
-    if (message.toolId) return `tool:${message.toolId}`;
-    return `tool:${message.toolName || ''}:${message.toolInput || ''}:${message.output || ''}`;
-  }
-  return `${message.role}:${message.kind || ''}:${message.text}:${message.attachments?.map((item) => item.name).join(',') || ''}`;
-}
-
 function findMatchingMessage(messages: ChatMessage[], candidate: ChatMessage, excluded = new Set<number>()): number {
-  const byId = messages.findIndex((message, index) => !excluded.has(index) && message.id === candidate.id);
-  if (byId >= 0) return byId;
-  if (candidate.kind === 'assistant' && candidate.status === 'streaming') {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      if (!excluded.has(index) && messages[index].kind === 'assistant' && messages[index].status === 'streaming') return index;
-    }
-  }
-  const key = messageKey(candidate);
-  return messages.findIndex((message, index) => !excluded.has(index) && messageKey(message) === key);
+  return messages.findIndex((message, index) => !excluded.has(index) && message.id === candidate.id);
 }
 
 function mergeStreamingMessage(durable: ChatMessage, local: ChatMessage): ChatMessage {
@@ -202,7 +231,37 @@ export function mergeDurableChatMessages(local: ChatMessage[], durable: ChatMess
     .map(({ message }) => message);
 }
 
-/** Record a sequenced event only when it advances the watermark for its session. */
+/** Replace the durable view with a complete canonical projection.
+ *
+ * Only explicitly live rows survive outside the projection. Matching is by the
+ * SessionDB-derived id; repeated text/tool payloads are never identity keys.
+ */
+export function replaceWithCanonicalChatMessages(local: ChatMessage[], canonical: ChatMessage[]): ChatMessage[] {
+  const merged: ChatMessage[] = canonical.map((message) => ({ ...message, source: 'canonical' as const }));
+  const canonicalIds = new Set(merged.map((message) => message.id));
+  const live = local.filter((message) => message.source === 'live' || message.status === 'streaming');
+  for (const liveMessage of live) {
+    const match = merged.findIndex((message) => message.id === liveMessage.id);
+    if (match >= 0) {
+      merged[match] = mergeMessagePair(merged[match], liveMessage);
+    } else if (!canonicalIds.has(liveMessage.id)) {
+      merged.push({ ...liveMessage, source: 'live' });
+    }
+  }
+  return merged
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const leftTime = typeof left.message.createdAt === 'number' && Number.isFinite(left.message.createdAt)
+        ? left.message.createdAt
+        : Number.POSITIVE_INFINITY;
+      const rightTime = typeof right.message.createdAt === 'number' && Number.isFinite(right.message.createdAt)
+        ? right.message.createdAt
+        : Number.POSITIVE_INFINITY;
+      return leftTime - rightTime || left.index - right.index;
+    })
+    .map(({ message }) => message);
+}
+
 export function shouldApplySequencedEvent(watermarks: Map<string, number>, event: GatewayEvent): boolean {
   const sid = event.session_id;
   const seq = event.seq;

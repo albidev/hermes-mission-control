@@ -56,7 +56,7 @@ export function persistChat(
         sessionId,
         sessionKey,
         modelIdentity,
-        messages: messages.slice(-200),
+        messages,
         updatedAt: Date.now(),
         revision,
       }),
