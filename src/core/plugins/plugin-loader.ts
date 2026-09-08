@@ -17,7 +17,10 @@ function pluginIdFromPath(path: string): string | null {
 }
 
 function moduleExport(module: Record<string, unknown>, id: string, suffix: string): unknown {
-  return module[`${id}${suffix}`] ?? module.default;
+  const pascalId = id.charAt(0).toUpperCase() + id.slice(1);
+  return module[`${id}${suffix}`]
+    ?? module[`${pascalId}${suffix}`]
+    ?? module.default;
 }
 
 /**
