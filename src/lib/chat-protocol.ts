@@ -110,6 +110,16 @@ export type GatewayCommandDispatch =
   | { type: 'send'; message: string; display?: string; notice?: string }
   | { type: 'prefill'; message: string; notice?: string };
 
+export async function refreshModelAfterCommandDispatch(
+  dispatch: GatewayCommandDispatch,
+  activeSessionId: string,
+  refreshModel: (sessionId: string) => Promise<void>,
+): Promise<void> {
+  if (dispatch.type === 'exec' || dispatch.type === 'plugin') {
+    await refreshModel(activeSessionId);
+  }
+}
+
 export type ChatActivity = {
   kind: 'status' | 'tool' | 'reasoning';
   label: string;

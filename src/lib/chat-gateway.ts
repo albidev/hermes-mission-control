@@ -22,6 +22,7 @@ import {
   isResponseFor,
   parseCommandDispatch,
   parseSlash,
+  refreshModelAfterCommandDispatch,
   normalizeTranscript,
   parseGatewayFrame,
   pendingPromptWasPersisted,
@@ -632,7 +633,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     } catch {
       // The create/resume payload already carries the model; status is a best-effort refresh.
     }
-    void refreshReasoning(activeSessionId);
+    await refreshReasoning(activeSessionId);
   }, [adoptModel, refreshReasoning, request]);
 
   const refreshContext = useCallback(async (activeSessionId: string) => {
@@ -1244,7 +1245,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       return false;
     }
 
-    const handleDispatch = async (dispatch: GatewayCommandDispatch): Promise<boolean> => {
+    const handleDispatch = async (
+      dispatch: GatewayCommandDispatch,
+      activeSessionId: string,
+    ): Promise<boolean> => {
       if (dispatch.type === 'alias') {
         return executeSlashCommand(`/${dispatch.target}${parsed.arg ? ` ${parsed.arg}` : ''}`, depth + 1);
       }
@@ -1263,6 +1267,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         .filter((value): value is string => Boolean(value?.trim()))
         .join('\n\n');
       appendSystemMessage(output || `/${parsed.name}: no output`);
+      await refreshModelAfterCommandDispatch(dispatch, activeSessionId, refreshModel);
       return true;
     };
 
@@ -1287,7 +1292,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           session_id: activeSessionId,
         });
         const dispatch = parseCommandDispatch(result);
-        if (dispatch) return handleDispatch(dispatch);
+        if (dispatch) return await handleDispatch(dispatch, activeSessionId);
         const output = commandOutput(result) || `/${parsed.name}: no output`;
         appendSystemMessage(output);
         adoptModel(result);
@@ -1303,7 +1308,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         session_id: activeSessionId,
       }));
       if (!dispatch) throw new Error(`/${parsed.name}: invalid command response.`);
-      return handleDispatch(dispatch);
+      return await handleDispatch(dispatch, activeSessionId);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Slash command failed.';
       appendSystemMessage(`/${parsed.name}: ${message}`);

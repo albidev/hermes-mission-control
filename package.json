@@ -13,7 +13,7 @@
     "test": "python3 -m unittest discover -s tests -p 'test_*.py' && pnpm test:server",
     "test:server": "python3 -c \"import websockets\" && python3 -m unittest discover -s server/tests -p 'test_*.py'",
     "test:vite-config": "node tests/vite-config.test.mjs",
-    "test:chat": "node --experimental-strip-types tests/chat-bootstrap.test.ts && node --experimental-strip-types tests/chat-handoff-contract.test.ts && node --experimental-strip-types tests/chat-protocol.test.ts && node --experimental-strip-types tests/chat-interactions.test.ts && node --experimental-strip-types tests/chat-sync.test.ts",
+    "test:chat": "node --experimental-strip-types tests/chat-bootstrap.test.ts && node --experimental-strip-types tests/chat-handoff-contract.test.ts && node --experimental-strip-types tests/chat-protocol.test.ts && node --experimental-strip-types tests/chat-interactions.test.ts && node --experimental-strip-types tests/chat-sync.test.ts && node --experimental-strip-types tests/chat-slash-dispatch.test.ts",
     "test:ui": "node --experimental-strip-types tests/chat-ui-contract.test.ts",
     "test:mobile-route-layout": "node tests/mobile-route-layout-contract.test.mjs",
     "test:provider-usage-ui": "node tests/provider-usage-ui-contract.test.mjs",
