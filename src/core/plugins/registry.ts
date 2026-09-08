@@ -1,5 +1,5 @@
 import React from 'react';
-import type { MCPluginManifest, MCPluginNavItem, MCPluginRoute } from './types';
+import type { MCPluginManifest, MCPluginNavItem, MCPluginRoute, MCPluginEndpoint } from './types';
 
 /**
  * Internal plugin — manifest + route info.
@@ -19,12 +19,13 @@ function isNavItem(item: MCPluginNavItem | null | undefined): item is MCPluginNa
 
 /**
  * Registry for internal plugins.
- * Discovers plugins in src/plugins and builds routes + nav items.
+ * Discovers plugins in src/plugins and builds routes + nav items + endpoint resolution.
  */
 export class PluginRegistry {
   private plugins: InternalPlugin[] = [];
   private navItems: MCPluginNavItem[] = [];
   private routes: MCPluginRoute[] = [];
+  private endpoints = new Map<string, MCPluginEndpoint[]>();  // pluginId -> endpoints[]
 
   /**
    * Load all internal plugins from manifest files.
@@ -67,6 +68,13 @@ export class PluginRegistry {
         index: false,
       };
     });
+
+    // Register endpoints from manifests
+    for (const p of plugins) {
+      if (p.manifest.endpoints) {
+        this.endpoints.set(p.manifest.id, p.manifest.endpoints);
+      }
+    }
   }
 
   /** Get sorted nav items for plugin-enabled sidebar entries */
@@ -88,5 +96,44 @@ export class PluginRegistry {
   isEnabled(id: string): boolean {
     const p = this.getPlugin(id);
     return p?.manifest.enabled ?? false;
+  }
+
+  /**
+   * Get all registered endpoints for a plugin.
+   * Used by fetch helpers to resolve URLs.
+   */
+  getEndpoints(pluginId: string): MCPluginEndpoint[] {
+    return this.endpoints.get(pluginId) ?? [];
+  }
+
+  /**
+   * Resolve the URL for a specific plugin endpoint.
+   * Returns the path relative to /api/local (e.g. '/candidates').
+   * Returns null if the endpoint is not found.
+   *
+   * Usage:
+   *   const url = registry.resolveEndpointUrl('curate', 'listCandidates');
+   *   // => '/candidates'
+   *   const fullUrl = apiUrl(url);  // => '/api/local/candidates'
+   */
+  resolveEndpointUrl(pluginId: string, handlerName: string): string | null {
+    const endpoints = this.endpoints.get(pluginId);
+    if (!endpoints) return null;
+    const ep = endpoints.find((e) => e.handler === handlerName);
+    return ep?.path ?? null;
+  }
+
+  /**
+   * Get all endpoints across all plugins.
+   * Useful for debugging/health checks.
+   */
+  getAllEndpoints(): Array<MCPluginEndpoint & { pluginId: string }> {
+    const result: Array<MCPluginEndpoint & { pluginId: string }> = [];
+    for (const [pluginId, endpoints] of this.endpoints) {
+      for (const ep of endpoints) {
+        result.push({ ...ep, pluginId });
+      }
+    }
+    return result;
   }
 }

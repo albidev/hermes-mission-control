@@ -6,6 +6,7 @@ import { MissionControlShell } from './components/MissionControlShell';
 import { OverviewLayout } from './routes/OverviewRoute';
 import { OverviewDashboard } from './components/overview/OverviewDashboard';
 import { PluginRegistry } from './core/plugins/registry';
+import { setPluginRegistry } from './core/plugin-registry';
 import { CuratePlugin } from './plugins/curate/route';
 import { curateManifest } from './plugins/curate/manifest';
 
@@ -30,6 +31,9 @@ registry.load([
     loadRoute: () => Promise.resolve({ default: CuratePlugin }),
   },
 ]);
+
+// Expose registry globally for non-React modules (hermes-api.ts, plugin endpoints)
+setPluginRegistry(registry);
 
 // Default routes (hardcoded, non-plugin)
 const defaultRoutes = [

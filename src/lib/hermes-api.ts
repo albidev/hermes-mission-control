@@ -1,4 +1,18 @@
 import { normalizeTodoPlanSnapshot, type TodoPlan } from './todo-plan';
+import { getPluginRegistry } from '../core/plugin-registry';
+
+/**
+ * Resolve a plugin endpoint URL from the registry.
+ * Falls back to the hardcoded path if the registry is not available.
+ */
+function resolvePluginPath(pluginId: string, handlerName: string, fallbackPath: string): string {
+  try {
+    const registry = getPluginRegistry();
+    return registry.resolveEndpointUrl(pluginId, handlerName) ?? fallbackPath;
+  } catch {
+    return fallbackPath;
+  }
+}
 
 export type MissionControlMachineStatus = {
   health: 'healthy' | 'degraded' | 'critical' | 'offline';
@@ -2544,8 +2558,9 @@ export interface MissionControlVaultInfo {
 export async function loadMissionControlVaults(
   accessToken?: string,
 ): Promise<MissionControlVaultInfo[]> {
+  const path = resolvePluginPath('curate', 'listVaults', '/candidates/vaults');
   const { payload } = await maybeFetchLocalJson<{ vaults: MissionControlVaultInfo[] }>(
-    '/candidates/vaults',
+    path,
     accessToken,
   );
   return payload?.vaults ?? [];
@@ -2560,7 +2575,7 @@ export async function loadMissionControlCandidates(
   if (status) params.set('status', status);
   if (vault) params.set('vault', vault);
   const qs = params.toString();
-  const path = qs ? `/candidates?${qs}` : '/candidates';
+  const path = resolvePluginPath('curate', 'listCandidates', `/candidates${qs ? `?${qs}` : ''}`);
   const { payload } = await maybeFetchLocalJson<MissionControlCandidatesSnapshot>(path, accessToken);
   return payload ?? { candidates: [], count: 0 };
 }
@@ -2571,7 +2586,8 @@ export async function approveCandidate(
   vault?: string,
   filename?: string,
 ): Promise<MissionControlCandidate | null> {
-  const response = await fetch(apiUrl('/candidates/approve'), {
+  const path = resolvePluginPath('curate', 'approveCandidate', '/candidates/approve');
+  const response = await fetch(apiUrl(path), {
     method: 'POST',
     headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, ...(vault ? { vault } : {}), ...(filename ? { filename } : {}) }),
@@ -2598,7 +2614,8 @@ export async function rejectCandidate(
   vault?: string,
   filename?: string,
 ): Promise<MissionControlCandidate | null> {
-  const response = await fetch(apiUrl('/candidates/reject'), {
+  const path = resolvePluginPath('curate', 'rejectCandidate', '/candidates/reject');
+  const response = await fetch(apiUrl(path), {
     method: 'POST',
     headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, reason, ...(vault ? { vault } : {}), ...(filename ? { filename } : {}) }),
