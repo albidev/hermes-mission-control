@@ -16,4 +16,10 @@ export const curateManifest: MCPluginManifest = {
   routePath: '/curate',
   lazyRoute: true,
   permissions: [],
+  endpoints: [
+    { method: 'GET', path: '/candidates', handler: 'listCandidates' },
+    { method: 'GET', path: '/candidates/vaults', handler: 'listVaults' },
+    { method: 'POST', path: '/candidates/approve', handler: 'approveCandidate' },
+    { method: 'POST', path: '/candidates/reject', handler: 'rejectCandidate' },
+  ],
 };

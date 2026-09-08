@@ -46,8 +46,8 @@ _CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
 def _client_diagnostics_log() -> Path:
     return hermes_logs_dir() / "mission-control-client.log"
 
-import candidates as candidates_mod
 import session_synthesis_rejections
+from plugins.loader import resolve_handler, dispatch_plugin_request
 from synthesis_activity_proxy import (
     SynthesisProxyError,
     apply_synthesis_candidate,
@@ -2410,29 +2410,19 @@ class Handler(BaseHTTPRequestHandler):
             except SynthesisProxyError as exc:
                 self._json(exc.status_code, {'error': 'bdh_unavailable', 'detail': str(exc)})
             return
-        if parsed.path == '/api/local/candidates':
+        # Plugin dispatch — fallback for /api/local/ routes not handled above.
+        # Plugins are self-contained: the telemetry server doesn't know about
+        # specific plugin paths, it just delegates to the loader.
+        if parsed.path.startswith('/api/local/'):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
-                self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+            body = {}
+            handled, response, status = dispatch_plugin_request('GET', parsed.path, body, params)
+            if handled:
+                self._json(status, response)
                 return
-            status = (params.get("status") or [None])[0] or None
-            vault = (params.get("vault") or [None])[0] or None
-            cands = candidates_mod.list_candidates(status=status, vault=vault)
-            self._json(200, {"candidates": cands, "count": len(cands), "vault": vault})
-            return
-        if parsed.path == '/api/local/candidates/vaults':
-            if not _is_authorized(self):
-                self._unauthorized()
-                return
-            if not _candidates_enabled():
-                self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
-                return
-            self._json(200, {"vaults": candidates_mod.list_vaults()})
-            return
+
         self._json(404, {"error": "not_found", "path": self.path})
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -2981,75 +2971,20 @@ class Handler(BaseHTTPRequestHandler):
                 'recorded': record,
             })
             return
-        if parsed.path == '/api/local/candidates/approve':
+        # Plugin dispatch — fallback for /api/local/ routes not handled above.
+        # Plugins are self-contained: the telemetry server doesn't know about
+        # specific plugin paths, it just delegates to the loader.
+        if parsed.path.startswith('/api/local/'):
             if not _is_authorized(self):
                 self._unauthorized()
                 return
-            if not _candidates_enabled():
-                self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
+            body = self._read_json_body() or {}
+            params = urllib.parse.parse_qs(parsed.query)
+            handled, response, status = dispatch_plugin_request('POST', parsed.path, body, params)
+            if handled:
+                self._json(status, response)
                 return
-            length = int(self.headers.get('Content-Length', 0))
-            if length == 0:
-                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
-                return
-            body = self.rfile.read(length).decode('utf-8')
-            try:
-                data = json.loads(body)
-            except json.JSONDecodeError:
-                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
-                return
-            cid = data.get('id', '')
-            filename = data.get('filename') or None
-            vault = data.get('vault') or None
-            if not cid:
-                self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
-                return
-            if not candidates_mod.can_curate(vault):
-                self._json(403, {'error': 'vault_not_curable',
-                                 'detail': 'Candidate mutations are disabled for this vault.'})
-                return
-            cand = candidates_mod.approve(cid, vault, filename)
-            if not cand:
-                self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
-                return
-            self._json(200, {'success': True, 'candidate': cand})
-            return
-        if parsed.path == '/api/local/candidates/reject':
-            if not _is_authorized(self):
-                self._unauthorized()
-                return
-            if not _candidates_enabled():
-                self._json(404, {'error': 'feature_disabled',
-                                 'detail': 'BDH curator is disabled. Set MC_ENABLE_BDH_CURATOR=1 to enable.'})
-                return
-            length = int(self.headers.get('Content-Length', 0))
-            if length == 0:
-                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
-                return
-            body = self.rfile.read(length).decode('utf-8')
-            try:
-                data = json.loads(body)
-            except json.JSONDecodeError:
-                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
-                return
-            cid = data.get('id', '')
-            filename = data.get('filename') or None
-            reason = data.get('reason', '')
-            vault = data.get('vault') or None
-            if not cid:
-                self._json(400, {'error': 'bad_request', 'detail': 'Missing id.'})
-                return
-            if not candidates_mod.can_curate(vault):
-                self._json(403, {'error': 'vault_not_curable',
-                                 'detail': 'Candidate mutations are disabled for this vault.'})
-                return
-            cand = candidates_mod.reject(cid, reason, vault, filename)
-            if not cand:
-                self._json(404, {'error': 'not_found', 'detail': f'Candidate {cid} not found.'})
-                return
-            self._json(200, {'success': True, 'candidate': cand})
-            return
+
         self._json(404, {'error': 'not_found', 'path': self.path})
 
     def do_PATCH(self) -> None:  # noqa: N802
