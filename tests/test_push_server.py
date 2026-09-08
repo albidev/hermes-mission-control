@@ -106,7 +106,7 @@ class PushMissingDependencyTest(unittest.TestCase):
         self._original_find_spec = importlib.util.find_spec
 
         def find_spec_shadow(name, *args, **kwargs):
-            if name in ("pywebpush", "websockets"):
+            if name == "pywebpush":
                 return None
             return self._original_find_spec(name, *args, **kwargs)
 
@@ -127,7 +127,6 @@ class PushMissingDependencyTest(unittest.TestCase):
         self.assertFalse(status["enabled"])
         self.assertEqual(status["reason"], "missing_dependency")
         self.assertIn("pywebpush", status["missingDependencies"])
-        self.assertIn("websockets", status["missingDependencies"])
 
     def test_send_push_disabled_with_reason(self) -> None:
         result = push_server.send_push("t", "b")
@@ -136,7 +135,7 @@ class PushMissingDependencyTest(unittest.TestCase):
 
 
 class PushWatcherResilienceTest(unittest.TestCase):
-    """A bare Linux install (no optional deps) must not crash on startup."""
+    """A bare Linux install without optional push deps must not crash."""
 
     def test_start_gateway_watcher_tolerates_missing_deps(self) -> None:
         import os
@@ -146,7 +145,7 @@ class PushWatcherResilienceTest(unittest.TestCase):
             os.environ.pop(key, None)
         try:
             # Should spawn threads and return without raising, even though
-            # pywebpush/websockets may not be importable in this interpreter.
+            # pywebpush may not be importable in this interpreter.
             push_server.start_gateway_watcher(interval=0.01)
         finally:
             for key, value in self._env_backup.items():

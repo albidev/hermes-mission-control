@@ -8,7 +8,7 @@
  */
 import type { ComponentType, LazyExoticComponent, ReactNode } from 'react';
 
-export type CanvasAddonId = 'tldraw';
+export type CanvasAddonId = 'tldraw' | 'terminal';
 
 export type CanvasAttachment = {
   kind: 'image';

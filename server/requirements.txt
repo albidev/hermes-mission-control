@@ -2,7 +2,8 @@
 #
 # Web Push is optional and pulls in extra packages — install them separately:
 #   python3 -m pip install -r server/requirements-push.txt
-# (pywebpush + websockets). Without them push is explicitly disabled and
-# reported via /health (push.reason = missing_dependency).
+# (pywebpush only). The terminal PTY server and its integration tests require
+# websockets, so it remains a base dependency.
 psutil>=6.0.0
 PyYAML>=6.0.0
+websockets>=15.0.0

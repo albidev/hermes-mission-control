@@ -1,0 +1,62 @@
+# Render this template with deployment-specific values, for example:
+#   export MC_BIND_IP=100.64.0.10 MC_HOSTNAME=mission-control.example
+#   export MC_PUBLIC_PORT=6010 MC_TELEMETRY_PORT=8765
+#   export MC_TERMINAL_PORT=8766 MC_FRONTEND_PORT=5174
+#   envsubst '$MC_BIND_IP $MC_HOSTNAME $MC_PUBLIC_PORT $MC_TELEMETRY_PORT $MC_TERMINAL_PORT $MC_FRONTEND_PORT' \
+#     < deploy/nginx-mission-control.conf.example > /etc/nginx/sites-enabled/mission-control
+#
+# MC_BIND_IP must be the public/non-loopback address used by nginx. Keep the
+# upstream services bound to loopback so nginx is not proxying back into its
+# own listener when the public bind is 0.0.0.0.
+server {
+    listen ${MC_BIND_IP}:${MC_PUBLIC_PORT};
+    server_name ${MC_HOSTNAME};
+
+    location /api/local/ {
+        proxy_pass http://127.0.0.1:${MC_TELEMETRY_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/terminal {
+        access_log off;
+        proxy_pass http://127.0.0.1:${MC_TERMINAL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host 127.0.0.1:${MC_TERMINAL_PORT};
+        proxy_set_header Origin http://127.0.0.1:${MC_TERMINAL_PORT};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 1h;
+    }
+
+    location /api/ws {
+        proxy_pass http://127.0.0.1:${MC_FRONTEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        # nginx is the trusted reverse-proxy boundary. Present the
+        # loopback origin to Vite's loopback-bound proxy before it forwards
+        # the WebSocket to the Hermes dashboard API.
+        proxy_set_header Host 127.0.0.1:${MC_FRONTEND_PORT};
+        proxy_set_header Origin http://127.0.0.1:${MC_FRONTEND_PORT};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 1h;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${MC_FRONTEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

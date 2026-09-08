@@ -39,9 +39,17 @@ fail visibly — which is the intended behavior (see "Failure behavior").
 git clone https://github.com/albidev/hermes-mission-control.git
 cd hermes-mission-control
 pnpm install          # frontend dependencies (node_modules)
-python3 -m pip install -r server/requirements.txt   # telemetry sidecar deps
+# Install into the same interpreter selected by run-local-telemetry.sh.
+# The Hermes core venv is preferred when it exists because it contains
+# hermes_state and must include both psutil and websockets.
+if [[ -x "${HERMES_HOME:-$HOME/.hermes}/hermes-agent/venv/bin/python" ]]; then
+  TELEMETRY_PYTHON="${HERMES_HOME:-$HOME/.hermes}/hermes-agent/venv/bin/python"
+else
+  TELEMETRY_PYTHON="$(command -v python3)"
+fi
+"$TELEMETRY_PYTHON" -m pip install -r server/requirements.txt
 # Optional Web Push support (see .env.example and docs/telemetry.md):
-python3 -m pip install -r server/requirements-push.txt
+"$TELEMETRY_PYTHON" -m pip install -r server/requirements-push.txt
 ```
 
 Verify the checkout builds and tests pass before deploying:

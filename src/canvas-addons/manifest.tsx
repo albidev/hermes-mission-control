@@ -13,6 +13,19 @@ export const CANVAS_ADDONS: CanvasAddonDescriptor[] = [
     supportsPersistence: true,
     supportsCommands: true,
   },
+  {
+    id: 'terminal',
+    label: 'Terminal',
+    description: 'Terminale interattivo della sessione Hermes',
+    icon: '⌘',
+    component: lazy(() => import('./terminal/TerminalAddon').then(({ TerminalAddon }) => ({ default: TerminalAddon }))),
+    lifecycleTimeout: 15000,
+    supportsPersistence: false,
+    supportsCommands: false,
+    supportsAttachments: false,
+    resizable: true,
+    mobileSupport: true,
+  },
 ];
 
 export const ADDON_INDEX: Record<CanvasAddonId, CanvasAddonDescriptor> = Object.fromEntries(

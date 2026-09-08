@@ -1,8 +1,8 @@
 # Optional runtime dependencies for Web Push (Mission Control).
 #
-# Not part of the base server/requirements.txt: push is an optional feature
-# and the telemetry sidecar runs fine without these packages (push degrades
-# to an explicit "disabled" state, see push_status() in push_server.py).
+# pywebpush is not part of the base server/requirements.txt: push is an
+# optional feature and the telemetry sidecar runs fine without it (push
+# degrades to an explicit "disabled" state, see push_status() in push_server.py).
 #
 # Install only if you want push notifications:
 #   python3 -m pip install -r server/requirements-push.txt
@@ -12,4 +12,3 @@
 # these packages installed.
 
 pywebpush>=1.14.0
-websockets>=12.0
