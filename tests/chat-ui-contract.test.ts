@@ -40,7 +40,7 @@ assertIncludes(chatGateway, 'publishChatSync(storedToken, activeSessionId, \'sys
 assertIncludes(chatSync, 'export type ChatSyncEnvelope', 'chat sync envelope supports control acknowledgements');
 assertIncludes(chatSync, 'export function applySyncedChatMessage', 'chat sync deduplicates mirrored messages');
 assertIncludes(chatSync, 'let publishQueue: Promise<void> = Promise.resolve();', 'chat sync serializes publishes to preserve event order');
-assertIncludes(chatGateway, "!open || !storedToken || initialSessionId?.trim()", 'explicit session resume is not overridden by the global last-chat pointer');
+assertIncludes(chatGateway, 'if (!open || initialSessionId?.trim()) return;', 'explicit session resume is not overridden by the global last-chat pointer');
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');
@@ -108,6 +108,9 @@ assertIncludes(styles, '.chat-choice-row.has-long-choice .chat-choice {\n  width
 assertIncludes(messagesComponent, 'function ChatMarkdown', 'chat messages expose one shared Markdown renderer');
 assertIncludes(messagesComponent, '<ChatMarkdown', 'message cards use the shared Markdown renderer');
 assertIncludes(messagesComponent, 'text={message.text}', 'streaming and completed text use Markdown renderer');
+assertIncludes(messagesComponent, 'formatChatMessageTime(messageTimestamp)', 'chat timestamps use localized same-day/full-date formatting');
+assertIncludes(messagesComponent, 'dateTime={new Date(messageTimestamp ?? 0).toISOString()}', 'chat timestamps retain canonical machine-readable ISO values');
+assertIncludes(messagesComponent, "import { formatChatMessageTime } from '../lib/chat-time';", 'chat timestamp formatter is shared and pure');
 assertExcludes(messagesComponent, '<div className="chat-streaming-copy">{message.text}</div>', 'streaming text is not rendered as plain text');
 assertExcludes(messagesComponent, '<ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text || \'\'}</ReactMarkdown>', 'message cards do not duplicate Markdown renderer branches');
 
