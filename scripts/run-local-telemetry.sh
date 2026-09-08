@@ -11,18 +11,25 @@ load_mission_control_env
 # HERMES_HOME env, then the sticky active profile, then ~/.hermes.
 HERMES_ROOT="$(resolve_hermes_home)"
 
-# Prefer the core venv (Python 3.10+) — the system python3 (3.9) cannot
-# import hermes_state, which now uses 3.10+ syntax (e.g. `str | object`).
-# Only fall back to system python3 if the venv lacks psutil.
-if [[ -x "$HERMES_ROOT/hermes-agent/venv/bin/python" ]] && "$HERMES_ROOT/hermes-agent/venv/bin/python" -c 'import psutil' >/dev/null 2>&1; then
-  PYTHON_BIN="$HERMES_ROOT/hermes-agent/venv/bin/python"
-elif command -v python3 >/dev/null 2>&1 && python3 -c 'import psutil' >/dev/null 2>&1; then
-  PYTHON_BIN="python3"
+# The telemetry sidecar now always starts the terminal WebSocket bridge, so
+# both dependencies must be available in the interpreter that runs it. Check
+# the Python version too: hermes_state.py uses Python 3.10+ syntax.
+runtime_ready() {
+  "$1" -c 'import sys, psutil, websockets; raise SystemExit(sys.version_info < (3, 10))' >/dev/null 2>&1
+}
+
+# Prefer the core venv because it contains the Hermes state modules. Fall back
+# to system python3 only when that interpreter also has the complete runtime.
+CORE_PYTHON="$HERMES_ROOT/hermes-agent/venv/bin/python"
+if [[ -x "$CORE_PYTHON" ]] && runtime_ready "$CORE_PYTHON"; then
+  PYTHON_BIN="$CORE_PYTHON"
+elif command -v python3 >/dev/null 2>&1 && runtime_ready "$(command -v python3)"; then
+  PYTHON_BIN="$(command -v python3)"
 else
-  echo "[mission-control-local-telemetry] psutil non trovato."
-  echo "Installa con uno di questi comandi:"
-  echo "  python3 -m pip install psutil"
-  echo "  $HERMES_ROOT/hermes-agent/venv/bin/python -m pip install psutil"
+  echo "[mission-control-local-telemetry] Python 3.10+, psutil, or websockets is missing." >&2
+  echo "Install the base sidecar dependencies into the interpreter that will run it:" >&2
+  echo "  $CORE_PYTHON -m pip install -r $SCRIPT_DIR/../server/requirements.txt" >&2
+  echo "  python3 -m pip install -r $SCRIPT_DIR/../server/requirements.txt" >&2
   exit 1
 fi
 
