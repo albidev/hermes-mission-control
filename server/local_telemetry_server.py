@@ -2358,6 +2358,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, load_chat_message_timestamps(session_id, session_key))
             return
+        if parsed.path == '/api/local/plugins':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            from plugins.loader import get_loader
+            loader = get_loader()
+            plugins = loader.list_plugins()
+            self._json(200, {'plugins': plugins, 'count': len(plugins)})
+            return
         if parsed.path == '/api/local/chat/last':
             if not _is_authorized(self):
                 self._unauthorized()

@@ -1,4 +1,4 @@
-import { lazy } from 'react';
+import { lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { MissionControlProvider } from './lib/mission-control-store';
 import { I18nProvider } from './lib/i18n';
@@ -7,6 +7,7 @@ import { OverviewLayout } from './routes/OverviewRoute';
 import { OverviewDashboard } from './components/overview/OverviewDashboard';
 import { PluginRegistry } from './core/plugins/registry';
 import { setPluginRegistry } from './core/plugin-registry';
+import { loadPlugins, type InternalPlugin } from './core/plugins/plugin-loader';
 
 // Busy routes — lazy-loaded
 const SessionsRoute = lazy(() => import('./routes/SessionsRoute').then((m) => ({ default: m.SessionsRoute })));
@@ -18,10 +19,6 @@ const SkillsRoute = lazy(() => import('./routes/SkillsRoute').then((m) => ({ def
 const ConfigRoute = lazy(() => import('./routes/ConfigRoute').then((m) => ({ default: m.ConfigRoute })));
 const LogsRoute = lazy(() => import('./routes/LogsRoute').then((m) => ({ default: m.LogsRoute })));
 const KanbanRoute = lazy(() => import('./routes/KanbanRoute').then((m) => ({ default: m.KanbanRoute })));
-
-// Plugin registry — empty by default. Plugins self-register via setPluginRegistry.
-const registry = new PluginRegistry();
-setPluginRegistry(registry);
 
 // Default routes (hardcoded, non-plugin)
 const defaultRoutes = [
@@ -36,25 +33,46 @@ const defaultRoutes = [
   { path: 'kanban', element: <KanbanRoute /> },
 ];
 
-// Plugin routes (populated by plugins via registry)
-const pluginRoutes = registry.getRoutes();
+// Plugin registry — populated at runtime from installed plugins
+const registry = new PluginRegistry();
+setPluginRegistry(registry);
 
 function App() {
+  const [pluginRoutes, setPluginRoutes] = useState<React.ReactElement[]>([]);
+  const [pluginNavItems, setPluginNavItems] = useState<any[]>([]);
+  const [pluginsLoaded, setPluginsLoaded] = useState(false);
+
+  useEffect(() => {
+    loadPlugins().then((plugins) => {
+      if (plugins.length > 0) {
+        registry.load(plugins);
+        const routes = registry.getRoutes().map((r) => (
+          <Route key={r.path} path={r.path} element={r.element} />
+        ));
+        setPluginRoutes(routes);
+        setPluginNavItems(registry.getNavItems());
+      }
+      setPluginsLoaded(true);
+    });
+  }, []);
+
+  if (!pluginsLoaded) {
+    return null; // or loading spinner
+  }
+
   return (
     <I18nProvider>
       <MissionControlProvider>
         <BrowserRouter>
           <Routes>
-            <Route element={<MissionControlShell registry={registry} />}>
+            <Route element={<MissionControlShell registry={registry} navItems={pluginNavItems} />}>
               <Route element={<OverviewLayout />}>
                 <Route index element={<OverviewDashboard />} />
               </Route>
               {defaultRoutes.map((r) => (
                 <Route key={r.path} path={r.path} element={r.element} />
               ))}
-              {pluginRoutes.map((r) => (
-                <Route key={r.path} path={r.path} element={r.element} />
-              ))}
+              {pluginRoutes}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>
