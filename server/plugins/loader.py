@@ -274,7 +274,12 @@ def dispatch_plugin_request(
       handled=False means no plugin matched (caller should handle 404).
     """
     loader = get_loader()
-    handler = loader.resolve(method, path)
+    # HTTP handlers declare paths relative to /api/local, while the
+    # BaseHTTPRequestHandler receives the full local API path.
+    plugin_path = path
+    if plugin_path.startswith('/api/local'):
+        plugin_path = plugin_path[len('/api/local'):] or '/'
+    handler = loader.resolve(method, plugin_path)
     if handler is None:
         return False, {}, 404
 

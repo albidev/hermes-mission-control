@@ -7,7 +7,9 @@
 set -euo pipefail
 
 MC_PLUGINS_DIR="${HOME}/.hermes/mc-plugins"
-SRC_PLUGINS_DIR="$(cd "$(dirname "$0")/../src/plugins" && pwd)"
+SRC_PLUGINS_ROOT="$(cd "$(dirname "$0")/../src" && pwd)"
+SRC_PLUGINS_DIR="${SRC_PLUGINS_ROOT}/plugins"
+mkdir -p "$SRC_PLUGINS_DIR"
 
 echo "=== MC Plugin Setup ==="
 echo "External plugins: ${MC_PLUGINS_DIR}"
