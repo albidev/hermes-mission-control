@@ -526,7 +526,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     }
 
     const handoffRequestIds = new Set(handoffs.map((handoff) => `bot-request-${handoff.id}`));
-    const handoffReplyIds = new Set(handoffs.map((handoff) => `bot-reply-${handoff.id}`));
+    const existingMessageIds = new Set(messages.map((message: ChatMessage) => message.id));
     const timeline = [
       ...messages
         .filter((message: ChatMessage) => !handoffRequestIds.has(message.id))
@@ -542,7 +542,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           status: 'complete',
           createdAt,
         };
-        const replyMessage: ChatMessage | null = handoff.reply && !handoffReplyIds.has(`bot-reply-${handoff.id}`)
+        const replyMessage: ChatMessage | null = handoff.reply && !existingMessageIds.has(`bot-reply-${handoff.id}`)
           ? {
             id: `bot-reply-${handoff.id}`,
             role: 'assistant',

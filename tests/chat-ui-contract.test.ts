@@ -39,7 +39,8 @@ assertIncludes(component, 'previewMessages.map((msg, index)', 'resume preview re
 assertIncludes(chatGateway, 'if (since !== undefined && typeof ready.latest_seq === \'number\')', 'fresh relay subscribers replay existing MC messages');
 assertIncludes(component, 'const handoffRequestIds = new Set(', 'only the technical Bot request row is grouped');
 assertIncludes(component, "filter((message: ChatMessage) => !handoffRequestIds.has(message.id))", 'the attributed Bot assistant reply remains visible');
-assertIncludes(component, 'const replyMessage: ChatMessage | null = handoff.reply', 'resume reconstructs a missing attributed assistant reply');
+assertIncludes(component, 'const existingMessageIds = new Set(messages.map((message: ChatMessage) => message.id));', 'resume checks actual transcript IDs before reconstructing the reply');
+assertIncludes(component, '!existingMessageIds.has(`bot-reply-${handoff.id}`)', 'missing attributed replies are reconstructed exactly once');
 assertIncludes(component, 'order: 2, id: replyMessage.id', 'the attributed assistant reply closes the Bot turn');
 assertIncludes(component, 'const requestMessage: ChatMessage = {', 'Bot handoff reconstructs the user bubble on resume');
 assertIncludes(component, 'order: 0, id: requestMessage.id', 'reconstructed user bubble precedes the Bot card');
