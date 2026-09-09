@@ -36,6 +36,25 @@ describe('createHandoffObserver', () => {
     assert.ok(seen.some((entry) => entry.startsWith('complete:')));
   });
 
+  it('starts after the supplied pre-submit watermark', async () => {
+    const seen: number[] = [];
+    const rpc: HandoffEventRpc = {
+      eventsSince: async (params) => {
+        seen.push(params.last_seen);
+        return { events: [{ type: 'message.complete', seq: 11, payload: { text: 'new answer' } }], truncated: false, epoch: 'e1' };
+      },
+    };
+    const observer = createHandoffObserver(rpc, {
+      sessionId: 'run-crossnection',
+      initialLastSeen: 10,
+      onEvent: () => {},
+      onComplete: () => {},
+      onError: () => {},
+    });
+    await observer.start();
+    assert.deepStrictEqual(seen, [10]);
+  });
+
   it('reports error events and stops', async () => {
     const rpc = makeRpc([
       { events: [{ type: 'error', payload: { message: 'gateway down' } }] },

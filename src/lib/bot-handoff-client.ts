@@ -16,7 +16,7 @@ export type HandoffClient = {
   resolveCanonical(profile: string, knownCanonicalId?: string | null): Promise<BotChatResult>;
   resume(profile: string, sessionId: string): Promise<string>;
   submit(text: string): Promise<void>;
-  eventsSince(lastSeen: number): Promise<{ events?: Array<{ type: string; seq?: number; payload?: Record<string, unknown> }>; truncated?: boolean; epoch?: string | null }>;
+  eventsSince(lastSeen: number): Promise<{ events?: Array<{ type: string; seq?: number; payload?: Record<string, unknown> }>; truncated?: boolean; epoch?: string | null; latest_seq?: number }>;
   close(): void;
 };
 
@@ -108,7 +108,7 @@ export async function openHandoffClient(options: HandoffClientOptions = {}): Pro
     },
     async eventsSince(lastSeen: number) {
       if (!runtimeId) throw new Error('Resume the canonical session before observing events.');
-      return rpc<{ events?: Array<{ type: string; seq?: number; payload?: Record<string, unknown> }>; truncated?: boolean; epoch?: string | null }>(
+      return rpc<{ events?: Array<{ type: string; seq?: number; payload?: Record<string, unknown> }>; truncated?: boolean; epoch?: string | null; latest_seq?: number }>(
         'session.events.since',
         { session_id: runtimeId, last_seen: lastSeen },
       );

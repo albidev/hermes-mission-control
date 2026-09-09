@@ -550,6 +550,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                   const canonical = await client.resolveCanonical(handle);
                   upsertHandoffState(handoff.id, { targetSessionId: canonical.openedId });
                   const runtimeId = await client.resume(handle, canonical.registryId);
+                  const baseline = await client.eventsSince(0);
+                  const initialLastSeen = Math.max(
+                    baseline.latest_seq ?? 0,
+                    ...(baseline.events ?? []).map((event) => event.seq ?? 0),
+                  );
                   upsertHandoffState(handoff.id, { status: 'running' });
                   await client.submit(formatHandoffPrompt(createHandoffEnvelope(
                     { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
@@ -562,6 +567,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                     },
                     {
                       sessionId: runtimeId,
+                      initialLastSeen,
                       intervalMs: 1200,
                       onEvent: () => {},
                       onComplete: (reply) => {
@@ -779,6 +785,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           const canonical = await client.resolveCanonical(handle);
           upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, originSessionId);
           const runtimeId = await client.resume(handle, canonical.registryId);
+          const baseline = await client.eventsSince(0);
+          const initialLastSeen = Math.max(
+            baseline.latest_seq ?? 0,
+            ...(baseline.events ?? []).map((event) => event.seq ?? 0),
+          );
           upsertHandoffState(handoffId, { status: 'running' }, originSessionId);
           await client.submit(formatHandoffPrompt(envelope));
           handoffObserverRef.current = createHandoffObserver(
@@ -787,6 +798,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             },
             {
               sessionId: runtimeId,
+              initialLastSeen,
               intervalMs: 1200,
               onEvent: () => {},
               onComplete: (reply) => {

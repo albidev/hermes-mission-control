@@ -15,6 +15,7 @@ export type HandoffEventRpc = {
 export type HandoffObserverOptions = {
   sessionId: string;
   intervalMs?: number;
+  initialLastSeen?: number;
   onEvent: (event: HandoffEvent) => void;
   onComplete: (text: string) => void;
   onError: (message: string) => void;
@@ -44,7 +45,7 @@ function extractText(payload: Record<string, unknown> | undefined): string {
 export function createHandoffObserver(rpc: HandoffEventRpc, options: HandoffObserverOptions) {
   const intervalMs = options.intervalMs ?? 1200;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let lastSeen = 0;
+  let lastSeen = Math.max(0, Math.floor(options.initialLastSeen ?? 0));
   let stopped = false;
   let settled = false;
 
