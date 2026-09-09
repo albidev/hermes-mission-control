@@ -3419,6 +3419,30 @@ body.modal-open .route-page-scroll {
   max-width: 100%;
 }
 
+.bot-handoff-tool-surface {
+  align-self: flex-start;
+  width: min(96%, 42rem);
+  box-sizing: border-box;
+}
+
+.bot-handoff-tool-surface .chat-tool-heading {
+  flex: 1 1 auto;
+}
+
+.bot-handoff-tool-surface .chat-tool-heading span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-handoff-tool-surface .chat-tool-section pre {
+  max-height: none;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .chat-tool-section pre,
 .chat-tool-live pre {
   width: 100%;

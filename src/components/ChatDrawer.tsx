@@ -522,9 +522,14 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       );
     }
 
+    const handoffMessageIds = new Set(
+      handoffs.flatMap((handoff) => [`bot-request-${handoff.id}`, `bot-reply-${handoff.id}`]),
+    );
     const timeline = [
-      ...messages.map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, id: message.id, message })),
-      ...handoffs.map((handoff) => ({ kind: 'handoff' as const, createdAt: handoff.updatedAt, id: handoff.id, handoff })),
+      ...messages
+        .filter((message: ChatMessage) => !handoffMessageIds.has(message.id))
+        .map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, id: message.id, message })),
+      ...handoffs.map((handoff) => ({ kind: 'handoff' as const, createdAt: handoff.createdAt ?? handoff.updatedAt, id: handoff.id, handoff })),
     ].sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
 
     return (
@@ -792,6 +797,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         provider: candidate?.provider,
         request: mention.request,
         status: 'queued',
+        createdAt: Date.now(),
         updatedAt: Date.now(),
       };
       setHandoffs((current) => [...current, initialHandoff]);

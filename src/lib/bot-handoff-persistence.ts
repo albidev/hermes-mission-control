@@ -11,6 +11,7 @@ export type PersistedBotHandoff = {
   status: BotHandoffStatus;
   reply?: string | null;
   error?: string | null;
+  createdAt?: number;
   updatedAt: number;
 };
 

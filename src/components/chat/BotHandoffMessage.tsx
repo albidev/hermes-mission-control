@@ -1,4 +1,4 @@
-import { Bot, Check, CircleAlert, Loader2, RotateCcw } from 'lucide-react';
+import { Bot, Check, ChevronDown, CircleAlert, Loader2, RotateCcw } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 
 export type BotHandoffStatus = 'queued' | 'running' | 'completed' | 'failed';
@@ -15,29 +15,47 @@ export type BotHandoffMessageProps = {
   onRetry?: () => void;
 };
 
+function PayloadBlock({ label, value, meta, open = true }: { label: string; value: string; meta: string; open?: boolean }) {
+  return (
+    <details className="chat-tool-section chat-tool-payload" open={open}>
+      <summary className="chat-tool-section-label">
+        <span>{label}</span>
+        <span className="chat-tool-section-meta">{meta}</span>
+        <ChevronDown className="chat-tool-payload-chevron" size={14} aria-hidden />
+      </summary>
+      <pre>{value}</pre>
+    </details>
+  );
+}
+
 export function BotHandoffMessage({ handle, displayName, model, provider, request, status, reply, error, onRetry }: BotHandoffMessageProps) {
   const { t } = useI18n();
   const label = displayName || handle;
   const modelLabel = model || 'model inherited';
   const providerLabel = provider || 'provider inherited';
+  const running = status === 'queued' || status === 'running';
+  const failed = status === 'failed';
   return (
-    <div className="bot-handoff-card" data-status={status}>
-      <div className="bot-handoff-head">
-        <span className="bot-handoff-avatar"><Bot size={14} /></span>
-        <span className="bot-handoff-name">{label}</span>
-        <span className="bot-handoff-model" title={`${modelLabel} · ${providerLabel}`}>{modelLabel} · {providerLabel}</span>
-        <span className="bot-handoff-status">
-          {status === 'queued' ? <Loader2 size={12} className="chat-spin" /> : null}
-          {status === 'running' ? <Loader2 size={12} className="chat-spin" /> : null}
-          {status === 'completed' ? <Check size={12} /> : null}
-          {status === 'failed' ? <CircleAlert size={12} /> : null}
+    <div className={`chat-tool-surface chat-tool-family-delegation bot-handoff-tool-surface is-${status}`} data-status={status}>
+      <div className="chat-tool-header">
+        <span className="chat-tool-avatar" aria-hidden><Bot size={15} /></span>
+        <div className="chat-tool-heading">
+          <strong>@{handle}</strong>
+          <span>{label} · {modelLabel} · {providerLabel}</span>
+        </div>
+        <span className={`chat-tool-state is-${failed ? 'error' : running ? 'running' : 'complete'}`}>
+          {failed ? <CircleAlert size={13} /> : running ? <Loader2 size={13} className="chat-spin" /> : <Check size={13} />}
           {t(`bots.handoff.${status}`)}
         </span>
       </div>
-      <p className="bot-handoff-request">@{handle} {request}</p>
-      {status === 'completed' && reply ? <p className="bot-handoff-reply">{reply}</p> : null}
-      {status === 'failed' && error ? <p className="bot-handoff-error">{error}</p> : null}
-      {status === 'failed' && onRetry ? (
+
+      <PayloadBlock label="Input" value={`@${handle} ${request}`.trim()} meta="request" />
+
+      {reply ? <PayloadBlock label="Output" value={reply} meta="result" open={!running} /> : running ? (
+        <div className="chat-tool-waiting"><Loader2 size={13} className="chat-spin" /> Waiting for Bot result…</div>
+      ) : null}
+      {failed && error ? <pre className="chat-tool-detail chat-bot-handoff-error">{error}</pre> : null}
+      {failed && onRetry ? (
         <button type="button" className="bot-handoff-retry" onClick={onRetry}>
           <RotateCcw size={12} /> {t('bots.handoff.retry')}
         </button>

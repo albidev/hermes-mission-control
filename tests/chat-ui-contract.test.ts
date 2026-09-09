@@ -21,6 +21,7 @@ const buttonComponent = readFileSync(new URL('../src/components/ui/Button.tsx', 
 const tldraw = readFileSync(new URL('../src/components/TLDrawCanvas.tsx', import.meta.url), 'utf8');
 const todoPlan = readFileSync(new URL('../src/components/chat/ChatTodoPlan.tsx', import.meta.url), 'utf8');
 const toolMessage = readFileSync(new URL('../src/components/chat/ToolMessage.tsx', import.meta.url), 'utf8');
+const botHandoff = readFileSync(new URL('../src/components/chat/BotHandoffMessage.tsx', import.meta.url), 'utf8');
 const chatSync = readFileSync(new URL('../src/lib/chat-sync.ts', import.meta.url), 'utf8');
 const chatPersistence = readFileSync(new URL('../src/lib/chat-persistence.ts', import.meta.url), 'utf8');
 
@@ -33,7 +34,15 @@ assertIncludes(component, 'let originSessionId = await ensureSession();', 'Bot h
 assertIncludes(component, "originSessionId = await claimLastChatPointer('submit', originSessionId);", 'Bot handoffs claim the shared last-chat pointer');
 assertIncludes(component, "appendChatMessage(attributedReply, 'assistant_message');", 'Bot replies are projected into the primary chat transcript');
 assertIncludes(component, "id: `bot-request-${handoffId}`", 'first Bot mention is recorded as a primary user message');
-assertIncludes(component, "appendChatMessage({", 'Bot handoff writes the primary request through the chat message pipeline');
+assertIncludes(component, 'const handoffMessageIds = new Set(', 'Bot request and reply are grouped into one visual timeline card');
+assertIncludes(component, "filter((message: ChatMessage) => !handoffMessageIds.has(message.id))", 'grouped Bot messages are not rendered twice');
+assertIncludes(component, 'createdAt: handoff.createdAt ?? handoff.updatedAt', 'Bot card keeps its original request order while status changes');
+assertIncludes(component, '<BotHandoffMessage', 'primary timeline renders the Bot card');
+assertIncludes(botHandoff, 'chat-tool-surface chat-tool-family-delegation bot-handoff-tool-surface', 'Bot handoff reuses the tool card surface');
+assertIncludes(botHandoff, '<PayloadBlock label="Input"', 'Bot card exposes the request as tool input');
+assertIncludes(botHandoff, '<PayloadBlock label="Output"', 'Bot card exposes the reply as tool output');
+assertIncludes(styles, '.bot-handoff-tool-surface {', 'Bot tool card has a responsive surface');
+assertIncludes(styles, 'max-height: none;', 'Bot tool output does not hide mobile content behind an inner scroll');
 assertIncludes(component, 'attribution: {', 'primary transcript preserves Bot attribution metadata');
 assertIncludes(chatSync, "'assistant_message'", 'chat sync supports attributed assistant messages');
 assertIncludes(component, 'targetSessionId: canonical.openedId', 'Bot handoffs record the canonical Bot Chat session');
