@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from chat_runtime_presence import active_runtime_presences
+from chat_title_store import get_chat_title
 
 _log = logging.getLogger(__name__)
 
@@ -700,6 +701,13 @@ def _build_session_item(
         _normalize_text((db_row or {}).get("preview")),
         _normalize_text((index_entry or {}).get("display_name")),
     )
+    stored_title = get_chat_title(
+        session_id,
+        (db_row or {}).get("session_key"),
+        (index_entry or {}).get("session_key"),
+    )
+    if stored_title:
+        title = stored_title
     preview = _derive_preview(sidecar_messages, _normalize_text((db_row or {}).get("preview")))
     message_count = max(
         _coerce_int((sidecar or {}).get("message_count"), 0),

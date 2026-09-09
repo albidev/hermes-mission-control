@@ -83,6 +83,7 @@ from push_server import (
 
 from last_chat_store import get_last_chat, set_last_chat
 from chat_handoff_store import list_handoffs, upsert_handoff
+from chat_title_store import set_chat_title
 from chat_runtime_presence import active_runtime_presences, update_runtime_presence
 from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
 import kanban_bridge as kanban_bridge_mod
@@ -2693,6 +2694,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {'error': 'bad_request', 'detail': str(exc)})
             except Exception as exc:  # defensive: relay must not kill the sidecar worker
                 self._json(500, {'error': 'chat_sync_failed', 'detail': str(exc)[:240]})
+            return
+        if parsed.path == '/api/local/chat/title':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None or not isinstance(payload, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            try:
+                saved = set_chat_title(
+                    str(payload.get('sessionId') or payload.get('session_id') or ''),
+                    str(payload.get('sessionKey') or payload.get('session_key') or ''),
+                    str(payload.get('title') or ''),
+                )
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+                return
+            self._json(200, {'success': True, **saved})
             return
         if parsed.path == '/api/local/chat/handoffs':
             if not _is_authorized(self):

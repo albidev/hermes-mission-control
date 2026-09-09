@@ -66,6 +66,29 @@ export function persistChat(
   }
 }
 
+export async function persistChatTitle(
+  sessionId: string,
+  sessionKey: string | null,
+  title: string,
+  storedToken: string,
+): Promise<void> {
+  const normalizedTitle = title.trim().slice(0, 120);
+  if (!normalizedTitle || (!sessionId.trim() && !sessionKey?.trim())) return;
+  try {
+    await fetch('/api/local/chat/title', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
+      },
+      cache: 'no-store',
+      body: JSON.stringify({ sessionId, sessionKey, title: normalizedTitle }),
+    });
+  } catch {
+    // The gateway/runtime remains authoritative; MC metadata is best effort.
+  }
+}
+
 export type LastChatClaimResult = {
   accepted: boolean;
   lastChat: ServerLastChat | null;

@@ -40,7 +40,7 @@ import {
 import { deriveTodoPlan, normalizeTodoPlanSnapshot, type TodoPlan } from './todo-plan';
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
 import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
-import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
+import { fetchServerLastChat, persistChat, persistChatTitle, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { canClaimLastChatPointer, createChatBootstrapGuard, shouldAdoptServerPointer, type LastChatClaimAction, type ServerLastChat } from './chat-bootstrap';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
 import { applySyncedAssistantMessage, applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, fetchChatTranscript, publishChatSync, replaceWithCanonicalChatMessages, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
@@ -1157,7 +1157,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       // A title failure must not abort the Bot handoff; the UI still has a useful local title.
       setSessionTitle(trimmed);
     }
-  }, [request]);
+    void persistChatTitle(activeSessionId, sessionKeyRef.current, trimmed, storedToken);
+  }, [request, storedToken]);
 
   const appendSystemMessage = useCallback((text: string) => {
     const trimmed = text.trim();
