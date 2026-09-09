@@ -82,6 +82,7 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
+from chat_handoff_store import list_handoffs, upsert_handoff
 from chat_runtime_presence import active_runtime_presences, update_runtime_presence
 from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
 import kanban_bridge as kanban_bridge_mod
@@ -2386,6 +2387,16 @@ class Handler(BaseHTTPRequestHandler):
                 'leases': active_runtime_presences(),
             })
             return
+        if parsed.path == '/api/local/chat/handoffs':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            session_id = (params.get('session_id') or params.get('sessionId') or [''])[0].strip()
+            if not session_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id.'})
+                return
+            self._json(200, {'sessionId': session_id, 'handoffs': list_handoffs(session_id)})
+            return
         if parsed.path == '/api/local/chat/last':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2682,6 +2693,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {'error': 'bad_request', 'detail': str(exc)})
             except Exception as exc:  # defensive: relay must not kill the sidecar worker
                 self._json(500, {'error': 'chat_sync_failed', 'detail': str(exc)[:240]})
+            return
+        if parsed.path == '/api/local/chat/handoffs':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None or not isinstance(payload, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            session_id = str(payload.get('session_id') or payload.get('sessionId') or '').strip()
+            handoff = payload.get('handoff')
+            if not session_id or not isinstance(handoff, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'session_id and handoff are required.'})
+                return
+            try:
+                saved = upsert_handoff(session_id, handoff)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+                return
+            self._json(200, {'success': True, 'sessionId': session_id, 'handoff': saved})
             return
         if parsed.path == '/api/local/gateway/restart':
             if not _is_authorized(self):

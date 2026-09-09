@@ -70,7 +70,8 @@ import { createHandoffEnvelope, createHandoffDedupe } from '../lib/bot-handoff';
 import { createHandoffObserver } from '../lib/bot-handoff-observer';
 import { openHandoffClient } from '../lib/bot-handoff-client';
 import { extractMentionRequest } from '../lib/bot-mentions';
-import { BotHandoffMessage, type BotHandoffStatus } from './chat/BotHandoffMessage';
+import { BotHandoffMessage } from './chat/BotHandoffMessage';
+import { loadPersistedBotHandoffs, persistBotHandoff, type PersistedBotHandoff } from '../lib/bot-handoff-persistence';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -169,15 +170,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
   const mentionPopoverRef = useRef<ChatMentionPopoverHandle | null>(null);
   const [botRoster, setBotRoster] = useState<BotMentionCandidate[]>([]);
-  const [handoffs, setHandoffs] = useState<Array<{
-    id: string;
-    handle: string;
-    displayName?: string;
-    request: string;
-    status: BotHandoffStatus;
-    reply?: string | null;
-    error?: string | null;
-  }>>([]);
+  const [handoffs, setHandoffs] = useState<PersistedBotHandoff[]>([]);
   const handoffDedupeRef = useRef(createHandoffDedupe());
   const handoffObserverRef = useRef<ReturnType<typeof createHandoffObserver> | null>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
@@ -238,6 +231,15 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     interrupt,
     reset,
   } = useGatewayChat(storedToken, open, initialSessionId);
+
+  useEffect(() => {
+    if (!open || !sessionId) return;
+    let cancelled = false;
+    void loadPersistedBotHandoffs(storedToken, sessionId).then((rows) => {
+      if (!cancelled) setHandoffs(rows);
+    });
+    return () => { cancelled = true; };
+  }, [open, sessionId, storedToken]);
 
   useEffect(() => {
     if (!open) return;
@@ -502,7 +504,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             onRetry={handoff.status === 'failed' ? () => {
               const handle = handoff.handle;
               if (!handoffDedupeRef.current.tryClaim(handle)) return;
-              setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'queued', error: null } : item));
+              upsertHandoffState(handoff.id, { status: 'queued', error: null });
               const envelope = createHandoffEnvelope(
                 { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
                 { profile: handle, canonicalTitle: 'Bot Chat' },
@@ -515,7 +517,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                   client = await openHandoffClient({ accessToken: storedToken || undefined });
                   const canonical = await client.resolveCanonical(handle);
                   const runtimeId = await client.resume(handle, canonical.registryId);
-                  setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'running' } : item));
+                  upsertHandoffState(handoff.id, { status: 'running' });
                   await client.submit(handoff.request);
                   handoffObserverRef.current = createHandoffObserver(
                     {
@@ -528,12 +530,12 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                       onComplete: (reply) => {
                         handoffDedupeRef.current.release(handle);
                         client?.close();
-                        setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'completed', reply } : item));
+                        upsertHandoffState(handoff.id, { status: 'completed', reply });
                       },
                       onError: (message) => {
                         handoffDedupeRef.current.release(handle);
                         client?.close();
-                        setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'failed', error: message } : item));
+                        upsertHandoffState(handoff.id, { status: 'failed', error: message });
                       },
                     },
                   );
@@ -675,6 +677,16 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     }
   };
 
+  const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>) => {
+    setHandoffs((current) => {
+      const existing = current.find((item) => item.id === id);
+      if (!existing) return current;
+      const updated: PersistedBotHandoff = { ...existing, ...patch, updatedAt: Date.now() };
+      void persistBotHandoff(storedToken, sessionId ?? '', updated);
+      return current.map((item) => item.id === id ? updated : item);
+    });
+  }, [sessionId, storedToken]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = draft;
@@ -705,13 +717,18 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         mention.request,
       );
       const handoffId = envelope.handoffId;
-      setHandoffs((current) => [...current, {
+      const initialHandoff: PersistedBotHandoff = {
         id: handoffId,
         handle,
         displayName: candidate?.displayName,
+        model: candidate?.model,
+        provider: candidate?.provider,
         request: mention.request,
         status: 'queued',
-      }]);
+        updatedAt: Date.now(),
+      };
+      setHandoffs((current) => [...current, initialHandoff]);
+      void persistBotHandoff(storedToken, sessionId ?? '', initialHandoff);
       setDraft('');
       const runHandoff = async (): Promise<void> => {
         let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
@@ -719,7 +736,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           client = await openHandoffClient({ accessToken: storedToken || undefined });
           const canonical = await client.resolveCanonical(handle);
           const runtimeId = await client.resume(handle, canonical.registryId);
-          setHandoffs((current) => current.map((item) => item.id === handoffId ? { ...item, status: 'running' } : item));
+          upsertHandoffState(handoffId, { status: 'running' });
           await client.submit(mention.request);
           handoffObserverRef.current = createHandoffObserver(
             {
@@ -732,12 +749,12 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               onComplete: (reply) => {
                 handoffDedupeRef.current.release(handle);
                 client?.close();
-                setHandoffs((current) => current.map((item) => item.id === handoffId ? { ...item, status: 'completed', reply } : item));
+                upsertHandoffState(handoffId, { status: 'completed', reply });
               },
               onError: (message) => {
                 handoffDedupeRef.current.release(handle);
                 client?.close();
-                setHandoffs((current) => current.map((item) => item.id === handoffId ? { ...item, status: 'failed', error: message } : item));
+                upsertHandoffState(handoffId, { status: 'failed', error: message });
               },
             },
           );
