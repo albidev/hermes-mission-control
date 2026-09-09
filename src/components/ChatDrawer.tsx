@@ -68,6 +68,7 @@ import type { BotMentionCandidate } from '../lib/bot-mentions';
 import type { ChatMentionPopoverHandle } from './ChatMentionPopover';
 import { createHandoffEnvelope, createHandoffDedupe, formatHandoffPrompt } from '../lib/bot-handoff';
 import { createHandoffObserver } from '../lib/bot-handoff-observer';
+import { findHandoffCompletion } from '../lib/bot-handoff-recovery';
 import { openHandoffClient } from '../lib/bot-handoff-client';
 import { extractMentionRequest } from '../lib/bot-mentions';
 import { BotHandoffMessage } from './chat/BotHandoffMessage';
@@ -173,6 +174,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const [handoffs, setHandoffs] = useState<PersistedBotHandoff[]>([]);
   const handoffDedupeRef = useRef(createHandoffDedupe());
   const handoffObserverRef = useRef<ReturnType<typeof createHandoffObserver> | null>(null);
+  const handoffRecoveryRef = useRef(new Set<string>());
+  const loadedHandoffIdsRef = useRef(new Set<string>());
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
@@ -239,8 +242,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   useEffect(() => {
     if (!open || !sessionId) return;
     let cancelled = false;
+    loadedHandoffIdsRef.current.clear();
     void loadPersistedBotHandoffs(storedToken, sessionId).then((rows) => {
-      if (!cancelled) setHandoffs(rows);
+      if (cancelled) return;
+      for (const row of rows) loadedHandoffIdsRef.current.add(row.id);
+      setHandoffs(rows);
     });
     return () => { cancelled = true; };
   }, [open, sessionId, storedToken]);
@@ -778,6 +784,47 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       return current.map((item) => item.id === id ? updated : item);
     });
   }, [sessionId, storedToken]);
+
+  useEffect(() => {
+    if (!open || !sessionId || !storedToken.trim()) return;
+    const pending = handoffs.filter((handoff) => (
+      loadedHandoffIdsRef.current.has(handoff.id)
+      && (handoff.status === 'queued' || handoff.status === 'running')
+    ));
+    if (pending.length === 0) return;
+    let cancelled = false;
+
+    const recover = async (): Promise<void> => {
+      for (const handoff of pending) {
+        if (cancelled || handoffRecoveryRef.current.has(handoff.id)) continue;
+        handoffRecoveryRef.current.add(handoff.id);
+        let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
+        try {
+          client = await openHandoffClient({ accessToken: storedToken });
+          const canonical = await client.resolveCanonical(handoff.handle, handoff.targetSessionId);
+          await client.resume(handoff.handle, canonical.registryId);
+          const snapshot = await client.eventsSince(0);
+          const reply = findHandoffCompletion(snapshot.events ?? [], handoff.id);
+          if (!cancelled && reply) {
+            upsertHandoffState(handoff.id, {
+              targetSessionId: canonical.openedId,
+              status: 'completed',
+              reply,
+              error: null,
+            }, sessionId);
+          }
+        } catch {
+          // The Bot may still be working or the gateway may be unavailable.
+          // Leave the durable handoff state untouched; the next reopen retries.
+        } finally {
+          client?.close();
+          handoffRecoveryRef.current.delete(handoff.id);
+        }
+      }
+    };
+    void recover();
+    return () => { cancelled = true; };
+  }, [handoffs, open, sessionId, storedToken, upsertHandoffState]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
