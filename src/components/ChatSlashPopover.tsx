@@ -1,4 +1,3 @@
-import { useI18n } from '../lib/i18n';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   forwardRef,
@@ -9,21 +8,19 @@ import {
   useState,
 } from 'react';
 import { ChevronRight } from 'lucide-react';
-
-type CompletionItem = {
-  display: string;
-  text: string;
-  meta?: string;
-};
+import { useI18n } from '../lib/i18n';
+import {
+  ChatCompletionPopover,
+  type ChatCompletionItem,
+  type ChatCompletionPopoverHandle,
+} from './ChatCompletionPopover';
 
 export type ChatSlashCompletionResponse = {
-  items?: CompletionItem[];
+  items?: ChatCompletionItem[];
   replace_from?: number;
 };
 
-export type ChatSlashPopoverHandle = {
-  handleKey(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean;
-};
+export type ChatSlashPopoverHandle = ChatCompletionPopoverHandle;
 
 type ChatSlashPopoverProps = {
   input: string;
@@ -35,11 +32,12 @@ const DEBOUNCE_MS = 60;
 
 export const ChatSlashPopover = forwardRef<ChatSlashPopoverHandle, ChatSlashPopoverProps>(
   function ChatSlashPopover({ input, complete, onApply }, ref) {
-  const { t } = useI18n();
-    const [items, setItems] = useState<CompletionItem[]>([]);
-    const [selected, setSelected] = useState(0);
+    const { t } = useI18n();
+    const [items, setItems] = useState<ChatCompletionItem[]>([]);
     const [replaceFrom, setReplaceFrom] = useState(0);
+    const [dismissed, setDismissed] = useState(false);
     const lastInputRef = useRef('');
+    const popoverHandleRef = useRef<ChatCompletionPopoverHandle | null>(null);
 
     useEffect(() => {
       const currentInput = input ?? '';
@@ -49,6 +47,7 @@ export const ChatSlashPopover = forwardRef<ChatSlashPopoverHandle, ChatSlashPopo
       }
 
       lastInputRef.current = currentInput;
+      setDismissed(false);
       const timer = window.setTimeout(async () => {
         if (lastInputRef.current !== currentInput) return;
         try {
@@ -56,7 +55,6 @@ export const ChatSlashPopover = forwardRef<ChatSlashPopoverHandle, ChatSlashPopo
           if (lastInputRef.current !== currentInput) return;
           setItems(Array.isArray(response.items) ? response.items : []);
           setReplaceFrom(typeof response.replace_from === 'number' ? response.replace_from : 0);
-          setSelected(0);
         } catch {
           if (lastInputRef.current === currentInput) setItems([]);
         }
@@ -65,72 +63,39 @@ export const ChatSlashPopover = forwardRef<ChatSlashPopoverHandle, ChatSlashPopo
       return () => window.clearTimeout(timer);
     }, [complete, input]);
 
-    const apply = useCallback((item: CompletionItem | undefined) => {
-      if (!item) return;
-      onApply(input.slice(0, replaceFrom) + item.text);
-    }, [input, onApply, replaceFrom]);
+    const visible = input.startsWith('/') && !dismissed && items.length > 0;
 
-    const visible = input.startsWith('/') && items.length > 0;
+    const handleApply = useCallback((nextInput: string) => {
+      onApply(nextInput);
+    }, [onApply]);
+
+    const handleDismiss = useCallback(() => {
+      setDismissed(true);
+      setItems([]);
+    }, []);
 
     useImperativeHandle(ref, () => ({
       handleKey: (event) => {
-        if (!visible) return false;
-        if (event.key === 'ArrowDown') {
-          event.preventDefault();
-          setSelected((current) => (current + 1) % items.length);
-          return true;
-        }
-        if (event.key === 'ArrowUp') {
-          event.preventDefault();
-          setSelected((current) => (current - 1 + items.length) % items.length);
-          return true;
-        }
-        if (event.key === 'Tab' || event.key === 'Enter') {
-          const item = items[selected];
-          // When the user has already typed the full local command (notably
-          // `/model`), Enter should submit it and open the model picker rather
-          // than applying the same completion forever.
-          if (event.key === 'Enter' && item && input.trim() === item.text.trim() && !input.trim().includes(' ')) {
-            setItems([]);
-            return false;
-          }
-          event.preventDefault();
-          apply(item);
-          return true;
-        }
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          setItems([]);
-          return true;
-        }
-        return false;
+        const handle = popoverHandleRef.current;
+        return handle ? handle.handleKey(event) : false;
       },
-    }), [apply, items, selected, visible]);
-
-    if (!visible) return null;
+    }), []);
 
     return (
-      <div className="chat-slash-popover" role="listbox" aria-label={t('slash.commandsAria')}>
-        <div className="chat-slash-popover-label">{t('slash.commands')}</div>
-        {items.map((item, index) => {
-          const active = index === selected;
-          return (
-            <button
-              className={`chat-slash-option ${active ? 'is-selected' : ''}`}
-              key={`${item.text}-${index}`}
-              type="button"
-              role="option"
-              aria-selected={active}
-              onMouseEnter={() => setSelected(index)}
-              onClick={() => apply(item)}
-            >
-              <ChevronRight size={13} aria-hidden />
-              <span className="chat-slash-option-name">{item.display || item.text}</span>
-              {item.meta ? <span className="chat-slash-option-meta">{item.meta}</span> : null}
-            </button>
-          );
-        })}
-      </div>
+      <ChatCompletionPopover
+        ref={popoverHandleRef}
+        input={input}
+        items={items}
+        visible={visible}
+        replaceFrom={replaceFrom}
+        label={t('slash.commands')}
+        ariaLabel={t('slash.commandsAria')}
+        icon={<ChevronRight size={13} aria-hidden />}
+        onApply={handleApply}
+        onDismiss={handleDismiss}
+        enterSubmits={(currentInput, item) =>
+          currentInput.trim() === item.text.trim() && !currentInput.trim().includes(' ')}
+      />
     );
   },
 );

@@ -40,6 +40,13 @@ describe('findMentionAtCaret', () => {
     assert.strictEqual(findMentionAtCaret('@cro', 4, []), null);
   });
 
+  it('shows the full roster for a bare @', () => {
+    const match = findMentionAtCaret('@', 1, ROSTER);
+    assert.ok(match);
+    assert.strictEqual(match.query, '');
+    assert.deepStrictEqual(match.matches.map((c) => c.handle), ['crossnection', 'bdhidentity', 'bdhverifier']);
+  });
+
   it('returns null when caret is not at the mention token', () => {
     assert.strictEqual(findMentionAtCaret('@crossnection poi', 17, ROSTER), null);
   });

@@ -45,8 +45,10 @@ export function findMentionAtCaret(
   // the mention and the popover must hide.
   if (/\s/.test(token)) return null;
   const query = normalizeHandle(token.slice(1));
-  if (!query) return null;
-  const matches = roster.filter((candidate) => normalizeHandle(candidate.handle).startsWith(query));
+  // An empty query (`@` alone) shows the full roster.
+  const matches = query
+    ? roster.filter((candidate) => normalizeHandle(candidate.handle).startsWith(query))
+    : roster;
   if (!matches.length) return null;
   return { start: atIndex, end: caret, query, matches };
 }
