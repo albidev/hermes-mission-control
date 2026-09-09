@@ -572,7 +572,24 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           ...(replyMessage ? [{ kind: 'message' as const, createdAt: handoff.updatedAt, order: 2, id: replyMessage.id, message: replyMessage }] : []),
         ];
       }),
-    ].sort((left, right) => left.createdAt - right.createdAt || left.order - right.order || left.id.localeCompare(right.id));
+    ].sort((left, right) => {
+      const byTimestamp = left.createdAt - right.createdAt;
+      if (byTimestamp !== 0) return byTimestamp;
+
+      // Reasoning and the final assistant response come from the same
+      // SessionDB row and therefore share its timestamp. Keep the semantic
+      // order instead of letting the suffixed ID win lexicographically.
+      if (left.kind === 'message' && right.kind === 'message') {
+        const leftMessage = left.message;
+        const rightMessage = right.message;
+        if (leftMessage.canonicalId && leftMessage.canonicalId === rightMessage.canonicalId) {
+          if (leftMessage.kind === 'reasoning' && rightMessage.kind === 'assistant') return -1;
+          if (leftMessage.kind === 'assistant' && rightMessage.kind === 'reasoning') return 1;
+        }
+      }
+
+      return left.order - right.order || left.id.localeCompare(right.id);
+    });
 
     return (
       <>
