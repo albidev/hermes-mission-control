@@ -176,6 +176,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const handoffObserverRef = useRef<ReturnType<typeof createHandoffObserver> | null>(null);
   const handoffRecoveryRef = useRef(new Set<string>());
   const loadedHandoffIdsRef = useRef(new Set<string>());
+  const titleRecoveryRef = useRef(new Set<string>());
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
@@ -787,14 +788,17 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
 
   useEffect(() => {
     if (!open || !sessionId || !storedToken.trim()) return;
-    const pending = handoffs.filter((handoff) => (
-      loadedHandoffIdsRef.current.has(handoff.id)
-      && (handoff.status === 'queued' || handoff.status === 'running')
-    ));
-    if (pending.length === 0) return;
+    const loaded = handoffs.filter((handoff) => loadedHandoffIdsRef.current.has(handoff.id));
+    const pending = loaded.filter((handoff) => handoff.status === 'queued' || handoff.status === 'running');
+    if (loaded.length === 0) return;
     let cancelled = false;
 
     const recover = async (): Promise<void> => {
+      const titleHandoff = loaded[0];
+      if (titleHandoff && !titleRecoveryRef.current.has(titleHandoff.id) && (!sessionTitle?.trim() || sessionTitle === 'Untitled session')) {
+        titleRecoveryRef.current.add(titleHandoff.id);
+        await titleSession(sessionId, titleHandoff.request);
+      }
       for (const handoff of pending) {
         if (cancelled || handoffRecoveryRef.current.has(handoff.id)) continue;
         handoffRecoveryRef.current.add(handoff.id);
@@ -824,7 +828,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     };
     void recover();
     return () => { cancelled = true; };
-  }, [handoffs, open, sessionId, storedToken, upsertHandoffState]);
+  }, [handoffs, open, sessionId, sessionTitle, storedToken, titleSession, upsertHandoffState]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

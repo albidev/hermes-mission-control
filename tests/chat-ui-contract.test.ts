@@ -39,6 +39,8 @@ assertIncludes(component, 'previewMessages.map((msg, index)', 'resume preview re
 assertIncludes(chatGateway, 'if (since !== undefined && typeof ready.latest_seq === \'number\')', 'fresh relay subscribers replay existing MC messages');
 assertIncludes(component, 'const handoffRequestIds = new Set(', 'only the technical Bot request row is grouped');
 assertIncludes(component, "filter((message: ChatMessage) => !handoffRequestIds.has(message.id))", 'the attributed Bot assistant reply remains visible');
+assertIncludes(component, 'const titleHandoff = loaded[0];', 'recovery derives the primary title from the first Bot request');
+assertIncludes(component, 'await titleSession(sessionId, titleHandoff.request);', 'recovery persists the missing primary title');
 assertIncludes(component, 'const existingMessageIds = new Set(messages.map((message: ChatMessage) => message.id));', 'resume checks actual transcript IDs before reconstructing the reply');
 assertIncludes(component, '!existingMessageIds.has(`bot-reply-${handoff.id}`)', 'missing attributed replies are reconstructed exactly once');
 assertIncludes(component, 'order: 2, id: replyMessage.id', 'the attributed assistant reply closes the Bot turn');
