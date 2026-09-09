@@ -451,6 +451,19 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               )) : (
                 <p className="chat-preview-fallback">{preview.preview || 'No recent messages available.'}</p>
               )}
+              {handoffs.map((handoff) => (
+                <BotHandoffMessage
+                  key={`preview-${handoff.id}`}
+                  handle={handoff.handle}
+                  displayName={handoff.displayName}
+                  model={handoff.model}
+                  provider={handoff.provider}
+                  request={handoff.request}
+                  status={handoff.status}
+                  reply={handoff.reply}
+                  error={handoff.error}
+                />
+              ))}
             </div>
             <button
               type="button"
@@ -466,6 +479,23 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       }
       return (
         <section className="chat-preview-surface">
+          {handoffs.length > 0 ? (
+            <div className="chat-preview-body">
+              {handoffs.map((handoff) => (
+                <BotHandoffMessage
+                  key={`preview-unavailable-${handoff.id}`}
+                  handle={handoff.handle}
+                  displayName={handoff.displayName}
+                  model={handoff.model}
+                  provider={handoff.provider}
+                  request={handoff.request}
+                  status={handoff.status}
+                  reply={handoff.reply}
+                  error={handoff.error}
+                />
+              ))}
+            </div>
+          ) : null}
           <div className="chat-preview-empty">
             <MessageSquare size={20} />
             <p>{t('chatDrawer.previewUnavailable')}</p>
@@ -516,6 +546,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                 try {
                   client = await openHandoffClient({ accessToken: storedToken || undefined });
                   const canonical = await client.resolveCanonical(handle);
+                  upsertHandoffState(handoff.id, { targetSessionId: canonical.openedId });
                   const runtimeId = await client.resume(handle, canonical.registryId);
                   upsertHandoffState(handoff.id, { status: 'running' });
                   await client.submit(handoff.request);
@@ -735,6 +766,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         try {
           client = await openHandoffClient({ accessToken: storedToken || undefined });
           const canonical = await client.resolveCanonical(handle);
+          upsertHandoffState(handoffId, { targetSessionId: canonical.openedId });
           const runtimeId = await client.resume(handle, canonical.registryId);
           upsertHandoffState(handoffId, { status: 'running' });
           await client.submit(mention.request);

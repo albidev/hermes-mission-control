@@ -3,6 +3,7 @@ import type { BotHandoffStatus } from '../components/chat/BotHandoffMessage';
 export type PersistedBotHandoff = {
   id: string;
   handle: string;
+  targetSessionId?: string;
   displayName?: string;
   model?: string;
   provider?: string;
@@ -35,15 +36,18 @@ export async function loadPersistedBotHandoffs(accessToken: string, sessionId: s
 }
 
 export async function persistBotHandoff(accessToken: string, sessionId: string, handoff: PersistedBotHandoff): Promise<void> {
-  if (!sessionId.trim()) return;
-  try {
-    await fetch('/api/local/chat/handoffs', {
-      method: 'POST',
-      headers: { ...authHeaders(accessToken), 'Content-Type': 'application/json' },
-      cache: 'no-store',
-      body: JSON.stringify({ session_id: sessionId, handoff }),
-    });
-  } catch {
-    // The live handoff remains authoritative if the sidecar is unavailable.
-  }
+  const sessionIds = [...new Set([sessionId.trim(), handoff.targetSessionId?.trim() || ''].filter(Boolean))];
+  if (sessionIds.length === 0) return;
+  await Promise.all(sessionIds.map(async (targetSessionId) => {
+    try {
+      await fetch('/api/local/chat/handoffs', {
+        method: 'POST',
+        headers: { ...authHeaders(accessToken), 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ session_id: targetSessionId, handoff }),
+      });
+    } catch {
+      // The live handoff remains authoritative if the sidecar is unavailable.
+    }
+  }));
 }
