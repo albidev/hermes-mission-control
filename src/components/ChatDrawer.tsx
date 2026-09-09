@@ -63,9 +63,14 @@ import {
   type MissionControlSessionPreviewMessage,
 } from '../lib/hermes-api';
 import { deriveTodoPlan, type TodoPlan } from '../lib/todo-plan';
-import { loadBotProfiles } from '../lib/bot-gateway';
+import { loadBotProfiles, openBotCanonicalChat } from '../lib/bot-gateway';
 import type { BotMentionCandidate } from '../lib/bot-mentions';
 import type { ChatMentionPopoverHandle } from './ChatMentionPopover';
+import { createHandoffEnvelope, createHandoffDedupe } from '../lib/bot-handoff';
+import { createHandoffObserver } from '../lib/bot-handoff-observer';
+import { openHandoffClient } from '../lib/bot-handoff-client';
+import { extractMentionRequest } from '../lib/bot-mentions';
+import { BotHandoffMessage, type BotHandoffStatus } from './chat/BotHandoffMessage';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -164,6 +169,17 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
   const mentionPopoverRef = useRef<ChatMentionPopoverHandle | null>(null);
   const [botRoster, setBotRoster] = useState<BotMentionCandidate[]>([]);
+  const [handoffs, setHandoffs] = useState<Array<{
+    id: string;
+    handle: string;
+    displayName?: string;
+    request: string;
+    status: BotHandoffStatus;
+    reply?: string | null;
+    error?: string | null;
+  }>>([]);
+  const handoffDedupeRef = useRef(createHandoffDedupe());
+  const handoffObserverRef = useRef<ReturnType<typeof createHandoffObserver> | null>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
@@ -458,7 +474,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       );
     }
 
-    if (messages.length === 0) {
+    if (messages.length === 0 && handoffs.length === 0) {
       return (
         <section className="chat-empty">
           <MessageSquare size={22} />
@@ -468,7 +484,69 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       );
     }
 
-    return <>{messages.map((message) => <ChatMessageCard key={message.id} message={message} />)}</>;
+    return (
+      <>
+        {handoffs.map((handoff) => (
+          <BotHandoffMessage
+            key={handoff.id}
+            handle={handoff.handle}
+            displayName={handoff.displayName}
+            request={handoff.request}
+            status={handoff.status}
+            reply={handoff.reply}
+            error={handoff.error}
+            onRetry={handoff.status === 'failed' ? () => {
+              const handle = handoff.handle;
+              if (!handoffDedupeRef.current.tryClaim(handle)) return;
+              setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'queued', error: null } : item));
+              const envelope = createHandoffEnvelope(
+                { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
+                { profile: handle, canonicalTitle: 'Bot Chat' },
+                handoff.request,
+              );
+              const retryId = envelope.handoffId;
+              const runRetry = async (): Promise<void> => {
+                let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
+                try {
+                  client = await openHandoffClient({ accessToken: storedToken || undefined });
+                  const canonical = await client.resolveCanonical(handle);
+                  const runtimeId = await client.resume(handle, canonical.registryId);
+                  setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'running' } : item));
+                  await client.submit(handoff.request);
+                  handoffObserverRef.current = createHandoffObserver(
+                    {
+                      eventsSince: (params) => client!.eventsSince(params.last_seen),
+                    },
+                    {
+                      sessionId: runtimeId,
+                      intervalMs: 1200,
+                      onEvent: () => {},
+                      onComplete: (reply) => {
+                        handoffDedupeRef.current.release(handle);
+                        client?.close();
+                        setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'completed', reply } : item));
+                      },
+                      onError: (message) => {
+                        handoffDedupeRef.current.release(handle);
+                        client?.close();
+                        setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'failed', error: message } : item));
+                      },
+                    },
+                  );
+                  void handoffObserverRef.current.start();
+                } catch (err) {
+                  handoffDedupeRef.current.release(handle);
+                  client?.close();
+                  setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'failed', error: err instanceof Error ? err.message : 'Handoff failed.' } : item));
+                }
+              };
+              void runRetry();
+            } : undefined}
+          />
+        ))}
+        {messages.map((message) => <ChatMessageCard key={message.id} message={message} />)}
+      </>
+    );
   };
 
   useEffect(() => {
@@ -602,6 +680,74 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       return;
     }
     setAttachmentNotice(null);
+
+    // Bot handoff: a mention to a roster-marked Bot routes the request into the
+    // target canonical Bot Chat. The origin transcript stays untouched; the
+    // attributed reply is rendered as a dedicated handoff card.
+    const mention = extractMentionRequest(text, botRoster);
+    if (mention) {
+      const handle = mention.mention.slice(1);
+      const candidate = botRoster.find((item) => item.handle === handle);
+      // Dedupe: a second submit for the same Bot while one is in flight is
+      // ignored (double click, StrictMode, reconnect). The claim is released
+      // when the handoff settles so an explicit Retry can re-run it.
+      if (!handoffDedupeRef.current.tryClaim(handle)) {
+        setAttachmentNotice('A request to this Bot is already in flight.');
+        return;
+      }
+      const envelope = createHandoffEnvelope(
+        { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
+        { profile: handle, canonicalTitle: 'Bot Chat' },
+        mention.request,
+      );
+      const handoffId = envelope.handoffId;
+      setHandoffs((current) => [...current, {
+        id: handoffId,
+        handle,
+        displayName: candidate?.displayName,
+        request: mention.request,
+        status: 'queued',
+      }]);
+      setDraft('');
+      const runHandoff = async (): Promise<void> => {
+        let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
+        try {
+          client = await openHandoffClient({ accessToken: storedToken || undefined });
+          const canonical = await client.resolveCanonical(handle);
+          const runtimeId = await client.resume(handle, canonical.registryId);
+          setHandoffs((current) => current.map((item) => item.id === handoffId ? { ...item, status: 'running' } : item));
+          await client.submit(mention.request);
+          handoffObserverRef.current = createHandoffObserver(
+            {
+              eventsSince: (params) => client!.eventsSince(params.last_seen),
+            },
+            {
+              sessionId: runtimeId,
+              intervalMs: 1200,
+              onEvent: () => {},
+              onComplete: (reply) => {
+                handoffDedupeRef.current.release(handle);
+                client?.close();
+                setHandoffs((current) => current.map((item) => item.id === handoffId ? { ...item, status: 'completed', reply } : item));
+              },
+              onError: (message) => {
+                handoffDedupeRef.current.release(handle);
+                client?.close();
+                setHandoffs((current) => current.map((item) => item.id === handoffId ? { ...item, status: 'failed', error: message } : item));
+              },
+            },
+          );
+          void handoffObserverRef.current.start();
+        } catch (err) {
+          handoffDedupeRef.current.release(handle);
+          client?.close();
+          setHandoffs((current) => current.map((item) => item.id === handoffId ? { ...item, status: 'failed', error: err instanceof Error ? err.message : 'Handoff failed.' } : item));
+        }
+      };
+      void runHandoff();
+      return;
+    }
+
     try {
       const uploads: ChatAttachmentUpload[] = [];
       for (const attachment of pendingAttachments) {
