@@ -63,6 +63,9 @@ import {
   type MissionControlSessionPreviewMessage,
 } from '../lib/hermes-api';
 import { deriveTodoPlan, type TodoPlan } from '../lib/todo-plan';
+import { loadBotProfiles } from '../lib/bot-gateway';
+import type { BotMentionCandidate } from '../lib/bot-mentions';
+import type { ChatMentionPopoverHandle } from './ChatMentionPopover';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -159,6 +162,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const programmaticScrollRef = useRef(false);
   const scrollFrameRef = useRef<number | null>(null);
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
+  const mentionPopoverRef = useRef<ChatMentionPopoverHandle | null>(null);
+  const [botRoster, setBotRoster] = useState<BotMentionCandidate[]>([]);
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
@@ -217,6 +222,24 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     interrupt,
     reset,
   } = useGatewayChat(storedToken, open, initialSessionId);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    loadBotProfiles(storedToken || undefined).then((result) => {
+      if (cancelled) return;
+      setBotRoster(result.profiles
+        .filter((profile) => profile.is_bot === true)
+        .map((profile) => ({
+          handle: profile.name,
+          displayName: profile.display_name || profile.name,
+          description: profile.description || undefined,
+        })));
+    }).catch(() => {
+      if (!cancelled) setBotRoster([]);
+    });
+    return () => { cancelled = true; };
+  }, [open, storedToken]);
 
   useEffect(() => {
     if (!running) {
@@ -612,6 +635,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (slashPopoverRef.current?.handleKey(event)) return;
+    if (mentionPopoverRef.current?.handleKey(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
@@ -1019,6 +1043,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           completeSlash={completeSlash}
           textareaRef={textareaRef}
           slashPopoverRef={slashPopoverRef}
+          mentionPopoverRef={mentionPopoverRef}
+          botRoster={botRoster}
           running={running}
           submitting={submitting}
           disabled={connectionState !== 'connected'}
