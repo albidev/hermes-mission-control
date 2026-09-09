@@ -63,7 +63,7 @@ import {
   type MissionControlSessionPreviewMessage,
 } from '../lib/hermes-api';
 import { deriveTodoPlan, type TodoPlan } from '../lib/todo-plan';
-import { loadBotProfiles, openBotCanonicalChat } from '../lib/bot-gateway';
+import { loadBotProfiles } from '../lib/bot-gateway';
 import type { BotMentionCandidate } from '../lib/bot-mentions';
 import type { ChatMentionPopoverHandle } from './ChatMentionPopover';
 import { createHandoffEnvelope, createHandoffDedupe } from '../lib/bot-handoff';

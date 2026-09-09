@@ -163,52 +163,6 @@ export async function openBotCanonicalChat(
   return resolver.resolve(normalizedProfile, knownCanonicalId?.trim() || undefined);
 }
 
-export async function submitBotPrompt(
-  profile: string,
-  text: string,
-  accessToken?: string,
-): Promise<{ openedId: string; submitted: boolean }> {
-  const canonical = await openBotCanonicalChat(profile, undefined, accessToken);
-  // The registry row may point to a closed runtime session (e.g. the drawer
-  // closed it on unmount). Resume the canonical session so the runtime id is
-  // live before submitting, exactly like the Desktop canonical contract.
-  // Every RPC here MUST carry the explicit profile: the gateway is
-  // profile-scoped and would otherwise look in the default profile's DB.
-  let runtimeId = canonical.openedId;
-  try {
-    const resumed = await requestBotRpc<unknown>('session.resume', {
-      session_id: canonical.registryId,
-      profile,
-      cols: 80,
-      eager_build: true,
-      source: 'mission-control',
-    }, accessToken);
-    if (isRecord(resumed) && typeof resumed.session_id === 'string' && resumed.session_id.trim()) {
-      runtimeId = resumed.session_id.trim();
-    }
-  } catch (err) {
-    // Resume failure is fatal here: prompt.submit resolves sessions only from
-    // the gateway's in-memory registry, so a dead runtime id can never be
-    // submitted. Surface the real error instead of masking it.
-    throw new Error(`Could not resume the canonical Bot Chat for ${profile}: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  await requestBotRpc('prompt.submit', { session_id: runtimeId, text, profile }, accessToken);
-  return { openedId: runtimeId, submitted: true };
-}
-
-export async function botEventsSince(
-  sessionId: string,
-  lastSeen: number,
-  accessToken?: string,
-  profile?: string,
-): Promise<{ events?: Array<{ type: string; seq?: number; payload?: Record<string, unknown> }>; truncated?: boolean; epoch?: string | null }> {
-  return requestBotRpc('session.events.since', {
-    session_id: sessionId,
-    last_seen: lastSeen,
-    ...(profile ? { profile } : {}),
-  }, accessToken);
-}
-
 export async function loadBotProfiles(accessToken?: string): Promise<BotProfilesPayload> {
   return normalizeProfiles(await requestBotRpc<unknown>('profiles.list', { include_sessions: true }, accessToken));
 }
