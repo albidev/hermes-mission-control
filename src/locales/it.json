@@ -30,6 +30,8 @@
   "bots.noRole": "Nessuna descrizione del ruolo.",
   "bots.chatReady": "Bot Chat pronto",
   "bots.chatNotCreated": "Bot Chat non creato",
+  "bots.openChat": "Apri Bot Chat",
+  "bots.openingChat": "Apertura Bot Chat…",
   "bots.canonicalTitle": "Identità canonica",
   "bots.canonicalText": "Bot Chat viene risolto tramite profilo + titolo, non tramite un session pointer obsoleto. Stato corrente: {state}.",
   "bots.profileEyebrow": "Profilo Bot",

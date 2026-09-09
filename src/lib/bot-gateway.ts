@@ -5,6 +5,7 @@ import {
   parseGatewayFrame,
 } from './chat-protocol';
 import { getWebSocketUrl, mintWsCredential, RPC_TIMEOUT_MS } from './chat-transport';
+import { createBotChatResolver, type BotChatResult } from './bot-chat-routing';
 
 export type BotCanonicalSession = {
   id?: string;
@@ -145,6 +146,21 @@ async function requestBotRpc<T>(method: string, params: Record<string, unknown>,
       socket.send(JSON.stringify(createRpcRequest(requestId, method, params)));
     };
   });
+}
+
+export async function openBotCanonicalChat(
+  profile: string,
+  knownCanonicalId?: string | null,
+  accessToken?: string,
+): Promise<BotChatResult> {
+  const normalizedProfile = profile.trim();
+  if (!normalizedProfile) throw new Error('A Bot profile is required to open Bot Chat.');
+  const resolver = createBotChatResolver({
+    list: (params) => requestBotRpc('session.list', params, accessToken),
+    create: (params) => requestBotRpc('session.create', params, accessToken),
+    title: (params) => requestBotRpc('session.title', params, accessToken),
+  });
+  return resolver.resolve(normalizedProfile, knownCanonicalId?.trim() || undefined);
 }
 
 export async function loadBotProfiles(accessToken?: string): Promise<BotProfilesPayload> {

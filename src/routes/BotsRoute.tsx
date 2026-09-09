@@ -1,6 +1,7 @@
 import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { CircleAlert, Download, Loader2, Plus, RefreshCw, Save, Search, ShieldCheck } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { CircleAlert, Download, Loader2, MessageSquare, Plus, RefreshCw, Save, Search, ShieldCheck } from 'lucide-react';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/Modal';
@@ -20,10 +21,12 @@ import {
   loadBotProfiles,
   installBotSkill,
   loadBotModelOptions,
+  openBotCanonicalChat,
   type BotModelProviderOption,
   type BotProfileDetails,
   type BotProfileSummary,
 } from '../lib/bot-gateway';
+import { buildBotChatHref } from '../lib/bot-chat-navigation';
 
 const EMPTY_SOUL = `You are a specialist Hermes Bot.
 
@@ -151,6 +154,8 @@ function ProfileEditor({
   onSubmit,
   onCancelCreate,
   onClose,
+  onOpenChat,
+  chatOpening,
   accessToken,
   onInstallSkill,
 }: {
@@ -166,6 +171,8 @@ function ProfileEditor({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onCancelCreate: () => void;
   onClose: () => void;
+  onOpenChat: () => void;
+  chatOpening: boolean;
   accessToken?: string;
   onInstallSkill: (profile: string, identifier: string) => Promise<void>;
 }) {
@@ -282,7 +289,18 @@ function ProfileEditor({
       footer={(
         <div className="flex flex-wrap items-center justify-end gap-2">
           {mode === 'create' ? <Button type="button" variant="ghost" onClick={onCancelCreate} disabled={busy}>{t('bots.cancel')}</Button> : null}
-          <Button type="submit" form="bot-profile-form" variant="primary" icon={busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} disabled={busy}>
+          {mode === 'edit' && draft.botRoster ? (
+            <Button
+              type="button"
+              variant="secondary"
+              icon={chatOpening ? <Loader2 size={15} className="animate-spin" /> : <MessageSquare size={15} />}
+              onClick={onOpenChat}
+              disabled={busy || chatOpening}
+            >
+              {chatOpening ? t('bots.openingChat') : t('bots.openChat')}
+            </Button>
+          ) : null}
+          <Button type="submit" form="bot-profile-form" variant="primary" icon={busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} disabled={busy || chatOpening}>
             {busy ? t('bots.saving') : mode === 'create' ? t('bots.create') : t('bots.save')}
           </Button>
         </div>
@@ -559,6 +577,8 @@ function ProfileEditor({
 
 export function BotsRoute() {
   const { t } = useI18n();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { storedToken } = useMissionControl();
   const [profiles, setProfiles] = useState<BotProfileSummary[]>([]);
   const [modelOptions, setModelOptions] = useState<BotModelProviderOption[]>([]);
@@ -573,6 +593,7 @@ export function BotsRoute() {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [chatOpening, setChatOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshRoster = useCallback(async (preferredName?: string | null) => {
@@ -658,6 +679,24 @@ export function BotsRoute() {
   );
 
   const selectedSummary = useMemo(() => profiles.find((profile) => profile.name === selectedName) ?? null, [profiles, selectedName]);
+
+  const handleOpenChat = useCallback(async () => {
+    if (!selectedSummary || !draft.botRoster || chatOpening) return;
+    setChatOpening(true);
+    setError(null);
+    try {
+      const result = await openBotCanonicalChat(
+        draft.name,
+        selectedSummary.canonical_session?.id,
+        storedToken || undefined,
+      );
+      navigate(buildBotChatHref(location.pathname, location.search, result.openedId));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not open Bot Chat.');
+    } finally {
+      setChatOpening(false);
+    }
+  }, [chatOpening, draft.botRoster, draft.name, location.pathname, location.search, navigate, selectedSummary, storedToken]);
 
   const startCreate = () => {
     setMode('create');
@@ -770,6 +809,8 @@ export function BotsRoute() {
             onSubmit={handleSubmit}
             onCancelCreate={() => { setDetailOpen(false); setMode('edit'); void refreshRoster(selectedName); }}
             onClose={() => setDetailOpen(false)}
+            onOpenChat={() => { void handleOpenChat(); }}
+            chatOpening={chatOpening}
             onInstallSkill={handleInstallBotSkill}
           />
         )
