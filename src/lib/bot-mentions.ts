@@ -2,6 +2,8 @@ export type BotMentionCandidate = {
   handle: string;
   displayName?: string;
   description?: string;
+  model?: string;
+  provider?: string;
 };
 
 export type MentionMatch = {

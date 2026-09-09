@@ -1480,6 +1480,17 @@ body.modal-open .route-page-scroll {
   white-space: nowrap;
 }
 
+.bot-handoff-model {
+  min-width: 0;
+  max-width: 42%;
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.625rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .bot-handoff-status {
   display: inline-flex;
   flex: 0 0 auto;

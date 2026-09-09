@@ -6,6 +6,8 @@ export type BotHandoffStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type BotHandoffMessageProps = {
   handle: string;
   displayName?: string;
+  model?: string;
+  provider?: string;
   request: string;
   status: BotHandoffStatus;
   reply?: string | null;
@@ -13,14 +15,17 @@ export type BotHandoffMessageProps = {
   onRetry?: () => void;
 };
 
-export function BotHandoffMessage({ handle, displayName, request, status, reply, error, onRetry }: BotHandoffMessageProps) {
+export function BotHandoffMessage({ handle, displayName, model, provider, request, status, reply, error, onRetry }: BotHandoffMessageProps) {
   const { t } = useI18n();
   const label = displayName || handle;
+  const modelLabel = model || 'model inherited';
+  const providerLabel = provider || 'provider inherited';
   return (
     <div className="bot-handoff-card" data-status={status}>
       <div className="bot-handoff-head">
         <span className="bot-handoff-avatar"><Bot size={14} /></span>
         <span className="bot-handoff-name">{label}</span>
+        <span className="bot-handoff-model" title={`${modelLabel} · ${providerLabel}`}>{modelLabel} · {providerLabel}</span>
         <span className="bot-handoff-status">
           {status === 'queued' ? <Loader2 size={12} className="chat-spin" /> : null}
           {status === 'running' ? <Loader2 size={12} className="chat-spin" /> : null}

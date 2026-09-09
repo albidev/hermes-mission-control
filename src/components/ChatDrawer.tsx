@@ -250,6 +250,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           handle: profile.name,
           displayName: profile.display_name || profile.name,
           description: profile.description || undefined,
+          model: profile.model,
+          provider: profile.provider,
         })));
     }).catch(() => {
       if (!cancelled) setBotRoster([]);
@@ -491,6 +493,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             key={handoff.id}
             handle={handoff.handle}
             displayName={handoff.displayName}
+            model={botRoster.find((bot) => bot.handle === handoff.handle)?.model}
+            provider={botRoster.find((bot) => bot.handle === handoff.handle)?.provider}
             request={handoff.request}
             status={handoff.status}
             reply={handoff.reply}
