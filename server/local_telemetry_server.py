@@ -1492,9 +1492,53 @@ def _collect_skills_catalog(query: str = "", source: str = "all", limit: int = 5
             "installed": name.lower() in installed_names,
         })
 
-    trust_rank = {"builtin": 0, "trusted": 1, "community": 2}
+    for md_path in _find_skill_md_files(hermes_root() / "skills"):
+        try:
+            rel = md_path.relative_to(hermes_root() / "skills")
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+        parts = rel.parts[:-1]
+        if not parts:
+            continue
+        frontmatter = _parse_skill_yaml_frontmatter(text)
+        name = str(frontmatter.get("name") or parts[-1]).strip()
+        if not name:
+            continue
+        item_source = "local"
+        if source_filter not in {"all", item_source}:
+            continue
+        description = str(frontmatter.get("description") or name)
+        tags = []
+        metadata = frontmatter.get("metadata")
+        if isinstance(metadata, dict) and isinstance(metadata.get("hermes"), dict):
+            raw_tags = metadata["hermes"].get("tags", [])
+            tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
+        rel_dir = "/".join(parts)
+        identifier = f"local:{rel_dir}"
+        haystack = " ".join([name, description, item_source, identifier, *tags]).lower()
+        if normalized_query and normalized_query not in haystack:
+            continue
+        items.append({
+            "id": identifier,
+            "name": name,
+            "description": description,
+            "source": item_source,
+            "identifier": identifier,
+            "trustLevel": "local",
+            "repo": None,
+            "path": rel_dir,
+            "tags": tags,
+            "installed": name.lower() in installed_names,
+        })
+        source_counts[item_source] = source_counts.get(item_source, 0) + 1
+
+    trust_rank = {"builtin": 0, "trusted": 1, "community": 2, "local": 3}
     items.sort(key=lambda item: (trust_rank.get(str(item.get("trustLevel")), 3), str(item.get("source")) != "official", str(item.get("name", "")).lower()))
-    items = items[:requested_limit]
+    local_items = [item for item in items if item.get("source") == "local"]
+    non_local_items = [item for item in items if item.get("source") != "local"]
+    items = non_local_items[:max(0, requested_limit - len(local_items))] + local_items[:requested_limit]
+    items = items[:requested_limit] if len(local_items) > requested_limit else items
 
     return {
         "available": True,
@@ -1529,6 +1573,48 @@ def _resolve_hermes_cli() -> Optional[Path]:
         except OSError:
             continue
     return None
+
+
+def _install_local_profile_skill(profile: str, identifier: str) -> tuple[int, Dict[str, Any]]:
+    """Copy one local, cataloged skill from the shared Hermes skill store into a profile."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile):
+        return 400, {"success": False, "error": "invalid_profile", "detail": "Invalid Hermes profile name."}
+    if not identifier.startswith("local:"):
+        return 400, {"success": False, "error": "invalid_identifier", "detail": "This is not a local skill identifier."}
+    relative = identifier[len("local:"):].strip("/")
+    source_root = (hermes_root() / "skills").resolve()
+    source = (source_root / relative).resolve()
+    try:
+        source.relative_to(source_root)
+    except ValueError:
+        return 400, {"success": False, "error": "invalid_identifier", "detail": "Skill path escapes the Hermes skill store."}
+    if not source.is_dir() or not (source / "SKILL.md").is_file():
+        return 404, {"success": False, "error": "skill_not_found", "detail": "Local skill not found."}
+    profile_root = (hermes_root() / "profiles" / profile).resolve()
+    if not profile_root.is_dir():
+        return 404, {"success": False, "error": "profile_not_found", "detail": f"Profile '{profile}' not found."}
+    target = profile_root / "skills" / relative
+    if target.exists():
+        return 409, {"success": False, "error": "already_installed", "skillName": source.name, "detail": "This skill is already installed in the Bot."}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.parent / f".{target.name}.installing-{os.getpid()}-{threading.get_ident()}"
+    try:
+        shutil.copytree(source, temporary, symlinks=False)
+        os.replace(temporary, target)
+        verified = (target / "SKILL.md").is_file()
+        if not verified:
+            shutil.rmtree(target, ignore_errors=True)
+            return 500, {"success": False, "error": "install_unverified", "detail": "Skill copy could not be verified."}
+        return 200, {
+            "success": True, "skillName": source.name, "identifier": identifier,
+            "installed": True, "verified": True, "profile": profile,
+        }
+    except FileExistsError:
+        shutil.rmtree(temporary, ignore_errors=True)
+        return 409, {"success": False, "error": "already_installed", "skillName": source.name, "detail": "This skill is already installed in the Bot."}
+    except OSError as exc:
+        shutil.rmtree(temporary, ignore_errors=True)
+        return 500, {"success": False, "error": "install_failed", "skillName": source.name, "detail": str(exc)[:240]}
 
 
 def _install_catalog_skill(identifier: str) -> tuple[int, Dict[str, Any]]:
@@ -2854,6 +2940,21 @@ class Handler(BaseHTTPRequestHandler):
                 import logging
                 logging.exception('Canvas addon handler error for %s', addon_id)
                 self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
+            return
+        if parsed.path == '/api/local/profile/skills/install':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            profile = payload.get('profile')
+            identifier = payload.get('identifier')
+            if not isinstance(profile, str) or not isinstance(identifier, str):
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing profile or skill identifier.'})
+                return
+            status, result = _install_local_profile_skill(profile.strip(), identifier.strip())
+            self._json(status, result)
             return
         if parsed.path == '/api/local/skills/install':
             if not _is_authorized(self):

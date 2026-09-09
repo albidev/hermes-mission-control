@@ -1,12 +1,13 @@
 import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { CircleAlert, Download, Loader2, MessageSquare, Plus, RefreshCw, Save, Search, ShieldCheck } from 'lucide-react';
+import { ChevronDown, CircleAlert, Download, Loader2, MessageSquare, Plus, RefreshCw, Save, Search } from 'lucide-react';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/Modal';
 import { Card } from '../components/ui/Card';
 import { Dropdown } from '../components/ui/Dropdown';
+import { ToggleSwitch } from '../components/ui/ToggleSwitch';
 import { PageHeader } from '../components/PageHeader';
 import { useMissionControl } from '../lib/mission-control-store';
 import {
@@ -14,9 +15,11 @@ import {
   type MissionControlSkillCatalogItem,
 } from '../lib/hermes-api';
 import {
+  configureBotMcpTools,
   configureBotProfile,
   configureBotToolsets,
   createBotProfile,
+  loadBotMcpTools,
   loadBotProfile,
   loadBotProfiles,
   installBotSkill,
@@ -33,7 +36,7 @@ const EMPTY_SOUL = `You are a specialist Hermes Bot.
 Describe your role, the work you own, and the boundaries you must respect.
 Be concise, evidence-based, and explicit about uncertainty.`;
 
-type ProfileTab = 'overview' | 'tools' | 'skills';
+type ProfileTab = 'overview' | 'tools' | 'mcp' | 'skills';
 
 type BotDraft = {
   name: string;
@@ -42,6 +45,8 @@ type BotDraft = {
   model: string;
   provider: string;
   enabledToolsets: string[];
+  enabledMcpServers: string[];
+  mcpToolEnabled: Record<string, boolean>;
   disabledSkills: string[];
   noSkills: boolean;
   botRoster: boolean;
@@ -55,6 +60,8 @@ function emptyDraft(): BotDraft {
     model: '',
     provider: '',
     enabledToolsets: [],
+    enabledMcpServers: [],
+    mcpToolEnabled: {},
     disabledSkills: [],
     noSkills: true,
     botRoster: true,
@@ -69,10 +76,38 @@ function draftFromDetails(details: BotProfileDetails, botRoster: boolean): BotDr
     model: details.model.default,
     provider: details.model.provider,
     enabledToolsets: details.toolsets.filter((toolset) => toolset.enabled).map((toolset) => toolset.name),
+    enabledMcpServers: details.mcp_servers.filter((server) => server.enabled).map((server) => server.name),
+    mcpToolEnabled: {},
     disabledSkills: details.skills.filter((skill) => !skill.enabled).map((skill) => skill.name),
     noSkills: details.skills.length === 0,
     botRoster,
   };
+}
+
+function mcpToolIsEnabled(server: BotProfileDetails['mcp_servers'][number], toolName: string): boolean {
+  const filters = server.tools;
+  if (filters?.include && filters.include.length > 0) return filters.include.includes(toolName);
+  if (filters?.exclude && filters.exclude.length > 0) return !filters.exclude.includes(toolName);
+  return true;
+}
+
+function mcpToolKey(serverName: string, toolName: string): string {
+  return `${serverName}:${toolName}`;
+}
+
+function mcpToolChanges(details: BotProfileDetails, draft: BotDraft): { enable: string[]; disable: string[] } {
+  const enable: string[] = [];
+  const disable: string[] = [];
+  for (const [key, desired] of Object.entries(draft.mcpToolEnabled)) {
+    const separator = key.indexOf(':');
+    if (separator <= 0) continue;
+    const serverName = key.slice(0, separator);
+    const toolName = key.slice(separator + 1);
+    const server = details.mcp_servers.find((item) => item.name === serverName);
+    if (!server || desired === mcpToolIsEnabled(server, toolName)) continue;
+    (desired ? enable : disable).push(key);
+  }
+  return { enable, disable };
 }
 
 function profileInitials(name: string): string {
@@ -185,6 +220,11 @@ function ProfileEditor({
   const [skillCatalogError, setSkillCatalogError] = useState<string | null>(null);
   const [skillQuery, setSkillQuery] = useState('');
   const [installingSkill, setInstallingSkill] = useState<string | null>(null);
+  const [mcpTools, setMcpTools] = useState<Record<string, Array<{ name: string; description?: string }>>>({});
+  const [mcpToolsLoading, setMcpToolsLoading] = useState(false);
+  const [mcpToolsError, setMcpToolsError] = useState<Record<string, string>>({});
+  const [expandedMcpTools, setExpandedMcpTools] = useState<Record<string, boolean>>({});
+  const mcpToolsRequestedRef = useRef<Set<string>>(new Set());
   const toolsets = details?.toolsets ?? createToolsets;
   const toolsetsPinned = details?.toolsets_pinned ?? (mode === 'create' && draft.enabledToolsets.length > 0);
   const skills = details?.skills ?? [];
@@ -243,6 +283,42 @@ function ProfileEditor({
   // Request ownership is intentionally guarded by a ref: loading state must not cancel its own request.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, accessToken]);
+
+  useEffect(() => {
+    mcpToolsRequestedRef.current = new Set();
+    setMcpTools({});
+    setMcpToolsError({});
+    setExpandedMcpTools({});
+  }, [details?.name, mode]);
+
+  useEffect(() => {
+    if (activeTab !== 'mcp' || mode === 'create') return;
+    const pending = mcpServers.filter((server) => draft.enabledMcpServers.includes(server.name) && !mcpToolsRequestedRef.current.has(server.name));
+    if (pending.length === 0) return;
+    pending.forEach((server) => mcpToolsRequestedRef.current.add(server.name));
+    let cancelled = false;
+    setMcpToolsLoading(true);
+    setMcpToolsError({});
+    Promise.all(pending.map(async (server) => ({
+      name: server.name,
+      result: await loadBotMcpTools(server.name, server.configured ? draft.name : undefined, accessToken),
+    }))).then((results) => {
+      if (cancelled) return;
+      setMcpTools((current) => Object.fromEntries([
+        ...Object.entries(current),
+        ...results.filter(({ result }) => result.ok).map(({ name, result }) => [name, result.tools]),
+      ]));
+      const errors = Object.fromEntries(
+        results.filter(({ result }) => !result.ok && result.error).map(({ name, result }) => [name, result.error as string]),
+      );
+      setMcpToolsError(errors);
+    }).catch((cause) => {
+      if (!cancelled) setMcpToolsError({ _gateway: cause instanceof Error ? cause.message : t('bots.mcpToolsUnavailable') });
+    }).finally(() => {
+      if (!cancelled) setMcpToolsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [accessToken, activeTab, draft.name, mcpServers, mode, t]);
 
   useEffect(() => {
     const textarea = soulRef.current;
@@ -308,7 +384,7 @@ function ProfileEditor({
     >
       <form id="bot-profile-form" className="space-y-5" onSubmit={onSubmit}>
         <div className="flex flex-wrap gap-1 rounded-xl bg-surface-sunken/35 p-1">
-          {([['overview', t('bots.overview')], ['tools', t('bots.toolsets')], ['skills', t('bots.skills')]] as const).map(([tab, label]) => (
+          {([['overview', t('bots.overview')], ['tools', t('bots.toolsets')], ['mcp', t('bots.mcp')], ['skills', t('bots.skills')]] as const).map(([tab, label]) => (
             <button
               key={tab}
               type="button"
@@ -422,7 +498,7 @@ function ProfileEditor({
         ) : null}
 
         {activeTab === 'tools' ? (
-          <div className="space-y-5">
+          <div className="space-y-6">
             <section>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
@@ -456,6 +532,93 @@ function ProfileEditor({
                 </div>
               ) : (
                 <p className="rounded-lg bg-surface-sunken/20 px-3 py-6 text-xs text-text-muted">{t('bots.noToolsets')}</p>
+              )}
+            </section>
+          </div>
+        ) : null}
+
+        {activeTab === 'mcp' ? (
+          <div className="space-y-6">
+            <section>
+              <div className="mb-3">
+                <p className="text-xs font-semibold text-text">{t('bots.mcp')}</p>
+                <p className="mt-1 text-[11px] text-text-subtle">{t('bots.mcpHelp')}</p>
+              </div>
+              {mcpToolsError._gateway ? <p className="mb-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">{mcpToolsError._gateway}</p> : null}
+              {mcpServers.length > 0 ? (
+                <div className="space-y-3">
+                  {mcpServers.map((server) => {
+                    const serverEnabled = draft.enabledMcpServers.includes(server.name);
+                    const discovered = mcpTools[server.name] ?? [];
+                    const toolsExpanded = expandedMcpTools[server.name] === true;
+                    return (
+                      <div key={server.name} className="rounded-xl bg-surface-sunken/20 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold text-text">{server.name}</p>
+                            <p className="mt-1 text-[11px] text-text-subtle">{server.transport || 'MCP'} · {server.configured ? (serverEnabled ? t('bots.enabled') : t('bots.disabled')) : t('bots.mcpAvailable')}</p>
+                          </div>
+                          <ToggleSwitch
+                            id={`mcp-server-${server.name}`}
+                            checked={serverEnabled}
+                            onChange={() => onChange({ enabledMcpServers: toggleValue(draft.enabledMcpServers, server.name) })}
+                            disabled={busy}
+                            label={serverEnabled ? t('bots.enabled') : t('bots.disabled')}
+                          />
+                        </div>
+                        {serverEnabled && mcpToolsError[server.name] ? <p className="mt-3 rounded-lg bg-warning/10 px-2.5 py-2 text-[11px] leading-relaxed text-warning">{mcpToolsError[server.name]}</p> : null}
+                        {serverEnabled ? (
+                          <div className="mt-3 border-t border-white/5 pt-3">
+                            {mcpToolsLoading && discovered.length === 0 ? (
+                              <div className="flex items-center gap-2 text-[11px] text-text-muted"><Loader2 size={13} className="animate-spin" /> {t('bots.mcpToolsLoading')}</div>
+                            ) : discovered.length > 0 ? (
+                              <div className="space-y-2">
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-text-subtle transition-colors hover:bg-surface-raised/40 hover:text-text"
+                                  aria-expanded={toolsExpanded}
+                                  onClick={() => setExpandedMcpTools((current) => ({ ...current, [server.name]: !toolsExpanded }))}
+                                >
+                                  <span>{t('bots.individualTools')} <span className="normal-case text-text-muted">({discovered.length})</span></span>
+                                  <ChevronDown size={14} className={`shrink-0 transition-transform ${toolsExpanded ? 'rotate-180' : ''}`} />
+                                </button>
+                                {toolsExpanded ? (
+                                  <div className="space-y-1">
+                                    {discovered.map((tool) => {
+                                      const key = mcpToolKey(server.name, tool.name);
+                                      const enabled = key in draft.mcpToolEnabled
+                                        ? draft.mcpToolEnabled[key]
+                                        : mcpToolIsEnabled(server, tool.name);
+                                      return (
+                                        <label key={tool.name} className={`flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 ${enabled ? 'bg-accent/5' : 'hover:bg-surface-raised/40'}`}>
+                                          <input
+                                            type="checkbox"
+                                            className="mt-0.5 accent-[var(--accent)]"
+                                            checked={enabled}
+                                            onChange={() => onChange({ mcpToolEnabled: { ...draft.mcpToolEnabled, [key]: !enabled } })}
+                                            disabled={busy}
+                                          />
+                                          <span className="min-w-0">
+                                            <span className="block break-all font-mono text-[11px] text-text">{tool.name}</span>
+                                            {tool.description ? <span className="mt-0.5 block line-clamp-2 text-[11px] leading-relaxed text-text-subtle">{tool.description}</span> : null}
+                                          </span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : (
+                              mcpToolsError[server.name] ? null : <p className="text-[11px] text-text-muted">{t('bots.mcpToolsUnavailable')}</p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-lg bg-surface-sunken/20 px-3 py-6 text-xs text-text-muted">{t('bots.noMcpServers')}</p>
               )}
             </section>
           </div>
@@ -552,15 +715,6 @@ function ProfileEditor({
               )}
             </section>
           </div>
-        ) : null}
-
-        {activeTab === 'tools' && mcpServers.length > 0 ? (
-          <section className="rounded-lg bg-surface-sunken/25 p-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-text"><ShieldCheck size={14} className="text-positive" /> {t('bots.mcp')}</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {mcpServers.map((server) => <Badge key={server.name} variant={server.enabled ? 'positive' : 'default'}>{server.name}</Badge>)}
-            </div>
-          </section>
         ) : null}
 
         {error ? (
@@ -738,9 +892,22 @@ export function BotsRoute() {
           model: draft.model,
           provider: draft.provider,
           enabledToolsets: details ? draft.enabledToolsets : undefined,
+          enabledMcpServers: details ? draft.enabledMcpServers : undefined,
           disabledSkills: details ? draft.disabledSkills : undefined,
           botRoster: draft.botRoster,
         }, storedToken || undefined);
+        if (details) {
+          const changes = mcpToolChanges(details, draft);
+          if (changes.enable.length > 0 || changes.disable.length > 0) {
+            let sessionId = selectedSummary?.canonical_session?.id || '';
+            if (!sessionId) {
+              const chat = await openBotCanonicalChat(draft.name, undefined, storedToken || undefined);
+              sessionId = chat.registryId;
+            }
+            await configureBotMcpTools(sessionId, 'disable', changes.disable, storedToken || undefined);
+            await configureBotMcpTools(sessionId, 'enable', changes.enable, storedToken || undefined);
+          }
+        }
         await refreshRoster(draft.name);
         await refreshDetails(draft.name);
       }

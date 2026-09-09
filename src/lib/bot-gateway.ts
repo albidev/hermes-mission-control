@@ -29,6 +29,19 @@ export type BotProfileSummary = {
   is_bot?: boolean;
 };
 
+export type BotMcpTool = {
+  name: string;
+  description?: string;
+};
+
+export type BotMcpServer = {
+  name: string;
+  enabled: boolean;
+  transport?: string;
+  configured?: boolean;
+  tools?: { include?: string[]; exclude?: string[] };
+};
+
 export type BotProfileDetails = {
   name: string;
   description: string;
@@ -37,7 +50,7 @@ export type BotProfileDetails = {
   skills: Array<{ name: string; enabled: boolean }>;
   toolsets: Array<{ name: string; label?: string; description?: string; enabled: boolean; tool_count?: number }>;
   toolsets_pinned?: boolean;
-  mcp_servers: Array<{ name: string; enabled: boolean; transport?: string }>;
+  mcp_servers: BotMcpServer[];
 };
 
 export type BotProfilesPayload = {
@@ -70,6 +83,7 @@ export type ConfigureBotProfileInput = {
   model?: string;
   provider?: string;
   enabledToolsets?: string[];
+  enabledMcpServers?: string[];
   disabledSkills?: string[];
   botRoster: boolean;
 };
@@ -185,6 +199,24 @@ export async function loadBotModelOptions(accessToken?: string): Promise<BotMode
 }
 
 export async function installBotSkill(profile: string, identifier: string, accessToken?: string): Promise<void> {
+  if (identifier.startsWith('local:')) {
+    const response = await fetch('/api/local/profile/skills/install', {
+      method: 'POST',
+      headers: { Authorization: accessToken ? `Bearer ${accessToken}` : '', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile, identifier }),
+    });
+    if (!response.ok) {
+      let detail = `Local skill installation failed (${response.status}).`;
+      try {
+        const payload = await response.json() as { detail?: string };
+        if (payload.detail) detail = payload.detail;
+      } catch {
+        // Keep the HTTP status when the sidecar did not return JSON.
+      }
+      throw new Error(detail);
+    }
+    return;
+  }
   await requestBotRpc('skills.manage', {
     action: 'install',
     query: identifier,
@@ -199,9 +231,91 @@ export async function configureBotToolsets(name: string, enabledToolsets: string
   }, accessToken);
 }
 
+export async function configureBotMcpTools(
+  sessionId: string,
+  action: 'enable' | 'disable',
+  names: string[],
+  accessToken?: string,
+): Promise<void> {
+  if (!sessionId || names.length === 0) return;
+  const result = await requestBotRpc<unknown>('tools.configure', {
+    session_id: sessionId,
+    action,
+    names,
+  }, accessToken);
+  if (isRecord(result) && Array.isArray(result.unknown) && result.unknown.length > 0) {
+    throw new Error(`Unknown MCP tools: ${result.unknown.join(', ')}`);
+  }
+  if (isRecord(result) && Array.isArray(result.missing_servers) && result.missing_servers.length > 0) {
+    throw new Error(`MCP servers unavailable: ${result.missing_servers.join(', ')}`);
+  }
+}
+
+export async function loadBotMcpTools(
+  server: string,
+  profile: string | undefined,
+  accessToken?: string,
+): Promise<{ ok: boolean; tools: BotMcpTool[]; error?: string }> {
+  const value = await requestBotRpc<unknown>('mcp.servers.test', {
+    name: server,
+    ...(profile ? { profile } : {}),
+  }, accessToken);
+  if (!isRecord(value)) return { ok: false, tools: [], error: 'Invalid MCP response.' };
+  return {
+    ok: value.ok === true,
+    tools: Array.isArray(value.tools)
+      ? value.tools.filter(isRecord).map((tool) => ({
+        name: typeof tool.name === 'string' ? tool.name : '',
+        description: typeof tool.description === 'string' ? tool.description : undefined,
+      })).filter((tool) => tool.name)
+      : [],
+    error: typeof value.error === 'string' ? value.error : undefined,
+  };
+}
+
 export async function loadBotProfile(name: string, accessToken?: string): Promise<BotProfileDetails> {
-  const value = await requestBotRpc<unknown>('profiles.describe', { name }, accessToken);
+  const [value, mcpValue, launchMcpValue] = await Promise.all([
+    requestBotRpc<unknown>('profiles.describe', { name }, accessToken),
+    requestBotRpc<unknown>('mcp.servers.list', { profile: name }, accessToken).catch(() => null),
+    requestBotRpc<unknown>('mcp.servers.list', {}, accessToken).catch(() => null),
+  ]);
   if (!isRecord(value)) throw new Error('Gateway returned an invalid Bot profile.');
+  const describedMcp = Array.isArray(value.mcp_servers) ? value.mcp_servers.filter(isRecord) : [];
+  const listedMcp = isRecord(mcpValue) && Array.isArray(mcpValue.servers) ? mcpValue.servers.filter(isRecord) : [];
+  const launchMcp = isRecord(launchMcpValue) && Array.isArray(launchMcpValue.servers) ? launchMcpValue.servers.filter(isRecord) : [];
+  const mcpByName = new Map<string, Record<string, unknown>>(
+    listedMcp.filter((server) => typeof server.name === 'string')
+      .map((server) => [server.name as string, server]),
+  );
+  const launchMcpByName = new Map<string, Record<string, unknown>>(
+    launchMcp.filter((server) => typeof server.name === 'string')
+      .map((server) => [server.name as string, server]),
+  );
+  const describedByName = new Map<string, Record<string, unknown>>(
+    describedMcp.filter((server) => typeof server.name === 'string')
+      .map((server) => [server.name as string, server]),
+  );
+  const mcpNames = [...new Set([
+    ...describedByName.keys(),
+    ...launchMcpByName.keys(),
+  ])];
+  const mcpServers = mcpNames.map((nameValue) => {
+    const described = describedByName.get(nameValue);
+    const listed = mcpByName.get(nameValue) ?? launchMcpByName.get(nameValue);
+    const filters = listed && isRecord(listed.tools) ? listed.tools : undefined;
+    return {
+      name: nameValue,
+      enabled: described?.enabled === true,
+      configured: Boolean(described),
+      transport: typeof described?.transport === 'string'
+        ? described.transport
+        : (typeof listed?.transport === 'string' ? listed.transport : undefined),
+      tools: filters ? {
+        include: Array.isArray(filters.include) ? filters.include.filter((tool): tool is string => typeof tool === 'string') : undefined,
+        exclude: Array.isArray(filters.exclude) ? filters.exclude.filter((tool): tool is string => typeof tool === 'string') : undefined,
+      } : undefined,
+    };
+  });
   return {
     name: typeof value.name === 'string' ? value.name : name,
     description: typeof value.description === 'string' ? value.description : '',
@@ -228,13 +342,7 @@ export async function loadBotProfile(name: string, accessToken?: string): Promis
       })).filter((toolset) => toolset.name)
       : [],
     toolsets_pinned: value.toolsets_pinned === true,
-    mcp_servers: Array.isArray(value.mcp_servers)
-      ? value.mcp_servers.filter(isRecord).map((server) => ({
-        name: typeof server.name === 'string' ? server.name : '',
-        enabled: server.enabled === true,
-        transport: typeof server.transport === 'string' ? server.transport : undefined,
-      })).filter((server) => server.name)
-      : [],
+    mcp_servers: mcpServers,
   };
 }
 
@@ -260,6 +368,7 @@ export async function configureBotProfile(input: ConfigureBotProfileInput, acces
     model: input.model?.trim() || undefined,
     provider: input.provider?.trim() || undefined,
     ...(input.enabledToolsets ? { enabled_toolsets: input.enabledToolsets } : {}),
+    ...(input.enabledMcpServers ? { enabled_mcp_servers: input.enabledMcpServers } : {}),
     ...(input.disabledSkills ? { disabled_skills: input.disabledSkills } : {}),
     ui_meta: { mission_control: { bot: input.botRoster } },
   }, accessToken);
