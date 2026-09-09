@@ -1432,6 +1432,131 @@ body.modal-open .route-page-scroll {
   background: rgba(255, 255, 255, 0.16);
 }
 
+/* Bot handoff cards live in the same message stream as ChatMessageCard.
+   Keep them a real message surface; without this block the semantic markup
+   collapses into unstyled paragraphs (the screenshot regression). */
+.bot-handoff-card {
+  align-self: flex-start;
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: min(92%, 42rem);
+  padding: 0.75rem 0.875rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface-raised));
+  color: var(--color-text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  overflow-wrap: anywhere;
+}
+
+.bot-handoff-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bot-handoff-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: 0.5rem;
+  color: white;
+  background: var(--color-accent);
+}
+
+.bot-handoff-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-handoff-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.bot-handoff-card[data-status='completed'] .bot-handoff-status {
+  color: var(--color-positive);
+}
+
+.bot-handoff-card[data-status='failed'] .bot-handoff-status,
+.bot-handoff-error {
+  color: var(--color-negative);
+}
+
+.bot-handoff-request,
+.bot-handoff-reply,
+.bot-handoff-error {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.bot-handoff-request {
+  color: var(--color-text-muted);
+}
+
+.bot-handoff-reply {
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.bot-handoff-error {
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-md);
+  background: var(--color-negative-subtle);
+}
+
+.bot-handoff-retry {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.625rem;
+  border: 1px solid color-mix(in srgb, var(--color-negative) 35%, var(--color-border));
+  border-radius: var(--radius-md);
+  color: var(--color-negative);
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.bot-handoff-retry:hover {
+  background: var(--color-negative-subtle);
+}
+
+@media (max-width: 640px) {
+  .bot-handoff-card {
+    width: 100%;
+  }
+
+  .bot-handoff-status {
+    font-size: 0.625rem;
+  }
+}
+
 .chat-message-body pre {
   overflow-x: auto;
   padding: 0.75rem;
