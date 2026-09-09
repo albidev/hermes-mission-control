@@ -766,6 +766,15 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         mention.request,
       );
       const handoffId = envelope.handoffId;
+      appendChatMessage({
+        id: `bot-request-${handoffId}`,
+        role: 'user',
+        kind: 'user',
+        source: 'live',
+        text: text.trim(),
+        status: 'complete',
+        createdAt: Date.now(),
+      }, 'user_message');
       const initialHandoff: PersistedBotHandoff = {
         id: handoffId,
         handle,

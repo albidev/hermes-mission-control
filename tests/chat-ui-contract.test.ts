@@ -32,6 +32,8 @@ assertIncludes(component, 'const visibleTodoPlan = gatewayTodoPlan ?? previewTod
 assertIncludes(component, 'let originSessionId = await ensureSession();', 'Bot handoffs bootstrap a fresh origin session');
 assertIncludes(component, "originSessionId = await claimLastChatPointer('submit', originSessionId);", 'Bot handoffs claim the shared last-chat pointer');
 assertIncludes(component, "appendChatMessage(attributedReply, 'assistant_message');", 'Bot replies are projected into the primary chat transcript');
+assertIncludes(component, "id: `bot-request-${handoffId}`", 'first Bot mention is recorded as a primary user message');
+assertIncludes(component, "appendChatMessage({", 'Bot handoff writes the primary request through the chat message pipeline');
 assertIncludes(component, 'attribution: {', 'primary transcript preserves Bot attribution metadata');
 assertIncludes(chatSync, "'assistant_message'", 'chat sync supports attributed assistant messages');
 assertIncludes(component, 'targetSessionId: canonical.openedId', 'Bot handoffs record the canonical Bot Chat session');
