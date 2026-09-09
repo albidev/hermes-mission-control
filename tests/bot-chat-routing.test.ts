@@ -104,6 +104,56 @@ describe('bot-chat-routing resolver', () => {
     assert.strictEqual(rpc.getCalls().filter(c => c.method === 'list').length, 1);
   });
 
+  it('root_title canonical with different tip title selects resolved_id', async () => {
+    const rpc = new SeqMock();
+    rpc.addList({ sessions: [{ id: 'sess-c', root_title: 'Bot Chat', title: 'Something Else', resolved_id: 'res-c' }] });
+    const r = await createBotChatResolver(rpc).resolve('p');
+    assert.deepStrictEqual(r, { profile: 'p', registryId: 'sess-c', openedId: 'res-c', created: false });
+  });
+
+  it('malformed list response / no sessions confirmed absence', async () => {
+    const rpc = new SeqMock();
+    rpc.addList({});
+    rpc.addCreate({ session_id: 'cr', stored_session_id: 'st' });
+    rpc.addTitle({ title: 'Bot Chat' });
+    rpc.addList({ sessions: [{ id: 'st', title: 'Bot Chat' }] });
+    const r = await createBotChatResolver(rpc).resolve('p');
+    assert.strictEqual(r.created, true);
+  });
+
+  it('non-already-in-use title error throws', async () => {
+    const rpc = new SeqMock();
+    rpc.addList({ sessions: [] });
+    rpc.addCreate({ session_id: 'r', stored_session_id: 's' });
+    rpc.addTitle(new Error('other error'));
+    await assert.rejects(async () => createBotChatResolver(rpc).resolve('p'), /session\.title failed: other error/);
+  });
+
+  it('create payload verifies follow_profile_config true', async () => {
+    const rpc = new SeqMock();
+    rpc.addList({ sessions: [] });
+    rpc.addCreate({ session_id: 'r1', stored_session_id: 's1' });
+    rpc.addTitle({ title: 'Bot Chat' });
+    rpc.addList({ sessions: [{ id: 's1', title: 'Bot Chat' }] });
+    await createBotChatResolver(rpc).resolve('p');
+    paramsCheck(rpc.getCalls(), [{ profile: 'p', title: 'Bot Chat', hidden: true, follow_profile_config: true }], 'create');
+  });
+
+  it('concurrent flight clears after settle - second resolve performs fresh list', async () => {
+    const rpc = new SeqMock();
+    rpc.addList({ sessions: [] });
+    rpc.addCreate({ session_id: 'r-new', stored_session_id: 'new-id' });
+    rpc.addTitle({ title: 'Bot Chat' });
+    rpc.addList({ sessions: [{ id: 'new-id', title: 'Bot Chat' }] });
+    const r1 = await createBotChatResolver(rpc).resolve('p');
+    assert.strictEqual(r1.created, true);
+    rpc.addList({ sessions: [{ id: 'new-id', title: 'Bot Chat' }] });
+    const r2 = await createBotChatResolver(rpc).resolve('p');
+    assert.strictEqual(r2.created, false);
+    assert.strictEqual(r2.registryId, 'new-id');
+    assert.strictEqual((rpc.getCalls() as any[]).filter((c: any) => c.method === 'list').length, 3);
+  });
+
   it('exact list params', async () => {
     const rpc = new SeqMock();
     rpc.addList({ sessions: [{ id: 'x', title: 'Bot Chat' }] });

@@ -26,6 +26,11 @@ export function createBotChatResolver(rpc: SessionRpc) {
   }
 
   async function doResolve(profile: string, knownCanonicalId?: string): Promise<BotChatResult> {
+    const isCanonical = (s: { root_title?: string; title?: string }) => {
+      const root = String(s.root_title || '').trim();
+      const title = String(s.title || '').trim();
+      return root === 'Bot Chat' || (!root && title === 'Bot Chat');
+    };
     let listResp: { sessions?: Array<{ id?: string; resolved_id?: string; title?: string; root_title?: string }> };
     try {
       listResp = await rpc.list({ profile, title: 'Bot Chat', include_hidden: true, limit: 200 });
@@ -33,10 +38,11 @@ export function createBotChatResolver(rpc: SessionRpc) {
       throw new Error('session.list failed: ' + (e instanceof Error ? e.message : String(e)));
     }
     const sessions = (listResp && Array.isArray(listResp.sessions)) ? listResp.sessions : [];
-    const exact = sessions.find(s => (s.title || s.root_title) === 'Bot Chat');
+    const exact = sessions.find(isCanonical);
 
     if (exact) {
       const id = exact.id || '';
+      if (!id) throw new Error('fail-closed: missing registry id');
       return { profile, registryId: id, openedId: exact.resolved_id || id, created: false };
     }
 
@@ -64,9 +70,11 @@ export function createBotChatResolver(rpc: SessionRpc) {
           throw new Error('re-list after already-in-use failed: ' + (e2 instanceof Error ? e2.message : String(e2)));
         }
         const relSessions = (relist && Array.isArray(relist.sessions)) ? relist.sessions : [];
-        const winner = relSessions.find(s => (s.title || s.root_title) === 'Bot Chat');
+        const winner = relSessions.find(isCanonical);
         if (!winner) throw new Error('already-in-use adoption found no winner');
-        return { profile, registryId: winner.id || '', openedId: winner.resolved_id || winner.id || '', created: false };
+        const winId = winner.id || '';
+        if (!winId) throw new Error('fail-closed: missing registry id');
+        return { profile, registryId: winId, openedId: winner.resolved_id || winId, created: false };
       }
       throw new Error('session.title failed: ' + msg);
     }
@@ -78,12 +86,14 @@ export function createBotChatResolver(rpc: SessionRpc) {
       throw new Error('post-title re-list failed: ' + (e instanceof Error ? e.message : String(e)));
     }
     const rel2 = (relist2 && Array.isArray(relist2.sessions)) ? relist2.sessions : [];
-    const adopted = rel2.find(s => (s.title || s.root_title) === 'Bot Chat');
+    const adopted = rel2.find(isCanonical);
     if (!adopted) throw new Error('missing post-title registry row');
+    const adoptedId = adopted.id || '';
+    if (!adoptedId) throw new Error('fail-closed: missing registry id');
     return {
       profile,
-      registryId: adopted.id || '',
-      openedId: adopted.resolved_id || adopted.id || '',
+      registryId: adoptedId,
+      openedId: adopted.resolved_id || adoptedId,
       created: true,
     };
   }
