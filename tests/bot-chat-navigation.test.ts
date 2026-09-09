@@ -24,4 +24,12 @@ describe('buildBotChatHref', () => {
   it('hash-free pathname preserved', () => {
     assert.strictEqual(buildBotChatHref('/a/b#hash', '', 'x'), '/a/b?chatSession=x');
   });
+  it('encodes bot context mode and profile', () => {
+    const href = buildBotChatHref('/bots', 'tab=overview', 'session-1', { mode: 'task', profile: 'crossnection' });
+    const params = new URL(`http://x${href}`).searchParams;
+    assert.strictEqual(params.get('chatSession'), 'session-1');
+    assert.strictEqual(params.get('chatMode'), 'task');
+    assert.strictEqual(params.get('botProfile'), 'crossnection');
+    assert.strictEqual(params.get('tab'), 'overview');
+  });
 });

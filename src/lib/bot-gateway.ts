@@ -177,6 +177,24 @@ export async function openBotCanonicalChat(
   return resolver.resolve(normalizedProfile, knownCanonicalId?.trim() || undefined);
 }
 
+export async function openBotTaskChat(profile: string, accessToken?: string): Promise<{ profile: string; openedId: string }> {
+  const normalizedProfile = profile.trim();
+  if (!normalizedProfile) throw new Error('A Bot profile is required to start a new chat.');
+  let result: { session_id?: string; stored_session_id?: string };
+  try {
+    result = await requestBotRpc('session.create', {
+      profile: normalizedProfile,
+      hidden: false,
+      follow_profile_config: true,
+    }, accessToken);
+  } catch (cause) {
+    throw new Error('session.create failed: ' + (cause instanceof Error ? cause.message : String(cause)));
+  }
+  const openedId = result.stored_session_id || result.session_id || '';
+  if (!openedId.trim()) throw new Error('session.create returned no session id.');
+  return { profile: normalizedProfile, openedId };
+}
+
 export async function loadBotProfiles(accessToken?: string): Promise<BotProfilesPayload> {
   return normalizeProfiles(await requestBotRpc<unknown>('profiles.list', { include_sessions: true }, accessToken));
 }

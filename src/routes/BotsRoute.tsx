@@ -25,6 +25,7 @@ import {
   installBotSkill,
   loadBotModelOptions,
   openBotCanonicalChat,
+  openBotTaskChat,
   type BotModelProviderOption,
   type BotProfileDetails,
   type BotProfileSummary,
@@ -190,7 +191,8 @@ function ProfileEditor({
   onCancelCreate,
   onClose,
   onOpenChat,
-  chatOpening,
+  onOpenTaskChat,
+  chatOpeningMode,
   accessToken,
   onInstallSkill,
 }: {
@@ -207,7 +209,8 @@ function ProfileEditor({
   onCancelCreate: () => void;
   onClose: () => void;
   onOpenChat: () => void;
-  chatOpening: boolean;
+  onOpenTaskChat: () => void;
+  chatOpeningMode: 'canonical' | 'task' | null;
   accessToken?: string;
   onInstallSkill: (profile: string, identifier: string) => Promise<void>;
 }) {
@@ -366,17 +369,28 @@ function ProfileEditor({
         <div className="flex flex-wrap items-center justify-end gap-2">
           {mode === 'create' ? <Button type="button" variant="ghost" onClick={onCancelCreate} disabled={busy}>{t('bots.cancel')}</Button> : null}
           {mode === 'edit' && draft.botRoster ? (
-            <Button
-              type="button"
-              variant="secondary"
-              icon={chatOpening ? <Loader2 size={15} className="animate-spin" /> : <MessageSquare size={15} />}
-              onClick={onOpenChat}
-              disabled={busy || chatOpening}
-            >
-              {chatOpening ? t('bots.openingChat') : t('bots.openChat')}
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="secondary"
+                icon={chatOpeningMode === 'canonical' ? <Loader2 size={15} className="animate-spin" /> : <MessageSquare size={15} />}
+                onClick={onOpenChat}
+                disabled={busy || chatOpeningMode !== null}
+              >
+                {chatOpeningMode === 'canonical' ? t('bots.openingCanonicalChat') : t('bots.openCanonicalChat')}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                icon={chatOpeningMode === 'task' ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+                onClick={onOpenTaskChat}
+                disabled={busy || chatOpeningMode !== null}
+              >
+                {chatOpeningMode === 'task' ? t('bots.openingTaskChat') : t('bots.newTaskChat')}
+              </Button>
+            </>
           ) : null}
-          <Button type="submit" form="bot-profile-form" variant="primary" icon={busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} disabled={busy || chatOpening}>
+          <Button type="submit" form="bot-profile-form" variant="primary" icon={busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} disabled={busy || chatOpeningMode !== null}>
             {busy ? t('bots.saving') : mode === 'create' ? t('bots.create') : t('bots.save')}
           </Button>
         </div>
@@ -747,7 +761,7 @@ export function BotsRoute() {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [chatOpening, setChatOpening] = useState(false);
+  const [chatOpeningMode, setChatOpeningMode] = useState<'canonical' | 'task' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refreshRoster = useCallback(async (preferredName?: string | null) => {
@@ -835,8 +849,8 @@ export function BotsRoute() {
   const selectedSummary = useMemo(() => profiles.find((profile) => profile.name === selectedName) ?? null, [profiles, selectedName]);
 
   const handleOpenChat = useCallback(async () => {
-    if (!selectedSummary || !draft.botRoster || chatOpening) return;
-    setChatOpening(true);
+    if (!selectedSummary || !draft.botRoster || chatOpeningMode !== null) return;
+    setChatOpeningMode('canonical');
     setError(null);
     try {
       const result = await openBotCanonicalChat(
@@ -844,13 +858,29 @@ export function BotsRoute() {
         selectedSummary.canonical_session?.id,
         storedToken || undefined,
       );
-      navigate(buildBotChatHref(location.pathname, location.search, result.openedId));
+      setDetailOpen(false);
+      navigate(buildBotChatHref(location.pathname, location.search, result.openedId, { mode: 'canonical', profile: draft.name }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not open Bot Chat.');
+      setError(cause instanceof Error ? cause.message : 'Could not open the canonical Bot Chat.');
     } finally {
-      setChatOpening(false);
+      setChatOpeningMode(null);
     }
-  }, [chatOpening, draft.botRoster, draft.name, location.pathname, location.search, navigate, selectedSummary, storedToken]);
+  }, [chatOpeningMode, draft.botRoster, draft.name, location.pathname, location.search, navigate, selectedSummary, storedToken]);
+
+  const handleOpenTaskChat = useCallback(async () => {
+    if (!selectedSummary || !draft.botRoster || chatOpeningMode !== null) return;
+    setChatOpeningMode('task');
+    setError(null);
+    try {
+      const result = await openBotTaskChat(draft.name, storedToken || undefined);
+      setDetailOpen(false);
+      navigate(buildBotChatHref(location.pathname, location.search, result.openedId, { mode: 'task', profile: result.profile }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not start a new Bot chat.');
+    } finally {
+      setChatOpeningMode(null);
+    }
+  }, [chatOpeningMode, draft.botRoster, draft.name, location.pathname, location.search, navigate, selectedSummary, storedToken]);
 
   const startCreate = () => {
     setMode('create');
@@ -977,7 +1007,8 @@ export function BotsRoute() {
             onCancelCreate={() => { setDetailOpen(false); setMode('edit'); void refreshRoster(selectedName); }}
             onClose={() => setDetailOpen(false)}
             onOpenChat={() => { void handleOpenChat(); }}
-            chatOpening={chatOpening}
+            onOpenTaskChat={() => { void handleOpenTaskChat(); }}
+            chatOpeningMode={chatOpeningMode}
             onInstallSkill={handleInstallBotSkill}
           />
         )

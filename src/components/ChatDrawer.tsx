@@ -79,6 +79,8 @@ type ChatDrawerProps = {
   open: boolean;
   storedToken: string;
   initialSessionId?: string | null;
+  chatMode?: 'general' | 'canonical' | 'task';
+  botProfile?: string | null;
   onClose: () => void;
 };
 
@@ -153,7 +155,7 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
   );
 }
 
-export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
+export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose }: ChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -676,7 +678,13 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     : connectionState === 'reconnecting' || connectionState === 'connecting' || connectionState === 'ticket'
       ? 'is-pending'
       : 'is-offline';
-  const headerSessionTitle = sessionTitle || preview?.title || 'Untitled session';
+  const headerSessionTitle = sessionTitle || preview?.title || t('chatDrawer.untitledSession');
+  const contextEyebrow = chatMode === 'canonical'
+    ? t('chatDrawer.primaryChat')
+    : chatMode === 'task'
+      ? t('chatDrawer.freshTaskChat')
+      : t('chatDrawer.eyebrow');
+  const contextTitle = botProfile?.trim() || t('chat.button');
   const streamingVerb = TUI_VERBS[verbTick % TUI_VERBS.length] || 'processing';
   const streamingKaomoji = TUI_KAOMOJI[verbTick % TUI_KAOMOJI.length] || '(._.)';
   const statusLineLabel = interaction
@@ -1186,8 +1194,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             <div className="chat-head-identity">
               <span className="chat-mark" aria-hidden><Bot size={18} /></span>
               <div className="chat-head-copy">
-                <p className="eyebrow">{t('chatDrawer.eyebrow')}</p>
-                <h2 id="chat-drawer-title">{t('chat.button')}</h2>
+                <p className="eyebrow">{contextEyebrow}</p>
+                <h2 id="chat-drawer-title">{contextTitle}</h2>
                 <span className="chat-session-title" title={headerSessionTitle}>{headerSessionTitle}</span>
               </div>
             </div>

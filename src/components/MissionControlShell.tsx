@@ -92,7 +92,12 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     setChatOpenState(open);
     try { sessionStorage.setItem('mission-control-chat-open', open ? '1' : '0'); } catch { /* ignore */ }
   }, []);
-  const chatRecoverySessionId = new URLSearchParams(location.search).get('chatSession');
+  const chatSearchParams = new URLSearchParams(location.search);
+  const chatRecoverySessionId = chatSearchParams.get('chatSession');
+  const chatMode = chatSearchParams.get('chatMode') === 'canonical' || chatSearchParams.get('chatMode') === 'task'
+    ? chatSearchParams.get('chatMode') as 'canonical' | 'task'
+    : 'general';
+  const chatBotProfile = chatSearchParams.get('botProfile');
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const chatButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -102,6 +107,8 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     if (!chatRecoverySessionId) return;
     const params = new URLSearchParams(location.search);
     params.delete('chatSession');
+    params.delete('chatMode');
+    params.delete('botProfile');
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
   }, [chatRecoverySessionId, location.pathname, location.search, navigate]);
@@ -383,6 +390,8 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             open={chatOpen}
             storedToken={storedToken}
             initialSessionId={chatRecoverySessionId}
+            chatMode={chatMode}
+            botProfile={chatBotProfile}
             onClose={closeChat}
           />
         ) : null}
