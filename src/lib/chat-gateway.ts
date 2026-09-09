@@ -581,7 +581,12 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       nextSource.addEventListener('chat-sync-ready', (event) => {
         try {
           const ready = JSON.parse((event as MessageEvent<string>).data) as { latest_seq?: unknown };
-          if (since === undefined && typeof ready.latest_seq === 'number') chatSyncRelaySeqRef.current.set(activeSessionId, ready.latest_seq);
+          // A fresh Mission Control client must replay the existing relay buffer:
+          // it contains MC-only user/assistant projections that are not in Hermes
+          // SessionDB. The message/event IDs and relay watermark dedupe repeats.
+          if (since !== undefined && typeof ready.latest_seq === 'number') {
+            chatSyncRelaySeqRef.current.set(activeSessionId, Math.max(since, ready.latest_seq));
+          }
         } catch {
           // A malformed readiness event must not disable the direct gateway.
         }

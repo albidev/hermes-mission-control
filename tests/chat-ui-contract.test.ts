@@ -34,7 +34,9 @@ assertIncludes(component, 'let originSessionId = await ensureSession();', 'Bot h
 assertIncludes(component, "originSessionId = await claimLastChatPointer('submit', originSessionId);", 'Bot handoffs claim the shared last-chat pointer');
 assertIncludes(component, "appendChatMessage(attributedReply, 'assistant_message');", 'Bot replies are projected into the primary chat transcript');
 assertIncludes(component, "id: `bot-request-${handoffId}`", 'first Bot mention is recorded as a primary user message');
-assertIncludes(component, 'const handoffMessageIds = new Set(', 'Bot request and reply are grouped into one visual timeline card');
+assertIncludes(component, 'const previewMessages = (preview.recentMessages ?? []).filter', 'resume preview filters the duplicate Bot reply');
+assertIncludes(component, 'previewMessages.map((msg, index)', 'resume preview renders the filtered transcript');
+assertIncludes(chatGateway, 'if (since !== undefined && typeof ready.latest_seq === \'number\')', 'fresh relay subscribers replay existing MC messages');
 assertIncludes(component, "filter((message: ChatMessage) => !handoffMessageIds.has(message.id))", 'grouped Bot messages are not rendered twice');
 assertIncludes(component, 'createdAt: handoff.createdAt ?? handoff.updatedAt', 'Bot card keeps its original request order while status changes');
 assertIncludes(component, '<BotHandoffMessage', 'primary timeline renders the Bot card');

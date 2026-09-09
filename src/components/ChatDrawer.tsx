@@ -437,6 +437,9 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         );
       }
       if (preview) {
+        const previewMessages = (preview.recentMessages ?? []).filter((message) => !handoffs.some((handoff) => (
+          handoff.reply?.trim() && handoff.reply.trim() === message.text.trim()
+        )));
         return (
           <section className="chat-preview-surface">
             <div className="chat-preview-heading">
@@ -450,7 +453,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               </span>
             </div>
             <div className="chat-preview-body">
-              {(preview.recentMessages ?? []).length > 0 ? preview.recentMessages!.map((msg, index) => (
+              {previewMessages.length > 0 ? previewMessages.map((msg, index) => (
                 <ChatPreviewBubble key={`${msg.role}-${msg.timestamp ?? 'na'}-${index}`} message={msg} />
               )) : (
                 <p className="chat-preview-fallback">{preview.preview || 'No recent messages available.'}</p>
