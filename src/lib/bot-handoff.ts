@@ -27,6 +27,21 @@ export type HandoffSubmitResult = {
   submitted: boolean;
 };
 
+/** Make the canonical Bot Chat treat every handoff as a fresh user request. */
+export function formatHandoffPrompt(envelope: HandoffEnvelope): string {
+  return [
+    '[MISSION CONTROL HANDOFF — NEW REQUEST]',
+    `handoff_id: ${envelope.handoffId}`,
+    'Answer the CURRENT REQUEST directly.',
+    'Do not say you already answered above and do not defer to a previous answer.',
+    'Use previous conversation only as background context; it is not the answer to this request.',
+    'Use your normal Hermes reasoning and tools. For specific/project/factual requests, use BDH as required by your SOUL.',
+    '',
+    'CURRENT REQUEST:',
+    envelope.request,
+  ].join('\n');
+}
+
 export function createHandoffEnvelope(
   origin: HandoffOrigin,
   target: HandoffTarget,
@@ -65,7 +80,7 @@ export async function submitHandoff(
   }
   try {
     const canonical = await rpc.resolveCanonical(envelope.target.profile);
-    await rpc.submit({ session_id: canonical.openedId, text: envelope.request });
+    await rpc.submit({ session_id: canonical.openedId, text: formatHandoffPrompt(envelope) });
     return { openedId: canonical.openedId, submitted: true };
   } catch (err) {
     dedupe.release(envelope.handoffId);

@@ -56,7 +56,9 @@ describe('submitHandoff', () => {
     assert.strictEqual(result.openedId, 'run-crossnection');
     assert.strictEqual(record.submits.length, 1);
     assert.strictEqual(record.submits[0].session_id, 'run-crossnection');
-    assert.strictEqual(record.submits[0].text, 'analizza questo trace');
+    assert.match(record.submits[0].text, /\[MISSION CONTROL HANDOFF — NEW REQUEST\]/);
+    assert.match(record.submits[0].text, /Answer the CURRENT REQUEST directly/);
+    assert.match(record.submits[0].text, /CURRENT REQUEST:\nanalizza questo trace/);
   });
 
   it('does not submit twice for the same handoffId', async () => {

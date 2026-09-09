@@ -66,7 +66,7 @@ import { deriveTodoPlan, type TodoPlan } from '../lib/todo-plan';
 import { loadBotProfiles } from '../lib/bot-gateway';
 import type { BotMentionCandidate } from '../lib/bot-mentions';
 import type { ChatMentionPopoverHandle } from './ChatMentionPopover';
-import { createHandoffEnvelope, createHandoffDedupe } from '../lib/bot-handoff';
+import { createHandoffEnvelope, createHandoffDedupe, formatHandoffPrompt } from '../lib/bot-handoff';
 import { createHandoffObserver } from '../lib/bot-handoff-observer';
 import { openHandoffClient } from '../lib/bot-handoff-client';
 import { extractMentionRequest } from '../lib/bot-mentions';
@@ -551,7 +551,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                   upsertHandoffState(handoff.id, { targetSessionId: canonical.openedId });
                   const runtimeId = await client.resume(handle, canonical.registryId);
                   upsertHandoffState(handoff.id, { status: 'running' });
-                  await client.submit(handoff.request);
+                  await client.submit(formatHandoffPrompt(createHandoffEnvelope(
+                    { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
+                    { profile: handle, canonicalTitle: 'Bot Chat' },
+                    handoff.request,
+                  )));
                   handoffObserverRef.current = createHandoffObserver(
                     {
                       eventsSince: (params) => client!.eventsSince(params.last_seen),
@@ -776,7 +780,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, originSessionId);
           const runtimeId = await client.resume(handle, canonical.registryId);
           upsertHandoffState(handoffId, { status: 'running' }, originSessionId);
-          await client.submit(mention.request);
+          await client.submit(formatHandoffPrompt(envelope));
           handoffObserverRef.current = createHandoffObserver(
             {
               eventsSince: (params) => client!.eventsSince(params.last_seen),
