@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from chat_runtime_presence import active_runtime_presences
+
 _log = logging.getLogger(__name__)
 
 _TRACE_MODE_NATIVE = "native"
@@ -738,6 +740,96 @@ def _build_session_item(
     }
 
 
+def _build_runtime_presence_item(presence: dict[str, Any]) -> dict[str, Any]:
+    """Build a temporary live item for a resumed runtime not persisted yet."""
+    session_id = str(presence.get("runtimeSessionId") or "").strip()
+    source = _normalize_text(presence.get("source")) or "mission-control"
+    model = _normalize_text(presence.get("model")) or "unknown"
+    title = _normalize_text(presence.get("title")) or "Resumed Mission Control session"
+    now = _parse_timestamp(presence.get("updatedAt")) or time.time()
+    return {
+        "sessionId": session_id,
+        "agentId": _build_agent_key(source, model),
+        "title": title,
+        "source": source,
+        "platform": source,
+        "chatType": "local",
+        "displayName": title,
+        "model": model,
+        "startedAt": now,
+        "lastActiveAt": now,
+        "endedAt": None,
+        "status": "live",
+        "category": "conversation",
+        "originLabel": _ORIGIN_LABELS.get(source, source),
+        "isResumable": True,
+        "messageCount": 0,
+        "traceMode": _TRACE_MODE_NATIVE,
+        "preview": "",
+        "recentMessages": [],
+        "todoPlan": None,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "estimatedCostUsd": 0.0,
+        "costStatus": "",
+    }
+
+
+def _overlay_runtime_presence_item(item: dict[str, Any], presence: dict[str, Any]) -> None:
+    """Apply one active runtime lease to a display item without touching SessionDB."""
+    item["status"] = "live"
+    item["endedAt"] = None
+    runtime_session_id = str(presence.get("runtimeSessionId") or "").strip()
+    if runtime_session_id and runtime_session_id != str(item.get("sessionId") or ""):
+        item["runtimeSessionId"] = runtime_session_id
+        item["resumedFrom"] = str(presence.get("resumedFrom") or "").strip() or None
+    item["lastActiveAt"] = max(
+        _parse_timestamp(item.get("lastActiveAt")) or 0,
+        _parse_timestamp(presence.get("updatedAt")) or 0,
+    )
+
+
+def _presence_aliases(presence: dict[str, Any]) -> list[str]:
+    return [
+        value
+        for value in (
+            presence.get("runtimeSessionId"),
+            presence.get("resumedFrom"),
+            presence.get("sessionKey"),
+        )
+        if isinstance(value, str) and value.strip()
+    ]
+
+
+def _apply_runtime_presence(items: list[dict[str, Any]], filters: dict[str, str] | None = None) -> None:
+    """Overlay active resumed runtimes without mutating canonical SessionDB rows."""
+    presences = active_runtime_presences()
+    if not presences:
+        return
+
+    by_id = {str(item.get("sessionId") or ""): item for item in items}
+    for presence in presences:
+        aliases = _presence_aliases(presence)
+        if not aliases:
+            continue
+        item = next((by_id.get(alias) for alias in aliases if by_id.get(alias) is not None), None)
+        if item is None:
+            item = _build_runtime_presence_item(presence)
+            if _session_matches_filters(item, filters):
+                items.append(item)
+                by_id[str(item.get("sessionId") or "")] = item
+            continue
+        # Prefer the canonical SessionDB item (resumedFrom/sessionKey) when the
+        # runtime has a different ephemeral id. This prevents one conversation
+        # from rendering twice while preserving the runtime id as metadata.
+        _overlay_runtime_presence_item(item, presence)
+        for alias in aliases:
+            by_id.setdefault(alias, item)
+
+
 def _build_session_facets(items: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     facets = {
         "status": {"live": 0, "idle": 0, "ended": 0},
@@ -827,6 +919,10 @@ def _collect_agent_sessions(
     filters: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     index_map = _read_gateway_sessions_index()
+    presence_by_id: dict[str, dict[str, Any]] = {}
+    for presence in active_runtime_presences():
+        for alias in _presence_aliases(presence):
+            presence_by_id.setdefault(alias, presence)
     # _iter_db_session_ids already returns ids ordered by last_active (recency).
     # Preserve that order, but put index-only sessions first. Those entries are
     # normally live gateway sessions that have not reached SessionDB yet; if we
@@ -873,8 +969,11 @@ def _collect_agent_sessions(
                 recent_messages,
                 todo_plan,
             )
+            if presence := presence_by_id.get(session_id):
+                _overlay_runtime_presence_item(item, presence)
             if _session_matches_filters(item, filters):
                 items.append(item)
+        _apply_runtime_presence(items, filters)
         # Items already follow the ordered_ids sequence (recency first). Do NOT
         # re-sort here — the client may also re-sort, but the page boundaries
         # must stay contiguous, which requires a stable single ordering.

@@ -53,7 +53,7 @@ import {
   readFileAsDataUrl,
   useGatewayChat,
   type PendingAttachment,
-} from '../lib/chat-gateway';
+} from '../lib/chat-gateway?mc=resume-v2';
 import { markChatPresenceRead } from '../lib/chat-presence';
 import { normalizeClarifyInteraction } from '../lib/chat-interactions';
 import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';

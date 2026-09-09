@@ -2048,6 +2048,9 @@ export async function loadMissionControlAgentSessions(
   filters?: MissionControlAgentSessionFilters,
 ): Promise<MissionControlAgentsSessionsSnapshot> {
   const payload = await fetchMissionControlAgentSessions(accessToken, limit, offset, null, filters);
+  if (!payload) {
+    throw new Error('Mission Control sessions endpoint unavailable.');
+  }
   return normalizeAgentSessionsSnapshot(payload);
 }
 

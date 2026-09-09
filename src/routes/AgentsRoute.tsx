@@ -191,6 +191,7 @@ function summarizeEventPreview(value?: string, limit = 180): string {
 
 const LIVE_FRESHNESS_SECONDS = 5 * 60;
 const LIVE_TRACE_LIMIT = 320;
+const AGENT_SESSION_POLL_INTERVAL_MS = 5_000;
 type LiveTraceScope = 'current' | 'last3' | 'full';
 const DAG_NODE_WIDTH = 260;
 const DAG_NODE_HEIGHT = 76;
@@ -522,23 +523,34 @@ export function AgentsRoute() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+
+    const refreshAgentSessions = async () => {
       try {
-        const resolved = await loadMissionControlAgentSessions(storedToken, 200);
+        const resolved = await loadMissionControlAgentSessions(
+          storedToken,
+          200,
+          0,
+          liveMode ? { tab: 'live' } : undefined,
+        );
         if (!cancelled) {
           setAgentSessions(resolved.items);
         }
       } catch {
-        if (!cancelled) {
-          setAgentSessions([]);
-        }
+        // Keep the last known registry during transient DB/network failures.
+        // Clearing it makes a live session disappear even though it is still running.
       }
-    })();
+    };
+
+    void refreshAgentSessions();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshAgentSessions();
+    }, liveMode ? AGENT_SESSION_POLL_INTERVAL_MS : 15_000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
     };
-  }, [storedToken]);
+  }, [liveMode, storedToken]);
 
   useEffect(() => {
     setSseFallbackToPolling(false);

@@ -54,6 +54,7 @@ import {
   type ClarifyInteractionContent,
 } from './chat-interactions';
 import { recordReloadDiagnostic } from './reload-diagnostics';
+import { publishChatRuntimePresence } from './chat-runtime-presence';
 
 // Backward-compatible re-export for ChatDrawer consumers during the gateway split.
 export { interactionTitle };
@@ -69,6 +70,12 @@ type PendingRpc = {
 };
 
 type PendingPrompt = PendingChatSubmit;
+
+type ResumedRuntimePresence = {
+  runtimeSessionId: string;
+  resumedFrom: string;
+  sessionKey: string | null;
+};
 
 export type PendingAttachment = Omit<ChatAttachmentSummary, 'id'> & {
   id: string;
@@ -149,6 +156,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
   const [modelPickerRefresh, setModelPickerRefresh] = useState(false);
   const [commandPrefill, setCommandPrefill] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<boolean>(Boolean(initialSessionId?.trim()));
+  const [resumedRuntime, setResumedRuntime] = useState<ResumedRuntimePresence | null>(null);
   const [pointerRevision, setPointerRevision] = useState<number | null>(initial.revision);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef(new Map<string, PendingRpc>());
@@ -216,6 +224,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     requestedSessionIdRef.current = requested;
     previewModeRef.current = Boolean(requested);
     setPreviewMode(Boolean(requested));
+    setResumedRuntime(null);
     if (!requested) return;
     setSessionId(requested);
     sessionIdRef.current = requested;
@@ -241,6 +250,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     setPointerRevision(serverChat.revision);
     const currentSessionId = sessionIdRef.current;
     if (currentSessionId !== serverChat.sessionId) {
+      setResumedRuntime(null);
       setSessionId(serverChat.sessionId);
       sessionIdRef.current = serverChat.sessionId;
       setSessionKey(serverChat.sessionKey ?? serverChat.sessionId);
@@ -647,8 +657,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     }
   }, [request]);
 
-  const ensureSession = useCallback(async () => {
-    const existingKey = requestedSessionIdRef.current || sessionKeyRef.current || sessionIdRef.current;
+  const ensureSession = useCallback(async (preferredSessionId?: string | null) => {
+    const explicitSessionId = preferredSessionId?.trim() || initialSessionId?.trim() || null;
+    const existingKey = explicitSessionId || requestedSessionIdRef.current || sessionKeyRef.current || sessionIdRef.current;
+    const isExplicitResume = Boolean(explicitSessionId);
     if (existingKey) {
       try {
         const resumed = await request<unknown>('session.resume', {
@@ -664,6 +676,11 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         sessionIdRef.current = resolvedSessionId;
         setSessionKey(resolvedSessionKey);
         sessionKeyRef.current = resolvedSessionKey;
+        setResumedRuntime({
+          runtimeSessionId: resolvedSessionId,
+          resumedFrom: existingKey,
+          sessionKey: resolvedSessionKey,
+        });
         const { inflight } = await hydrateSessionSnapshot(resumed, resolvedSessionId, resolvedSessionKey);
         setRunning(Boolean(inflight) || extractSessionRunning(resumed));
         return resolvedSessionId;
@@ -673,9 +690,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
           requested: existingKey,
           error: err instanceof Error ? err.message : String(err),
         });
-        // A stale/deleted requested session is a normal recovery path: discard
-        // the invalid pointer and start a fresh chat. Do not surface a misleading
-        // error for an ID that is no longer present in the gateway.
+        if (isExplicitResume) throw err;
+        // A stale/deleted non-explicit pointer is a normal recovery path: discard
+        // it and start a fresh chat. Explicit URL resumes must never silently
+        // become a new session with the global default model.
         requestedSessionIdRef.current = null;
         previewModeRef.current = false;
         setPreviewMode(false);
@@ -686,6 +704,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     }
 
     const created = await request<unknown>('session.create', { cols: 80, source: 'mission-control' });
+    setResumedRuntime(null);
     adoptModel(created);
     const createdSessionId = extractSessionId(created);
     if (!createdSessionId) throw new Error('Gateway did not return a session id.');
@@ -696,7 +715,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     sessionKeyRef.current = createdSessionKey;
     setRunning(false);
     return createdSessionId;
-  }, [adoptModel, hydrateSessionSnapshot, request]);
+  }, [adoptModel, hydrateSessionSnapshot, initialSessionId, request]);
 
   const clearPendingPrompt = useCallback(() => {
     pendingPromptRef.current = null;
@@ -768,10 +787,10 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     previewModeRef.current = false;
     setPreviewMode(false);
     try {
-      let activeSessionId = await ensureSession();
+      let activeSessionId = await ensureSession(initialSessionId);
       if (activeSessionId) {
         const canonicalSessionId = await claimLastChatPointer('resume', activeSessionId);
-        if (canonicalSessionId !== activeSessionId) activeSessionId = await ensureSession();
+        if (canonicalSessionId !== activeSessionId) activeSessionId = await ensureSession(canonicalSessionId);
         void refreshModel(activeSessionId);
         void refreshContext(activeSessionId);
         void replayPendingPrompt(activeSessionId);
@@ -781,7 +800,29 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       setError(err instanceof Error ? err.message : 'Failed to resume the selected session.');
       return null;
     }
-  }, [claimLastChatPointer, ensureSession, refreshContext, refreshModel, replayPendingPrompt]);
+  }, [claimLastChatPointer, ensureSession, initialSessionId, refreshContext, refreshModel, replayPendingPrompt]);
+
+  useEffect(() => {
+    if (!open || previewMode || connectionState !== 'connected' || !resumedRuntime) return;
+
+    const payload = {
+      runtimeSessionId: resumedRuntime.runtimeSessionId,
+      resumedFrom: resumedRuntime.resumedFrom,
+      sessionKey: resumedRuntime.sessionKey,
+      model: modelIdentity?.model ?? null,
+      title: sessionTitle ?? null,
+      phase: 'connected' as const,
+      source: 'mission-control',
+    };
+    const publish = () => void publishChatRuntimePresence(storedToken, payload);
+
+    publish();
+    const timer = window.setInterval(publish, 5_000);
+    return () => {
+      window.clearInterval(timer);
+      void publishChatRuntimePresence(storedToken, { ...payload, phase: 'closed' });
+    };
+  }, [connectionState, open, previewMode, resumedRuntime, storedToken]);
 
   const scheduleReconnect = useCallback(() => {
     if (intentionalCloseRef.current || reconnectAttemptsRef.current >= MAX_RECONNECTS) {

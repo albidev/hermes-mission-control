@@ -11,7 +11,7 @@ import {
 import { ListTodo, Loader2, Paperclip, Pause, Send, X } from 'lucide-react';
 import { ChatSlashPopover, type ChatSlashPopoverHandle, type ChatSlashCompletionResponse } from './ChatSlashPopover';
 import { AttachmentIcon } from './chat-messages';
-import type { PendingAttachment } from '../lib/chat-gateway';
+import type { PendingAttachment } from '../lib/chat-gateway?mc=resume-v2';
 
 export type ChatComposerProps = {
   draft: string;

@@ -293,7 +293,9 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
             activeModel: dashboard.activeModel,
             fallbackModel: dashboard.fallbackModel,
             gatewayStatus: dashboard.gatewayStatus,
-            activeAgents: dashboard.activeAgents,
+            // Session data comes from the dedicated sessions endpoint above.
+            // The lightweight dashboard snapshot intentionally does not load
+            // sessions and would otherwise overwrite a live count with 0.
             candidatesEnabled: dashboard.candidatesEnabled,
             queuedJobs: dashboard.queuedJobs,
             toolCallsToday: dashboard.toolCallsToday,
@@ -361,7 +363,13 @@ export function MissionControlProvider({ children }: { children: ReactNode }) {
       const includeSnapshot = ticks % 4 === 0 || snapshot.activeModel === 'gpt-5.4-mini';
       const includeConfig = ticks % 4 === 0 || !config.available;
       recordReloadDiagnostic('mc-refresh-poll', { ticks, includeReference, includeSnapshot, includeConfig, includeCron: false });
-      void refreshAll(storedToken || undefined, { silent: true, includeReference, includeSnapshot, includeCron: false });
+      void refreshAll(storedToken || undefined, {
+        silent: true,
+        includeReference,
+        includeSnapshot,
+        includeSessions: true,
+        includeCron: false,
+      });
       if (includeConfig) {
         void refreshConfig(storedToken || undefined).catch(() => {});
       }

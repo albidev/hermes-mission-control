@@ -82,6 +82,7 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
+from chat_runtime_presence import active_runtime_presences, update_runtime_presence
 from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
 import kanban_bridge as kanban_bridge_mod
 from kanban_bridge import KanbanError as KanbanBridgeError
@@ -2376,6 +2377,15 @@ class Handler(BaseHTTPRequestHandler):
             plugins = loader.list_plugins()
             self._json(200, {'plugins': plugins, 'count': len(plugins)})
             return
+        if parsed.path == '/api/local/chat/presence':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, {
+                'success': True,
+                'leases': active_runtime_presences(),
+            })
+            return
         if parsed.path == '/api/local/chat/last':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2617,6 +2627,23 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"success": True})
             return
         if self._reject_mutation_in_read_only_mode():
+            return
+        if parsed.path == '/api/local/chat/presence':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            if not isinstance(payload, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            try:
+                result = update_runtime_presence(payload)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+                return
+            self._json(200, result)
             return
         if parsed.path.startswith("/api/local/cron/"):
             if not _is_authorized(self):

@@ -4,7 +4,7 @@ import {
   MAX_ATTACHMENTS,
   classifyAttachment,
   type PendingAttachment,
-} from '../lib/chat-gateway';
+} from '../lib/chat-gateway?mc=resume-v2';
 
 type UseChatAttachmentsResult = {
   pendingAttachments: PendingAttachment[];
