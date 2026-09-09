@@ -227,6 +227,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     clearCommandPrefill,
     submitPrompt,
     appendChatMessage,
+    titleSession,
     ensureSession,
     claimLastChatPointer,
     appendSystemMessage,
@@ -521,20 +522,28 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       );
     }
 
+    const timeline = [
+      ...messages.map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, id: message.id, message })),
+      ...handoffs.map((handoff) => ({ kind: 'handoff' as const, createdAt: handoff.updatedAt, id: handoff.id, handoff })),
+    ].sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+
     return (
       <>
-        {handoffs.map((handoff) => (
+        {timeline.map((entry) => entry.kind === 'message' ? (
+          <ChatMessageCard key={entry.id} message={entry.message} />
+        ) : (
           <BotHandoffMessage
-            key={handoff.id}
-            handle={handoff.handle}
-            displayName={handoff.displayName}
-            model={botRoster.find((bot) => bot.handle === handoff.handle)?.model}
-            provider={botRoster.find((bot) => bot.handle === handoff.handle)?.provider}
-            request={handoff.request}
-            status={handoff.status}
-            reply={handoff.reply}
-            error={handoff.error}
-            onRetry={handoff.status === 'failed' ? () => {
+            key={entry.id}
+            handle={entry.handoff.handle}
+            displayName={entry.handoff.displayName}
+            model={botRoster.find((bot) => bot.handle === entry.handoff.handle)?.model}
+            provider={botRoster.find((bot) => bot.handle === entry.handoff.handle)?.provider}
+            request={entry.handoff.request}
+            status={entry.handoff.status}
+            reply={entry.handoff.reply}
+            error={entry.handoff.error}
+            onRetry={entry.handoff.status === 'failed' ? () => {
+              const handoff = entry.handoff;
               const handle = handoff.handle;
               if (!handoffDedupeRef.current.tryClaim(handle)) return;
               upsertHandoffState(handoff.id, { status: 'queued', error: null });
@@ -594,7 +603,6 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             } : undefined}
           />
         ))}
-        {messages.map((message) => <ChatMessageCard key={message.id} message={message} />)}
       </>
     );
   };
@@ -766,6 +774,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         mention.request,
       );
       const handoffId = envelope.handoffId;
+      await titleSession(originSessionId, mention.request || `@${handle}`);
       appendChatMessage({
         id: `bot-request-${handoffId}`,
         role: 'user',

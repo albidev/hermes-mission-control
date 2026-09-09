@@ -1142,6 +1142,18 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     if (activeSessionId) void publishChatSync(storedToken, activeSessionId, kind, message as unknown as Record<string, unknown>);
   }, [storedToken]);
 
+  const titleSession = useCallback(async (activeSessionId: string, title: string): Promise<void> => {
+    const trimmed = title.trim().slice(0, 120);
+    if (!activeSessionId.trim() || !trimmed) return;
+    try {
+      await request('session.title', { session_id: activeSessionId, title: trimmed });
+      setSessionTitle(trimmed);
+    } catch {
+      // A title failure must not abort the Bot handoff; the UI still has a useful local title.
+      setSessionTitle(trimmed);
+    }
+  }, [request]);
+
   const appendSystemMessage = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -1531,6 +1543,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     clearCommandPrefill,
     submitPrompt,
     appendChatMessage,
+    titleSession,
     appendSystemMessage,
     respondInteraction,
     interrupt,
