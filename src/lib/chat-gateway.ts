@@ -1512,6 +1512,8 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     modelPickerOpen,
     modelPickerRefresh,
     request,
+    ensureSession,
+    claimLastChatPointer,
     switchModel,
     closeModelPicker,
     commandPrefill,

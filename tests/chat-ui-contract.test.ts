@@ -29,6 +29,10 @@ assertIncludes(component, '<ChatTodoPlan plan={showTodoPlan}', 'chat drawer expo
 assertIncludes(component, 'todoPlan: gatewayTodoPlan', 'chat drawer consumes the gateway TODO state');
 assertIncludes(component, 'const [previewTodoPlan, setPreviewTodoPlan] = useState<TodoPlan | null>(null);', 'preview TODO state survives explicit resume');
 assertIncludes(component, 'const visibleTodoPlan = gatewayTodoPlan ?? previewTodoPlan ?? derivedTodoPlan;', 'gateway TODO state has priority over preview fallback');
+assertIncludes(component, 'let originSessionId = await ensureSession();', 'Bot handoffs bootstrap a fresh origin session');
+assertIncludes(component, "originSessionId = await claimLastChatPointer('submit', originSessionId);", 'Bot handoffs claim the shared last-chat pointer');
+assertIncludes(component, 'targetSessionId: canonical.openedId', 'Bot handoffs record the canonical Bot Chat session');
+assertIncludes(chatGateway, 'claimLastChatPointer,', 'chat gateway exposes the shared pointer claim to Bot handoffs');
 assertIncludes(chatGateway, "'session.events.since'", 'chat gateway replays missed session events');
 assertIncludes(chatGateway, 'shouldApplySequencedEvent', 'chat gateway deduplicates sequenced events');
 assertIncludes(chatSync, 'mergeDurableChatMessages', 'chat sync merges remote snapshots without dropping local streaming state');

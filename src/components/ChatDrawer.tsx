@@ -226,6 +226,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    ensureSession,
+    claimLastChatPointer,
     appendSystemMessage,
     respondInteraction,
     interrupt,
@@ -708,12 +710,12 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     }
   };
 
-  const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>) => {
+  const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>, originSessionId = sessionId ?? '') => {
     setHandoffs((current) => {
       const existing = current.find((item) => item.id === id);
       if (!existing) return current;
       const updated: PersistedBotHandoff = { ...existing, ...patch, updatedAt: Date.now() };
-      void persistBotHandoff(storedToken, sessionId ?? '', updated);
+      void persistBotHandoff(storedToken, originSessionId, updated);
       return current.map((item) => item.id === id ? updated : item);
     });
   }, [sessionId, storedToken]);
@@ -733,6 +735,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     // attributed reply is rendered as a dedicated handoff card.
     const mention = extractMentionRequest(text, botRoster);
     if (mention) {
+      let originSessionId = await ensureSession();
+      originSessionId = await claimLastChatPointer('submit', originSessionId);
+      if (originSessionId !== sessionId) {
+        originSessionId = await ensureSession(originSessionId);
+      }
       const handle = mention.mention.slice(1);
       const candidate = botRoster.find((item) => item.handle === handle);
       // Dedupe: a second submit for the same Bot while one is in flight is
@@ -743,7 +750,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         return;
       }
       const envelope = createHandoffEnvelope(
-        { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
+        { connectionId: 'local', profile: 'default', sessionId: originSessionId },
         { profile: handle, canonicalTitle: 'Bot Chat' },
         mention.request,
       );
@@ -759,16 +766,16 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         updatedAt: Date.now(),
       };
       setHandoffs((current) => [...current, initialHandoff]);
-      void persistBotHandoff(storedToken, sessionId ?? '', initialHandoff);
+      void persistBotHandoff(storedToken, originSessionId, initialHandoff);
       setDraft('');
       const runHandoff = async (): Promise<void> => {
         let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
         try {
           client = await openHandoffClient({ accessToken: storedToken || undefined });
           const canonical = await client.resolveCanonical(handle);
-          upsertHandoffState(handoffId, { targetSessionId: canonical.openedId });
+          upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, originSessionId);
           const runtimeId = await client.resume(handle, canonical.registryId);
-          upsertHandoffState(handoffId, { status: 'running' });
+          upsertHandoffState(handoffId, { status: 'running' }, originSessionId);
           await client.submit(mention.request);
           handoffObserverRef.current = createHandoffObserver(
             {
@@ -781,12 +788,12 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               onComplete: (reply) => {
                 handoffDedupeRef.current.release(handle);
                 client?.close();
-                upsertHandoffState(handoffId, { status: 'completed', reply });
+                upsertHandoffState(handoffId, { status: 'completed', reply }, originSessionId);
               },
               onError: (message) => {
                 handoffDedupeRef.current.release(handle);
                 client?.close();
-                upsertHandoffState(handoffId, { status: 'failed', error: message });
+                upsertHandoffState(handoffId, { status: 'failed', error: message }, originSessionId);
               },
             },
           );
