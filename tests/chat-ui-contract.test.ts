@@ -38,7 +38,9 @@ assertIncludes(component, 'const previewMessages = (preview.recentMessages ?? []
 assertIncludes(component, 'previewMessages.map((msg, index)', 'resume preview renders the filtered transcript');
 assertIncludes(chatGateway, 'if (since !== undefined && typeof ready.latest_seq === \'number\')', 'fresh relay subscribers replay existing MC messages');
 assertIncludes(component, "filter((message: ChatMessage) => !handoffMessageIds.has(message.id))", 'grouped Bot messages are not rendered twice');
-assertIncludes(component, 'createdAt: handoff.createdAt ?? handoff.updatedAt', 'Bot card keeps its original request order while status changes');
+assertIncludes(component, 'const requestMessage: ChatMessage = {', 'Bot handoff reconstructs the user bubble on resume');
+assertIncludes(component, 'order: 0, id: requestMessage.id', 'reconstructed user bubble precedes the Bot card');
+assertIncludes(component, 'order: 1, id: handoff.id', 'Bot card follows the user bubble');
 assertIncludes(component, '<BotHandoffMessage', 'primary timeline renders the Bot card');
 assertIncludes(botHandoff, 'chat-tool-surface chat-tool-family-delegation bot-handoff-tool-surface', 'Bot handoff reuses the tool card surface');
 assertIncludes(botHandoff, '<PayloadBlock label="Input"', 'Bot card exposes the request as tool input');

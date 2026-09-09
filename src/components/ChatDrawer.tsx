@@ -531,9 +531,24 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     const timeline = [
       ...messages
         .filter((message: ChatMessage) => !handoffMessageIds.has(message.id))
-        .map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, id: message.id, message })),
-      ...handoffs.map((handoff) => ({ kind: 'handoff' as const, createdAt: handoff.createdAt ?? handoff.updatedAt, id: handoff.id, handoff })),
-    ].sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+        .map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, order: 0, id: message.id, message })),
+      ...handoffs.flatMap((handoff) => {
+        const createdAt = handoff.createdAt ?? handoff.updatedAt;
+        const requestMessage: ChatMessage = {
+          id: `bot-request-${handoff.id}`,
+          role: 'user',
+          kind: 'user',
+          source: 'live',
+          text: `@${handoff.handle} ${handoff.request}`.trim(),
+          status: 'complete',
+          createdAt,
+        };
+        return [
+          { kind: 'message' as const, createdAt, order: 0, id: requestMessage.id, message: requestMessage },
+          { kind: 'handoff' as const, createdAt, order: 1, id: handoff.id, handoff },
+        ];
+      }),
+    ].sort((left, right) => left.createdAt - right.createdAt || left.order - right.order || left.id.localeCompare(right.id));
 
     return (
       <>
