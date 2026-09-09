@@ -525,12 +525,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       );
     }
 
-    const handoffMessageIds = new Set(
-      handoffs.flatMap((handoff) => [`bot-request-${handoff.id}`, `bot-reply-${handoff.id}`]),
-    );
+    const handoffRequestIds = new Set(handoffs.map((handoff) => `bot-request-${handoff.id}`));
+    const handoffReplyIds = new Set(handoffs.map((handoff) => `bot-reply-${handoff.id}`));
     const timeline = [
       ...messages
-        .filter((message: ChatMessage) => !handoffMessageIds.has(message.id))
+        .filter((message: ChatMessage) => !handoffRequestIds.has(message.id))
         .map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, order: 0, id: message.id, message })),
       ...handoffs.flatMap((handoff) => {
         const createdAt = handoff.createdAt ?? handoff.updatedAt;
@@ -543,9 +542,27 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           status: 'complete',
           createdAt,
         };
+        const replyMessage: ChatMessage | null = handoff.reply && !handoffReplyIds.has(`bot-reply-${handoff.id}`)
+          ? {
+            id: `bot-reply-${handoff.id}`,
+            role: 'assistant',
+            kind: 'assistant',
+            source: 'live',
+            text: handoff.reply,
+            status: 'complete',
+            createdAt: handoff.updatedAt,
+            attribution: {
+              handle: handoff.handle,
+              displayName: handoff.displayName,
+              model: handoff.model,
+              provider: handoff.provider,
+            },
+          }
+          : null;
         return [
           { kind: 'message' as const, createdAt, order: 0, id: requestMessage.id, message: requestMessage },
           { kind: 'handoff' as const, createdAt, order: 1, id: handoff.id, handoff },
+          ...(replyMessage ? [{ kind: 'message' as const, createdAt: handoff.updatedAt, order: 2, id: replyMessage.id, message: replyMessage }] : []),
         ];
       }),
     ].sort((left, right) => left.createdAt - right.createdAt || left.order - right.order || left.id.localeCompare(right.id));

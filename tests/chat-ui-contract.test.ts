@@ -37,7 +37,10 @@ assertIncludes(component, "id: `bot-request-${handoffId}`", 'first Bot mention i
 assertIncludes(component, 'const previewMessages = (preview.recentMessages ?? []).filter', 'resume preview filters the duplicate Bot reply');
 assertIncludes(component, 'previewMessages.map((msg, index)', 'resume preview renders the filtered transcript');
 assertIncludes(chatGateway, 'if (since !== undefined && typeof ready.latest_seq === \'number\')', 'fresh relay subscribers replay existing MC messages');
-assertIncludes(component, "filter((message: ChatMessage) => !handoffMessageIds.has(message.id))", 'grouped Bot messages are not rendered twice');
+assertIncludes(component, 'const handoffRequestIds = new Set(', 'only the technical Bot request row is grouped');
+assertIncludes(component, "filter((message: ChatMessage) => !handoffRequestIds.has(message.id))", 'the attributed Bot assistant reply remains visible');
+assertIncludes(component, 'const replyMessage: ChatMessage | null = handoff.reply', 'resume reconstructs a missing attributed assistant reply');
+assertIncludes(component, 'order: 2, id: replyMessage.id', 'the attributed assistant reply closes the Bot turn');
 assertIncludes(component, 'const requestMessage: ChatMessage = {', 'Bot handoff reconstructs the user bubble on resume');
 assertIncludes(component, 'order: 0, id: requestMessage.id', 'reconstructed user bubble precedes the Bot card');
 assertIncludes(component, 'order: 1, id: handoff.id', 'Bot card follows the user bubble');
