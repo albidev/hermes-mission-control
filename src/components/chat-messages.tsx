@@ -50,6 +50,7 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
   const isTool = visualKind === 'tool';
   const isTodoTool = isTool && message.toolName?.trim().toLowerCase() === 'todo';
   const isReasoning = visualKind === 'reasoning';
+  const attribution = message.attribution;
   const messageTimestamp = typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) ? message.createdAt : null;
   const messageTime = messageTimestamp === null ? '' : formatChatMessageTime(messageTimestamp);
   if (isTodoTool) return null;
@@ -68,7 +69,8 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
             <span className="chat-message-kind-icon" aria-hidden>
               {visualKind === 'assistant' ? <Bot size={12} /> : isReasoning ? <Cpu size={12} /> : visualKind === 'user' ? <MessageSquare size={12} /> : <FileText size={12} />}
             </span>
-            <span>{label}</span>
+            <span>{attribution?.displayName || attribution?.handle || label}</span>
+            {attribution ? <span className="chat-message-attribution">@{attribution.handle}{attribution.model ? ` · ${attribution.model}` : ''}{attribution.provider ? ` · ${attribution.provider}` : ''}</span> : null}
             {message.status === 'streaming'
               ? <Loader2 size={12} className="chat-spin" aria-label={t('chatDrawer.streaming')} />
               : messageTime ? (

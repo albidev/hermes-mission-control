@@ -43,7 +43,7 @@ import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPres
 import { fetchServerLastChat, persistChat, readPersistedChat, syncLastChatToServer } from './chat-persistence';
 import { canClaimLastChatPointer, createChatBootstrapGuard, shouldAdoptServerPointer, type LastChatClaimAction, type ServerLastChat } from './chat-bootstrap';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
-import { applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, fetchChatTranscript, publishChatSync, replaceWithCanonicalChatMessages, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
+import { applySyncedAssistantMessage, applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, fetchChatTranscript, publishChatSync, replaceWithCanonicalChatMessages, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, executeReasoningSlashCommand, resultText } from './chat-commands';
 import {
@@ -560,13 +560,15 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
         return;
       }
 
-      if (envelope.kind === 'user_message' || envelope.kind === 'system_message') {
+      if (envelope.kind === 'user_message' || envelope.kind === 'system_message' || envelope.kind === 'assistant_message') {
         const message = envelope.payload as unknown as ChatMessage;
-        const expectedRole = envelope.kind === 'user_message' ? 'user' : 'system';
+        const expectedRole = envelope.kind === 'user_message' ? 'user' : envelope.kind === 'assistant_message' ? 'assistant' : 'system';
         if (message.role !== expectedRole || typeof message.id !== 'string' || typeof message.text !== 'string') return;
         setMessages((current) => envelope.kind === 'user_message'
           ? applySyncedUserMessage(current, message)
-          : applySyncedChatMessage(current, message));
+          : envelope.kind === 'assistant_message'
+            ? applySyncedAssistantMessage(current, message)
+            : applySyncedChatMessage(current, message));
       }
     };
 
@@ -1134,6 +1136,12 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     };
   }, [connect, open, rejectPending]);
 
+  const appendChatMessage = useCallback((message: ChatMessage, kind: 'user_message' | 'system_message' = 'system_message') => {
+    setMessages((current) => current.some((candidate) => candidate.id === message.id) ? current : [...current, message]);
+    const activeSessionId = sessionIdRef.current;
+    if (activeSessionId) void publishChatSync(storedToken, activeSessionId, kind, message as unknown as Record<string, unknown>);
+  }, [storedToken]);
+
   const appendSystemMessage = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -1522,6 +1530,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    appendChatMessage,
     appendSystemMessage,
     respondInteraction,
     interrupt,

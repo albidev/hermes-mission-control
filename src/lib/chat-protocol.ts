@@ -34,6 +34,12 @@ export type ChatMessage = {
   toolInput?: string;
   durationS?: number;
   toolCalls?: Array<{ name: string; arguments: string }>;
+  attribution?: {
+    handle: string;
+    displayName?: string;
+    model?: string;
+    provider?: string;
+  };
 };
 
 export type GatewayTranscriptMessage = {

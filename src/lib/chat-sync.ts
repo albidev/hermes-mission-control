@@ -12,7 +12,7 @@ export type ChatSyncEnvelope = {
   session_id: string;
   relay_seq: number;
   dedupe_key: string;
-  kind: 'gateway_event' | 'user_message' | 'system_message';
+  kind: 'gateway_event' | 'user_message' | 'system_message' | 'assistant_message';
   payload: Record<string, unknown>;
 };
 
@@ -57,7 +57,7 @@ export function chatSyncStreamUrl(sessionId: string, accessToken: string, since?
 export function publishChatSync(
   accessToken: string,
   sessionId: string,
-  kind: 'gateway_event' | 'user_message' | 'system_message',
+  kind: 'gateway_event' | 'user_message' | 'system_message' | 'assistant_message',
   payload: Record<string, unknown>,
   dedupeKey?: string,
 ): Promise<void> {
@@ -156,6 +156,7 @@ export function applySyncedChatMessage(messages: ChatMessage[], message: ChatMes
 }
 
 export const applySyncedUserMessage = applySyncedChatMessage;
+export const applySyncedAssistantMessage = applySyncedChatMessage;
 
 function findMatchingMessage(messages: ChatMessage[], candidate: ChatMessage, excluded = new Set<number>()): number {
   return messages.findIndex((message, index) => !excluded.has(index) && message.id === candidate.id);

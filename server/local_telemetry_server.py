@@ -2031,9 +2031,9 @@ class Handler(BaseHTTPRequestHandler):
             event_id = str(payload.get("event_id") or "").strip()
             dedupe_key = core_event_dedupe_key(session_id, event, event_id)
             relay_payload = event
-        elif kind in {"user_message", "system_message"}:
+        elif kind in {"user_message", "system_message", "assistant_message"}:
             message = payload.get("message")
-            expected_role = "user" if kind == "user_message" else "system"
+            expected_role = {"user_message": "user", "system_message": "system", "assistant_message": "assistant"}[kind]
             if not isinstance(message, dict) or not str(message.get("id") or "").strip() or message.get("role") != expected_role:
                 self._json(400, {"error": "bad_request", "detail": f"{kind} requires a {expected_role} message with an id."})
                 return

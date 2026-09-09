@@ -56,7 +56,7 @@ import {
 } from '../lib/chat-gateway?mc=resume-v2';
 import { markChatPresenceRead } from '../lib/chat-presence';
 import { normalizeClarifyInteraction } from '../lib/chat-interactions';
-import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';
+import { previewText, type ChatAttachmentUpload, type ChatMessage, type GatewayInteractionRequest } from '../lib/chat-protocol';
 import {
   loadMissionControlSessionPreview,
   type MissionControlAgentSessionItem,
@@ -226,6 +226,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    appendChatMessage,
     ensureSession,
     claimLastChatPointer,
     appendSystemMessage,
@@ -804,6 +805,22 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               onComplete: (reply) => {
                 handoffDedupeRef.current.release(handle);
                 client?.close();
+                const attributedReply: ChatMessage = {
+                  id: `bot-reply-${handoffId}`,
+                  role: 'assistant',
+                  kind: 'assistant',
+                  source: 'live',
+                  text: reply,
+                  status: 'complete',
+                  createdAt: Date.now(),
+                  attribution: {
+                    handle,
+                    displayName: candidate?.displayName,
+                    model: candidate?.model,
+                    provider: candidate?.provider,
+                  },
+                };
+                appendChatMessage(attributedReply, 'assistant_message');
                 upsertHandoffState(handoffId, { status: 'completed', reply }, originSessionId);
               },
               onError: (message) => {

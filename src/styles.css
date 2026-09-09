@@ -1354,6 +1354,14 @@ body.modal-open .route-page-scroll {
   text-transform: uppercase;
 }
 
+.chat-message-attribution {
+  color: var(--color-text-subtle);
+  font-size: 0.65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: none;
+  font-weight: 500;
+}
+
 .chat-message-time {
   margin-left: auto;
   font-weight: 500;
