@@ -19,6 +19,7 @@ const SkillsRoute = lazy(() => import('./routes/SkillsRoute').then((m) => ({ def
 const ConfigRoute = lazy(() => import('./routes/ConfigRoute').then((m) => ({ default: m.ConfigRoute })));
 const LogsRoute = lazy(() => import('./routes/LogsRoute').then((m) => ({ default: m.LogsRoute })));
 const KanbanRoute = lazy(() => import('./routes/KanbanRoute').then((m) => ({ default: m.KanbanRoute })));
+const BotsRoute = lazy(() => import('./routes/BotsRoute').then((m) => ({ default: m.BotsRoute })));
 
 // Default routes (hardcoded, non-plugin)
 const defaultRoutes = [
@@ -31,6 +32,7 @@ const defaultRoutes = [
   { path: 'config', element: <ConfigRoute /> },
   { path: 'logs', element: <LogsRoute /> },
   { path: 'kanban', element: <KanbanRoute /> },
+  { path: 'bots', element: <BotsRoute /> },
 ];
 
 // Plugin registry — populated at runtime from installed plugins

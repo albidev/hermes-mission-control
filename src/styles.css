@@ -147,6 +147,10 @@
   }
 }
 
+body.modal-open .route-page-scroll {
+  overflow: hidden !important;
+}
+
 /* ============================================
    Component Utilities
    ============================================ */

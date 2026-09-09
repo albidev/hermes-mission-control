@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Kanban as KanbanIcon, RefreshCw, Plus, X, MessageSquare, GitBranch, Trash2, Search, ChevronDown } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { Dropdown } from '../components/ui/Dropdown';
 import {
   loadKanbanBoard,
   loadKanbanBoards,
@@ -574,75 +575,6 @@ function BoardPicker({
                     <Trash2 size={12} />
                   </button>
                 </div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Dropdown — shared select-style component (same look as the board picker)
-// ---------------------------------------------------------------------------
-
-function Dropdown({
-  value,
-  options,
-  onChange,
-  placeholder = 'All',
-  ariaLabel,
-  dropUp = false,
-}: {
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (value: string) => void;
-  placeholder?: string;
-  ariaLabel: string;
-  dropUp?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const activeLabel = options.find((o) => o.value === value)?.label ?? placeholder;
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        className={`flex w-full items-center justify-between gap-1.5 rounded-lg border px-2.5 py-2 text-xs transition-colors ${value ? 'border-border bg-surface-sunken text-text' : 'border-border-subtle bg-surface text-text-muted hover:border-border hover:text-text'}`}
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-label={ariaLabel}
-      >
-        <span className="truncate">{activeLabel}</span>
-        <ChevronDown size={13} className={`shrink-0 text-text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open ? (
-        <ul className={`absolute z-30 min-w-[10rem] rounded-xl border border-border-subtle bg-surface p-1 shadow-xl ${dropUp ? 'bottom-full mb-1' : 'mt-1'}`} role="listbox" aria-label={ariaLabel}>
-          {options.map((o) => {
-            const selected = o.value === value;
-            return (
-              <li key={o.value || '__all__'} role="option" aria-selected={selected}>
-                <button
-                  type="button"
-                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${selected ? 'bg-sky-400/10 text-text font-medium' : 'text-text-muted hover:bg-surface-sunken hover:text-text'}`}
-                  onClick={() => { onChange(o.value); setOpen(false); }}
-                >
-                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${selected ? 'bg-sky-400' : 'bg-transparent'}`} />
-                  <span className="truncate flex-1">{o.label}</span>
-                </button>
               </li>
             );
           })}
