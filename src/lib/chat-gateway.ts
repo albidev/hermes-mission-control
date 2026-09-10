@@ -116,8 +116,9 @@ async function loadCanonicalTranscript(
   accessToken: string,
   sessionId: string | null,
   sessionKey: string | null,
+  profile?: string | null,
 ): Promise<ChatMessage[] | null> {
-  const payload = await fetchChatTranscript(accessToken, sessionId, sessionKey);
+  const payload = await fetchChatTranscript(accessToken, sessionId, sessionKey, profile);
   if (!payload?.complete) return null;
   return normalizeTranscript(payload.messages);
 }
@@ -439,7 +440,7 @@ export function useGatewayChat(
     const rawTranscript = extractTranscript(resumed);
     const resolvedSessionId = activeSessionId ?? extractSessionId(resumed);
     const resolvedSessionKey = activeSessionKey ?? extractSessionKey(resumed) ?? resolvedSessionId;
-    const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey);
+    const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey, botProfile);
     const transcript = canonicalTranscript ?? [];
     const inflight = extractInflightAssistant(resumed);
     const inflightMessage: ChatMessage | null = inflight
@@ -466,7 +467,7 @@ export function useGatewayChat(
     if (resumedTodoPlan) setTodoPlan(resumedTodoPlan);
     else if (transcript.length > 0) setTodoPlan(deriveTodoPlan(transcript));
     return { transcript, inflight };
-  }, [storedToken]);
+  }, [botProfile, storedToken]);
 
   const reconcileSessionSnapshot = useCallback(async (activeSessionId: string) => {
     try {

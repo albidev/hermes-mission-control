@@ -265,7 +265,9 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     if (!open || !sessionId) return;
     let cancelled = false;
     loadedHandoffIdsRef.current.clear();
-    void loadPersistedBotHandoffs(storedToken, sessionId).then((rows) => {
+    const references = [...new Set([sessionId, sessionKey].map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+    void Promise.all(references.map((reference) => loadPersistedBotHandoffs(storedToken, reference))).then((batches) => {
+      const rows = [...new Map(batches.flat().map((row) => [row.id, row])).values()];
       if (cancelled) return;
       for (const row of rows) loadedHandoffIdsRef.current.add(row.id);
       setHandoffs(rows);
@@ -280,7 +282,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       } : null);
     });
     return () => { cancelled = true; };
-  }, [open, sessionId, storedToken, activeTargetStorageKey]);
+  }, [open, sessionId, sessionKey, storedToken, activeTargetStorageKey]);
 
   useEffect(() => {
     if (!open) return;

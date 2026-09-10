@@ -16,6 +16,38 @@ SPEC.loader.exec_module(mission_control_agents)
 
 
 class MissionControlSessionOrderTests(unittest.TestCase):
+    def test_canonical_transcript_uses_requested_profile_scope(self):
+        calls = []
+
+        class FakeDb:
+            def list_sessions_rich(self, **kwargs):
+                return []
+
+            def resolve_resume_session_id(self, session_id):
+                return session_id
+
+            def get_resume_conversations(self, session_id):
+                return [], [{
+                    "_row_id": 77,
+                    "role": "assistant",
+                    "content": "Crossconnection reply",
+                    "timestamp": 1789047549.0,
+                }]
+
+        def open_db(profile=None):
+            calls.append(profile)
+            return FakeDb()
+
+        with patch.object(mission_control_agents, "_try_get_session_db", side_effect=open_db):
+            payload = mission_control_agents.load_chat_transcript(
+                "bot-session", "bot-session-key", profile="crossnection"
+            )
+
+        self.assertEqual(calls, ["crossnection"])
+        self.assertEqual(payload["sessionId"], "bot-session-key")
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["messages"][0]["content"], "Crossconnection reply")
+
     def test_index_only_sessions_fill_first_page_before_db_history(self):
         index = {
             "gateway-live": {

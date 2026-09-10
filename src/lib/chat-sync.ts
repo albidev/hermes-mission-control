@@ -92,10 +92,12 @@ export async function fetchChatTimestampMetadata(
   accessToken: string,
   sessionId: string | null,
   sessionKey: string | null,
+  profile?: string | null,
 ): Promise<ChatTimestampMetadata[]> {
   const params = new URLSearchParams();
   if (sessionId?.trim()) params.set('session_id', sessionId.trim());
   if (sessionKey?.trim()) params.set('session_key', sessionKey.trim());
+  if (profile?.trim()) params.set('profile', profile.trim());
   if (!params.toString()) return [];
   try {
     const response = await fetch(`/api/local/chat/timestamps?${params.toString()}`, {
@@ -117,10 +119,12 @@ export async function fetchChatTranscript(
   accessToken: string,
   sessionId: string | null,
   sessionKey: string | null,
+  profile?: string | null,
 ): Promise<CanonicalChatTranscript | null> {
   const params = new URLSearchParams();
   if (sessionId?.trim()) params.set('session_id', sessionId.trim());
   if (sessionKey?.trim()) params.set('session_key', sessionKey.trim());
+  if (profile?.trim()) params.set('profile', profile.trim());
   if (!params.toString()) return null;
   try {
     const response = await fetch(`/api/local/chat/transcript?${params.toString()}`, {

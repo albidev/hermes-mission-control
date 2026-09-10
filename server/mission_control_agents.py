@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime
@@ -228,17 +229,28 @@ def _iter_db_session_ids() -> list[str]:
         _close_session_db(db)
 
 
-def _try_get_session_db():
+def _try_get_session_db(profile: str | None = None):
     """Open the Hermes session store strictly read-only for telemetry.
 
     Mission Control only observes sessions.  A writable ``SessionDB()`` runs
     schema/FTS initialization on every request and competes with the gateway's
     writer, which is precisely the wrong thing for a polling sidecar to do.
+    When a Bot profile is supplied, use that profile's DB explicitly instead of
+    following the sidecar process's active-profile environment.
     """
     try:
         from hermes_state import SessionDB
 
-        return SessionDB(read_only=True)
+        db_path = None
+        if profile is not None:
+            name = str(profile).strip()
+            if not name or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
+                return None
+            from hermes_paths import hermes_root
+            db_path = hermes_root() / "state.db" if name == "default" else hermes_root() / "profiles" / name / "state.db"
+            if not db_path.is_file():
+                return None
+        return SessionDB(db_path=db_path, read_only=True) if db_path is not None else SessionDB(read_only=True)
     except Exception:
         return None
 
@@ -322,6 +334,7 @@ def _resolve_chat_reference(
 def load_chat_transcript(
     session_id: str | None = None,
     session_key: str | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Return the complete, canonical Mission Control display transcript.
 
@@ -333,7 +346,7 @@ def load_chat_transcript(
     if not reference:
         return {"sessionId": "", "sessionKey": "", "messages": [], "complete": True, "count": 0}
 
-    db = _try_get_session_db()
+    db = _try_get_session_db(profile)
     try:
         resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
         display_rows = db.get_resume_conversations(resolved_id)[1] if db is not None else []
@@ -394,13 +407,14 @@ def load_chat_transcript(
 def load_chat_message_timestamps(
     session_id: str | None = None,
     session_key: str | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Return canonical SessionDB message metadata for legacy resume repair."""
     reference = str(session_key or session_id or "").strip()
     if not reference:
         return {"sessionId": "", "sessionKey": "", "messages": []}
 
-    db = _try_get_session_db()
+    db = _try_get_session_db(profile)
     try:
         resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
         rows = _get_db_messages(db, resolved_id) or []
