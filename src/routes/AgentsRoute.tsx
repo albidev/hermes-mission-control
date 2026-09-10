@@ -207,12 +207,14 @@ export function AgentsRoute() {
   const [searchParams] = useSearchParams();
   const requestedMode = searchParams.get('mode');
   const requestedSession = searchParams.get('session');
+  const requestedProfile = searchParams.get('profile');
   const { snapshot, storedToken } = useMissionControl();
   const [view, setView] = useState<'timeline' | 'dag'>('timeline');
-  const [liveMode, setLiveMode] = useState(() => requestedMode !== 'post');
+  const [liveMode, setLiveMode] = useState(() => requestedMode !== 'post' && !requestedProfile);
   const [liveTraceScope, setLiveTraceScope] = useState<LiveTraceScope>('current');
   const [selectedActionFilters, setSelectedActionFilters] = useState<TraceActionFilter[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>(requestedSession ?? '');
+  const [selectedSessionProfile, setSelectedSessionProfile] = useState<string | null>(requestedProfile?.trim() || null);
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentSessionItem[]>([]);
   const [trace, setTrace] = useState<MissionControlAgentTraceSnapshot | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
@@ -251,6 +253,7 @@ export function AgentsRoute() {
             storedToken || undefined,
             liveMode ? LIVE_TRACE_LIMIT : 0,
             liveMode && traceCompactAvailable,
+            selectedSessionProfile,
           );
           setTrace(payload);
         } catch {
@@ -276,11 +279,12 @@ export function AgentsRoute() {
     if (requestedMode === 'post') setLiveMode(false);
   }, [requestedMode]);
 
-  const selectSession = (sessionId: string, manual = false) => {
+  const selectSession = (sessionId: string, manual = false, profile: string | null = null) => {
     manualSessionSelectionRef.current = manual;
     hasTraceRef.current = false;
     setTrace(null);
     setTraceLoading(Boolean(sessionId));
+    setSelectedSessionProfile(profile?.trim() || null);
     setSelectedSessionId(sessionId);
   };
 
@@ -296,6 +300,10 @@ export function AgentsRoute() {
 
   const baseSessions = liveMode ? trulyLiveSessions : orderedSessions;
   const selectableSessions = baseSessions;
+  const externalSelectedSession = selectedSessionProfile && selectedSessionId
+    && !selectableSessions.some((session) => session.sessionId === selectedSessionId)
+    ? { sessionId: selectedSessionId, title: `${selectedSessionProfile} Bot Chat`, source: selectedSessionProfile }
+    : null;
 
   useEffect(() => {
     if (selectedSessionId) return;
@@ -579,11 +587,12 @@ export function AgentsRoute() {
   }, [selectedEvent, filteredTrace]);
 
   useEffect(() => {
+    if (selectedSessionProfile) return;
     if (!selectedSessionId) return;
     if (selectableSessions.some((session) => session.sessionId === selectedSessionId)) return;
     manualSessionSelectionRef.current = false;
     selectSession(selectableSessions[0]?.sessionId ?? '');
-  }, [selectedSessionId, selectableSessions]);
+  }, [selectedSessionId, selectedSessionProfile, selectableSessions]);
 
   useEffect(() => {
     if (!liveMode) return;
@@ -631,6 +640,7 @@ export function AgentsRoute() {
     const officialBase = (import.meta.env.VITE_HERMES_API_BASE_URL || '/api').replace(/\/$/, '');
     const params = new URLSearchParams();
     if (selectedSessionId) params.set('session_id', selectedSessionId);
+    if (selectedSessionProfile) params.set('profile', selectedSessionProfile);
     params.set('limit', String(LIVE_TRACE_LIMIT));
     params.set('interval', '1.5');
     if (storedToken) params.set('access_token', storedToken);
@@ -719,6 +729,7 @@ export function AgentsRoute() {
         storedToken || undefined,
         liveMode ? LIVE_TRACE_LIMIT : 0,
         liveMode && traceCompactAvailable,
+        selectedSessionProfile,
       );
       if (!cancelled) {
         setTrace(payload);
@@ -741,7 +752,7 @@ export function AgentsRoute() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSessionId, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
+  }, [selectedSessionId, selectedSessionProfile, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
 
   return (
     <div ref={containerRef} className="route-page-scroll flex min-w-0 flex-col gap-6 h-full overflow-x-hidden overflow-y-auto">
@@ -805,7 +816,15 @@ export function AgentsRoute() {
                 key={row.handoff.id}
                 type="button"
                 className="flex w-full min-w-0 flex-col gap-1 px-4 py-3 text-left hover:bg-surface-raised/40"
-                onClick={() => selectSession(row.originSessionId, true)}
+                onClick={() => {
+                  const targetSessionId = row.handoff.targetSessionId?.trim();
+                  if (targetSessionId) {
+                    setLiveMode(false);
+                    selectSession(targetSessionId, true, row.handoff.handle);
+                    return;
+                  }
+                  selectSession(row.originSessionId, true);
+                }}
               >
                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
                   <Badge variant={row.handoff.status === 'completed' ? 'positive' : row.handoff.status === 'failed' ? 'negative' : 'warning'}>{row.handoff.status}</Badge>
@@ -883,8 +902,13 @@ export function AgentsRoute() {
               className="h-11 w-full min-w-0 rounded-md bg-surface px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:h-9"
               value={selectedSessionId}
               onChange={(event) => selectSession(event.target.value, true)}
-              disabled={selectableSessions.length === 0}
+              disabled={selectableSessions.length === 0 && !externalSelectedSession}
             >
+              {externalSelectedSession ? (
+                <option value={externalSelectedSession.sessionId}>
+                  {externalSelectedSession.title} · {externalSelectedSession.source}
+                </option>
+              ) : null}
               {selectableSessions.length === 0 ? (
                 <option value="">
                   {liveMode ? t('agents.noLiveSessions') : t('agents.noSessions')}

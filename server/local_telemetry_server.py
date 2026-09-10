@@ -2137,7 +2137,7 @@ class Handler(BaseHTTPRequestHandler):
         result = chat_sync_relay.publish(session_id, client_id, kind, relay_payload, dedupe_key)
         self._json(200, {"success": True, "relay": result})
 
-    def _stream_trace(self, session_id: str | None, limit: int, compact: bool, interval: float) -> None:
+    def _stream_trace(self, session_id: str | None, limit: int, compact: bool, interval: float, profile: str | None = None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache, no-store")
@@ -2147,7 +2147,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
         while True:
-            payload = load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact)
+            payload = load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact, profile=profile)
             frame = f"event: trace\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
             try:
                 self.wfile.write(frame)
@@ -2311,19 +2311,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._unauthorized()
                 return
             session_id = (params.get("session_id") or [None])[0] or None
+            profile = (params.get("profile") or [None])[0] or None
             limit = _parse_int((params.get("limit") or [None])[0], default=300, minimum=0, maximum=1000)
             compact = _parse_bool((params.get("compact") or [None])[0], default=False)
-            self._json(200, load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact))
+            self._json(200, load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact, profile=profile))
             return
         if parsed.path == "/api/local/mission-control/agents/trace/stream":
             if not _is_authorized(self, allow_query_token=True):
                 self._unauthorized()
                 return
             session_id = (params.get("session_id") or [None])[0] or None
+            profile = (params.get("profile") or [None])[0] or None
             limit = _parse_int((params.get("limit") or [None])[0], default=300, minimum=0, maximum=1000)
             compact = _parse_bool((params.get("compact") or [None])[0], default=True)
             interval = _parse_float((params.get("interval") or [None])[0], default=2.0, minimum=0.5, maximum=30.0)
-            self._stream_trace(session_id=session_id, limit=limit, compact=compact, interval=interval)
+            self._stream_trace(session_id=session_id, limit=limit, compact=compact, interval=interval, profile=profile)
             return
         if parsed.path == '/api/local/status':
             if not _is_authorized(self):

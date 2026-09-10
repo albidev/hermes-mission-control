@@ -48,6 +48,36 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["messages"][0]["content"], "Crossconnection reply")
 
+    def test_agent_trace_uses_requested_profile_scope(self):
+        calls = []
+
+        class FakeDb:
+            def get_messages(self, session_id):
+                return [{"role": "assistant", "content": "Bot trace reply", "timestamp": 1789047549.0}]
+
+            def _get_session_rich_row(self, session_id, **kwargs):
+                return {"id": session_id, "title": "Bot Chat"}
+
+            def close(self):
+                pass
+
+        def open_db(profile=None):
+            calls.append(profile)
+            return FakeDb()
+
+        with (
+            patch.object(mission_control_agents, "_try_get_session_db", side_effect=open_db),
+            patch.object(mission_control_agents, "_read_gateway_sessions_index", return_value={}),
+        ):
+            payload = mission_control_agents.load_agent_trace_snapshot(
+                session_id="bot-session", profile="crossnection", limit=20, compact=True
+            )
+
+        self.assertEqual(calls, ["crossnection"])
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["traceMode"], "native")
+        self.assertGreater(len(payload["events"]), 0)
+
     def test_index_only_sessions_fill_first_page_before_db_history(self):
         index = {
             "gateway-live": {

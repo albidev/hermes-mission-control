@@ -1685,11 +1685,13 @@ async function fetchMissionControlAgentTrace(
   accessToken?: string,
   limit = 300,
   compact = false,
+  profile?: string | null,
 ): Promise<Partial<MissionControlAgentTraceSnapshot> | null> {
   const params = new URLSearchParams();
   if (sessionId) params.set('session_id', sessionId);
   params.set('limit', String(limit));
   if (compact) params.set('compact', '1');
+  if (profile?.trim()) params.set('profile', profile.trim());
   const { payload: local } = await maybeFetchLocalJson<Partial<MissionControlAgentTraceSnapshot>>(
     `/mission-control/agents/trace?${params.toString()}`,
     accessToken,
@@ -2131,9 +2133,10 @@ export async function loadMissionControlAgentTrace(
   accessToken?: string,
   limit = 300,
   compact = false,
+  profile?: string | null,
 ): Promise<MissionControlAgentTraceSnapshot> {
   try {
-    const payload = await fetchMissionControlAgentTrace(sessionId, accessToken, limit, compact);
+    const payload = await fetchMissionControlAgentTrace(sessionId, accessToken, limit, compact, profile);
     if (payload) {
       return normalizeAgentTracePayload(payload);
     }

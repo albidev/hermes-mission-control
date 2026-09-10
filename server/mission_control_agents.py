@@ -36,7 +36,21 @@ _ORIGIN_LABELS = {
 }
 
 
-def _sessions_dir() -> Path:
+def _profile_home(profile: str) -> Path | None:
+    name = str(profile or "").strip()
+    if not name or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
+        return None
+    from hermes_paths import hermes_root
+    root = hermes_root()
+    return root if name == "default" else root / "profiles" / name
+
+
+def _sessions_dir(profile: str | None = None) -> Path:
+    if profile is not None:
+        home = _profile_home(profile)
+        if home is None:
+            return Path("/__mission_control_invalid_profile__") / "sessions"
+        return (home / "sessions").resolve()
     from hermes_paths import hermes_sessions_dir
 
     return hermes_sessions_dir().resolve()
@@ -158,8 +172,8 @@ def _is_live(last_active_ts: float | None, ended_at: float | None, live_window_s
     return (time.time() - last_active_ts) < max(30, live_window_seconds)
 
 
-def _read_gateway_sessions_index() -> dict[str, dict[str, Any]]:
-    path = _sessions_dir() / "sessions.json"
+def _read_gateway_sessions_index(profile: str | None = None) -> dict[str, dict[str, Any]]:
+    path = _sessions_dir(profile) / "sessions.json";
     raw = _safe_read_json(path) or {}
     result: dict[str, dict[str, Any]] = {}
     for entry in raw.values():
@@ -243,11 +257,10 @@ def _try_get_session_db(profile: str | None = None):
 
         db_path = None
         if profile is not None:
-            name = str(profile).strip()
-            if not name or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
+            home = _profile_home(profile)
+            if home is None:
                 return None
-            from hermes_paths import hermes_root
-            db_path = hermes_root() / "state.db" if name == "default" else hermes_root() / "profiles" / name / "state.db"
+            db_path = home / "state.db"
             if not db_path.is_file():
                 return None
         return SessionDB(db_path=db_path, read_only=True) if db_path is not None else SessionDB(read_only=True)
@@ -1719,8 +1732,8 @@ def _build_trace_from_transcript(session_id: str, limit: int = 300, compact: boo
     return None
 
 
-def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False) -> dict[str, Any] | None:
-    db = _try_get_session_db()
+def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False, profile: str | None = None) -> dict[str, Any] | None:
+    db = _try_get_session_db(profile)
     try:
         if db is None:
             return None
@@ -1728,7 +1741,7 @@ def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False
         if not messages:
             return None
         row = _get_db_rich_row(db, session_id)
-        session_item = _build_session_item(session_id, _read_gateway_sessions_index().get(session_id), None, row, 300)
+        session_item = _build_session_item(session_id, _read_gateway_sessions_index(profile).get(session_id), None, row, 300)
         return _build_trace_from_messages(session_item, messages, trace_mode=_TRACE_MODE_NATIVE, limit=limit, compact=compact)
     finally:
         _close_session_db(db)
@@ -1772,12 +1785,17 @@ def _pick_default_session_id() -> str | None:
     return chosen.get("sessionId")
 
 
-def load_agent_trace_snapshot(session_id: str | None = None, limit: int = 300, compact: bool = False) -> dict[str, Any]:
+def load_agent_trace_snapshot(
+    session_id: str | None = None,
+    limit: int = 300,
+    compact: bool = False,
+    profile: str | None = None,
+) -> dict[str, Any]:
     resolved_session_id = session_id or _pick_default_session_id()
     if not resolved_session_id:
         return _fallback_unavailable_trace(None, "No session artifacts were found for Mission Control trace.")
 
-    native = _build_trace_native(resolved_session_id, limit=limit, compact=compact)
+    native = _build_trace_native(resolved_session_id, limit=limit, compact=compact, profile=profile)
     if native is not None:
         return native
 
