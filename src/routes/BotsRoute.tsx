@@ -341,13 +341,24 @@ function ProfileEditor({
   const installedSkillNames = useMemo(() => new Set(skills.map((skill) => skill.name.toLowerCase())), [skills]);
   const visibleSkillCatalog = useMemo(() => {
     const query = skillQuery.trim().toLowerCase();
-    return skillCatalog.filter((skill) => {
+    const matching = skillCatalog.filter((skill) => {
       if (!query) return true;
       return [skill.name, skill.description, skill.source, skill.identifier, ...skill.tags]
         .join(' ')
         .toLowerCase()
         .includes(query);
-    }).slice(0, 120);
+    });
+    if (!query) return matching.slice(0, 120);
+    const relevance = (skill: MissionControlSkillCatalogItem): number => {
+      const name = skill.name.toLowerCase();
+      const identifier = skill.identifier.toLowerCase();
+      if (name === query) return 0;
+      if (name.startsWith(query)) return 1;
+      if (identifier === query || identifier.endsWith(`/${query}`)) return 2;
+      if (identifier.includes(query)) return 3;
+      return 4;
+    };
+    return matching.sort((left, right) => relevance(left) - relevance(right) || left.name.localeCompare(right.name)).slice(0, 120);
   }, [skillCatalog, skillQuery]);
 
   const handleInstallSkill = async (skill: MissionControlSkillCatalogItem) => {
