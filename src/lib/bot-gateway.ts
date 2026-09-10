@@ -93,9 +93,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function rpcError(value: unknown): Error {
-  if (isRecord(value) && typeof value.message === 'string') return new Error(value.message);
-  return new Error(getRpcErrorMessage(value));
+export class BotRpcError extends Error {
+  readonly code: string | number | undefined;
+  readonly data: unknown;
+
+  constructor(message: string, code?: string | number, data?: unknown) {
+    super(message);
+    this.name = 'BotRpcError';
+    this.code = code;
+    this.data = data;
+  }
+}
+
+export function rpcError(value: unknown): BotRpcError {
+  if (isRecord(value)) {
+    const message = typeof value.message === 'string' ? value.message : getRpcErrorMessage(value);
+    const code = typeof value.code === 'string' || typeof value.code === 'number' ? value.code : undefined;
+    return new BotRpcError(message, code, value.data);
+  }
+  return new BotRpcError(getRpcErrorMessage(value));
 }
 
 function normalizeProfiles(value: unknown): BotProfilesPayload {
@@ -122,7 +138,7 @@ function normalizeProfiles(value: unknown): BotProfilesPayload {
   };
 }
 
-async function requestBotRpc<T>(method: string, params: Record<string, unknown>, accessToken?: string): Promise<T> {
+export async function requestBotRpc<T>(method: string, params: Record<string, unknown>, accessToken?: string): Promise<T> {
   const credential = await mintWsCredential(accessToken ?? '');
   const socket = new WebSocket(getWebSocketUrl(credential));
   const requestId = `mc-bots-${Date.now()}-${Math.random().toString(36).slice(2)}`;
