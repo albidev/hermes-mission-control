@@ -33,6 +33,7 @@ import {
   updateMissionControlCronJob,
   type MissionControlCronJob,
 } from '../lib/hermes-api';
+import { loadBotProfiles, type BotProfileSummary } from '../lib/bot-gateway';
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—';
@@ -75,6 +76,7 @@ function statusLabel(job: MissionControlCronJob, t: (key: string) => string): st
 
 type CronFormState = {
   name: string;
+  profile: string;
   prompt: string;
   schedule: string;
   deliver: string;
@@ -91,6 +93,7 @@ type CronFormState = {
 
 const emptyForm: CronFormState = {
   name: '',
+  profile: 'default',
   prompt: '',
   schedule: 'every 1h',
   deliver: 'local',
@@ -111,6 +114,7 @@ function formFromJob(job: MissionControlCronJob): CronFormState {
     : job.repeat?.times ? String(job.repeat.times) : '';
   return {
     name: job.label,
+    profile: job.profile || 'default',
     prompt: job.prompt,
     schedule: job.scheduleExpr || job.scheduleDisplay,
     deliver: job.deliver || 'local',
@@ -129,6 +133,7 @@ function formFromJob(job: MissionControlCronJob): CronFormState {
 function toPayload(form: CronFormState): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     name: form.name.trim() || undefined,
+    profile: form.profile.trim() || undefined,
     prompt: form.prompt,
     schedule: form.schedule.trim(),
     deliver: form.deliver.trim() || undefined,
@@ -175,12 +180,25 @@ function CronFormModal({
   const { storedToken } = useMissionControl();
   const { t } = useI18n();
   const [form, setForm] = useState<CronFormState>(() => job ? formFromJob(job) : emptyForm);
+  const [profiles, setProfiles] = useState<BotProfileSummary[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const update = (key: keyof CronFormState, value: string | boolean) => {
     setForm((previous) => ({ ...previous, [key]: value }));
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadBotProfiles(storedToken || undefined).then((result) => {
+      if (!cancelled) setProfiles(result.profiles.filter((profile) => profile.is_bot === true));
+    }).catch(() => {
+      if (!cancelled) setProfiles([]);
+    });
+    return () => { cancelled = true; };
+  }, [storedToken]);
+
+  const botProfiles = profiles.filter((profile) => profile.name !== 'default');
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -223,9 +241,15 @@ function CronFormModal({
     >
       <form className="grid gap-4" onSubmit={submit}>
         {error ? <div className="rounded-lg border border-negative/30 bg-negative-subtle px-3 py-2 text-sm text-negative">{error}</div> : null}
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <Field label={t('cron.form.name')}>
             <input className="mc-input" value={form.name} onChange={(event) => update('name', event.target.value)} placeholder={t('cron.form.namePlaceholder')} />
+          </Field>
+          <Field label={t('cron.form.profile')} hint={t('cron.form.profileHint')}>
+            <select className="mc-input" value={form.profile} onChange={(event) => update('profile', event.target.value)}>
+              <option value="default">default</option>
+              {botProfiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.display_name || profile.name}</option>)}
+            </select>
           </Field>
           <Field label={t('cron.form.schedule')} hint={t('cron.form.scheduleHint')}>
             <input className="mc-input font-mono" value={form.schedule} onChange={(event) => update('schedule', event.target.value)} placeholder="0 9 * * *" required />
@@ -293,6 +317,7 @@ function CronDetailModal({ job, onClose }: { job: MissionControlCronJob; onClose
           {job.scheduleKind === 'once' ? <Badge variant="default">{t('cron.status.oneShot')}</Badge> : null}
         </div>
         <div className="grid gap-3 sm:grid-cols-2 text-sm">
+          <div><p className="eyebrow">{t('cron.detail.profile')}</p><p className="text-text">{job.profile || 'default'}</p></div>
           <div><p className="eyebrow">{t('cron.detail.nextRun')}</p><p className="text-text">{formatDate(job.nextRunAt)} <span className="text-text-subtle">({formatRelative(job.nextRunAt)})</span></p></div>
           <div><p className="eyebrow">{t('cron.detail.lastRun')}</p><p className="text-text">{formatDate(job.lastRunAt)}</p></div>
           <div><p className="eyebrow">{t('cron.detail.delivery')}</p><p className="text-text break-all">{job.deliver || 'local'}</p></div>
@@ -336,6 +361,7 @@ export function CronRoute() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [editingJob, setEditingJob] = useState<MissionControlCronJob | null | undefined>(undefined);
   const [actionJobId, setActionJobId] = useState<string | null>(null);
+  const [profileFilter, setProfileFilter] = useState('all');
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async (silent = false) => {
@@ -373,8 +399,10 @@ export function CronRoute() {
   }), [jobs]);
 
   const orderedJobs = useMemo(
-    () => [...jobs].sort((left, right) => Number(isCronPaused(left)) - Number(isCronPaused(right))),
-    [jobs],
+    () => [...jobs]
+      .filter((job) => profileFilter === 'all' || (job.profile || 'default') === profileFilter)
+      .sort((left, right) => Number(isCronPaused(left)) - Number(isCronPaused(right))),
+    [jobs, profileFilter],
   );
 
   const runAction = async (job: MissionControlCronJob, action: 'run' | 'pause' | 'resume' | 'delete') => {
@@ -458,13 +486,22 @@ export function CronRoute() {
           <Metric label={t('cron.metrics.failed')} value={String(counters.failed)} icon={RotateCcw} />
         </div>
       </Card>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="flex items-center gap-2 text-xs text-text-muted">
+          <span>{t('cron.form.profile')}</span>
+          <select className="mc-input h-9 min-w-36" value={profileFilter} onChange={(event) => setProfileFilter(event.target.value)}>
+            <option value="all">{t('cron.profileAll')}</option>
+            {[...new Set(jobs.map((job) => job.profile || 'default'))].sort().map((profile) => <option key={profile} value={profile}>{profile}</option>)}
+          </select>
+        </label>
+      </div>
       <Card padding="none">
         <div className="border-b border-border-subtle px-4 pb-3 pt-4"><span className="eyebrow">{t('cron.list.eyebrow')}</span><h3 className="mt-0.5 text-sm font-semibold text-text">{t('cron.list.title')}</h3></div>
         {loading ? <div className="px-4 py-10 text-center text-sm text-text-muted">{t('cron.loading')}</div> : jobs.length === 0 ? <div className="px-4 py-10 text-center text-sm text-text-muted">{t('cron.empty')}</div> : <div className="divide-y divide-border-subtle">{orderedJobs.map((job) => {
           const busy = actionJobId === job.id;
           const paused = isCronPaused(job);
           return <div key={job.id} className="cron-job-row flex flex-col gap-3 px-4 py-4 xl:flex-row xl:items-center xl:gap-5">
-            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h4 className="truncate text-sm font-medium text-text">{job.label}</h4><Badge variant={statusVariant(job)}>{statusLabel(job, t)}</Badge></div><p className="mt-1 truncate font-mono text-xs text-text-muted">{job.scheduleDisplay}</p><p className="mt-1 text-xs text-text-subtle">{job.id}</p></div>
+            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h4 className="truncate text-sm font-medium text-text">{job.label}</h4><Badge variant={statusVariant(job)}>{statusLabel(job, t)}</Badge><Badge variant="default">{job.profile || 'default'}</Badge></div><p className="mt-1 truncate font-mono text-xs text-text-muted">{job.scheduleDisplay}</p><p className="mt-1 text-xs text-text-subtle">{job.id}</p></div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-text-muted sm:grid-cols-4 xl:w-[30rem]"><div><span className="block text-text-subtle">{t('cron.list.next')}</span><span>{formatRelative(job.nextRunAt)}</span></div><div className="text-right sm:text-left"><span className="block text-text-subtle">{t('cron.list.last')}</span><span>{formatRelative(job.lastRunAt)}</span></div><div><span className="block text-text-subtle">{t('cron.list.delivery')}</span><span className="max-w-28 truncate block">{job.deliver || 'local'}</span></div><div className="text-right sm:text-left"><span className="block text-text-subtle">{t('cron.list.mode')}</span><span>{job.noAgent ? t('cron.status.script') : t('cron.status.agent')}</span></div></div>
             <div className="flex w-fit self-end flex-wrap items-center gap-1.5 xl:self-auto xl:justify-end"><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.detail')} aria-label={t('cron.actions.detail')} onClick={() => openDetail(job)}>{detailLoading && selectedJob?.id === job.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.edit')} aria-label={t('cron.actions.edit')} onClick={() => setEditingJob(job)}><Pencil className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.run')} aria-label={t('cron.actions.run')} loading={busy} onClick={() => runAction(job, 'run')}><Play className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={paused ? t('cron.actions.resume') : t('cron.actions.pause')} aria-label={paused ? t('cron.actions.resume') : t('cron.actions.pause')} loading={busy} onClick={() => runAction(job, paused ? 'resume' : 'pause')}>{paused ? <RotateCcw className="h-4 w-4" /> : <Pause className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="danger" title={t('cron.actions.delete')} aria-label={t('cron.actions.delete')} loading={busy} onClick={() => runAction(job, 'delete')}><Trash2 className="h-4 w-4" /></Button></div>
           </div>;

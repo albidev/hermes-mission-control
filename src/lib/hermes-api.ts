@@ -138,6 +138,7 @@ export type MissionControlCronExecution = {
 export type MissionControlCronJob = {
   id: string;
   label: string;
+  profile?: string;
   enabled: boolean;
   state: string;
   scheduleDisplay: string;
@@ -1816,6 +1817,7 @@ function normalizeOfficialCronJob(input: Record<string, unknown>): MissionContro
   return normalizeCronJob({
     id: readString(input.id, 'scheduled-job'),
     label: readString(input.name) || readString(input.label) || readString(input.id, 'Scheduled job'),
+    profile: readNullableString(input.profile) ?? undefined,
     enabled,
     state,
     scheduleDisplay,

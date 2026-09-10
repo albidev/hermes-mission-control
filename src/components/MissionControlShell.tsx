@@ -113,6 +113,14 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
   }, [chatRecoverySessionId, location.pathname, location.search, navigate]);
 
+  const startTaskChat = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete('chatSession');
+    params.set('chatMode', 'task');
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
   const activeNav = navItems.find((item) => (item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)));
   const isOverviewRoute = activeNav?.to === '/';
 
@@ -393,6 +401,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             chatMode={chatMode}
             botProfile={chatBotProfile}
             onClose={closeChat}
+            onStartTaskChat={startTaskChat}
           />
         ) : null}
       </div>

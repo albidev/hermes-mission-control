@@ -34,6 +34,34 @@ def list_handoffs(session_id: str) -> List[Dict[str, Any]]:
         return [dict(item) for item in _read().get(sid, []) if isinstance(item, dict)]
 
 
+def list_all_handoffs() -> List[Dict[str, Any]]:
+    with _LOCK:
+        rows: List[Dict[str, Any]] = []
+        for session_id, handoffs in _read().items():
+            if not isinstance(handoffs, list):
+                continue
+            for handoff in handoffs:
+                if isinstance(handoff, dict):
+                    rows.append({"sessionId": str(session_id), "handoff": dict(handoff)})
+        return rows
+
+
+def claim_handoff(session_id: str, handoff: Dict[str, Any]) -> bool:
+    sid = str(session_id or "").strip()
+    handoff_id = str(handoff.get("id") or "").strip()
+    if not sid or not handoff_id:
+        raise ValueError("session_id and handoff id are required")
+    with _LOCK:
+        payload = _read()
+        rows = [dict(item) for item in payload.get(sid, []) if isinstance(item, dict)]
+        if any(str(item.get("id") or "").strip() == handoff_id for item in rows):
+            return False
+        rows.append(dict(handoff))
+        payload[sid] = rows
+        _write(payload)
+        return True
+
+
 def upsert_handoff(session_id: str, handoff: Dict[str, Any]) -> Dict[str, Any]:
     sid = str(session_id or "").strip()
     handoff_id = str(handoff.get("id") or "").strip()

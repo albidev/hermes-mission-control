@@ -82,7 +82,7 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
-from chat_handoff_store import list_handoffs, upsert_handoff
+from chat_handoff_store import claim_handoff, list_all_handoffs, list_handoffs, upsert_handoff
 from chat_title_store import set_chat_title
 from chat_runtime_presence import active_runtime_presences, update_runtime_presence
 from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
@@ -2028,11 +2028,11 @@ class Handler(BaseHTTPRequestHandler):
                     job_id = urllib.parse.unquote(parts[0])
                     action = parts[1]
                     if action == "pause":
-                        result = cron_bridge_mod.pause_job(job_id, reason=payload.get("reason"))
+                        result = cron_bridge_mod.pause_job(job_id, reason=payload.get("reason"), profile=payload.get("profile"))
                     elif action == "resume":
-                        result = cron_bridge_mod.resume_job(job_id)
+                        result = cron_bridge_mod.resume_job(job_id, profile=payload.get("profile"))
                     else:
-                        result = cron_bridge_mod.run_job(job_id)
+                        result = cron_bridge_mod.run_job(job_id, profile=payload.get("profile"))
                     self._json(200, result)
                     return
             self._json(404, {"error": "not_found", "path": parsed.path})
@@ -2474,6 +2474,12 @@ class Handler(BaseHTTPRequestHandler):
                 'leases': active_runtime_presences(),
             })
             return
+        if parsed.path == '/api/local/chat/handoffs/all':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, {'handoffs': list_all_handoffs()})
+            return
         if parsed.path == '/api/local/chat/handoffs':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2799,6 +2805,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {'error': 'bad_request', 'detail': str(exc)})
                 return
             self._json(200, {'success': True, **saved})
+            return
+        if parsed.path == '/api/local/chat/handoffs/claim':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None or not isinstance(payload, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            session_id = str(payload.get('session_id') or payload.get('sessionId') or '').strip()
+            handoff = payload.get('handoff')
+            if not session_id or not isinstance(handoff, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'session_id and handoff are required.'})
+                return
+            try:
+                accepted = claim_handoff(session_id, handoff)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+                return
+            self._json(200, {'success': True, 'accepted': accepted, 'sessionId': session_id})
             return
         if parsed.path == '/api/local/chat/handoffs':
             if not _is_authorized(self):

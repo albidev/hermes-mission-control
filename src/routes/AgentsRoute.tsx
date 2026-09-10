@@ -18,6 +18,8 @@ import {
   type MissionControlCapabilities,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { loadAllPersistedBotHandoffs } from '../lib/bot-handoff-persistence';
+import { buildBotLineageRows, type BotLineageRecord } from '../lib/bot-lineage';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
@@ -216,6 +218,7 @@ export function AgentsRoute() {
   const [traceLoading, setTraceLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [capabilities, setCapabilities] = useState<MissionControlCapabilities>(getFallbackCapabilities());
+  const [botLineage, setBotLineage] = useState<BotLineageRecord[]>([]);
   const [sseFallbackToPolling, setSseFallbackToPolling] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<MissionControlAgentTraceEvent | null>(null);
   const [rawPayloadViewer, setRawPayloadViewer] = useState<{ title: string; content: string } | null>(null);
@@ -523,6 +526,14 @@ export function AgentsRoute() {
 
   useEffect(() => {
     let cancelled = false;
+    void loadAllPersistedBotHandoffs(storedToken).then((entries) => {
+      if (!cancelled) setBotLineage(buildBotLineageRows(entries));
+    });
+    return () => { cancelled = true; };
+  }, [storedToken]);
+
+  useEffect(() => {
+    let cancelled = false;
 
     const refreshAgentSessions = async () => {
       try {
@@ -782,6 +793,32 @@ export function AgentsRoute() {
           />
         </div>
       </Card>
+      {botLineage.length > 0 ? (
+        <Card padding="none">
+          <div className="border-b border-border-subtle px-4 py-4">
+            <span className="eyebrow">{t('agents.botLineage')}</span>
+            <h3 className="mt-1 text-base font-semibold text-text">{t('agents.botLineageTitle')}</h3>
+          </div>
+          <div className="divide-y divide-border-subtle">
+            {botLineage.slice(0, 8).map((row) => (
+              <button
+                key={row.handoff.id}
+                type="button"
+                className="flex w-full min-w-0 flex-col gap-1 px-4 py-3 text-left hover:bg-surface-raised/40"
+                onClick={() => selectSession(row.originSessionId, true)}
+              >
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+                  <Badge variant={row.handoff.status === 'completed' ? 'positive' : row.handoff.status === 'failed' ? 'negative' : 'warning'}>{row.handoff.status}</Badge>
+                  <span className="font-semibold text-text">@{row.handoff.handle}</span>
+                  <span className="text-text-subtle">{row.originSessionId} → {row.handoff.targetSessionId || 'canonical'}</span>
+                  {row.handoff.reason ? <code className="text-[10px] text-warning">{row.handoff.reason}</code> : null}
+                </div>
+                <p className="truncate text-xs text-text-muted">{row.handoff.request}</p>
+              </button>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       <Card padding="none">
         <div className="border-b border-border-subtle">

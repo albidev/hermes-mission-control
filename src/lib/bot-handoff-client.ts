@@ -6,6 +6,17 @@ import {
 } from './chat-protocol';
 import { getWebSocketUrl, mintWsCredential, RPC_TIMEOUT_MS } from './chat-transport';
 import { createBotChatResolver, type BotChatResult } from './bot-chat-routing';
+import { classifyHandoffFailure, type BotHandoffFailureReason } from './bot-handoff-reasons';
+
+export class BotHandoffRpcError extends Error {
+  reason?: BotHandoffFailureReason;
+
+  constructor(message: string, reason?: BotHandoffFailureReason) {
+    super(message);
+    this.name = 'BotHandoffRpcError';
+    this.reason = reason;
+  }
+}
 
 const BOT_RELAY_TIMEOUT_MS = 1_380_000;
 
@@ -63,7 +74,8 @@ export async function openHandoffClient(options: HandoffClientOptions = {}): Pro
       pending.delete(requestId);
       window.clearTimeout(entry.timer);
       if (frame.response.error) {
-        entry.reject(new Error(getRpcErrorMessage(frame.response.error)));
+        const failure = classifyHandoffFailure(frame.response.error);
+        entry.reject(new BotHandoffRpcError(getRpcErrorMessage(frame.response.error), failure.reason === 'unknown' ? undefined : failure.reason));
       } else {
         entry.resolve(frame.response.result);
       }

@@ -44,7 +44,21 @@ export function ChatMarkdown({
   );
 }
 
-export const ChatMessageCard = memo(function ChatMessageCard({ message }: { message: ChatMessage }) {
+export function boldLeadingMention(text: string, mentionHandles: string[] = []): string {
+  const match = text.match(/^(@[a-z0-9][a-z0-9_-]*)(?=\s|$)/i);
+  if (!match) return text;
+  const known = new Set(mentionHandles.map((handle) => handle.trim().toLowerCase()));
+  if (!known.has(match[1].slice(1).toLowerCase())) return text;
+  return `**${match[1]}**${text.slice(match[1].length)}`;
+}
+
+export const ChatMessageCard = memo(function ChatMessageCard({
+  message,
+  mentionHandles = [],
+}: {
+  message: ChatMessage;
+  mentionHandles?: string[];
+}) {
   const { t } = useI18n();
   const visualKind = message.kind ?? message.role;
   const isTool = visualKind === 'tool';
@@ -53,6 +67,7 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
   const attribution = message.attribution;
   const messageTimestamp = typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) ? message.createdAt : null;
   const messageTime = messageTimestamp === null ? '' : formatChatMessageTime(messageTimestamp);
+  const messageText = visualKind === 'user' ? boldLeadingMention(message.text, mentionHandles) : message.text;
   if (isTodoTool) return null;
   const label = visualKind === 'assistant'
     ? 'Hermes'
@@ -107,7 +122,7 @@ export const ChatMessageCard = memo(function ChatMessageCard({ message }: { mess
           ) : (
             <div className={`chat-message-body chat-${visualKind}-body`}>
               <ChatMarkdown
-                text={message.text}
+                text={messageText}
                 placeholder="..."
                 streaming={message.status === 'streaming'}
               />

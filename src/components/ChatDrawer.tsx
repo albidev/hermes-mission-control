@@ -72,8 +72,10 @@ import { createHandoffObserver } from '../lib/bot-handoff-observer';
 import { findHandoffCompletion } from '../lib/bot-handoff-recovery';
 import { openHandoffClient } from '../lib/bot-handoff-client';
 import { extractMentionRequest } from '../lib/bot-mentions';
+import { canonicalChatCommand } from '../lib/bot-chat-policy';
+import { classifyHandoffFailure } from '../lib/bot-handoff-reasons';
 import { BotHandoffMessage } from './chat/BotHandoffMessage';
-import { loadPersistedBotHandoffs, persistBotHandoff, type PersistedBotHandoff } from '../lib/bot-handoff-persistence';
+import { claimBotHandoff, loadPersistedBotHandoffs, persistBotHandoff, type PersistedBotHandoff } from '../lib/bot-handoff-persistence';
 import { compareChatTimelineEntries } from '../lib/chat-timeline';
 
 type ChatDrawerProps = {
@@ -83,6 +85,7 @@ type ChatDrawerProps = {
   chatMode?: 'general' | 'canonical' | 'task';
   botProfile?: string | null;
   onClose: () => void;
+  onStartTaskChat?: () => void;
 };
 
 function formatTokens(tokens: number): string {
@@ -156,7 +159,7 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
   );
 }
 
-export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose }: ChatDrawerProps) {
+export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat }: ChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -480,6 +483,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                   status={handoff.status}
                   reply={handoff.reply}
                   error={handoff.error}
+                  reason={handoff.reason}
                 />
               ))}
             </div>
@@ -510,6 +514,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                   status={handoff.status}
                   reply={handoff.reply}
                   error={handoff.error}
+                  reason={handoff.reason}
                 />
               ))}
             </div>
@@ -581,7 +586,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     return (
       <>
         {timeline.map((entry) => entry.kind === 'message' ? (
-          <ChatMessageCard key={entry.id} message={entry.message} />
+          <ChatMessageCard key={entry.id} message={entry.message} mentionHandles={botRoster.map((bot) => bot.handle)} />
         ) : (
           <BotHandoffMessage
             key={entry.id}
@@ -593,7 +598,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             status={entry.handoff.status}
             reply={entry.handoff.reply}
             error={entry.handoff.error}
-            onRetry={entry.handoff.status === 'failed' ? () => {
+            reason={entry.handoff.reason}
+            onRetry={entry.handoff.status === 'failed' && (entry.handoff.retryable !== false) ? () => {
               const handoff = entry.handoff;
               const handle = handoff.handle;
               if (!handoffDedupeRef.current.tryClaim(handle)) return;
@@ -647,7 +653,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                       onError: (message) => {
                         handoffDedupeRef.current.release(handle);
                         client?.close();
-                        upsertHandoffState(handoff.id, { status: 'failed', error: message });
+                        const failure = classifyHandoffFailure(message);
+                        upsertHandoffState(handoff.id, { status: 'failed', error: message, reason: failure.reason, retryable: failure.retryable });
                       },
                     },
                   );
@@ -655,7 +662,15 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                 } catch (err) {
                   handoffDedupeRef.current.release(handle);
                   client?.close();
-                  setHandoffs((current) => current.map((item) => item.id === handoff.id ? { ...item, status: 'failed', error: err instanceof Error ? err.message : 'Handoff failed.' } : item));
+                  const message = err instanceof Error ? err.message : 'Handoff failed.';
+                  const failure = classifyHandoffFailure(err);
+                  setHandoffs((current) => current.map((item) => item.id === handoff.id ? {
+                    ...item,
+                    status: 'failed',
+                    error: message,
+                    reason: failure.reason,
+                    retryable: failure.retryable,
+                  } : item));
                 }
               };
               void runRetry();
@@ -904,6 +919,12 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
+      const claimResult = await claimBotHandoff(storedToken, originSessionId, initialHandoff);
+      if (claimResult === false) {
+        handoffDedupeRef.current.release(handle);
+        setAttachmentNotice('This handoff was already claimed by another Mission Control client.');
+        return;
+      }
       setHandoffs((current) => [...current, initialHandoff]);
       void persistBotHandoff(storedToken, originSessionId, initialHandoff);
       setDraft('');
@@ -1004,7 +1025,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               onError: (message) => {
                 handoffDedupeRef.current.release(handle);
                 client?.close();
-                upsertHandoffState(handoffId, { status: 'failed', error: message }, originSessionId);
+                const failure = classifyHandoffFailure(message);
+                upsertHandoffState(handoffId, { status: 'failed', error: message, reason: failure.reason, retryable: failure.retryable }, originSessionId);
               },
             },
           );
@@ -1012,7 +1034,15 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         } catch (err) {
           handoffDedupeRef.current.release(handle);
           client?.close();
-          setHandoffs((current) => current.map((item) => item.id === handoffId ? { ...item, status: 'failed', error: err instanceof Error ? err.message : 'Handoff failed.' } : item));
+          const message = err instanceof Error ? err.message : 'Handoff failed.';
+          const failure = classifyHandoffFailure(err);
+          setHandoffs((current) => current.map((item) => item.id === handoffId ? {
+            ...item,
+            status: 'failed',
+            error: message,
+            reason: failure.reason,
+            retryable: failure.retryable,
+          } : item));
         }
       };
       void runHandoff();
@@ -1032,7 +1062,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           dataUrl,
         });
       }
-      const sent = await submitPrompt(running && !uploads.length ? `/steer ${text}` : text, uploads);
+      const sent = await submitPrompt(running && !uploads.length
+        ? `/steer ${text}`
+        : text.trim().startsWith('/')
+          ? canonicalChatCommand(chatMode, text.trim().slice(1))
+          : text, uploads);
       if (!sent) return;
       setDraft('');
       // Sending a message always snaps back to the bottom, even if the user
@@ -1109,6 +1143,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     setNewChatLoading(true);
     try {
       await reset();
+      if (chatMode === 'canonical') onStartTaskChat?.();
     } finally {
       setNewChatLoading(false);
     }

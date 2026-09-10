@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Bot, Check, ChevronDown, CircleAlert, Loader2, RotateCcw } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 
@@ -12,10 +13,11 @@ export type BotHandoffMessageProps = {
   status: BotHandoffStatus;
   reply?: string | null;
   error?: string | null;
+  reason?: string;
   onRetry?: () => void;
 };
 
-function PayloadBlock({ label, value, meta, open = true }: { label: string; value: string; meta: string; open?: boolean }) {
+function PayloadBlock({ label, value, meta, open = true }: { label: string; value: ReactNode; meta: string; open?: boolean }) {
   return (
     <details className="chat-tool-section chat-tool-payload" open={open}>
       <summary className="chat-tool-section-label">
@@ -28,7 +30,7 @@ function PayloadBlock({ label, value, meta, open = true }: { label: string; valu
   );
 }
 
-export function BotHandoffMessage({ handle, displayName, model, provider, request, status, reply, error, onRetry }: BotHandoffMessageProps) {
+export function BotHandoffMessage({ handle, displayName, model, provider, request, status, reply, error, reason, onRetry }: BotHandoffMessageProps) {
   const { t } = useI18n();
   const label = displayName || handle;
   const modelLabel = model || 'model inherited';
@@ -49,12 +51,12 @@ export function BotHandoffMessage({ handle, displayName, model, provider, reques
         </span>
       </div>
 
-      <PayloadBlock label="Input" value={`@${handle} ${request}`.trim()} meta="request" />
+      <PayloadBlock label="Input" value={<><strong className="font-bold text-accent">@{handle}</strong>{request ? ` ${request}` : ''}</>} meta="request" />
 
       {reply ? <PayloadBlock label="Output" value={reply} meta="result" open={false} /> : running ? (
         <div className="chat-tool-waiting"><Loader2 size={13} className="chat-spin" /> Waiting for Bot result…</div>
       ) : null}
-      {failed && error ? <pre className="chat-tool-detail chat-bot-handoff-error">{error}</pre> : null}
+      {failed && error ? <pre className="chat-tool-detail chat-bot-handoff-error">{reason ? `[reason: ${reason}]\n` : ''}{error}</pre> : null}
       {failed && onRetry ? (
         <button type="button" className="bot-handoff-retry" onClick={onRetry}>
           <RotateCcw size={12} /> {t('bots.handoff.retry')}

@@ -36,9 +36,11 @@ const COMPLETE_TYPES = new Set([
 
 function extractText(payload: Record<string, unknown> | undefined): string {
   if (!payload) return '';
-  if (typeof payload.text === 'string') return payload.text;
-  if (typeof payload.content === 'string') return payload.content;
-  if (typeof payload.message === 'string') return payload.message;
+  const reason = typeof payload.reason === 'string' && payload.reason.trim() ? `[reason: ${payload.reason.trim()}] ` : '';
+  if (typeof payload.text === 'string') return reason + payload.text;
+  if (typeof payload.content === 'string') return reason + payload.content;
+  if (typeof payload.message === 'string') return reason + payload.message;
+  if (reason) return reason.trim();
   return '';
 }
 
