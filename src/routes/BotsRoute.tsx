@@ -804,7 +804,7 @@ export function BotsRoute() {
       const botProfiles = result.profiles.filter((profile) => profile.is_bot === true);
       const preferred = preferredName && botProfiles.some((profile) => profile.name === preferredName)
         ? preferredName
-        : botProfiles.find((profile) => profile.name === 'crossnection')?.name || botProfiles[0]?.name || null;
+        : botProfiles[0]?.name || null;
       setSelectedName(preferred);
       if (!preferred) {
         setMode('create');

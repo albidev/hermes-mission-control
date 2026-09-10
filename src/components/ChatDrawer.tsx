@@ -67,6 +67,7 @@ import { loadBotProfiles } from '../lib/bot-gateway';
 import type { BotMentionCandidate } from '../lib/bot-mentions';
 import type { ChatMentionPopoverHandle } from './ChatMentionPopover';
 import { createHandoffEnvelope, createHandoffDedupe, formatHandoffPrompt } from '../lib/bot-handoff';
+import { addChatProfile } from '../lib/chat-session-params';
 import { createHandoffObserver } from '../lib/bot-handoff-observer';
 import { findHandoffCompletion } from '../lib/bot-handoff-recovery';
 import { openHandoffClient } from '../lib/bot-handoff-client';
@@ -241,7 +242,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     respondInteraction,
     interrupt,
     reset,
-  } = useGatewayChat(storedToken, open, initialSessionId);
+  } = useGatewayChat(storedToken, open, initialSessionId, botProfile);
 
   useEffect(() => {
     if (!open || !sessionId) return;
@@ -602,29 +603,37 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
                 { profile: handle, canonicalTitle: 'Bot Chat' },
                 handoff.request,
               );
-              const retryId = envelope.handoffId;
               const runRetry = async (): Promise<void> => {
                 let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
                 try {
                   client = await openHandoffClient({ accessToken: storedToken || undefined });
                   const canonical = await client.resolveCanonical(handle);
                   upsertHandoffState(handoff.id, { targetSessionId: canonical.openedId });
+                  const staleRuntimeId = await client.resume(handle, canonical.registryId);
+                  await client.closeSession(staleRuntimeId);
+                  upsertHandoffState(handoff.id, { status: 'running' });
+                  const delivery = await client.deliver(handle, formatHandoffPrompt(envelope));
+                  if (!delivery.deferred) {
+                    handoffDedupeRef.current.release(handle);
+                    client.close();
+                    upsertHandoffState(handoff.id, { status: 'completed', reply: delivery.reply });
+                    return;
+                  }
                   const runtimeId = await client.resume(handle, canonical.registryId);
                   const baseline = await client.eventsSince(0);
                   const initialLastSeen = Math.max(
                     baseline.latest_seq ?? 0,
                     ...(baseline.events ?? []).map((event) => event.seq ?? 0),
                   );
-                  upsertHandoffState(handoff.id, { status: 'running' });
-                  await client.submit(formatHandoffPrompt(createHandoffEnvelope(
-                    { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
-                    { profile: handle, canonicalTitle: 'Bot Chat' },
-                    handoff.request,
-                  )));
+                  const completedReply = findHandoffCompletion(baseline.events ?? [], envelope.handoffId);
+                  if (completedReply) {
+                    handoffDedupeRef.current.release(handle);
+                    client.close();
+                    upsertHandoffState(handoff.id, { status: 'completed', reply: completedReply });
+                    return;
+                  }
                   handoffObserverRef.current = createHandoffObserver(
-                    {
-                      eventsSince: (params) => client!.eventsSince(params.last_seen),
-                    },
+                    { eventsSince: (params) => client!.eventsSince(params.last_seen) },
                     {
                       sessionId: runtimeId,
                       initialLastSeen,
@@ -904,18 +913,68 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           client = await openHandoffClient({ accessToken: storedToken || undefined });
           const canonical = await client.resolveCanonical(handle);
           upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, originSessionId);
+          // A dashboard-local Bot Chat may still be live with a stale MCP snapshot.
+          // Close only that runtime; the canonical transcript/profile remains intact.
+          const staleRuntimeId = await client.resume(handle, canonical.registryId);
+          await client.closeSession(staleRuntimeId);
+          upsertHandoffState(handoffId, { status: 'running' }, originSessionId);
+          const delivery = await client.deliver(handle, formatHandoffPrompt(envelope));
+          if (!delivery.deferred) {
+            handoffDedupeRef.current.release(handle);
+            client.close();
+            const attributedReply: ChatMessage = {
+              id: `bot-reply-${handoffId}`,
+              role: 'assistant',
+              kind: 'assistant',
+              source: 'live',
+              text: delivery.reply,
+              status: 'complete',
+              createdAt: Date.now(),
+              attribution: {
+                handle,
+                displayName: candidate?.displayName,
+                model: candidate?.model,
+                provider: candidate?.provider,
+              },
+            };
+            appendChatMessage(attributedReply, 'assistant_message');
+            upsertHandoffState(handoffId, { status: 'completed', reply: delivery.reply }, originSessionId);
+            return;
+          }
+
+          // The target Bot Chat is already live in this gateway. The relay has queued
+          // the request there; attach an observer so the UI keeps the working state
+          // and receives the actual Bot reply instead of the transport acknowledgement.
           const runtimeId = await client.resume(handle, canonical.registryId);
           const baseline = await client.eventsSince(0);
           const initialLastSeen = Math.max(
             baseline.latest_seq ?? 0,
             ...(baseline.events ?? []).map((event) => event.seq ?? 0),
           );
-          upsertHandoffState(handoffId, { status: 'running' }, originSessionId);
-          await client.submit(formatHandoffPrompt(envelope));
+          const completedReply = findHandoffCompletion(baseline.events ?? [], handoffId);
+          if (completedReply) {
+            handoffDedupeRef.current.release(handle);
+            client.close();
+            appendChatMessage({
+              id: `bot-reply-${handoffId}`,
+              role: 'assistant',
+              kind: 'assistant',
+              source: 'live',
+              text: completedReply,
+              status: 'complete',
+              createdAt: Date.now(),
+              attribution: {
+                handle,
+                displayName: candidate?.displayName,
+                model: candidate?.model,
+                provider: candidate?.provider,
+              },
+            }, 'assistant_message');
+            upsertHandoffState(handoffId, { status: 'completed', reply: completedReply }, originSessionId);
+            return;
+          }
           handoffObserverRef.current = createHandoffObserver(
-            {
-              eventsSince: (params) => client!.eventsSince(params.last_seen),
-            },
+            { eventsSince: (params) => client!.eventsSince(params.last_seen) },
             {
               sessionId: runtimeId,
               initialLastSeen,

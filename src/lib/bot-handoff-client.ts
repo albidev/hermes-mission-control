@@ -7,6 +7,8 @@ import {
 import { getWebSocketUrl, mintWsCredential, RPC_TIMEOUT_MS } from './chat-transport';
 import { createBotChatResolver, type BotChatResult } from './bot-chat-routing';
 
+const BOT_RELAY_TIMEOUT_MS = 1_380_000;
+
 export type HandoffClientOptions = {
   accessToken?: string;
   onEvent?: (event: { type: string; seq?: number; payload?: Record<string, unknown> }) => void;
@@ -14,7 +16,9 @@ export type HandoffClientOptions = {
 
 export type HandoffClient = {
   resolveCanonical(profile: string, knownCanonicalId?: string | null): Promise<BotChatResult>;
+  deliver(profile: string, text: string): Promise<{ reply: string; deferred: boolean }>;
   resume(profile: string, sessionId: string): Promise<string>;
+  closeSession(sessionId: string): Promise<void>;
   submit(text: string): Promise<void>;
   eventsSince(lastSeen: number): Promise<{ events?: Array<{ type: string; seq?: number; payload?: Record<string, unknown> }>; truncated?: boolean; epoch?: string | null; latest_seq?: number }>;
   close(): void;
@@ -34,7 +38,7 @@ export async function openHandoffClient(options: HandoffClientOptions = {}): Pro
   let closed = false;
   let runtimeId = '';
 
-  const rpc = <T>(method: string, params: Record<string, unknown>): Promise<T> =>
+  const rpc = <T>(method: string, params: Record<string, unknown>, timeoutMs = RPC_TIMEOUT_MS): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const requestId = `mc-handoff-${Date.now()}-${requestSeq++}`;
       const timer = window.setTimeout(() => {
@@ -89,6 +93,18 @@ export async function openHandoffClient(options: HandoffClientOptions = {}): Pro
       });
       return resolver.resolve(profile, knownCanonicalId?.trim() || undefined);
     },
+    async deliver(profile: string, text: string): Promise<{ reply: string; deferred: boolean }> {
+      const result = await rpc<{ reply?: string }>('bot_relay.deliver', {
+        profile,
+        message: text,
+      }, BOT_RELAY_TIMEOUT_MS);
+      const reply = result?.reply?.trim();
+      if (!reply) throw new Error('Bot relay returned no reply.');
+      return {
+        reply,
+        deferred: /^Delivered into @.+open Bot Chat; the reply will appear there\.?$/i.test(reply),
+      };
+    },
     async resume(profile: string, sessionId: string): Promise<string> {
       const resumed = await rpc<{ session_id?: string }>('session.resume', {
         session_id: sessionId,
@@ -101,6 +117,9 @@ export async function openHandoffClient(options: HandoffClientOptions = {}): Pro
       if (!nextRuntimeId) throw new Error('Gateway did not return a runtime session id on resume.');
       runtimeId = nextRuntimeId;
       return runtimeId;
+    },
+    async closeSession(sessionId: string): Promise<void> {
+      await rpc('session.close', { session_id: sessionId });
     },
     async submit(text: string): Promise<void> {
       if (!runtimeId) throw new Error('Resume the canonical session before submitting.');

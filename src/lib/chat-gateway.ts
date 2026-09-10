@@ -55,6 +55,7 @@ import {
 } from './chat-interactions';
 import { recordReloadDiagnostic } from './reload-diagnostics';
 import { publishChatRuntimePresence } from './chat-runtime-presence';
+import { addChatProfile } from './chat-session-params';
 
 // Backward-compatible re-export for ChatDrawer consumers during the gateway split.
 export { interactionTitle };
@@ -128,7 +129,12 @@ function applyLiveGatewayEvent(messages: ChatMessage[], event: GatewayEvent): Ch
     : { ...message, source: 'live' as const });
 }
 
-export function useGatewayChat(storedToken: string, open: boolean, initialSessionId?: string | null) {
+export function useGatewayChat(
+  storedToken: string,
+  open: boolean,
+  initialSessionId?: string | null,
+  botProfile?: string | null,
+) {
   const initial = useMemo(readPersistedChat, []);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [todoPlan, setTodoPlan] = useState<TodoPlan | null>(null);
@@ -464,17 +470,17 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
 
   const reconcileSessionSnapshot = useCallback(async (activeSessionId: string) => {
     try {
-      const resumed = await request<unknown>('session.resume', {
+      const resumed = await request<unknown>('session.resume', addChatProfile({
         session_id: activeSessionId,
         cols: 80,
         eager_build: true,
         source: 'mission-control',
-      });
+      }, botProfile));
       await hydrateSessionSnapshot(resumed, activeSessionId, sessionKeyRef.current ?? activeSessionId);
     } catch {
       // A disconnected or busy gateway is retried by the next reconciliation tick.
     }
-  }, [hydrateSessionSnapshot, request]);
+  }, [botProfile, hydrateSessionSnapshot, request]);
 
   useEffect(() => {
     if (!open || previewMode || connectionState !== 'connected') return;
@@ -670,12 +676,12 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     const isExplicitResume = Boolean(explicitSessionId);
     if (existingKey) {
       try {
-        const resumed = await request<unknown>('session.resume', {
+        const resumed = await request<unknown>('session.resume', addChatProfile({
           session_id: existingKey,
           cols: 80,
           eager_build: true,
           source: 'mission-control',
-        });
+        }, botProfile));
         adoptModel(resumed);
         const resolvedSessionId = extractSessionId(resumed) ?? sessionIdRef.current ?? existingKey;
         const resolvedSessionKey = extractSessionKey(resumed) ?? existingKey;
@@ -710,7 +716,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
       }
     }
 
-    const created = await request<unknown>('session.create', { cols: 80, source: 'mission-control' });
+    const created = await request<unknown>('session.create', addChatProfile({ cols: 80, source: 'mission-control' }, botProfile));
     setResumedRuntime(null);
     adoptModel(created);
     const createdSessionId = extractSessionId(created);
@@ -722,7 +728,7 @@ export function useGatewayChat(storedToken: string, open: boolean, initialSessio
     sessionKeyRef.current = createdSessionKey;
     setRunning(false);
     return createdSessionId;
-  }, [adoptModel, hydrateSessionSnapshot, initialSessionId, request]);
+  }, [adoptModel, botProfile, hydrateSessionSnapshot, initialSessionId, request]);
 
   const clearPendingPrompt = useCallback(() => {
     pendingPromptRef.current = null;
