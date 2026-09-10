@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildBotCreateInput } from '../src/lib/bot-create.ts';
+import { deleteBotProfile } from '../src/lib/bot-delete.ts';
 
 test('selected starting profile is preserved in the create request input', () => {
   const input = buildBotCreateInput({
@@ -31,6 +32,31 @@ test('fresh profile creation omits the starting profile', () => {
   });
 
   assert.equal(input.cloneFrom, undefined);
+});
+
+test('delete profile uses the authenticated dashboard REST contract', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ input: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input, init) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ ok: true, path: '/profiles/researcher' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+  try {
+    await deleteBotProfile(' researcher ');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.input, '/api/profiles/researcher');
+  assert.equal(calls[0]?.init?.method, 'DELETE');
+  assert.equal(calls[0]?.init?.credentials, 'include');
+});
+
+test('default profile is rejected before issuing a delete request', async () => {
+  await assert.rejects(() => deleteBotProfile('default'), /cannot be deleted/);
 });
 
 console.log('bot create tests passed');

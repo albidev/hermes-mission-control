@@ -393,3 +393,5 @@ export async function configureBotProfile(input: ConfigureBotProfileInput, acces
     ui_meta: { mission_control: { bot: input.botRoster } },
   }, accessToken);
 }
+
+export { deleteBotProfile } from './bot-delete';

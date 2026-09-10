@@ -1,6 +1,6 @@
 import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { ChevronDown, CircleAlert, Download, Loader2, Plus, RefreshCw, Save, Search } from 'lucide-react';
+import { ChevronDown, CircleAlert, Download, Loader2, Plus, RefreshCw, Save, Search, Trash2 } from 'lucide-react';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/Modal';
@@ -18,6 +18,7 @@ import {
   configureBotProfile,
   configureBotToolsets,
   createBotProfile,
+  deleteBotProfile,
   loadBotMcpTools,
   loadBotProfile,
   loadBotProfiles,
@@ -194,6 +195,7 @@ function ProfileEditor({
   onClose,
   accessToken,
   onInstallSkill,
+  onDelete,
 }: {
   mode: 'edit' | 'create';
   draft: BotDraft;
@@ -210,6 +212,7 @@ function ProfileEditor({
   onClose: () => void;
   accessToken?: string;
   onInstallSkill: (profile: string, identifier: string) => Promise<void>;
+  onDelete: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<ProfileTab>('overview');
@@ -370,11 +373,20 @@ function ProfileEditor({
       fixedHeight
       className="bot-detail-modal"
       footer={(
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {mode === 'create' ? <Button type="button" variant="ghost" onClick={onCancelCreate} disabled={busy}>{t('bots.cancel')}</Button> : null}
-          <Button type="submit" form="bot-profile-form" variant="primary" icon={busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} disabled={busy}>
-            {busy ? t('bots.saving') : mode === 'create' ? t('bots.create') : t('bots.save')}
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {mode === 'edit' ? (
+              <Button type="button" variant="danger" icon={<Trash2 size={15} />} onClick={() => void onDelete()} disabled={busy}>
+                {t('bots.delete')}
+              </Button>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {mode === 'create' ? <Button type="button" variant="ghost" onClick={onCancelCreate} disabled={busy}>{t('bots.cancel')}</Button> : null}
+            <Button type="submit" form="bot-profile-form" variant="primary" icon={busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} disabled={busy}>
+              {busy ? t('bots.saving') : mode === 'create' ? t('bots.create') : t('bots.save')}
+            </Button>
+          </div>
         </div>
       )}
     >
@@ -888,6 +900,26 @@ export function BotsRoute() {
     }
   };
 
+  const handleDelete = async () => {
+    const target = selectedSummary;
+    if (!target || target.is_default || target.name === 'default') return;
+    const label = target.display_name || target.name;
+    if (!window.confirm(t('bots.deleteConfirm', { name: label }))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteBotProfile(target.name);
+      setDetailOpen(false);
+      setDetails(null);
+      setSelectedName(null);
+      await refreshRoster();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('bots.deleteFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="route-page-scroll flex h-full min-w-0 flex-col gap-5 overflow-y-auto sm:gap-6">
       <PageHeader
@@ -940,6 +972,7 @@ export function BotsRoute() {
             onCancelCreate={() => { setDetailOpen(false); setMode('edit'); void refreshRoster(selectedName); }}
             onClose={() => setDetailOpen(false)}
             onInstallSkill={handleInstallBotSkill}
+            onDelete={handleDelete}
           />
         )
       ) : null}
