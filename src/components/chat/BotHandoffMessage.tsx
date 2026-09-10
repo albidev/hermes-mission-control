@@ -51,7 +51,7 @@ export function BotHandoffMessage({ handle, displayName, model, provider, reques
 
       <PayloadBlock label="Input" value={`@${handle} ${request}`.trim()} meta="request" />
 
-      {reply ? <PayloadBlock label="Output" value={reply} meta="result" open={!running} /> : running ? (
+      {reply ? <PayloadBlock label="Output" value={reply} meta="result" open={false} /> : running ? (
         <div className="chat-tool-waiting"><Loader2 size={13} className="chat-spin" /> Waiting for Bot result…</div>
       ) : null}
       {failed && error ? <pre className="chat-tool-detail chat-bot-handoff-error">{error}</pre> : null}
