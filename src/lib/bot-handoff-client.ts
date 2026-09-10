@@ -44,7 +44,7 @@ export async function openHandoffClient(options: HandoffClientOptions = {}): Pro
       const timer = window.setTimeout(() => {
         pending.delete(requestId);
         reject(new Error(`Gateway request timed out: ${method}`));
-      }, RPC_TIMEOUT_MS);
+      }, timeoutMs);
       pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject, timer });
       socket.send(JSON.stringify(createRpcRequest(requestId, method, params)));
     });
