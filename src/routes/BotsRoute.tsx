@@ -956,19 +956,19 @@ export function BotsRoute() {
         description={t('bots.description')}
         meta={selectedSummary ? `${t('bots.profilesCount', { count: profiles.length })} · ${selectedSummary.name}` : t('bots.profilesCount', { count: profiles.length })}
         actions={(
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="flex items-center rounded-xl bg-surface-sunken/35 p-1">
-              <Button size="sm" className="!border-0" variant={showAllProfiles ? 'ghost' : 'primary'} onClick={() => setShowAllProfiles(false)}>
+          <div className="bots-page-actions flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+            <div className="flex min-w-0 basis-full items-center rounded-xl bg-surface-sunken/35 p-1 sm:basis-auto">
+              <Button size="sm" className="!border-0 min-w-0 flex-1 sm:flex-none" variant={showAllProfiles ? 'ghost' : 'primary'} onClick={() => setShowAllProfiles(false)}>
                 {t('bots.onlyBots')}
               </Button>
-              <Button size="sm" className="!border-0" variant={showAllProfiles ? 'primary' : 'ghost'} onClick={() => setShowAllProfiles(true)}>
+              <Button size="sm" className="!border-0 min-w-0 flex-1 sm:flex-none" variant={showAllProfiles ? 'primary' : 'ghost'} onClick={() => setShowAllProfiles(true)}>
                 {t('bots.allProfiles')}
               </Button>
             </div>
-            <Button size="sm" variant="secondary" icon={<RefreshCw size={14} className={loading ? 'animate-spin' : ''} />} onClick={() => void refreshRoster(selectedName)} disabled={loading}>
+            <Button size="sm" className="min-w-0 flex-1 sm:flex-none" variant="secondary" icon={<RefreshCw size={14} className={loading ? 'animate-spin' : ''} />} onClick={() => void refreshRoster(selectedName)} disabled={loading}>
               {t('bots.refresh')}
             </Button>
-            <Button size="sm" variant="primary" icon={<Plus size={14} />} onClick={startCreate}>
+            <Button size="sm" className="min-w-0 flex-1 sm:flex-none" variant="primary" icon={<Plus size={14} />} onClick={startCreate}>
               {t('bots.new')}
             </Button>
           </div>
