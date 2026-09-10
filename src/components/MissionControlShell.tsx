@@ -67,7 +67,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     { to: '/', label: t('nav.overview'), icon: 'LayoutDashboard', order: 10 },
     { to: '/sessions', label: t('nav.sessions'), icon: 'MessageSquare', order: 20 },
     { to: '/kanban', label: t('nav.kanban'), icon: 'Kanban', order: 15 },
-    { to: '/agents', label: t('nav.agents'), icon: 'Bot', order: 30 },
+    { to: '/agents', label: t('nav.agents'), icon: 'Workflow', order: 30 },
     { to: '/bots', label: t('nav.bots'), icon: 'Bot', order: 35 },
     { to: '/usage', label: t('nav.usage'), icon: 'DollarSign', order: 40 },
     { to: '/tools', label: t('nav.tools'), icon: 'Wrench', order: 50 },

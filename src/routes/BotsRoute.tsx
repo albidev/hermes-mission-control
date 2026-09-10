@@ -31,6 +31,7 @@ import {
   type BotProfileSummary,
 } from '../lib/bot-gateway';
 import { buildBotChatHref } from '../lib/bot-chat-navigation';
+import { buildBotCreateInput } from '../lib/bot-create';
 
 const EMPTY_SOUL = `You are a specialist Hermes Bot.
 
@@ -51,6 +52,7 @@ type BotDraft = {
   disabledSkills: string[];
   noSkills: boolean;
   botRoster: boolean;
+  cloneFrom: string | null;
 };
 
 function emptyDraft(): BotDraft {
@@ -66,6 +68,7 @@ function emptyDraft(): BotDraft {
     disabledSkills: [],
     noSkills: true,
     botRoster: true,
+    cloneFrom: null,
   };
 }
 
@@ -82,6 +85,7 @@ function draftFromDetails(details: BotProfileDetails, botRoster: boolean): BotDr
     disabledSkills: details.skills.filter((skill) => !skill.enabled).map((skill) => skill.name),
     noSkills: details.skills.length === 0,
     botRoster,
+    cloneFrom: null,
   };
 }
 
@@ -183,6 +187,7 @@ function ProfileEditor({
   details,
   createToolsets,
   createToolsetsLoading,
+  startingProfiles,
   modelOptions,
   busy,
   error,
@@ -201,6 +206,7 @@ function ProfileEditor({
   details: BotProfileDetails | null;
   createToolsets: BotProfileDetails['toolsets'];
   createToolsetsLoading: boolean;
+  startingProfiles: BotProfileSummary[];
   modelOptions: BotModelProviderOption[];
   busy: boolean;
   error: string | null;
@@ -252,6 +258,13 @@ function ProfileEditor({
     }
     return options;
   }, [draft.model, providerModels, t]);
+  const startingProfileOptions = useMemo(() => [
+    { value: '', label: t('bots.freshProfile') },
+    ...startingProfiles.map((profile) => ({
+      value: profile.name,
+      label: `${profile.display_name || profile.name}${profile.is_default ? ` · ${t('bots.defaultProfile')}` : ''}`,
+    })),
+  ], [startingProfiles, t]);
   const toggleValue = (values: string[], value: string) => values.includes(value)
     ? values.filter((item) => item !== value)
     : [...values, value];
@@ -438,6 +451,25 @@ function ProfileEditor({
           </label>
         </div>
 
+        {mode === 'create' ? (
+          <label className="block text-xs font-medium text-text-muted">
+            {t('bots.startingProfile')}
+            <div className="mt-1.5">
+              <Dropdown
+                value={draft.cloneFrom ?? ''}
+                options={startingProfileOptions}
+                onChange={(cloneFrom) => onChange({
+                  cloneFrom: cloneFrom || null,
+                  noSkills: cloneFrom ? false : draft.noSkills,
+                })}
+                ariaLabel={t('bots.startingProfile')}
+                disabled={busy}
+              />
+            </div>
+            <span className="mt-1.5 block text-[11px] font-normal text-text-subtle">{t('bots.startingProfileHelp')}</span>
+          </label>
+        ) : null}
+
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block text-xs font-medium text-text-muted">
             {t('bots.provider')}
@@ -486,7 +518,7 @@ function ProfileEditor({
               className="mt-0.5 accent-[var(--accent)]"
               checked={draft.noSkills}
               onChange={(event) => onChange({ noSkills: event.target.checked })}
-              disabled={busy}
+              disabled={busy || draft.cloneFrom !== null}
             />
             <span>
               <strong className="text-text">{t('bots.createEmpty')}</strong>
@@ -752,7 +784,6 @@ export function BotsRoute() {
   const [modelOptions, setModelOptions] = useState<BotModelProviderOption[]>([]);
   const [createToolsets, setCreateToolsets] = useState<BotProfileDetails['toolsets']>([]);
   const [createToolsetsLoading, setCreateToolsetsLoading] = useState(false);
-  const [showAllProfiles, setShowAllProfiles] = useState(false);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [details, setDetails] = useState<BotProfileDetails | null>(null);
@@ -770,9 +801,10 @@ export function BotsRoute() {
     try {
       const result = await loadBotProfiles(storedToken || undefined);
       setProfiles(result.profiles);
-      const preferred = preferredName && result.profiles.some((profile) => profile.name === preferredName)
+      const botProfiles = result.profiles.filter((profile) => profile.is_bot === true);
+      const preferred = preferredName && botProfiles.some((profile) => profile.name === preferredName)
         ? preferredName
-        : result.profiles.find((profile) => profile.name === 'crossnection')?.name || result.profiles[0]?.name || null;
+        : botProfiles.find((profile) => profile.name === 'crossnection')?.name || botProfiles[0]?.name || null;
       setSelectedName(preferred);
       if (!preferred) {
         setMode('create');
@@ -835,15 +867,9 @@ export function BotsRoute() {
     if (detailOpen && mode === 'edit' && selectedName) void refreshDetails(selectedName);
   }, [detailOpen, mode, refreshDetails, selectedName]);
 
-  useEffect(() => {
-    if (!loading && profiles.length > 0 && profiles.every((profile) => profile.is_bot !== true)) {
-      setShowAllProfiles(true);
-    }
-  }, [loading, profiles]);
-
   const visibleProfiles = useMemo(
-    () => showAllProfiles ? profiles : profiles.filter((profile) => profile.is_bot === true),
-    [profiles, showAllProfiles],
+    () => profiles.filter((profile) => profile.is_bot === true),
+    [profiles],
   );
 
   const selectedSummary = useMemo(() => profiles.find((profile) => profile.name === selectedName) ?? null, [profiles, selectedName]);
@@ -898,15 +924,10 @@ export function BotsRoute() {
     setError(null);
     try {
       if (mode === 'create') {
+        const createInput = buildBotCreateInput(draft);
         await createBotProfile({
-          name: draft.name,
-          description: draft.description,
-          soul: draft.soul,
-          model: draft.model,
-          provider: draft.provider,
-          noSkills: draft.noSkills,
+          ...createInput,
           shareAuth: true,
-          botRoster: draft.botRoster,
         }, storedToken || undefined);
         if (draft.enabledToolsets.length > 0) {
           await configureBotToolsets(draft.name, draft.enabledToolsets, storedToken || undefined);
@@ -957,14 +978,6 @@ export function BotsRoute() {
         meta={selectedSummary ? `${t('bots.profilesCount', { count: profiles.length })} · ${selectedSummary.name}` : t('bots.profilesCount', { count: profiles.length })}
         actions={(
           <div className="bots-page-actions flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            <div className="flex min-w-0 basis-full items-center rounded-xl bg-surface-sunken/35 p-1 sm:basis-auto">
-              <Button size="sm" className="!border-0 min-w-0 flex-1 sm:flex-none" variant={showAllProfiles ? 'ghost' : 'primary'} onClick={() => setShowAllProfiles(false)}>
-                {t('bots.onlyBots')}
-              </Button>
-              <Button size="sm" className="!border-0 min-w-0 flex-1 sm:flex-none" variant={showAllProfiles ? 'primary' : 'ghost'} onClick={() => setShowAllProfiles(true)}>
-                {t('bots.allProfiles')}
-              </Button>
-            </div>
             <Button size="sm" className="min-w-0 flex-1 sm:flex-none" variant="secondary" icon={<RefreshCw size={14} className={loading ? 'animate-spin' : ''} />} onClick={() => void refreshRoster(selectedName)} disabled={loading}>
               {t('bots.refresh')}
             </Button>
@@ -981,7 +994,7 @@ export function BotsRoute() {
           selectedName={selectedName}
           loading={loading}
           onSelect={(name) => { setMode('edit'); setDetailOpen(true); setSelectedName(name); setError(null); }}
-          emptyMessage={!showAllProfiles ? t('bots.noMarkedBots') : undefined}
+          emptyMessage={t('bots.noMarkedBots')}
         />
 
       {detailOpen ? (
@@ -998,6 +1011,7 @@ export function BotsRoute() {
             details={details}
             createToolsets={createToolsets}
             createToolsetsLoading={createToolsetsLoading}
+            startingProfiles={profiles}
             modelOptions={modelOptions}
             accessToken={storedToken || undefined}
             busy={busy}

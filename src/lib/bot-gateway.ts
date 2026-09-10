@@ -71,6 +71,7 @@ export type CreateBotProfileInput = {
   soul?: string;
   model?: string;
   provider?: string;
+  cloneFrom?: string;
   noSkills?: boolean;
   shareAuth?: boolean;
   botRoster?: boolean;
@@ -371,6 +372,7 @@ export async function createBotProfile(input: CreateBotProfileInput, accessToken
     soul: input.soul?.trim() || undefined,
     model: input.model?.trim() || undefined,
     provider: input.provider?.trim() || undefined,
+    clone_from: input.cloneFrom?.trim() || undefined,
     no_skills: input.noSkills !== false,
     share_auth: input.shareAuth !== false,
     mirror_credentials: true,
