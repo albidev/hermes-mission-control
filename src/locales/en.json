@@ -1056,6 +1056,7 @@
   "rooms.activity": "Activity",
   "rooms.round": "Round {round}",
   "rooms.latestEvent": "Latest event {sequence}",
+  "rooms.protocolVersion": "Protocol v{version}",
   "rooms.finalAnswer": "Final answer",
   "rooms.you": "You",
   "rooms.member": "Member",

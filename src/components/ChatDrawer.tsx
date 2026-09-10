@@ -1611,6 +1611,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 });
 
 function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProps) {
+  const { t } = useI18n();
   const state = useGroupRoom({ enabled: open, initialRoomId: roomId ?? null });
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
   const mentionRoster = useMemo(() => (state.room?.members ?? [])
@@ -1633,17 +1634,17 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
 
   return (
     <>
-      {open ? <button className="chat-backdrop is-open" type="button" aria-label="Close Group Chat" onClick={onClose} /> : null}
-      <aside className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label="Group Chat" aria-hidden={!open} inert={!open ? true : undefined}>
-        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">Group Chat</p><h2>Rooms</h2><span className="chat-session-title">{state.room?.name || 'Select a room'}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label="Close Group Chat"><X size={18} /></button></div></header>
+      {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
+      <aside className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
+        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
         <div className="chat-transcript">
-          {!canUseRooms && !state.loading ? <div className="chat-error" role="status">Group Chat is unavailable on this gateway.</div> : null}
+          {!canUseRooms && !state.loading ? <div className="chat-error" role="status">{t('rooms.driverUnavailable')}</div> : null}
           {canUseRooms ? <>
-            <nav className="flex min-w-0 gap-2 overflow-x-auto pb-3" aria-label="Group Chat rooms">
+            <nav className="flex min-w-0 gap-2 overflow-x-auto pb-3" aria-label={t('rooms.title')}>
               {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
-              {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">No Group Chat rooms yet.</span> : null}
+              {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">{t('rooms.noRooms')}</span> : null}
             </nav>
-            {state.room ? <GroupRoomView state={state} mentionRoster={mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : <p className="text-sm text-text-muted">Choose a room to open its timeline.</p>}
+            {state.room ? <GroupRoomView state={state} mentionRoster={mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : <p className="text-sm text-text-muted">{t('rooms.chooseRoom')}</p>}
           </> : null}
           {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
         </div>
