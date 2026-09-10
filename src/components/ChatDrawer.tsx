@@ -13,6 +13,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -32,6 +33,7 @@ import {
   SquarePen,
   X,
   XCircle,
+  Users,
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatComposer } from './ChatComposer';
@@ -77,15 +79,20 @@ import { classifyHandoffFailure } from '../lib/bot-handoff-reasons';
 import { BotHandoffMessage } from './chat/BotHandoffMessage';
 import { claimBotHandoff, loadPersistedBotHandoffs, persistBotHandoff, type PersistedBotHandoff } from '../lib/bot-handoff-persistence';
 import { compareChatTimelineEntries } from '../lib/chat-timeline';
+import { useGroupRoom } from '../lib/use-group-room';
+import type { GroupRoom } from '../lib/group-gateway';
+import { GroupRoomView } from './chat/GroupRoomView';
 
 type ChatDrawerProps = {
   open: boolean;
   storedToken: string;
   initialSessionId?: string | null;
-  chatMode?: 'general' | 'canonical' | 'task';
+  chatMode?: 'general' | 'canonical' | 'task' | 'room';
+  roomId?: string | null;
   botProfile?: string | null;
   onClose: () => void;
   onStartTaskChat?: () => void;
+  onRoomChange?: (roomId: string | null) => void;
 };
 
 function formatTokens(tokens: number): string {
@@ -159,7 +166,9 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
   );
 }
 
-export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat }: ChatDrawerProps) {
+type CanonicalChatDrawerProps = Omit<ChatDrawerProps, 'chatMode'> & { chatMode?: 'general' | 'canonical' | 'task' };
+
+const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat }: CanonicalChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -1599,4 +1608,52 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       </Modal>
     </>
   );
+});
+
+function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProps) {
+  const state = useGroupRoom({ enabled: open, initialRoomId: roomId ?? null });
+  const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
+  const mentionRoster = useMemo(() => (state.room?.members ?? [])
+    .filter((member) => member.handle.trim())
+    .map((member) => ({
+      handle: member.handle,
+      displayName: member.displayName || member.profile || member.handle,
+      description: member.profile ? `profile: ${member.profile}` : undefined,
+    })), [state.room?.members]);
+
+  useEffect(() => {
+    if (!open || !state.selectedRoomId || state.selectedRoomId === roomId) return;
+    onRoomChange?.(state.selectedRoomId);
+  }, [onRoomChange, open, roomId, state.selectedRoomId]);
+
+  const selectRoom = useCallback((nextRoomId: string | null) => {
+    onRoomChange?.(nextRoomId);
+    return state.selectRoom(nextRoomId);
+  }, [onRoomChange, state.selectRoom]);
+
+  return (
+    <>
+      {open ? <button className="chat-backdrop is-open" type="button" aria-label="Close Group Chat" onClick={onClose} /> : null}
+      <aside className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label="Group Chat" aria-hidden={!open} inert={!open ? true : undefined}>
+        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">Group Chat</p><h2>Rooms</h2><span className="chat-session-title">{state.room?.name || 'Select a room'}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label="Close Group Chat"><X size={18} /></button></div></header>
+        <div className="chat-transcript">
+          {!canUseRooms && !state.loading ? <div className="chat-error" role="status">Group Chat is unavailable on this gateway.</div> : null}
+          {canUseRooms ? <>
+            <nav className="flex min-w-0 gap-2 overflow-x-auto pb-3" aria-label="Group Chat rooms">
+              {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
+              {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">No Group Chat rooms yet.</span> : null}
+            </nav>
+            {state.room ? <GroupRoomView state={state} mentionRoster={mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : <p className="text-sm text-text-muted">Choose a room to open its timeline.</p>}
+          </> : null}
+          {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
+        </div>
+      </aside>
+    </>
+  );
+}
+
+export const ChatDrawer = memo(function ChatDrawer(props: ChatDrawerProps) {
+  if (props.chatMode === 'room') return <GroupChatDrawer {...props} />;
+  const { chatMode, roomId: _roomId, onRoomChange: _onRoomChange, ...canonicalProps } = props;
+  return <CanonicalChatDrawer {...canonicalProps} chatMode={chatMode} />;
 });

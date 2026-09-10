@@ -94,24 +94,40 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
   }, []);
   const chatSearchParams = new URLSearchParams(location.search);
   const chatRecoverySessionId = chatSearchParams.get('chatSession');
-  const chatMode = chatSearchParams.get('chatMode') === 'canonical' || chatSearchParams.get('chatMode') === 'task'
-    ? chatSearchParams.get('chatMode') as 'canonical' | 'task'
+  const chatMode = chatSearchParams.get('chatMode') === 'canonical' || chatSearchParams.get('chatMode') === 'task' || chatSearchParams.get('chatMode') === 'room'
+    ? chatSearchParams.get('chatMode') as 'canonical' | 'task' | 'room'
     : 'general';
   const chatBotProfile = chatSearchParams.get('botProfile');
+  const chatRoomId = chatSearchParams.get('roomId');
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const chatButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const closeChat = useCallback(() => {
     setChatOpen(false);
     chatButtonRef.current?.focus();
-    if (!chatRecoverySessionId) return;
+    if (!chatRecoverySessionId && !chatRoomId) return;
     const params = new URLSearchParams(location.search);
     params.delete('chatSession');
     params.delete('chatMode');
     params.delete('botProfile');
+    params.delete('roomId');
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
-  }, [chatRecoverySessionId, location.pathname, location.search, navigate]);
+  }, [chatRecoverySessionId, chatRoomId, location.pathname, location.search, navigate]);
+
+  const changeRoom = useCallback((roomId: string | null) => {
+    const params = new URLSearchParams(location.search);
+    if (roomId) {
+      params.set('chatMode', 'room');
+      params.set('roomId', roomId);
+      params.delete('chatSession');
+    } else {
+      params.delete('roomId');
+      params.delete('chatMode');
+    }
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   const startTaskChat = useCallback(() => {
     const params = new URLSearchParams(location.search);
@@ -149,8 +165,8 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
   }, [sideOpen]);
 
   useEffect(() => {
-    if (chatRecoverySessionId) setChatOpen(true);
-  }, [chatRecoverySessionId]);
+    if (chatRecoverySessionId || chatRoomId) setChatOpen(true);
+  }, [chatRecoverySessionId, chatRoomId]);
 
   useEffect(() => {
     if (!chatOpen) return;
@@ -399,9 +415,11 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             storedToken={storedToken}
             initialSessionId={chatRecoverySessionId}
             chatMode={chatMode}
+            roomId={chatRoomId}
             botProfile={chatBotProfile}
             onClose={closeChat}
             onStartTaskChat={startTaskChat}
+            onRoomChange={changeRoom}
           />
         ) : null}
       </div>
