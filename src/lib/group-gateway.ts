@@ -29,6 +29,8 @@ export type GroupEvent = {
   actor: GroupActor;
   message: GroupMessage;
   createdAt: string | number | null;
+  round?: number;
+  coordinates?: { x: number; y: number };
 };
 export type GroupAuthority = { gatewayId: string; epoch: number };
 export type GroupLogPage = { events: GroupEvent[]; cursor: number | string | null; latestSeq: number; hasMore: boolean; authority: GroupAuthority | null };
@@ -74,11 +76,17 @@ export function normalizeGroupRoom(value: unknown): GroupRoom {
 export function normalizeGroupEvent(value: unknown): GroupEvent {
   const item = record(value); const actor = record(item.actor); const payload = record(item.payload); const member = record(payload.member);
   const hasMember = Object.keys(member).length > 0;
+  const round = numberValue(item.round ?? payload.round, -1);
+  const coordinates = record(item.coordinates ?? payload.coordinates);
+  const x = numberValue(coordinates.x, -1);
+  const y = numberValue(coordinates.y, -1);
   return {
     id: stringValue(item.event_id ?? item.id), seq: numberValue(item.seq), kind: stringValue(item.kind),
     actor: { kind: (['user', 'member', 'gateway', 'system'].includes(actor.kind as string) ? actor.kind : 'system') as GroupActorKind, id: stringValue(actor.id) },
     message: { text: stringValue(payload.text), threadId: optionalString(payload.thread_id) ?? null, member: hasMember ? { id: stringValue(member.member_id ?? member.id), ...(optionalString(member.handle) ? { handle: member.handle as string } : {}), ...(optionalString(member.display_name) ? { displayName: member.display_name as string } : {}) } : null },
     createdAt: (typeof item.created_at === 'string' || typeof item.created_at === 'number') ? item.created_at : null,
+    ...(round >= 0 ? { round } : {}),
+    ...(x >= 0 && y >= 0 ? { coordinates: { x, y } } : {}),
   };
 }
 
