@@ -16,7 +16,6 @@ import {
 import {
   configureBotMcpTools,
   configureBotProfile,
-  configureBotToolsets,
   createBotProfile,
   deleteBotProfile,
   loadBotMcpTools,
@@ -184,6 +183,7 @@ function ProfileEditor({
   draft,
   details,
   createToolsets,
+  createMcpServers,
   createToolsetsLoading,
   startingProfiles,
   modelOptions,
@@ -201,6 +201,7 @@ function ProfileEditor({
   draft: BotDraft;
   details: BotProfileDetails | null;
   createToolsets: BotProfileDetails['toolsets'];
+  createMcpServers: BotProfileDetails['mcp_servers'];
   createToolsetsLoading: boolean;
   startingProfiles: BotProfileSummary[];
   modelOptions: BotModelProviderOption[];
@@ -231,7 +232,7 @@ function ProfileEditor({
   const toolsets = details?.toolsets ?? createToolsets;
   const toolsetsPinned = details?.toolsets_pinned ?? (mode === 'create' && draft.enabledToolsets.length > 0);
   const skills = details?.skills ?? [];
-  const mcpServers = details?.mcp_servers ?? [];
+  const mcpServers = details?.mcp_servers ?? createMcpServers;
   const providerOptions = useMemo(() => {
     const options = [
       { value: '', label: t('bots.inheritProvider') },
@@ -749,6 +750,7 @@ export function BotsRoute() {
   const [profiles, setProfiles] = useState<BotProfileSummary[]>([]);
   const [modelOptions, setModelOptions] = useState<BotModelProviderOption[]>([]);
   const [createToolsets, setCreateToolsets] = useState<BotProfileDetails['toolsets']>([]);
+  const [createMcpServers, setCreateMcpServers] = useState<BotProfileDetails['mcp_servers']>([]);
   const [createToolsetsLoading, setCreateToolsetsLoading] = useState(false);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -809,8 +811,10 @@ export function BotsRoute() {
     try {
       const template = await loadBotProfile('default', storedToken || undefined);
       setCreateToolsets(template.toolsets);
+      setCreateMcpServers(template.mcp_servers);
     } catch (cause) {
       setCreateToolsets([]);
+      setCreateMcpServers([]);
       setError(cause instanceof Error ? cause.message : 'Could not load the toolset catalog.');
     } finally {
       setCreateToolsetsLoading(false);
@@ -860,9 +864,16 @@ export function BotsRoute() {
           ...createInput,
           shareAuth: true,
         }, storedToken || undefined);
-        if (draft.enabledToolsets.length > 0) {
-          await configureBotToolsets(draft.name, draft.enabledToolsets, storedToken || undefined);
-        }
+        await configureBotProfile({
+          name: draft.name,
+          description: draft.description,
+          soul: draft.soul,
+          model: draft.model,
+          provider: draft.provider,
+          enabledToolsets: draft.enabledToolsets,
+          enabledMcpServers: draft.enabledMcpServers,
+          botRoster: draft.botRoster,
+        }, storedToken || undefined);
         setMode('edit');
         setSelectedName(draft.name);
         await refreshRoster(draft.name);
@@ -961,6 +972,7 @@ export function BotsRoute() {
             draft={draft}
             details={details}
             createToolsets={createToolsets}
+            createMcpServers={createMcpServers}
             createToolsetsLoading={createToolsetsLoading}
             startingProfiles={profiles}
             modelOptions={modelOptions}
