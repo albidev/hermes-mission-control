@@ -31,6 +31,8 @@ export type ChatComposerProps = {
   slashPopoverRef: RefObject<ChatSlashPopoverHandle | null>;
   mentionPopoverRef: RefObject<ChatMentionPopoverHandle | null>;
   botRoster: BotMentionCandidate[];
+  activeBotTarget: BotMentionCandidate | null;
+  onClearBotTarget: () => void;
   running: boolean;
   submitting: boolean;
   disabled: boolean;
@@ -54,6 +56,8 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
   slashPopoverRef,
   mentionPopoverRef,
   botRoster,
+  activeBotTarget,
+  onClearBotTarget,
   running,
   submitting,
   disabled,
@@ -88,16 +92,24 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
       <ChatMentionPopover ref={mentionPopoverRef} input={draft} roster={botRoster} textareaRef={textareaRef} onApply={onDraftChange} />
       <form className="chat-composer" onSubmit={onSubmit}>
         <div className="chat-composer-main">
+          {activeBotTarget ? (
+            <div className="chat-composer-target-pill" role="status">
+              <strong>@{activeBotTarget.handle}</strong>
+              <button type="button" onClick={onClearBotTarget} aria-label={`Torna a Hermes da @${activeBotTarget.handle}`} title="Torna a Hermes">
+                <X size={12} />
+              </button>
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
-            placeholder={running ? 'Steer Hermes…' : 'Message Hermes'}
+            placeholder={running ? 'Steer Hermes…' : activeBotTarget ? `Message ${activeBotTarget.displayName || activeBotTarget.handle}` : 'Message Hermes'}
             rows={1}
             disabled={disabled}
-            aria-label={running ? 'Steer Hermes' : 'Message Hermes'}
+            aria-label={running ? 'Steer Hermes' : activeBotTarget ? `Message ${activeBotTarget.displayName || activeBotTarget.handle}` : 'Message Hermes'}
           />
           <div className="chat-composer-toolbar">
             <button

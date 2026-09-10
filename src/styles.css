@@ -5045,6 +5045,64 @@ body.modal-open .route-page-scroll {
   background: transparent;
 }
 
+.chat-composer-target-pill {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  height: 18px;
+  min-height: 18px;
+  max-width: calc(100% - 1.5rem);
+  gap: 0.15rem;
+  margin: 0.25rem 0.75rem 0.1rem;
+  padding: 0 0.1rem 0 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 34%, var(--color-border-subtle));
+  border-radius: 999px;
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.chat-composer-target-label {
+  display: none;
+}
+
+.chat-composer-target-pill strong {
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.chat-composer-target-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-composer-target-pill button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.95rem !important;
+  height: 0.95rem !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  margin-left: 0 !important;
+  padding: 0 !important;
+  line-height: 1;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  background: transparent;
+}
+
+.chat-composer-target-pill button:hover {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+}
+
 .chat-composer-main {
   min-width: 0;
   overflow: hidden;
