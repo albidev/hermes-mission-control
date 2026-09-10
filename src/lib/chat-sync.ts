@@ -158,10 +158,6 @@ export function applySyncedChatMessage(messages: ChatMessage[], message: ChatMes
 export const applySyncedUserMessage = applySyncedChatMessage;
 export const applySyncedAssistantMessage = applySyncedChatMessage;
 
-function findMatchingMessage(messages: ChatMessage[], candidate: ChatMessage, excluded = new Set<number>()): number {
-  return messages.findIndex((message, index) => !excluded.has(index) && message.id === candidate.id);
-}
-
 function mergeStreamingMessage(durable: ChatMessage, local: ChatMessage): ChatMessage {
   if (local.kind === 'assistant' && local.status === 'streaming') {
     const text = local.text.length >= durable.text.length ? local.text : durable.text;
@@ -189,6 +185,19 @@ function mergeMessagePair(durable: ChatMessage, local: ChatMessage): ChatMessage
 }
 
 /** Merge a server snapshot without dropping any visible local message. */
+const CANONICAL_LIVE_DEDUPE_WINDOW_MS = 15_000;
+
+function semanticallyMatchesCanonicalMessage(local: ChatMessage, canonical: ChatMessage): boolean {
+  if (local.id === canonical.id) return true;
+  const canonicalLivePair = (local.source === 'live' && canonical.source === 'canonical')
+    || (local.source === 'canonical' && canonical.source === 'live');
+  if (!canonicalLivePair) return false;
+  if (local.role !== canonical.role || local.kind !== canonical.kind || local.text !== canonical.text) return false;
+  if (local.kind === 'tool' && local.toolId && canonical.toolId && local.toolId !== canonical.toolId) return false;
+  if (typeof local.createdAt !== 'number' || typeof canonical.createdAt !== 'number') return false;
+  return Math.abs(local.createdAt - canonical.createdAt) <= CANONICAL_LIVE_DEDUPE_WINDOW_MS;
+}
+
 export function mergeDurableChatMessages(local: ChatMessage[], durable: ChatMessage[]): ChatMessage[] {
   if (durable.length === 0) return local;
 
@@ -200,7 +209,7 @@ export function mergeDurableChatMessages(local: ChatMessage[], durable: ChatMess
   const consumed = new Set<number>();
 
   for (const durableMessage of durable) {
-    const match = findMatchingMessage(merged, durableMessage, consumed);
+    const match = merged.findIndex((message, index) => !consumed.has(index) && semanticallyMatchesCanonicalMessage(message, durableMessage));
     if (match >= 0) {
       consumed.add(match);
       merged[match] = mergeMessagePair(durableMessage, merged[match]);
@@ -234,15 +243,17 @@ export function mergeDurableChatMessages(local: ChatMessage[], durable: ChatMess
 
 /** Replace the durable view with a complete canonical projection.
  *
- * Only explicitly live rows survive outside the projection. Matching is by the
- * SessionDB-derived id; repeated text/tool payloads are never identity keys.
+ * Only explicitly live rows survive outside the projection. Matching prefers the
+ * SessionDB-derived id, with a narrow canonical/live timestamp+content fallback
+ * for replayed rows whose runtime IDs differ. Repeated text alone is never an
+ * identity key.
  */
 export function replaceWithCanonicalChatMessages(local: ChatMessage[], canonical: ChatMessage[]): ChatMessage[] {
   const merged: ChatMessage[] = canonical.map((message) => ({ ...message, source: 'canonical' as const }));
   const canonicalIds = new Set(merged.map((message) => message.id));
   const live = local.filter((message) => message.source === 'live' || message.status === 'streaming');
   for (const liveMessage of live) {
-    const match = merged.findIndex((message) => message.id === liveMessage.id);
+    const match = merged.findIndex((message) => semanticallyMatchesCanonicalMessage(message, liveMessage));
     if (match >= 0) {
       merged[match] = mergeMessagePair(merged[match], liveMessage);
     } else if (!canonicalIds.has(liveMessage.id)) {
