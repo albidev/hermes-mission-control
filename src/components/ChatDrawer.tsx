@@ -472,6 +472,55 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     programmaticScrollRef.current = false;
   }, []);
 
+  const mentionHandles = useMemo(() => botRoster.map((bot) => bot.handle), [botRoster]);
+  const handoffRequestIds = useMemo(
+    () => new Set(handoffs.map((handoff) => `bot-request-${handoff.id}`)),
+    [handoffs],
+  );
+  const existingMessageIds = useMemo(
+    () => new Set(messages.map((message: ChatMessage) => message.id)),
+    [messages],
+  );
+  const timelinedMessages = useMemo(() => [
+    ...messages
+      .filter((message: ChatMessage) => !handoffRequestIds.has(message.id))
+      .map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, order: 0, id: message.id, message })),
+    ...handoffs.flatMap((handoff) => {
+      const createdAt = handoff.createdAt ?? handoff.updatedAt;
+      const requestMessage: ChatMessage = {
+        id: `bot-request-${handoff.id}`,
+        role: 'user',
+        kind: 'user',
+        source: 'live',
+        text: `@${handoff.handle} ${handoff.request}`.trim(),
+        status: 'complete',
+        createdAt,
+      };
+      const replyMessage: ChatMessage | null = handoff.reply && !existingMessageIds.has(`bot-reply-${handoff.id}`)
+        ? {
+          id: `bot-reply-${handoff.id}`,
+          role: 'assistant',
+          kind: 'assistant',
+          source: 'live',
+          text: handoff.reply,
+          status: 'complete',
+          createdAt: handoff.updatedAt,
+          attribution: {
+            handle: handoff.handle,
+            displayName: handoff.displayName,
+            model: handoff.model,
+            provider: handoff.provider,
+          },
+        }
+        : null;
+      return [
+        { kind: 'message' as const, createdAt, order: 0, id: requestMessage.id, message: requestMessage },
+        { kind: 'handoff' as const, createdAt, order: 1, id: handoff.id, handoff },
+        ...(replyMessage ? [{ kind: 'message' as const, createdAt: handoff.updatedAt, order: 2, id: replyMessage.id, message: replyMessage }] : []),
+      ];
+    }),
+  ].sort(compareChatTimelineEntries), [handoffs, handoffRequestIds, messages, existingMessageIds]);
+
   const renderMessages = () => {
     if (previewMode) {
       if (previewLoading) {
@@ -575,52 +624,12 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       );
     }
 
-    const handoffRequestIds = new Set(handoffs.map((handoff) => `bot-request-${handoff.id}`));
-    const existingMessageIds = new Set(messages.map((message: ChatMessage) => message.id));
-    const timeline = [
-      ...messages
-        .filter((message: ChatMessage) => !handoffRequestIds.has(message.id))
-        .map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, order: 0, id: message.id, message })),
-      ...handoffs.flatMap((handoff) => {
-        const createdAt = handoff.createdAt ?? handoff.updatedAt;
-        const requestMessage: ChatMessage = {
-          id: `bot-request-${handoff.id}`,
-          role: 'user',
-          kind: 'user',
-          source: 'live',
-          text: `@${handoff.handle} ${handoff.request}`.trim(),
-          status: 'complete',
-          createdAt,
-        };
-        const replyMessage: ChatMessage | null = handoff.reply && !existingMessageIds.has(`bot-reply-${handoff.id}`)
-          ? {
-            id: `bot-reply-${handoff.id}`,
-            role: 'assistant',
-            kind: 'assistant',
-            source: 'live',
-            text: handoff.reply,
-            status: 'complete',
-            createdAt: handoff.updatedAt,
-            attribution: {
-              handle: handoff.handle,
-              displayName: handoff.displayName,
-              model: handoff.model,
-              provider: handoff.provider,
-            },
-          }
-          : null;
-        return [
-          { kind: 'message' as const, createdAt, order: 0, id: requestMessage.id, message: requestMessage },
-          { kind: 'handoff' as const, createdAt, order: 1, id: handoff.id, handoff },
-          ...(replyMessage ? [{ kind: 'message' as const, createdAt: handoff.updatedAt, order: 2, id: replyMessage.id, message: replyMessage }] : []),
-        ];
-      }),
-    ].sort(compareChatTimelineEntries);
+    const timeline = timelinedMessages;
 
     return (
       <>
         {timeline.map((entry) => entry.kind === 'message' ? (
-          <ChatMessageCard key={entry.id} message={entry.message} mentionHandles={botRoster.map((bot) => bot.handle)} />
+          <ChatMessageCard key={entry.id} message={entry.message} mentionHandles={mentionHandles} />
         ) : (
           <BotHandoffMessage
             key={entry.id}

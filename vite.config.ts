@@ -85,5 +85,16 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    // vite preview (used by `pnpm preview`) also needs the LAN/tailnet hosts
+    // allowlisted. Otherwise a preview process answering on 5174 returns the
+    // "Blocked request. This host is not allowed." page for tailnet clients,
+    // which masquerades as a Mission Control outage. Keep this in sync with
+    // the server.allowedHosts list above.
+    preview: {
+      host: true,
+      port: 4174,
+      strictPort: true,
+      allowedHosts: ALL_ALLOWED_HOSTS.length ? ALL_ALLOWED_HOSTS : true,
+    },
   };
 });
