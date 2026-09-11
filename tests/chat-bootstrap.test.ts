@@ -3,6 +3,7 @@ import {
   buildLastChatClaimPayload,
   canClaimLastChatPointer,
   createChatBootstrapGuard,
+  serverPointerMatchesRequestedSession,
   shouldAdoptServerPointer,
   type ServerLastChat,
 } from '../src/lib/chat-bootstrap.ts';
@@ -36,6 +37,10 @@ assert.deepEqual(buildLastChatClaimPayload('sid', 'key', null, null), {
 assert.equal(buildLastChatClaimPayload('sid', 'key', null, 8).expectedRevision, 8);
 assert.equal(shouldAdoptServerPointer(local, server), true);
 assert.equal(shouldAdoptServerPointer({ ...local, sessionId: server.sessionId, revision: 8 }, server), false);
+assert.equal(serverPointerMatchesRequestedSession('canonical-server', server), true);
+assert.equal(serverPointerMatchesRequestedSession('canonical-key', server), true);
+assert.equal(serverPointerMatchesRequestedSession('other-session', server), false);
+assert.equal(serverPointerMatchesRequestedSession('canonical-server', { ...server, sessionKey: null }), true);
 
 // A GET from the first open may resolve after close + reopen. Its aborted signal
 // and obsolete generation must prevent it from replacing the new lifecycle.

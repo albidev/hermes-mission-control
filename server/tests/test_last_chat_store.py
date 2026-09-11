@@ -26,17 +26,19 @@ class LastChatStoreProtocolTest(unittest.TestCase):
 
     def test_first_claim_creates_server_revision_and_metadata(self) -> None:
         result = last_chat_store.set_last_chat(
-            {"sessionId": "desktop-1", "sessionKey": "key-1", "updatedAt": 1},
+            {"sessionId": "desktop-1", "sessionKey": "key-1", "profile": "crossnection", "updatedAt": 1},
         )
 
         self.assertTrue(result["accepted"])
         pointer = result["lastChat"]
         self.assertEqual(pointer["sessionId"], "desktop-1")
+        self.assertEqual(pointer["profile"], "crossnection")
         self.assertEqual(pointer["revision"], 1)
         self.assertGreater(pointer["updatedAt"], 1)
 
         persisted = json.loads(last_chat_store._STATE_FILE.read_text())
         self.assertEqual(persisted["revision"], 1)
+        self.assertEqual(persisted["profile"], "crossnection")
         self.assertNotEqual(persisted["updatedAt"], 1)
 
     def test_matching_revision_advances_pointer(self) -> None:

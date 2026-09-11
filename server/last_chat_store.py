@@ -18,7 +18,7 @@ SERVER_DIR = Path(__file__).resolve().parent
 _STATE_FILE = SERVER_DIR / "last_chat.json"
 _LOCK = threading.Lock()
 
-_ALLOWED_KEYS = {"sessionId", "sessionKey", "sessionTitle", "modelIdentity"}
+_ALLOWED_KEYS = {"sessionId", "sessionKey", "sessionTitle", "modelIdentity", "profile"}
 
 
 def _load() -> Dict[str, Any]:
@@ -57,6 +57,7 @@ def _canonical_pointer(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "sessionKey": data.get("sessionKey"),
         "sessionTitle": data.get("sessionTitle"),
         "modelIdentity": data.get("modelIdentity"),
+        "profile": data.get("profile"),
         "revision": _stored_revision(data),
         "updatedAt": data.get("updatedAt"),
     }

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from chat_runtime_presence import active_runtime_presences
+from chat_handoff_store import list_all_handoffs
 from chat_title_store import get_chat_title
 
 _log = logging.getLogger(__name__)
@@ -43,6 +44,25 @@ def _profile_home(profile: str) -> Path | None:
     from hermes_paths import hermes_root
     root = hermes_root()
     return root if name == "default" else root / "profiles" / name
+
+
+def _available_profile_names() -> list[str]:
+    """Return local profile names that have a SessionDB or session artifacts."""
+    root = _profile_home("default")
+    if root is None:
+        return []
+    profiles_dir = root / "profiles"
+    try:
+        entries = sorted(profiles_dir.iterdir(), key=lambda entry: entry.name)
+    except OSError:
+        return []
+    return [
+        entry.name
+        for entry in entries
+        if entry.is_dir()
+        and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", entry.name)
+        and ((entry / "state.db").is_file() or (entry / "sessions").is_dir())
+    ]
 
 
 def _sessions_dir(profile: str | None = None) -> Path:
@@ -166,6 +186,25 @@ def _build_agent_key(source: str, model: str) -> str:
     return f"{source or 'unknown'}::{model or 'unknown'}"
 
 
+def _bot_profiles_by_session() -> dict[str, list[str]]:
+    """Index durable Bot handoffs once for a Sessions snapshot, never per row."""
+    grouped: dict[str, set[str]] = {}
+    try:
+        rows = list_all_handoffs()
+    except Exception:
+        _log.debug("Failed to read Bot handoff evidence", exc_info=True)
+        return {}
+    for row in rows:
+        session_id = _normalize_text(row.get("sessionId"))
+        handoff = row.get("handoff")
+        if not session_id or not isinstance(handoff, dict):
+            continue
+        profile = _normalize_text(handoff.get("handle"))
+        if profile:
+            grouped.setdefault(session_id, set()).add(profile)
+    return {session_id: sorted(profiles) for session_id, profiles in grouped.items()}
+
+
 def _is_live(last_active_ts: float | None, ended_at: float | None, live_window_seconds: int) -> bool:
     if ended_at is not None or last_active_ts is None:
         return False
@@ -193,11 +232,11 @@ def _read_gateway_sessions_index(profile: str | None = None) -> dict[str, dict[s
     return result
 
 
-def _read_session_jsonl(session_id: str) -> list[dict[str, Any]]:
-    return _safe_read_jsonl(_sessions_dir() / f"{session_id}.jsonl")
+def _read_session_jsonl(session_id: str, profile: str | None = None) -> list[dict[str, Any]]:
+    return _safe_read_jsonl(_sessions_dir(profile) / f"{session_id}.jsonl")
 
 
-def _read_session_request_dump(session_id: str) -> list[dict[str, Any]]:
+def _read_session_request_dump(session_id: str, profile: str | None = None) -> list[dict[str, Any]]:
     """Read only the provider request messages needed for a TODO fallback.
 
     A gateway request can fail before the normal JSONL writer flushes a session.
@@ -205,7 +244,7 @@ def _read_session_request_dump(session_id: str) -> list[dict[str, Any]]:
     """
     try:
         paths = sorted(
-            _sessions_dir().glob(f"request_dump_{session_id}_*.json"),
+            _sessions_dir(profile).glob(f"request_dump_{session_id}_*.json"),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
@@ -221,13 +260,13 @@ def _read_session_request_dump(session_id: str) -> list[dict[str, Any]]:
     return []
 
 
-def _session_messages(db: Any, session_id: str) -> list[dict[str, Any]]:
-    return _read_session_jsonl(session_id) or _get_db_messages(db, session_id) or _read_session_request_dump(session_id)
+def _session_messages(db: Any, session_id: str, profile: str | None = None) -> list[dict[str, Any]]:
+    return _read_session_jsonl(session_id, profile) or _get_db_messages(db, session_id) or _read_session_request_dump(session_id, profile)
 
 
-def _iter_db_session_ids() -> list[str]:
-    """Discover session IDs from SessionDB (replaces sidecar-based discovery)."""
-    db = _try_get_session_db()
+def _iter_db_session_ids(profile: str | None = None) -> list[str]:
+    """Discover session IDs from the requested profile's SessionDB."""
+    db = _try_get_session_db(profile)
     try:
         if db is None:
             return []
@@ -235,6 +274,7 @@ def _iter_db_session_ids() -> list[str]:
             limit=2000,
             order_by_last_active=True,
             compact_rows=True,
+            include_hidden=profile is not None,
         )
         return [str(row.get("id", "")) for row in rows if row.get("id")]
     except Exception:
@@ -700,6 +740,8 @@ def _build_session_item(
     live_window_seconds: int,
     recent_messages: list[dict[str, Any]] | None = None,
     todo_plan: dict[str, Any] | None = None,
+    profile: str | None = None,
+    bot_profiles: list[str] | None = None,
 ) -> dict[str, Any]:
     sidecar_messages = sidecar.get("messages") if isinstance(sidecar, dict) and isinstance(sidecar.get("messages"), list) else None
     source = str(
@@ -747,6 +789,9 @@ def _build_session_item(
     origin = _classify_session_origin(source, platform, index_entry)
     return {
         "sessionId": session_id,
+        "sessionKey": _normalize_text((db_row or {}).get("session_key") or (index_entry or {}).get("session_key") or session_id),
+        "profile": profile or _normalize_text((db_row or {}).get("profile_name")) or None,
+        "botProfiles": bot_profiles or [],
         "agentId": agent_id,
         "title": title,
         "source": source,
@@ -784,6 +829,8 @@ def _build_runtime_presence_item(presence: dict[str, Any]) -> dict[str, Any]:
     now = _parse_timestamp(presence.get("updatedAt")) or time.time()
     return {
         "sessionId": session_id,
+        "sessionKey": _normalize_text(presence.get("sessionKey")) or None,
+        "profile": _normalize_text(presence.get("profile")) or None,
         "agentId": _build_agent_key(source, model),
         "title": title,
         "source": source,
@@ -839,14 +886,44 @@ def _presence_aliases(presence: dict[str, Any]) -> list[str]:
     ]
 
 
-def _apply_runtime_presence(items: list[dict[str, Any]], filters: dict[str, str] | None = None) -> None:
+def _presence_matches_profile(presence: dict[str, Any], profile: str | None) -> bool:
+    """Keep a profile-scoped runtime lease out of other profiles' snapshots."""
+    lease_profile = _normalize_text(presence.get("profile")) or None
+    if lease_profile is None:
+        # Old clients did not publish a profile; retain their legacy behavior.
+        return True
+    return lease_profile == (profile or "default")
+
+
+def _item_aliases(item: dict[str, Any]) -> list[str]:
+    return [
+        value
+        for value in (
+            _normalize_text(item.get("sessionId")),
+            _normalize_text(item.get("sessionKey")),
+        )
+        if value
+    ]
+
+
+def _apply_runtime_presence(
+    items: list[dict[str, Any]],
+    filters: dict[str, str] | None = None,
+    profile: str | None = None,
+) -> None:
     """Overlay active resumed runtimes without mutating canonical SessionDB rows."""
     presences = active_runtime_presences()
     if not presences:
         return
 
-    by_id = {str(item.get("sessionId") or ""): item for item in items}
+    by_id = {
+        alias: item
+        for item in items
+        for alias in _item_aliases(item)
+    }
     for presence in presences:
+        if not _presence_matches_profile(presence, profile):
+            continue
         aliases = _presence_aliases(presence)
         if not aliases:
             continue
@@ -855,7 +932,8 @@ def _apply_runtime_presence(items: list[dict[str, Any]], filters: dict[str, str]
             item = _build_runtime_presence_item(presence)
             if _session_matches_filters(item, filters):
                 items.append(item)
-                by_id[str(item.get("sessionId") or "")] = item
+                for alias in _item_aliases(item):
+                    by_id[alias] = item
             continue
         # Prefer the canonical SessionDB item (resumedFrom/sessionKey) when the
         # runtime has a different ephemeral id. This prevents one conversation
@@ -952,10 +1030,14 @@ def _collect_agent_sessions(
     session_id: str | None = None,
     include_recent_messages: bool = True,
     filters: dict[str, str] | None = None,
+    profile: str | None = None,
 ) -> list[dict[str, Any]]:
-    index_map = _read_gateway_sessions_index()
+    index_map = _read_gateway_sessions_index(profile)
+    bot_profiles_by_session = _bot_profiles_by_session()
     presence_by_id: dict[str, dict[str, Any]] = {}
     for presence in active_runtime_presences():
+        if not _presence_matches_profile(presence, profile):
+            continue
         for alias in _presence_aliases(presence):
             presence_by_id.setdefault(alias, presence)
     # _iter_db_session_ids already returns ids ordered by last_active (recency).
@@ -963,7 +1045,7 @@ def _collect_agent_sessions(
     # normally live gateway sessions that have not reached SessionDB yet; if we
     # append them after a large DB history, a small first page hides the active
     # session entirely.
-    db_ids = _iter_db_session_ids()
+    db_ids = _iter_db_session_ids(profile)
     db_id_set = set(db_ids)
     index_only_ids = [
         sid for sid in index_map.keys()
@@ -978,7 +1060,7 @@ def _collect_agent_sessions(
         # Narrow to a single session for the chat drawer preview. Keep the
         # recency ordering contract; the id either exists or yields nothing.
         ordered_ids = [sid for sid in ordered_ids if sid == session_id]
-        if not ordered_ids and (_read_session_jsonl(session_id) or _read_session_request_dump(session_id)):
+        if not ordered_ids and (_read_session_jsonl(session_id, profile) or _read_session_request_dump(session_id, profile)):
             ordered_ids = [session_id]
     # With filters, pagination must happen after item classification. Without
     # filters retain the cheap id-level window used by existing consumers.
@@ -987,12 +1069,12 @@ def _collect_agent_sessions(
             ordered_ids = ordered_ids[offset:]
         if limit is not None:
             ordered_ids = ordered_ids[:limit]
-    db = _try_get_session_db()
+    db = _try_get_session_db(profile)
     try:
         items: list[dict[str, Any]] = []
         for session_id in ordered_ids:
             db_row = _get_db_rich_row(db, session_id)
-            session_messages = _session_messages(db, session_id) if include_recent_messages else None
+            session_messages = _session_messages(db, session_id, profile) if include_recent_messages else None
             recent_messages = _recent_chat_messages(db, session_id, messages=session_messages) if include_recent_messages else []
             todo_plan = _derive_todo_plan(session_messages) if include_recent_messages else None
             item = _build_session_item(
@@ -1003,12 +1085,14 @@ def _collect_agent_sessions(
                 live_window_seconds,
                 recent_messages,
                 todo_plan,
+                profile,
+                bot_profiles_by_session.get(session_id),
             )
             if presence := presence_by_id.get(session_id):
                 _overlay_runtime_presence_item(item, presence)
             if _session_matches_filters(item, filters):
                 items.append(item)
-        _apply_runtime_presence(items, filters)
+        _apply_runtime_presence(items, filters, profile)
         # Items already follow the ordered_ids sequence (recency first). Do NOT
         # re-sort here — the client may also re-sort, but the page boundaries
         # must stay contiguous, which requires a stable single ordering.
@@ -1022,6 +1106,46 @@ def _collect_agent_sessions(
         _close_session_db(db)
 
 
+def _collect_snapshot_sessions(
+    live_window_seconds: int = 300,
+    limit: int | None = None,
+    offset: int = 0,
+    session_id: str | None = None,
+    include_recent_messages: bool = True,
+    filters: dict[str, str] | None = None,
+    profile: str | None = None,
+) -> list[dict[str, Any]]:
+    """Collect sessions from one profile, or all local profiles for the list."""
+    scopes: list[str | None] = [profile] if profile is not None else [None, *_available_profile_names()]
+    # Only the first global page needs transcript previews. Read at most the
+    # requested page depth from each profile, then merge/sort globally below.
+    # Scanning every JSONL transcript before returning 50 rows exceeds the
+    # handler's socket deadline and turns a slow list into a proxy 500.
+    per_scope_limit = None if filters else ((offset or 0) + limit if limit is not None else None)
+    items: list[dict[str, Any]] = []
+    for scope in scopes:
+        items.extend(_collect_agent_sessions(
+            live_window_seconds=live_window_seconds,
+            limit=per_scope_limit,
+            offset=0,
+            session_id=session_id,
+            include_recent_messages=include_recent_messages,
+            filters=filters,
+            profile=scope,
+        ))
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in items:
+        item_id = str(item.get("sessionId") or "").strip()
+        if item_id:
+            deduped[(str(item.get("profile") or "default"), item_id)] = item
+    ordered = sorted(deduped.values(), key=lambda item: _parse_timestamp(item.get("lastActiveAt")) or 0, reverse=True)
+    if offset:
+        ordered = ordered[offset:]
+    if limit is not None:
+        ordered = ordered[:limit]
+    return ordered
+
+
 def _load_agents_sessions_snapshot_uncached(
     limit: int = 100,
     live_window_seconds: int = 300,
@@ -1030,31 +1154,35 @@ def _load_agents_sessions_snapshot_uncached(
     include_facets: bool = True,
     include_recent_messages: bool = True,
     filters: dict[str, str] | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     clamped_limit = max(1, min(limit, 500))
-    visible_items = _collect_agent_sessions(
+    visible_items = _collect_snapshot_sessions(
         live_window_seconds=live_window_seconds,
         limit=clamped_limit,
         offset=offset,
         session_id=session_id,
         filters=filters,
         include_recent_messages=include_recent_messages,
+        profile=profile,
     )
     if include_facets and not session_id:
         # Facets are collected without recent message previews. This keeps the
         # global counts correct without loading conversation content for every
         # historical session on each request.
-        all_items = _collect_agent_sessions(
+        all_items = _collect_snapshot_sessions(
             live_window_seconds=live_window_seconds,
             include_recent_messages=False,
+            profile=profile,
         )
     else:
         all_items = visible_items
     if filters and not session_id:
-        filtered_items = _collect_agent_sessions(
+        filtered_items = _collect_snapshot_sessions(
             live_window_seconds=live_window_seconds,
             include_recent_messages=False,
             filters=filters,
+            profile=profile,
         )
     else:
         filtered_items = all_items
@@ -1098,6 +1226,7 @@ def load_agents_sessions_snapshot(
     include_facets: bool = True,
     include_recent_messages: bool = True,
     filters: dict[str, str] | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Return a short-lived, coalesced snapshot for polling clients.
 
@@ -1114,6 +1243,7 @@ def load_agents_sessions_snapshot(
         session_id,
         include_facets,
         include_recent_messages,
+        profile,
         tuple(sorted((filters or {}).items())),
     )
     while True:
@@ -1154,6 +1284,7 @@ def load_agents_sessions_snapshot(
                 include_facets=include_facets,
                 include_recent_messages=include_recent_messages,
                 filters=filters,
+                profile=profile,
             )
         except BaseException:
             with _SESSION_SNAPSHOT_CACHE_LOCK:

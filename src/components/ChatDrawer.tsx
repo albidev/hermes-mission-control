@@ -363,7 +363,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     const timeout = window.setTimeout(() => {
       if (!cancelled) setPreviewLoading(false);
     }, 6000);
-    loadMissionControlSessionPreview(token, initialSessionId).then((item) => {
+    loadMissionControlSessionPreview(token, initialSessionId, botProfile).then((item) => {
       if (!cancelled) {
         setPreview(item);
         setPreviewTodoPlan(item?.todoPlan ?? null);
@@ -378,7 +378,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [previewMode, initialSessionId, storedToken]);
+  }, [botProfile, initialSessionId, previewMode, storedToken]);
 
   useEffect(() => {
     return () => {
@@ -854,10 +854,10 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       const existing = current.find((item) => item.id === id);
       if (!existing) return current;
       const updated: PersistedBotHandoff = { ...existing, ...patch, updatedAt: Date.now() };
-      void persistBotHandoff(storedToken, originSessionId, updated);
+      void persistBotHandoff(storedToken, originSessionId, updated, sessionKey);
       return current.map((item) => item.id === id ? updated : item);
     });
-  }, [sessionId, storedToken]);
+  }, [sessionId, sessionKey, storedToken]);
 
   useEffect(() => {
     if (!open || !sessionId || !storedToken.trim()) return;
@@ -983,7 +983,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         provider: candidate?.provider,
       });
       setHandoffs((current) => [...current, initialHandoff]);
-      void persistBotHandoff(storedToken, originSessionId, initialHandoff);
+      void persistBotHandoff(storedToken, originSessionId, initialHandoff, sessionKey);
       setDraft('');
       const runHandoff = async (): Promise<void> => {
         let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;

@@ -156,6 +156,12 @@ function SessionActionButton({
   return <Button type="button" size="sm" variant={variant} icon={icon} className={className} onClick={onClick} aria-label={label} title={label}>{label}</Button>;
 }
 
+function sessionResumeUrl(sessionId: string, sessionKey?: string | null, profile?: string | null): string {
+  const params = new URLSearchParams({ chatSession: sessionKey?.trim() || sessionId });
+  if (profile && profile !== 'default') params.set('botProfile', profile);
+  return `/sessions?${params.toString()}`;
+}
+
 function SessionRow({
   session,
   selected,
@@ -196,6 +202,12 @@ function SessionRow({
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-text-subtle">
             <span className="min-w-0 max-w-[8rem] truncate rounded-full bg-surface px-2 py-0.5 font-medium text-text-muted">{origin.label}</span>
             <span className="rounded-full bg-surface px-2 py-0.5 text-text-subtle">{t(CATEGORY_LABEL_KEYS[origin.category])}</span>
+            {session.botProfiles.map((profile) => (
+              <span key={profile} className="inline-flex max-w-[10rem] items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 font-medium text-accent" title={`Bot profile used: ${profile}`}>
+                <Bot size={10} aria-hidden />
+                <span className="truncate">{profile}</span>
+              </span>
+            ))}
             <span className="min-w-0 max-w-[11rem] truncate sm:max-w-[15rem]">{session.model}</span>
             <span>·</span>
             <span>{t('sessions.msgs', { count: session.messageCount })}</span>
@@ -211,7 +223,7 @@ function SessionRow({
               <span className="truncate">{session.sessionId}</span>
             </button>
             <span className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:ml-auto sm:w-auto">
-              {actions.resumeChat ? <SessionActionButton label={t('sessions.resumeChat')} icon={<MessageSquare size={14} />} onClick={() => navigate(`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`)} variant="primary" className="!min-w-0 !border-0 !px-2 sm:!px-3" /> : null}
+              {actions.resumeChat ? <SessionActionButton label={t('sessions.resumeChat')} icon={<MessageSquare size={14} />} onClick={() => navigate(sessionResumeUrl(session.sessionId, session.sessionKey, session.profile))} variant="primary" className="!min-w-0 !border-0 !px-2 sm:!px-3" /> : null}
               {actions.trace ? <SessionActionButton label={t('sessions.trace')} icon={<Workflow size={14} />} onClick={() => navigate(`/agents?session=${encodeURIComponent(session.sessionId)}`)} className="!min-w-0 !border-0 !bg-sky-500/10 !text-sky-300 hover:!bg-sky-500/20 !px-2 sm:!px-3" /> : null}
               {actions.inspect ? <SessionActionButton label={t('sessions.searchAction')} icon={<Search size={14} />} onClick={() => onInspect(session)} variant="ghost" className="!min-w-0 !border-0 !bg-transparent !px-2 text-text-muted hover:!bg-surface-sunken hover:!text-text sm:!px-3" /> : null}
             </span>
@@ -268,7 +280,7 @@ function SessionDetails({ session, onClose, onCopy }: { session: MissionControlA
       borderless
       footer={(
         <div className="flex flex-wrap gap-2">
-          {actions.resumeChat ? <SessionActionButton label={t('sessions.resumeChat')} icon={<MessageSquare size={14} />} onClick={() => navigate(`/sessions?chatSession=${encodeURIComponent(session.sessionId)}`)} variant="primary" className="!border-0" /> : null}
+          {actions.resumeChat ? <SessionActionButton label={t('sessions.resumeChat')} icon={<MessageSquare size={14} />} onClick={() => navigate(sessionResumeUrl(session.sessionId, session.sessionKey, session.profile))} variant="primary" className="!border-0" /> : null}
           {actions.trace ? <SessionActionButton label={t('sessions.openTrace')} icon={<Workflow size={14} />} onClick={() => navigate(`/agents?session=${encodeURIComponent(session.sessionId)}`)} className="!border-0 !bg-sky-500/10 !text-sky-300 hover:!bg-sky-500/20" /> : null}
           <SessionActionButton label={t('sessions.copySessionId')} icon={<Copy size={14} />} onClick={() => onCopy(session.sessionId)} variant="ghost" className="!border-0 !bg-transparent text-text-muted hover:!bg-surface-sunken hover:!text-text" />
         </div>

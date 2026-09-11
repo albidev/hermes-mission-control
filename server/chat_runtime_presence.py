@@ -45,6 +45,10 @@ def update_runtime_presence(payload: Dict[str, Any]) -> Dict[str, Any]:
     if phase not in _ALLOWED_PHASES:
         raise ValueError("phase must be connected, running, or closed")
 
+    def _valid_profile(value: Any) -> str | None:
+        profile = str(value or "").strip()
+        return profile or None
+
     key = (client_id, runtime_session_id)
     now = time.time()
     with _LOCK:
@@ -58,6 +62,7 @@ def update_runtime_presence(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "runtimeSessionId": runtime_session_id,
                 "resumedFrom": _text(payload.get("resumedFrom"), 160) or None,
                 "sessionKey": _text(payload.get("sessionKey"), 240) or None,
+                "profile": _valid_profile(payload.get("profile")),
                 "phase": phase,
                 "source": _text(payload.get("source"), 80) or "mission-control",
                 "title": _text(payload.get("title"), 240) or None,

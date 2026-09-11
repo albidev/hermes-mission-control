@@ -75,7 +75,7 @@ assertIncludes(chatGateway, 'publishChatSync(storedToken, activeSessionId, \'sys
 assertIncludes(chatSync, 'export type ChatSyncEnvelope', 'chat sync envelope supports control acknowledgements');
 assertIncludes(chatSync, 'export function applySyncedChatMessage', 'chat sync deduplicates mirrored messages');
 assertIncludes(chatSync, 'let publishQueue: Promise<void> = Promise.resolve();', 'chat sync serializes publishes to preserve event order');
-assertIncludes(chatGateway, 'if (!open || initialSessionId?.trim()) return;', 'explicit session resume is not overridden by the global last-chat pointer');
+assertIncludes(chatGateway, 'serverPointerMatchesRequestedSession(requested, serverChat)', 'explicit session resume resolves only its own runtime alias through the shared pointer');
 assertIncludes(todoPlan, 'aria-expanded={expanded}', 'TODO capsule exposes expansion state');
 assertIncludes(todoPlan, 'role="progressbar"', 'expanded TODO plan exposes progress semantics');
 assertIncludes(todoPlan, 'chat-plan-item-${item.status}', 'TODO plan maps item status to a semantic class');

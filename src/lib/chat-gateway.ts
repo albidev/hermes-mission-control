@@ -41,7 +41,7 @@ import { deriveTodoPlan, normalizeTodoPlanSnapshot, type TodoPlan } from './todo
 import type { ChatSlashCompletionResponse } from '../components/ChatSlashPopover';
 import { CHAT_PRESENCE_EVENT, getChatPresence, getChatReadState, publishChatPresence } from './chat-presence';
 import { fetchServerLastChat, persistChat, persistChatTitle, readPersistedChat, syncLastChatToServer } from './chat-persistence';
-import { canClaimLastChatPointer, createChatBootstrapGuard, shouldAdoptServerPointer, type LastChatClaimAction, type ServerLastChat } from './chat-bootstrap';
+import { canClaimLastChatPointer, createChatBootstrapGuard, serverPointerMatchesRequestedSession, shouldAdoptServerPointer, type LastChatClaimAction, type ServerLastChat } from './chat-bootstrap';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
 import { applySyncedAssistantMessage, applySyncedChatMessage, applySyncedUserMessage, chatSyncStreamUrl, fetchChatTranscript, publishChatSync, replaceWithCanonicalChatMessages, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
@@ -185,6 +185,7 @@ export function useGatewayChat(
   const pendingClarifyContentRef = useRef<ClarifyInteractionContent | null>(null);
   const intentionalCloseRef = useRef(false);
   const requestedSessionIdRef = useRef<string | null>(initialSessionId ?? null);
+  const sessionProfileRef = useRef<string | null>(botProfile?.trim() || initial.profile || null);
   const previewModeRef = useRef<boolean>(Boolean(initialSessionId?.trim()));
   const connectRef = useRef<() => Promise<void>>(async () => {});
   const readyResolveRef = useRef<(() => void) | null>(null);
@@ -200,6 +201,7 @@ export function useGatewayChat(
     sessionId: initial.sessionId,
     sessionKey: initial.sessionKey,
     modelIdentity: initial.modelIdentity,
+    profile: initial.profile,
     revision: initial.revision,
   } : null);
   const pointerBootstrapPromiseRef = useRef<Promise<void> | null>(null);
@@ -215,6 +217,11 @@ export function useGatewayChat(
   }, []);
 
   useEffect(() => {
+    const explicitProfile = botProfile?.trim();
+    if (explicitProfile) sessionProfileRef.current = explicitProfile;
+  }, [botProfile]);
+
+  useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
@@ -228,6 +235,7 @@ export function useGatewayChat(
 
   useEffect(() => {
     const requested = initialSessionId?.trim() || null;
+    if (requested) sessionProfileRef.current = botProfile?.trim() || null;
     requestedSessionIdRef.current = requested;
     previewModeRef.current = Boolean(requested);
     setPreviewMode(Boolean(requested));
@@ -245,15 +253,16 @@ export function useGatewayChat(
     setModelPickerRefresh(false);
     setInteraction(null);
     setActivity(null);
-  }, [initialSessionId]);
+  }, [botProfile, initialSessionId]);
 
   useEffect(() => {
     if (!transcriptReadyRef.current) return;
-    persistChat(sessionId, sessionKey, modelIdentity, messages, pointerRevision);
+    persistChat(sessionId, sessionKey, modelIdentity, messages, pointerRevision, sessionProfileRef.current);
   }, [messages, modelIdentity, pointerRevision, sessionId, sessionKey]);
 
   const adoptServerPointer = useCallback((serverChat: ServerLastChat) => {
     pointerRef.current = serverChat;
+    sessionProfileRef.current = serverChat.profile?.trim() || sessionProfileRef.current || null;
     setPointerRevision(serverChat.revision);
     const currentSessionId = sessionIdRef.current;
     if (currentSessionId !== serverChat.sessionId) {
@@ -273,10 +282,11 @@ export function useGatewayChat(
     if (serverChat.modelIdentity) setModelIdentity(serverChat.modelIdentity);
   }, []);
 
-  // Generic drawer open is a read/adopt barrier. It never claims the shared
-  // pointer; only an explicit create/resume/submit action may do that.
+  // Resolve a deep-link alias before any resume. The server pointer maps a
+  // short-lived runtime ID back to its durable SessionDB key and profile, but
+  // only when it names this exact requested chat.
   const bootstrapPointer = useCallback(async (): Promise<void> => {
-    if (initialSessionId?.trim()) return;
+    const requested = initialSessionId?.trim() || null;
     const existing = pointerBootstrapPromiseRef.current;
     if (existing) {
       await existing;
@@ -285,6 +295,10 @@ export function useGatewayChat(
     const attempt = pointerBootstrapGuardRef.current.begin();
     const bootstrap = fetchServerLastChat(storedToken, attempt.signal).then((serverChat) => {
       if (!pointerBootstrapGuardRef.current.isCurrent(attempt) || !serverChat) return;
+      if (requested) {
+        if (serverPointerMatchesRequestedSession(requested, serverChat)) adoptServerPointer(serverChat);
+        return;
+      }
       const local = readPersistedChat();
       if (shouldAdoptServerPointer({ sessionId: local.sessionId, revision: local.revision }, serverChat)) {
         adoptServerPointer(serverChat);
@@ -331,7 +345,7 @@ export function useGatewayChat(
   }, []);
 
   useEffect(() => {
-    if (!open || initialSessionId?.trim()) return;
+    if (!open) return;
     void bootstrapPointer();
     return () => {
       // A closed drawer starts a new bootstrap lifecycle on reopen. Do not let
@@ -378,15 +392,26 @@ export function useGatewayChat(
     activeSessionId: string,
   ): Promise<string> => {
     if (!canClaimLastChatPointer(action)) return activeSessionId;
-    const result = await syncLastChatToServer(
+    let result = await syncLastChatToServer(
       activeSessionId,
       sessionKeyRef.current || activeSessionId,
       modelIdentity,
       storedToken,
       pointerRef.current?.revision ?? null,
+      sessionProfileRef.current,
     );
+    if (result.conflict && result.lastChat) {
+      result = await syncLastChatToServer(
+        activeSessionId,
+        sessionKeyRef.current || activeSessionId,
+        modelIdentity,
+        storedToken,
+        result.lastChat.revision,
+        sessionProfileRef.current,
+      );
+    }
     if (result.lastChat) adoptServerPointer(result.lastChat);
-    return result.lastChat?.sessionId ?? activeSessionId;
+    return result.lastChat?.sessionKey ?? result.lastChat?.sessionId ?? activeSessionId;
   }, [adoptServerPointer, modelIdentity, storedToken]);
 
   const prepareEventReplay = useCallback((): { sessionId: string; lastSeen: number } | null => {
@@ -440,7 +465,7 @@ export function useGatewayChat(
     const rawTranscript = extractTranscript(resumed);
     const resolvedSessionId = activeSessionId ?? extractSessionId(resumed);
     const resolvedSessionKey = activeSessionKey ?? extractSessionKey(resumed) ?? resolvedSessionId;
-    const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey, botProfile);
+    const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey, sessionProfileRef.current);
     const transcript = canonicalTranscript ?? [];
     const inflight = extractInflightAssistant(resumed);
     const inflightMessage: ChatMessage | null = inflight
@@ -467,7 +492,7 @@ export function useGatewayChat(
     if (resumedTodoPlan) setTodoPlan(resumedTodoPlan);
     else if (transcript.length > 0) setTodoPlan(deriveTodoPlan(transcript));
     return { transcript, inflight };
-  }, [botProfile, storedToken]);
+  }, [storedToken]);
 
   const reconcileSessionSnapshot = useCallback(async (activeSessionId: string) => {
     try {
@@ -476,12 +501,12 @@ export function useGatewayChat(
         cols: 80,
         eager_build: true,
         source: 'mission-control',
-      }, botProfile));
+      }, sessionProfileRef.current));
       await hydrateSessionSnapshot(resumed, activeSessionId, sessionKeyRef.current ?? activeSessionId);
     } catch {
       // A disconnected or busy gateway is retried by the next reconciliation tick.
     }
-  }, [botProfile, hydrateSessionSnapshot, request]);
+  }, [hydrateSessionSnapshot, request]);
 
   useEffect(() => {
     if (!open || previewMode || connectionState !== 'connected') return;
@@ -673,7 +698,7 @@ export function useGatewayChat(
 
   const ensureSession = useCallback(async (preferredSessionId?: string | null) => {
     const explicitSessionId = preferredSessionId?.trim() || initialSessionId?.trim() || null;
-    const existingKey = explicitSessionId || requestedSessionIdRef.current || sessionKeyRef.current || sessionIdRef.current;
+    const existingKey = sessionKeyRef.current || explicitSessionId || requestedSessionIdRef.current || sessionIdRef.current;
     const isExplicitResume = Boolean(explicitSessionId);
     if (existingKey) {
       try {
@@ -682,7 +707,7 @@ export function useGatewayChat(
           cols: 80,
           eager_build: true,
           source: 'mission-control',
-        }, botProfile));
+        }, sessionProfileRef.current));
         adoptModel(resumed);
         const resolvedSessionId = extractSessionId(resumed) ?? sessionIdRef.current ?? existingKey;
         const resolvedSessionKey = extractSessionKey(resumed) ?? existingKey;
@@ -717,7 +742,7 @@ export function useGatewayChat(
       }
     }
 
-    const created = await request<unknown>('session.create', addChatProfile({ cols: 80, source: 'mission-control' }, botProfile));
+    const created = await request<unknown>('session.create', addChatProfile({ cols: 80, source: 'mission-control' }, sessionProfileRef.current));
     setResumedRuntime(null);
     adoptModel(created);
     const createdSessionId = extractSessionId(created);
@@ -729,7 +754,7 @@ export function useGatewayChat(
     sessionKeyRef.current = createdSessionKey;
     setRunning(false);
     return createdSessionId;
-  }, [adoptModel, botProfile, hydrateSessionSnapshot, initialSessionId, request]);
+  }, [adoptModel, hydrateSessionSnapshot, initialSessionId, request]);
 
   const clearPendingPrompt = useCallback(() => {
     pendingPromptRef.current = null;
@@ -801,6 +826,8 @@ export function useGatewayChat(
     previewModeRef.current = false;
     setPreviewMode(false);
     try {
+      // Do not race an explicit runtime alias against its pointer translation.
+      await bootstrapPointer();
       let activeSessionId = await ensureSession(initialSessionId);
       if (activeSessionId) {
         const canonicalSessionId = await claimLastChatPointer('resume', activeSessionId);
@@ -814,7 +841,7 @@ export function useGatewayChat(
       setError(err instanceof Error ? err.message : 'Failed to resume the selected session.');
       return null;
     }
-  }, [claimLastChatPointer, ensureSession, initialSessionId, refreshContext, refreshModel, replayPendingPrompt]);
+  }, [bootstrapPointer, claimLastChatPointer, ensureSession, initialSessionId, refreshContext, refreshModel, replayPendingPrompt]);
 
   useEffect(() => {
     if (!open || previewMode || connectionState !== 'connected' || !resumedRuntime) return;
@@ -823,6 +850,7 @@ export function useGatewayChat(
       runtimeSessionId: resumedRuntime.runtimeSessionId,
       resumedFrom: resumedRuntime.resumedFrom,
       sessionKey: resumedRuntime.sessionKey,
+      profile: sessionProfileRef.current,
       model: modelIdentity?.model ?? null,
       title: sessionTitle ?? null,
       phase: 'connected' as const,

@@ -48,6 +48,36 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["messages"][0]["content"], "Crossconnection reply")
 
+    def test_runtime_presence_overlays_canonical_session_key_in_its_profile(self):
+        canonical = {
+            "sessionId": "stored-bot-session",
+            "sessionKey": "stored-bot-session",
+            "profile": "crossnection",
+            "status": "idle",
+            "endedAt": 1,
+            "lastActiveAt": 1,
+            "messageCount": 42,
+        }
+        presence = {
+            "runtimeSessionId": "runtime-alias",
+            "resumedFrom": "stored-bot-session",
+            "sessionKey": "stored-bot-session",
+            "profile": "crossnection",
+            "updatedAt": 2,
+            "source": "mission-control",
+        }
+        with patch.object(mission_control_agents, "active_runtime_presences", return_value=[presence]):
+            items = [dict(canonical)]
+            mission_control_agents._apply_runtime_presence(items, profile="crossnection")
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]["messageCount"], 42)
+            self.assertEqual(items[0]["runtimeSessionId"], "runtime-alias")
+            self.assertEqual(items[0]["status"], "live")
+
+            default_items = []
+            mission_control_agents._apply_runtime_presence(default_items, profile=None)
+            self.assertEqual(default_items, [])
+
     def test_agent_trace_uses_requested_profile_scope(self):
         calls = []
 
@@ -201,10 +231,12 @@ class MissionControlSessionOrderTests(unittest.TestCase):
                     "last_active": "2026-08-28T10:00:00+00:00",
                 },
                 300,
+                bot_profiles=["crossnection"],
             )
 
         self.assertEqual(item["category"], "conversation")
         self.assertEqual(item["originLabel"], "Desktop")
+        self.assertEqual(item["botProfiles"], ["crossnection"])
         self.assertTrue(item["isResumable"])
 
     def test_session_item_exposes_canonical_origin_metadata(self):
@@ -294,6 +326,7 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         }
         with (
             patch.object(mission_control_agents, "_read_gateway_sessions_index", return_value=index),
+            patch.object(mission_control_agents, "_available_profile_names", return_value=[]),
             patch.object(mission_control_agents, "_iter_db_session_ids", return_value=[]),
             patch.object(mission_control_agents, "_try_get_session_db", return_value=None),
             patch.object(mission_control_agents, "_read_session_jsonl", return_value=[]),

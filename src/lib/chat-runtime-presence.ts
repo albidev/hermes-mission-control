@@ -4,6 +4,7 @@ type RuntimePresencePayload = {
   runtimeSessionId: string;
   resumedFrom: string;
   sessionKey?: string | null;
+  profile?: string | null;
   phase: RuntimePresencePhase;
   source?: string;
   title?: string | null;

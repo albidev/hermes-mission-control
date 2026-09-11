@@ -72,8 +72,20 @@ export async function loadAllPersistedBotHandoffs(accessToken: string): Promise<
   }
 }
 
-export async function persistBotHandoff(accessToken: string, sessionId: string, handoff: PersistedBotHandoff): Promise<void> {
-  const sessionIds = [...new Set([sessionId.trim(), handoff.targetSessionId?.trim() || ''].filter(Boolean))];
+export async function persistBotHandoff(
+  accessToken: string,
+  sessionId: string,
+  handoff: PersistedBotHandoff,
+  canonicalSessionKey?: string | null,
+): Promise<void> {
+  // Runtime IDs change on each resume; the canonical key is what Sessions and
+  // cross-device deep links use. Persist both aliases so either surface can
+  // reconstruct the same attributed Bot exchange.
+  const sessionIds = [...new Set([
+    sessionId.trim(),
+    canonicalSessionKey?.trim() || '',
+    handoff.targetSessionId?.trim() || '',
+  ].filter(Boolean))];
   if (sessionIds.length === 0) return;
   await Promise.all(sessionIds.map(async (targetSessionId) => {
     try {
