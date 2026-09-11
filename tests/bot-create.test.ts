@@ -34,7 +34,7 @@ test('fresh profile creation omits the starting profile', () => {
   assert.equal(input.cloneFrom, undefined);
 });
 
-test('delete profile uses the authenticated dashboard REST contract', async () => {
+test('delete profile sends the authenticated dashboard REST request', async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ input: string; init?: RequestInit }> = [];
   globalThis.fetch = (async (input, init) => {
@@ -45,7 +45,7 @@ test('delete profile uses the authenticated dashboard REST contract', async () =
     });
   }) as typeof fetch;
   try {
-    await deleteBotProfile(' researcher ');
+    await deleteBotProfile(' researcher ', ' mc-token ');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -53,6 +53,10 @@ test('delete profile uses the authenticated dashboard REST contract', async () =
   assert.equal(calls[0]?.input, '/api/profiles/researcher');
   assert.equal(calls[0]?.init?.method, 'DELETE');
   assert.equal(calls[0]?.init?.credentials, 'include');
+  assert.deepEqual(calls[0]?.init?.headers, {
+    Accept: 'application/json',
+    Authorization: 'Bearer mc-token',
+  });
 });
 
 test('default profile is rejected before issuing a delete request', async () => {

@@ -28,6 +28,10 @@ cd "$HERMES_AGENT_DIR"
 
 export MISSION_CONTROL_TOKEN="${MISSION_CONTROL_TOKEN:-}"
 export API_SERVER_KEY="${API_SERVER_KEY:-}"
+# The dashboard REST middleware validates its own session token. MC already
+# authenticates with MISSION_CONTROL_TOKEN, so make that the stable dashboard
+# session token unless an explicit dashboard token was configured.
+export HERMES_DASHBOARD_SESSION_TOKEN="${HERMES_DASHBOARD_SESSION_TOKEN:-${MISSION_CONTROL_TOKEN:-}}"
 
 DASHBOARD_HOST="${MISSION_CONTROL_DASHBOARD_HOST:-127.0.0.1}"
 DASHBOARD_PORT="${MISSION_CONTROL_DASHBOARD_PORT:-9119}"

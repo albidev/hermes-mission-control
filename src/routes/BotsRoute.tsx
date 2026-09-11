@@ -930,7 +930,7 @@ export function BotsRoute() {
     setBusy(true);
     setError(null);
     try {
-      await deleteBotProfile(target.name);
+      await deleteBotProfile(target.name, storedToken || undefined);
       setDetailOpen(false);
       setDetails(null);
       setSelectedName(null);

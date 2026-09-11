@@ -2,14 +2,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-export async function deleteBotProfile(name: string): Promise<void> {
+export async function deleteBotProfile(name: string, accessToken?: string): Promise<void> {
   const normalizedName = name.trim();
   if (!normalizedName) throw new Error('A Bot profile name is required.');
   if (normalizedName === 'default') throw new Error('The default profile cannot be deleted.');
   const response = await fetch(`/api/profiles/${encodeURIComponent(normalizedName)}`, {
     method: 'DELETE',
     credentials: 'include',
-    headers: { Accept: 'application/json' },
+    headers: {
+      Accept: 'application/json',
+      ...(accessToken?.trim() ? { Authorization: `Bearer ${accessToken.trim()}` } : {}),
+    },
   });
   let payload: unknown = null;
   try {
