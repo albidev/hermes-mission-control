@@ -117,10 +117,13 @@ async function loadCanonicalTranscript(
   sessionId: string | null,
   sessionKey: string | null,
   profile?: string | null,
-): Promise<ChatMessage[] | null> {
+): Promise<{ messages: ChatMessage[]; sessionTitle: string | null } | null> {
   const payload = await fetchChatTranscript(accessToken, sessionId, sessionKey, profile);
   if (!payload?.complete) return null;
-  return normalizeTranscript(payload.messages);
+  return {
+    messages: normalizeTranscript(payload.messages),
+    sessionTitle: payload.sessionTitle ?? null,
+  };
 }
 
 function applyLiveGatewayEvent(messages: ChatMessage[], event: GatewayEvent): ChatMessage[] {
@@ -466,7 +469,8 @@ export function useGatewayChat(
     const resolvedSessionId = activeSessionId ?? extractSessionId(resumed);
     const resolvedSessionKey = activeSessionKey ?? extractSessionKey(resumed) ?? resolvedSessionId;
     const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey, sessionProfileRef.current);
-    const transcript = canonicalTranscript ?? [];
+    const transcript = canonicalTranscript?.messages ?? [];
+    if (canonicalTranscript?.sessionTitle) setSessionTitle(canonicalTranscript.sessionTitle);
     const inflight = extractInflightAssistant(resumed);
     const inflightMessage: ChatMessage | null = inflight
       ? {

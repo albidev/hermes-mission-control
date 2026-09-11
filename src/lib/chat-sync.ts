@@ -3,6 +3,7 @@ import type { ChatMessage, ChatTimestampMetadata, GatewayEvent, GatewayTranscrip
 export type CanonicalChatTranscript = {
   sessionId: string;
   sessionKey: string;
+  sessionTitle?: string | null;
   messages: GatewayTranscriptMessage[];
   complete: boolean;
   count: number;
@@ -136,6 +137,9 @@ export async function fetchChatTranscript(
     const rawMessages = Array.isArray(payload.messages) ? payload.messages : [];
     const sessionIdValue = typeof payload.sessionId === 'string' ? payload.sessionId : sessionId || '';
     const sessionKeyValue = typeof payload.sessionKey === 'string' ? payload.sessionKey : sessionKey || sessionIdValue;
+    const sessionTitleValue = typeof payload.sessionTitle === 'string' && payload.sessionTitle.trim()
+      ? payload.sessionTitle.trim()
+      : null;
     const count = typeof payload.count === 'number' && Number.isFinite(payload.count)
       ? Math.max(0, Math.floor(payload.count))
       : rawMessages.length;
@@ -143,6 +147,7 @@ export async function fetchChatTranscript(
     return {
       sessionId: sessionIdValue,
       sessionKey: sessionKeyValue,
+      sessionTitle: sessionTitleValue,
       messages: rawMessages.filter((item): item is GatewayTranscriptMessage => Boolean(item) && typeof item === 'object') as GatewayTranscriptMessage[],
       complete,
       count,

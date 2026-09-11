@@ -402,6 +402,15 @@ def load_chat_transcript(
     db = _try_get_session_db(profile)
     try:
         resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
+        session_title = None
+        try:
+            rich_row = _get_db_rich_row(db, resolved_id) if db is not None else None
+            if isinstance(rich_row, dict):
+                raw_title = rich_row.get("title")
+                if isinstance(raw_title, str) and raw_title.strip():
+                    session_title = raw_title.strip()
+        except Exception:
+            session_title = None
         display_rows = db.get_resume_conversations(resolved_id)[1] if db is not None else []
         messages: list[dict[str, Any]] = []
         for row in display_rows:
@@ -440,6 +449,7 @@ def load_chat_transcript(
         return {
             "sessionId": resolved_id,
             "sessionKey": resolved_key,
+            "sessionTitle": session_title,
             "messages": messages,
             "complete": True,
             "count": len(messages),
