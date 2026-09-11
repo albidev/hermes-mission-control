@@ -1661,7 +1661,33 @@ def _build_trace_from_messages(
     limit: int,
     compact: bool,
     warnings: list[str] | None = None,
+    handoff_id: str | None = None,
 ) -> dict[str, Any]:
+    trace_warnings = list(warnings or [])
+    if handoff_id:
+        marker = f"handoff_id: {handoff_id.strip()}"
+        start_index = next(
+            (
+                index
+                for index, message in enumerate(messages)
+                if marker in _normalize_text(message.get("content"))
+            ),
+            None,
+        )
+        if start_index is None:
+            messages = []
+            trace_warnings.append(f"Handoff {handoff_id} was not found in this session transcript.")
+        else:
+            end_index = next(
+                (
+                    index
+                    for index in range(start_index + 1, len(messages))
+                    if str(messages[index].get("role") or "") == "user"
+                ),
+                len(messages),
+            )
+            messages = messages[start_index:end_index]
+
     session_ref = _normalize_trace_session_ref(session_item)
     base_ts = None
     if session_ref:
@@ -1841,14 +1867,20 @@ def _build_trace_from_messages(
         "nodes": nodes,
         "edges": _build_sequence_edges(events),
         "stats": _trace_stats(events, session_ref),
-        "warnings": warnings or [],
+        "warnings": trace_warnings,
     }
     return _slice_trace_payload(payload, limit)
 
 
-def _build_trace_from_transcript(session_id: str, limit: int = 300, compact: bool = False) -> dict[str, Any] | None:
-    session_item = next((item for item in _collect_agent_sessions(include_recent_messages=False) if item["sessionId"] == session_id), None)
-    jsonl_rows = _read_session_jsonl(session_id)
+def _build_trace_from_transcript(
+    session_id: str,
+    limit: int = 300,
+    compact: bool = False,
+    profile: str | None = None,
+    handoff_id: str | None = None,
+) -> dict[str, Any] | None:
+    session_item = next((item for item in _collect_agent_sessions(include_recent_messages=False, profile=profile) if item["sessionId"] == session_id), None)
+    jsonl_rows = _read_session_jsonl(session_id, profile)
     if jsonl_rows:
         messages = [row for row in jsonl_rows if row.get("role") != "session_meta"]
         if messages:
@@ -1859,11 +1891,18 @@ def _build_trace_from_transcript(session_id: str, limit: int = 300, compact: boo
                 limit=limit,
                 compact=compact,
                 warnings=["Native tool-call trace unavailable; built from transcript artifacts."],
+                handoff_id=handoff_id,
             )
     return None
 
 
-def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False, profile: str | None = None) -> dict[str, Any] | None:
+def _build_trace_native(
+    session_id: str,
+    limit: int = 300,
+    compact: bool = False,
+    profile: str | None = None,
+    handoff_id: str | None = None,
+) -> dict[str, Any] | None:
     db = _try_get_session_db(profile)
     try:
         if db is None:
@@ -1873,7 +1912,7 @@ def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False
             return None
         row = _get_db_rich_row(db, session_id)
         session_item = _build_session_item(session_id, _read_gateway_sessions_index(profile).get(session_id), None, row, 300)
-        return _build_trace_from_messages(session_item, messages, trace_mode=_TRACE_MODE_NATIVE, limit=limit, compact=compact)
+        return _build_trace_from_messages(session_item, messages, trace_mode=_TRACE_MODE_NATIVE, limit=limit, compact=compact, handoff_id=handoff_id)
     finally:
         _close_session_db(db)
 
@@ -1921,16 +1960,29 @@ def load_agent_trace_snapshot(
     limit: int = 300,
     compact: bool = False,
     profile: str | None = None,
+    handoff_id: str | None = None,
 ) -> dict[str, Any]:
     resolved_session_id = session_id or _pick_default_session_id()
     if not resolved_session_id:
         return _fallback_unavailable_trace(None, "No session artifacts were found for Mission Control trace.")
 
-    native = _build_trace_native(resolved_session_id, limit=limit, compact=compact, profile=profile)
+    native = _build_trace_native(
+        resolved_session_id,
+        limit=limit,
+        compact=compact,
+        profile=profile,
+        handoff_id=handoff_id,
+    )
     if native is not None:
         return native
 
-    transcript = _build_trace_from_transcript(resolved_session_id, limit=limit, compact=compact)
+    transcript = _build_trace_from_transcript(
+        resolved_session_id,
+        limit=limit,
+        compact=compact,
+        profile=profile,
+        handoff_id=handoff_id,
+    )
     if transcript is not None:
         return transcript
 

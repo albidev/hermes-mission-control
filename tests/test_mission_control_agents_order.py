@@ -108,7 +108,49 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(payload["traceMode"], "native")
         self.assertGreater(len(payload["events"]), 0)
 
-    def test_index_only_sessions_fill_first_page_before_db_history(self):
+    def test_agent_trace_filters_to_requested_handoff_and_keeps_reasoning_and_tools(self):
+        messages = [
+            {
+                "role": "user",
+                "content": "[MISSION CONTROL HANDOFF — NEW REQUEST]\\nhandoff_id: h1\\nCURRENT REQUEST:\\nfirst",
+                "timestamp": 1789047540.0,
+            },
+            {
+                "role": "assistant",
+                "reasoning": "Reasoning for first handoff",
+                "tool_calls": [{"id": "call-1", "function": {"name": "search", "arguments": "{\\\"q\\\":\\\"first\\\"}"}}],
+                "timestamp": 1789047541.0,
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "first tool result", "timestamp": 1789047542.0},
+            {"role": "assistant", "content": "first answer", "timestamp": 1789047543.0},
+            {
+                "role": "user",
+                "content": "[MISSION CONTROL HANDOFF — NEW REQUEST]\\nhandoff_id: h2\\nCURRENT REQUEST:\\nsecond",
+                "timestamp": 1789047550.0,
+            },
+            {"role": "assistant", "reasoning": "Reasoning for second handoff", "content": "second answer", "timestamp": 1789047551.0},
+        ]
+        session_item = {"sessionId": "bot-session", "title": "Bot Chat", "model": "test", "status": "ended"}
+        with (
+            patch.object(mission_control_agents, "_build_trace_native", return_value=None),
+            patch.object(mission_control_agents, "_collect_agent_sessions", return_value=[session_item]),
+            patch.object(mission_control_agents, "_read_session_jsonl", return_value=messages) as read_jsonl,
+        ):
+            payload = mission_control_agents.load_agent_trace_snapshot(
+                session_id="bot-session",
+                profile="researcher",
+                handoff_id="h1",
+                limit=50,
+            )
+
+        read_jsonl.assert_called_once_with("bot-session", "researcher")
+        self.assertEqual([event["type"] for event in payload["events"]], [
+            "turn_started", "user_message", "thought", "tool_call_started", "tool_call_completed", "assistant_response",
+        ])
+        self.assertTrue(all("second" not in event.get("detail", "") for event in payload["events"]))
+        self.assertEqual(payload["stats"]["toolCalls"], 1)
+        self.assertEqual(payload["stats"]["thoughts"], 1)
+
         index = {
             "gateway-live": {
                 "session_id": "gateway-live",

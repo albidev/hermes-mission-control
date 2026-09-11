@@ -223,6 +223,7 @@ export function AgentsRoute() {
   const [refreshing, setRefreshing] = useState(false);
   const [capabilities, setCapabilities] = useState<MissionControlCapabilities>(getFallbackCapabilities());
   const [botLineage, setBotLineage] = useState<BotLineageRecord[]>([]);
+  const [selectedLineageId, setSelectedLineageId] = useState('');
   const [sseFallbackToPolling, setSseFallbackToPolling] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<MissionControlAgentTraceEvent | null>(null);
   const [rawPayloadViewer, setRawPayloadViewer] = useState<{ title: string; content: string } | null>(null);
@@ -247,7 +248,7 @@ export function AgentsRoute() {
           storedToken,
           liveMode ? 200 : 500,
           0,
-          !liveMode && normalizedSessionSearch ? { query: normalizedSessionSearch } : undefined,
+          !liveMode && view !== 'delegation' && normalizedSessionSearch ? { query: normalizedSessionSearch } : undefined,
         );
         setAgentSessions(resolved.items);
       } catch {
@@ -261,6 +262,7 @@ export function AgentsRoute() {
             liveMode ? LIVE_TRACE_LIMIT : 0,
             liveMode && traceCompactAvailable,
             selectedSessionProfile,
+            selectedLineageId,
           );
           setTrace(payload);
         } catch {
@@ -286,24 +288,25 @@ export function AgentsRoute() {
     if (requestedMode === 'post') setLiveMode(false);
   }, [requestedMode]);
 
-  const selectSession = (sessionId: string, manual = false, profile: string | null = null) => {
+  const selectSession = (sessionId: string, manual = false, profile: string | null = null, handoffId: string | null = null) => {
     manualSessionSelectionRef.current = manual;
     hasTraceRef.current = false;
     setTrace(null);
     setTraceLoading(Boolean(sessionId));
     setSelectedSessionProfile(profile?.trim() || null);
+    setSelectedLineageId(handoffId?.trim() || '');
     setSelectedSessionId(sessionId);
   };
 
   const openBotLineage = (row: BotLineageRecord) => {
     const targetSessionId = row.handoff.targetSessionId?.trim();
-    setView('timeline');
+    setView('delegation');
     if (targetSessionId) {
       setLiveMode(false);
-      selectSession(targetSessionId, true, row.handoff.handle);
+      selectSession(targetSessionId, true, row.handoff.handle, row.handoff.id);
       return;
     }
-    selectSession(row.originSessionId, true);
+    selectSession(row.originSessionId, true, null, row.handoff.id);
   };
 
   const orderedSessions = useMemo<MissionControlAgentSessionItem[]>(
@@ -319,6 +322,19 @@ export function AgentsRoute() {
   const baseSessions = liveMode ? trulyLiveSessions : orderedSessions;
   const selectableSessions = baseSessions;
   const normalizedSessionSearch = sessionSearch.trim().toLocaleLowerCase();
+  const inspectableLineages = useMemo(() => {
+    if (!normalizedSessionSearch) return botLineage;
+    return botLineage.filter((row) => [
+      row.handoff.id,
+      row.handoff.handle,
+      row.handoff.displayName,
+      row.handoff.request,
+      row.handoff.status,
+      row.originSessionId,
+      row.handoff.targetSessionId,
+    ].some((value) => String(value ?? '').toLocaleLowerCase().includes(normalizedSessionSearch)));
+  }, [botLineage, normalizedSessionSearch]);
+  const selectedLineage = botLineage.find((row) => row.handoff.id === selectedLineageId);
   const sessionOptions = useMemo(() => {
     if (liveMode || !normalizedSessionSearch) return selectableSessions;
     return selectableSessions.filter((session) => [
@@ -436,6 +452,8 @@ export function AgentsRoute() {
 
   const actionFilterSet = useMemo(() => new Set(selectedActionFilters), [selectedActionFilters]);
   const actionFilterActive = selectedActionFilters.length > 0;
+  const lineageTraceActive = view === 'delegation' && Boolean(selectedLineageId);
+  const tracePanelVisible = view !== 'delegation' || lineageTraceActive;
 
   const toggleActionFilter = (filter: TraceActionFilter) => {
     setSelectedActionFilters((current) =>
@@ -584,7 +602,7 @@ export function AgentsRoute() {
           storedToken,
           liveMode ? 200 : 500,
           0,
-          !liveMode && normalizedSessionSearch ? { query: normalizedSessionSearch } : liveMode ? { tab: 'live' } : undefined,
+          !liveMode && normalizedSessionSearch && view !== 'delegation' ? { query: normalizedSessionSearch } : liveMode ? { tab: 'live' } : undefined,
         );
         if (!cancelled) {
           setAgentSessions(resolved.items);
@@ -606,7 +624,7 @@ export function AgentsRoute() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [liveMode, storedToken, normalizedSessionSearch]);
+  }, [liveMode, view, storedToken, normalizedSessionSearch]);
 
   useEffect(() => {
     setSseFallbackToPolling(false);
@@ -680,6 +698,7 @@ export function AgentsRoute() {
     const params = new URLSearchParams();
     if (selectedSessionId) params.set('session_id', selectedSessionId);
     if (selectedSessionProfile) params.set('profile', selectedSessionProfile);
+    if (selectedLineageId) params.set('handoff_id', selectedLineageId);
     params.set('limit', String(LIVE_TRACE_LIMIT));
     params.set('interval', '1.5');
     if (storedToken) params.set('access_token', storedToken);
@@ -744,7 +763,7 @@ export function AgentsRoute() {
     return () => {
       source?.close();
     };
-  }, [selectedSessionId, liveMode, storedToken, sessionsLoading, sseFallbackToPolling, selectableSessions.length, traceCompactAvailable, traceNamedSseEventAvailable, traceStreamAvailable]);
+  }, [selectedSessionId, selectedSessionProfile, selectedLineageId, liveMode, storedToken, sessionsLoading, sseFallbackToPolling, selectableSessions.length, traceCompactAvailable, traceNamedSseEventAvailable, traceStreamAvailable]);
 
   useEffect(() => {
     if (liveMode && !sseFallbackToPolling && traceStreamAvailable) {
@@ -775,6 +794,7 @@ export function AgentsRoute() {
           liveMode ? LIVE_TRACE_LIMIT : 0,
           liveMode && traceCompactAvailable,
           selectedSessionProfile,
+          selectedLineageId,
         );
         if (!cancelled) {
           setTrace(payload);
@@ -802,7 +822,7 @@ export function AgentsRoute() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSessionId, selectedSessionProfile, liveMode, storedToken, sessionsLoading, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
+  }, [selectedSessionId, selectedSessionProfile, selectedLineageId, liveMode, storedToken, sessionsLoading, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
 
   return (
     <div ref={containerRef} className="route-page-scroll flex min-w-0 flex-col gap-6 h-full overflow-x-hidden overflow-y-auto">
@@ -812,7 +832,7 @@ export function AgentsRoute() {
           eyebrow={t('nav.agents')}
           title={t('agents.title')}
           description={t('agents.description')}
-          meta={selectedSessionId ? t('agents.selectedSessionMeta') : t('agents.noSessionMeta')}
+          meta={selectedLineageId ? t('agents.selectedLineageMeta') : selectedSessionId ? t('agents.selectedSessionMeta') : t('agents.noSessionMeta')}
           actions={<button type="button" onClick={() => void refreshPage()} className="inline-flex items-center justify-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text !px-0 sm:!px-2.5" aria-label={t('common.refresh')} title={t('common.refresh')} disabled={refreshing}>
             <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /><span className="hidden sm:inline">{t('common.refresh')}</span>
           </button>}
@@ -881,7 +901,7 @@ export function AgentsRoute() {
                     <button type="button" aria-pressed={view === 'dag'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${view === 'dag' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => setView('dag')}>
                       <GitBranch className="hidden h-3.5 w-3.5 shrink-0 sm:block" /> {t('agents.dag')}
                     </button>
-                    <button type="button" aria-pressed={view === 'delegation'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${view === 'delegation' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => setView('delegation')}>
+                    <button type="button" aria-pressed={view === 'delegation'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${view === 'delegation' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => { setView('delegation'); setLiveMode(false); setSelectedLineageId(''); setSessionSearch(''); }}>
                       <GitBranch className="hidden h-3.5 w-3.5 shrink-0 sm:block" /> {t('agents.delegation')}
                       {botLineage.length > 0 ? <span className="text-text-subtle">{botLineage.length}</span> : null}
                     </button>
@@ -913,7 +933,19 @@ export function AgentsRoute() {
         </div>
 
         <div className="flex flex-col gap-4 p-4">
-          {!liveMode ? (
+          {view === 'delegation' ? (
+            <label className="flex min-w-0 flex-col gap-1.5 text-xs text-text-muted">
+              <span className="eyebrow">{t('agents.searchLineages')}</span>
+              <input
+                type="search"
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
+                placeholder={t('agents.searchLineagesPlaceholder')}
+                autoComplete="off"
+                className="h-11 min-w-0 w-full rounded-md border border-border-subtle bg-surface-sunken px-3 text-xs text-text outline-none placeholder:text-text-subtle focus:ring-1 focus:ring-accent/40 sm:h-9"
+              />
+            </label>
+          ) : !liveMode ? (
             <label className="flex min-w-0 flex-col gap-1.5 text-xs text-text-muted">
               <span className="eyebrow">{t('agents.searchSessions')}</span>
               <input
@@ -927,36 +959,62 @@ export function AgentsRoute() {
             </label>
           ) : null}
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <label className="text-xs text-text-muted shrink-0">{t('agents.selectedSession')}</label>
-            <select
-              className="h-11 w-full min-w-0 rounded-md bg-surface px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:h-9"
-              value={selectedSessionId}
-              onChange={(event) => selectSession(event.target.value, true)}
-              disabled={selectableSessions.length === 0 && !externalSelectedSession}
-            >
-              {selectedSessionFilteredOut && selectedSessionOption ? (
-                <option value={selectedSessionOption.sessionId}>
-                  {selectedSessionOption.title} · {selectedSessionOption.source}
-                </option>
-              ) : null}
-              {selectableSessions.length === 0 ? (
+          {view === 'delegation' ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label htmlFor="delegation-lineage-select" className="text-xs text-text-muted shrink-0">{t('agents.selectedLineage')}</label>
+              <select
+                id="delegation-lineage-select"
+                className="h-11 w-full min-w-0 rounded-md bg-surface px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:h-9"
+                value={selectedLineageId}
+                onChange={(event) => {
+                  const row = botLineage.find((item) => item.handoff.id === event.target.value);
+                  if (row) openBotLineage(row);
+                }}
+                disabled={botLineage.length === 0}
+              >
                 <option value="">
-                  {liveMode ? t('agents.noLiveSessions') : t('agents.noSessions')}
+                  {botLineage.length === 0 ? t('agents.noBotLineage') : inspectableLineages.length === 0 ? t('agents.noMatchingLineages') : t('agents.inspectLineage')}
                 </option>
-              ) : null}
-              {selectableSessions.length > 0 && sessionOptions.length === 0 ? (
-                <option value="" disabled>{t('agents.noMatchingSessions')}</option>
-              ) : null}
-              {sessionOptions.map((session) => (
-                <option key={session.sessionId} value={session.sessionId}>
-                  {session.title} · {session.source} · {formatRelativeTime(session.lastActiveAt ?? session.startedAt ?? 0)}
-                </option>
-              ))}
-            </select>
-          </div>
+                {inspectableLineages.map((row) => (
+                  <option key={row.handoff.id} value={row.handoff.id}>
+                    @{row.handoff.handle} · {row.handoff.request} · {row.handoff.status}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label htmlFor="agent-session-select" className="text-xs text-text-muted shrink-0">{t('agents.selectedSession')}</label>
+              <select
+                id="agent-session-select"
+                className="h-11 w-full min-w-0 rounded-md bg-surface px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:h-9"
+                value={selectedSessionId}
+                onChange={(event) => selectSession(event.target.value, true)}
+                disabled={selectableSessions.length === 0 && !externalSelectedSession}
+              >
+                {selectedSessionFilteredOut && selectedSessionOption ? (
+                  <option value={selectedSessionOption.sessionId}>
+                    {selectedSessionOption.title} · {selectedSessionOption.source}
+                  </option>
+                ) : null}
+                {selectableSessions.length === 0 ? (
+                  <option value="">
+                    {liveMode ? t('agents.noLiveSessions') : t('agents.noSessions')}
+                  </option>
+                ) : null}
+                {selectableSessions.length > 0 && sessionOptions.length === 0 ? (
+                  <option value="" disabled>{t('agents.noMatchingSessions')}</option>
+                ) : null}
+                {sessionOptions.map((session) => (
+                  <option key={session.sessionId} value={session.sessionId}>
+                    {session.title} · {session.source} · {formatRelativeTime(session.lastActiveAt ?? session.startedAt ?? 0)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-          {view !== 'delegation' && visibleTrace ? (
+          {tracePanelVisible && visibleTrace ? (
             <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-col gap-0.5">
@@ -994,11 +1052,15 @@ export function AgentsRoute() {
             </div>
           ) : null}
 
-          {visibleTrace?.session ? (
+          {tracePanelVisible && visibleTrace?.session ? (
             <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-subtle">
                 <Badge variant={visibleTrace.mode === 'live' ? 'positive' : 'default'}>{visibleTrace.mode}</Badge>
-                <span className="min-w-0 flex-1 truncate">{visibleTrace.session.title} · {visibleTrace.session.model}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {selectedLineage
+                    ? `@${selectedLineage.handoff.handle} · ${selectedLineage.handoff.request}`
+                    : `${visibleTrace.session.title} · ${visibleTrace.session.model}`}
+                </span>
               </div>
               <div className="-mx-1 flex max-w-[calc(100% + 0.5rem)] flex-nowrap items-center gap-1.5 overflow-x-auto px-1 pb-1 text-[11px] text-text-subtle [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:max-w-none sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
                 <span className="shrink-0 rounded-full bg-surface px-2 py-0.5">{t('ui.turns')} {visibleTrace.stats.turns}</span>
@@ -1029,55 +1091,19 @@ export function AgentsRoute() {
             </div>
           ) : null}
 
-          {view === 'delegation' ? (
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <div>
-                  <span className="eyebrow">{t('agents.botLineage')}</span>
-                  <h4 className="mt-1 text-sm font-semibold text-text">{t('agents.botLineageTitle')}</h4>
-                </div>
-                <span className="text-xs tabular-nums text-text-subtle">{botLineage.length}</span>
-              </div>
-              {botLineage.length > 0 ? (
-                <div className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border-subtle bg-surface/50">
-                  {botLineage.map((row) => (
-                    <button
-                      key={row.handoff.id}
-                      type="button"
-                      className="flex w-full min-w-0 flex-col gap-1 px-3 py-3 text-left hover:bg-surface-raised/40"
-                      onClick={() => openBotLineage(row)}
-                    >
-                      <div className="flex min-w-0 items-center gap-2 text-xs">
-                        <Badge variant={row.handoff.status === 'completed' ? 'positive' : row.handoff.status === 'failed' ? 'negative' : 'warning'}>{row.handoff.status}</Badge>
-                        <span className="min-w-0 truncate font-semibold text-text">@{row.handoff.handle}</span>
-                      </div>
-                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-subtle">
-                        <span className="min-w-0 max-w-full truncate sm:max-w-[32rem]">{row.originSessionId} → {row.handoff.targetSessionId || 'canonical'}</span>
-                        {row.handoff.reason ? <code className="max-w-full truncate text-[10px] text-warning">{row.handoff.reason}</code> : null}
-                      </div>
-                      <p className="line-clamp-2 text-xs text-text-muted">{row.handoff.request}</p>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-text-muted">{t('agents.noBotLineage')}</p>
-              )}
-            </div>
-          ) : null}
-
-          {view !== 'delegation' && liveMode && trace && visibleTrace && trace.events.length > visibleTrace.events.length ? (
+          {tracePanelVisible && liveMode && trace && visibleTrace && trace.events.length > visibleTrace.events.length ? (
             <p className="text-xs text-text-subtle">
               Showing {visibleTrace.events.length} of {trace.events.length} events in live scope.
             </p>
           ) : null}
 
-          {view !== 'delegation' && actionFilterActive && visibleTrace && filteredTrace ? (
+          {tracePanelVisible && actionFilterActive && visibleTrace && filteredTrace ? (
             <p className="text-xs text-text-subtle">
               Filtered to {filteredTrace.events.length} of {visibleTrace.events.length} scoped events: {selectedActionFilters.map(getTraceActionLabel).join(', ')}.
             </p>
           ) : null}
 
-          {(traceLoading || sessionsLoading) && !visibleTrace && view !== 'delegation' ? (
+          {(traceLoading || sessionsLoading) && !visibleTrace && tracePanelVisible ? (
             <div className="flex flex-col gap-3 rounded-lg border border-border-subtle bg-surface/50 p-3" role="status" aria-live="polite">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
@@ -1092,7 +1118,7 @@ export function AgentsRoute() {
             </div>
           ) : null}
 
-          {!traceLoading && !sessionsLoading && !visibleTrace && view !== 'delegation' ? (
+          {!traceLoading && !sessionsLoading && !visibleTrace && tracePanelVisible ? (
             <div className="rounded-lg border border-dashed border-border-subtle bg-surface/30 p-4 text-sm text-text-muted">
               {selectedSessionId && selectableSessions.length > 0
                 ? t('agents.noTrace')
@@ -1102,13 +1128,15 @@ export function AgentsRoute() {
             </div>
           ) : null}
 
-          {!traceLoading && visibleTrace && visibleTrace.stats.toolCalls === 0 && visibleTrace.stats.skills === 0 ? (
+          {!traceLoading && tracePanelVisible && visibleTrace && visibleTrace.stats.toolCalls === 0 && visibleTrace.stats.skills === 0 ? (
             <div className="card p-3 text-xs text-text-muted">
-              Questa sessione ha solo user/assistant. Per vedere tool calls e skills, cambia sessione con una run più lunga.
+              {selectedLineageId
+                ? 'Questa lineage non contiene tool call o skill.'
+                : 'Questa sessione ha solo user/assistant. Per vedere tool calls e skills, cambia sessione con una run più lunga.'}
             </div>
           ) : null}
 
-          {!traceLoading && visibleTrace && view === 'timeline' ? (
+          {!traceLoading && visibleTrace && (view === 'timeline' || lineageTraceActive) ? (
             <div className="flex flex-col gap-2">
               {timelineEvents.length > 0 ? (
                 timelineEvents.map((event) => {
