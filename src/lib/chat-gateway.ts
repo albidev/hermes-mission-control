@@ -260,12 +260,13 @@ export function useGatewayChat(
 
   useEffect(() => {
     if (!transcriptReadyRef.current) return;
-    persistChat(sessionId, sessionKey, modelIdentity, messages, pointerRevision, sessionProfileRef.current);
-  }, [messages, modelIdentity, pointerRevision, sessionId, sessionKey]);
+    persistChat(sessionId, sessionKey, sessionTitle, modelIdentity, messages, pointerRevision, sessionProfileRef.current);
+  }, [messages, modelIdentity, pointerRevision, sessionId, sessionKey, sessionTitle]);
 
   const adoptServerPointer = useCallback((serverChat: ServerLastChat) => {
     pointerRef.current = serverChat;
     sessionProfileRef.current = serverChat.profile?.trim() || sessionProfileRef.current || null;
+    if (serverChat.sessionTitle?.trim()) setSessionTitle(serverChat.sessionTitle.trim());
     setPointerRevision(serverChat.revision);
     const currentSessionId = sessionIdRef.current;
     if (currentSessionId !== serverChat.sessionId) {
@@ -395,9 +396,11 @@ export function useGatewayChat(
     activeSessionId: string,
   ): Promise<string> => {
     if (!canClaimLastChatPointer(action)) return activeSessionId;
+    const claimedTitle = sessionTitle?.trim() || null;
     let result = await syncLastChatToServer(
       activeSessionId,
       sessionKeyRef.current || activeSessionId,
+      claimedTitle,
       modelIdentity,
       storedToken,
       pointerRef.current?.revision ?? null,
@@ -407,6 +410,7 @@ export function useGatewayChat(
       result = await syncLastChatToServer(
         activeSessionId,
         sessionKeyRef.current || activeSessionId,
+        claimedTitle,
         modelIdentity,
         storedToken,
         result.lastChat.revision,
@@ -415,7 +419,7 @@ export function useGatewayChat(
     }
     if (result.lastChat) adoptServerPointer(result.lastChat);
     return result.lastChat?.sessionKey ?? result.lastChat?.sessionId ?? activeSessionId;
-  }, [adoptServerPointer, modelIdentity, storedToken]);
+  }, [adoptServerPointer, modelIdentity, sessionTitle, storedToken]);
 
   const prepareEventReplay = useCallback((): { sessionId: string; lastSeen: number } | null => {
     if (eventReplayInFlightRef.current || replayHoldRef.current) return null;
@@ -1545,7 +1549,7 @@ export function useGatewayChat(
     setInteraction(null);
     setActivity(null);
     clearPendingPrompt();
-    persistChat(null, null, null, [], pointerRevision);
+    persistChat(null, null, null, null, [], pointerRevision);
     try {
       let activeSessionId = await ensureSession();
       if (activeSessionId) {

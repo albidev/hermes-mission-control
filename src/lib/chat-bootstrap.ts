@@ -83,11 +83,13 @@ export function serverPointerMatchesRequestedSession(requestedSessionId: string 
 export function buildLastChatClaimPayload(
   sessionId: string,
   sessionKey: string | null,
+  sessionTitle: string | null,
   modelIdentity: ChatModelIdentity | null,
   expectedRevision: number | null,
   profile?: string | null,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { sessionId, sessionKey, modelIdentity };
+  if (sessionTitle?.trim()) body.sessionTitle = sessionTitle.trim();
   if (profile?.trim()) body.profile = profile.trim();
   if (typeof expectedRevision === 'number' && Number.isInteger(expectedRevision) && expectedRevision > 0) {
     body.expectedRevision = expectedRevision;

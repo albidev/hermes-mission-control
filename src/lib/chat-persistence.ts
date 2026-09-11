@@ -7,6 +7,7 @@ const STORAGE_KEY = 'mission-control-chat-drawer-v1';
 export type PersistedChat = {
   sessionId: string | null;
   sessionKey: string | null;
+  sessionTitle: string | null;
   profile: string | null;
   modelIdentity: ChatModelIdentity | null;
   messages: ChatMessage[];
@@ -17,6 +18,7 @@ export type PersistedChat = {
 const emptyPersistedChat = (): PersistedChat => ({
   sessionId: null,
   sessionKey: null,
+  sessionTitle: null,
   profile: null,
   modelIdentity: null,
   messages: [],
@@ -32,6 +34,7 @@ export function readPersistedChat(): PersistedChat {
     return {
       sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
       sessionKey: typeof parsed.sessionKey === 'string' ? parsed.sessionKey : null,
+      sessionTitle: typeof parsed.sessionTitle === 'string' && parsed.sessionTitle.trim() ? parsed.sessionTitle.trim() : null,
       profile: typeof parsed.profile === 'string' && parsed.profile.trim() ? parsed.profile.trim() : null,
       modelIdentity: extractSessionModel(parsed.modelIdentity),
       messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
@@ -48,6 +51,7 @@ export function readPersistedChat(): PersistedChat {
 export function persistChat(
   sessionId: string | null,
   sessionKey: string | null,
+  sessionTitle: string | null,
   modelIdentity: ChatModelIdentity | null,
   messages: ChatMessage[],
   revision: number | null = null,
@@ -59,6 +63,7 @@ export function persistChat(
       JSON.stringify({
         sessionId,
         sessionKey,
+        sessionTitle: sessionTitle?.trim() || null,
         profile: profile?.trim() || null,
         modelIdentity,
         messages,
@@ -114,6 +119,7 @@ function parseLastChatPayload(value: unknown): ServerLastChat | null {
 export async function syncLastChatToServer(
   sessionId: string | null,
   sessionKey: string | null,
+  sessionTitle: string | null,
   modelIdentity: ChatModelIdentity | null,
   storedToken: string,
   expectedRevision: number | null = null,
@@ -121,7 +127,7 @@ export async function syncLastChatToServer(
 ): Promise<LastChatClaimResult> {
   if (!sessionId || !sessionId.trim()) return { accepted: false, conflict: false, lastChat: null };
   try {
-    const body = buildLastChatClaimPayload(sessionId, sessionKey, modelIdentity, expectedRevision, profile);
+    const body = buildLastChatClaimPayload(sessionId, sessionKey, sessionTitle, modelIdentity, expectedRevision, profile);
     const res = await fetch('/api/local/chat/last', {
       method: 'POST',
       headers: {
