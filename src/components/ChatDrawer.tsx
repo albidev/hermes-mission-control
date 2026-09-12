@@ -1644,6 +1644,8 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
   const [creating, setCreating] = useState(false);
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
   const [botCandidates, setBotCandidates] = useState<BotMentionCandidate[]>([]);
   const drawerRef = useRef<HTMLElement>(null);
   const resizingRef = useRef(false);
@@ -1746,13 +1748,14 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
               <span className="chat-mark" aria-hidden><Users size={18} /></span>
               <div className="chat-head-copy">
                 <p className="eyebrow">{t('rooms.eyebrow')}</p>
-                <h2 title={state.rooms.length > 0 ? t('rooms.selectRoom') : undefined} className={state.rooms.length > 0 ? 'inline-flex cursor-pointer items-center gap-1 hover:text-accent' : ''} onClick={state.rooms.length > 0 ? () => setRoomPickerOpen((open) => !open) : undefined}>{state.room?.name || t('rooms.title')}{state.rooms.length > 0 ? <ChevronDown size={13} className={`shrink-0 transition-transform ${roomPickerOpen ? 'rotate-180' : ''}`} /> : null}</h2>
+                {editingName && state.room ? <form onSubmit={(event) => { event.preventDefault(); if (nameDraft.trim() && nameDraft.trim() !== state.room?.name) void state.renameRoom(nameDraft); setEditingName(false); }} className="flex min-w-0 items-center gap-1"><input autoFocus value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => setEditingName(false)} onKeyDown={(event) => { if (event.key === 'Escape') setEditingName(false); }} aria-label={t('rooms.name')} className="mc-input h-7 min-w-0 flex-1 text-xs" /><button type="submit" aria-label={t('rooms.saveName')} title={t('rooms.saveName')} className="chat-control chat-icon-button !h-7 !w-7"><Check size={14} /></button></form> : <h2 title={state.rooms.length > 0 ? t('rooms.selectRoom') : undefined} className={state.rooms.length > 0 ? 'inline-flex cursor-pointer items-center gap-1 hover:text-accent' : ''} onClick={state.rooms.length > 0 ? () => setRoomPickerOpen((open) => !open) : undefined}>{state.room?.name || t('rooms.title')}{state.rooms.length > 0 ? <ChevronDown size={13} className={`shrink-0 transition-transform ${roomPickerOpen ? 'rotate-180' : ''}`} /> : null}</h2>}
                 {state.room && !state.disbanded ? <span className="chat-session-title">{t('rooms.membersCount', { count: state.room.members.length })} · {t('rooms.messagesCount', { count: state.events.length })}</span> : <span className="chat-session-title">{t('rooms.selectRoom')}</span>}
               </div>
             </div>
             <div className="chat-head-actions">
               {state.refreshing ? <Loader2 size={16} className="chat-spin chat-header-loader" aria-label={t('rooms.refresh')} /> : null}
               <span className={`chat-led ${state.disbanded || state.serviceUnavailable ? 'is-offline' : state.pendingActions.length > 0 || state.blocked ? 'is-pending' : 'is-online'}`} title={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')} aria-label={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')}><span className="chat-led-dot" /></span>
+              <button className="chat-control chat-icon-button" type="button" onClick={() => { if (state.room) { setNameDraft(state.room.name ?? ''); setEditingName(true); } }} title={t('rooms.renameRoom')} aria-label={t('rooms.renameRoom')} disabled={!state.room || state.disbanded}><SquarePen size={15} /></button>
               <button className="chat-control chat-icon-button" type="button" onClick={() => setCreating((current) => !current)} title={creating ? t('rooms.close') : t('rooms.create')} aria-label={creating ? t('rooms.close') : t('rooms.create')}>{creating ? <X size={16} /> : <Plus size={16} />}</button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title={t('rooms.close')} aria-label={t('rooms.close')}><X size={18} /></button>
             </div>

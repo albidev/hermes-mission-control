@@ -46,6 +46,7 @@ export type GroupRoomResult = {
   disband: () => Promise<void>;
   approve: (params: { memberId?: string | null; taskId?: string | null; executionGeneration?: number; choice?: string | null; requestId?: string | null }) => Promise<unknown>;
   retryMember: (taskId?: string | null) => Promise<unknown>;
+  renameRoom: (name: string) => Promise<void>;
   stopRoom: () => Promise<number | null>;
   clearAuthorityChange: () => void;
 };
@@ -233,6 +234,14 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     return result;
   }, [loadRoom, selectedRoomId]);
 
+  const renameRoom = useCallback(async (name: string) => {
+    if (!selectedRoomId || !name.trim()) return;
+    try {
+      await clientRef.current.rename(selectedRoomId, `mc-${Date.now()}`, name.trim());
+      if (mountedRef.current) { setError(null); await loadRooms(); await loadRoom(selectedRoomId); }
+    } catch (cause) { if (mountedRef.current) setError(toGroupRoomError(cause)); }
+  }, [loadRoom, loadRooms, selectedRoomId]);
+
   useEffect(() => {
     mountedRef.current = true;
     if (options.enabled === false) { setLoading(false); return () => { mountedRef.current = false; }; }
@@ -266,7 +275,7 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     disbanded: Boolean(room?.disbandedAt), memberActivity, round: deriveRoundCoordinates(events),
     focusHandle: latestMemberEvent?.message.member?.handle ?? null,
     selectRoom, refresh, retry, send, disband, clearAuthorityChange: () => setAuthorityChanged(false),
-    approve, retryMember,
+    approve, retryMember, renameRoom,
     stopRoom,
   };
 }

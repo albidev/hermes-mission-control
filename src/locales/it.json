@@ -1067,5 +1067,7 @@
   "rooms.messagesCount": "{count} messaggi",
   "rooms.ledOnline": "Stanza pronta",
   "rooms.ledPending": "Azione in attesa — richiede approvazione",
-  "rooms.ledOffline": "Sciolta o servizio non disponibile"
+  "rooms.ledOffline": "Sciolta o servizio non disponibile",
+  "rooms.renameRoom": "Rinomina stanza",
+  "rooms.saveName": "Salva nome"
 }
