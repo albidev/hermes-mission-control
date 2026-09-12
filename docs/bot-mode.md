@@ -1,80 +1,80 @@
 # Bot Mode
 
-Mission Control include **Bot Mode**: un roster gestito di profili Hermes trattati come bot, ciascuno con una chat canonica (`Bot Chat`), handoff attribuiti nel flusso di chat, autocomplete `@mention`, group rooms e gestione CRUD completa dei profili. Tutto parla con il gateway Hermes via WebSocket JSON-RPC (`/api/ws`) — nessuna modifica al core Hermes.
+Mission Control includes **Bot Mode**: a managed roster of Hermes profiles treated as bots, each with a canonical chat (`Bot Chat`), attributed handoffs in the chat stream, `@mention` autocomplete, group rooms, and full profile CRUD. Everything talks to the Hermes gateway over the WebSocket JSON-RPC surface (`/api/ws`) — zero Hermes core modifications.
 
-## Architettura
+## Architecture
 
 ```
 React (ChatDrawer / BotsRoute / GroupRoomView)
         │
-        ├─ bot-gateway.ts           → RPC profile-scoped (session.list/create/title, profiles.*, tools.configure)
+        ├─ bot-gateway.ts           → profile-scoped RPC (session.list/create/title, profiles.*, tools.configure)
         ├─ bot-chat-routing.ts      → canonical Bot Chat resolver (single-flight, adopt-before-mint)
-        ├─ bot-chat-policy.ts       → modalità canonical vs task: /new → /compact sulla canonical
-        ├─ bot-handoff*.ts          → handoff attribuiti: observer, persistence, recovery, reasons
-        ├─ bot-lineage.ts           → lineage trace per sessione profile-scoped
-        ├─ bot-mentions.ts          → parsing/autocomplete @mention dal roster live
-        ├─ bot-create.ts / bot-delete.ts → CRUD profili con auth
-        ├─ group-gateway.ts + use-group-room.ts → group rooms via RPC groups.*
-        └─ chat-gateway.ts          → multiplexing eventi per sessione/bot
+        ├─ bot-chat-policy.ts       → canonical vs task mode: /new → /compact on the canonical chat
+        ├─ bot-handoff*.ts          → attributed handoffs: observer, persistence, recovery, reasons
+        ├─ bot-lineage.ts           → lineage trace for profile-scoped sessions
+        ├─ bot-mentions.ts          → @mention parsing/autocomplete from the live roster
+        ├─ bot-create.ts / bot-delete.ts → profile CRUD with auth
+        ├─ group-gateway.ts + use-group-room.ts → group rooms via authenticated groups.* RPC
+        └─ chat-gateway.ts          → event multiplexing per session/bot
         │
         ▼
 GET /api/ws  (Hermes gateway)
 ```
 
-## Feature
+## Features
 
 ### Bot roster (BotsRoute)
 
-- Elenco profili da `profiles.list` (via `loadBotProfiles`), con `is_bot` derivato da `ui_meta.mission_control.bot === true`.
-- CRUD profili: creazione (`bot-create.ts`, opzioni clone, skills, auth sharing, bot roster flag), configurazione (toolsets, MCP servers, skills), **delete con auth** (`bot-delete.ts` — guardia su `default`, verifica `payload.ok === true` dal gateway).
-- Modello/provider configurabili per bot (`loadBotModelOptions` → `profiles.configure` / `tools.configure`).
-- Pagina responsive mobile.
+- Profile list from `profiles.list` (via `loadBotProfiles`), with `is_bot` derived from `ui_meta.mission_control.bot === true`.
+- Profile CRUD: creation (`bot-create.ts`, clone options, skills, auth sharing, bot roster flag), configuration (toolsets, MCP servers, skills), **delete with auth** (`bot-delete.ts` — guard on `default`, verifies `payload.ok === true` from the gateway).
+- Per-bot model/provider configuration (`loadBotModelOptions` → `profiles.configure` / `tools.configure`).
+- Mobile-responsive page.
 
 ### Canonical Bot Chat
 
-Ogni bot ha **una** chat duratura identificata da `(profile, title = "Bot Chat")`, non da un puntatore salvato:
+Each bot has **one** durable chat identified by `(profile, title = "Bot Chat")`, not by a stored pointer:
 
-- `createBotChatResolver` (in `bot-chat-routing.ts`): lookup per nome con `include_hidden: true`, poi create solo se assente (**adopt-before-mint**).
-- Single-flight per profile: un doppio click/submit non crea due sessioni (`inFlight` map).
-- Fail-closed: id registry mancante → errore; `knownCanonicalId` ma lista vuota → errore; race `already-in-use` → re-list + adozione del vincitore.
-- La sessione nasce `hidden: true`; su canonical, `/new` e `/reset` vengono rimappati a `/compact` (`canonicalChatCommand`), così la relazione resta duratura.
+- `createBotChatResolver` (in `bot-chat-routing.ts`): lookup by name with `include_hidden: true`, then create only if absent (**adopt-before-mint**).
+- Single-flight per profile: a double click/submit never creates two sessions (`inFlight` map).
+- Fail-closed: missing registry id → error; `knownCanonicalId` but empty list → error; `already-in-use` race → re-list + adopt the winner.
+- The session is created `hidden: true`; on the canonical chat, `/new` and `/reset` are remapped to `/compact` (`canonicalChatCommand`), keeping the relationship durable.
 
-### Handoff attribuiti
+### Attributed handoffs
 
-- Handoff `@bot` dalla chat origine alla sessione target, con **card di attribuzione** nel flusso (BotHandoffMessage): chi ha risposto, a quale richiesta, con `handoffId` diagnostico.
-- Persistenza e recovery: `bot-handoff-persistence.ts`, `bot-handoff-recovery.ts`, `bot-handoff-observer.ts` (polling di rete con reasons), `bot-handoff-reasons.ts`.
-- Timeline ordina i messaggi attribuiti (chat-timeline) e i reply persi vengono riallineati al resume.
-- Lineage per sessione profile-scoped (bot-lineage) per trace e risoluzione.
+- `@bot` handoff from the origin chat to the target session, with **attribution cards** in the stream (BotHandoffMessage): who answered, which request, with a diagnostic `handoffId`.
+- Persistence and recovery: `bot-handoff-persistence.ts`, `bot-handoff-recovery.ts`, `bot-handoff-observer.ts` (network polling with reasons), `bot-handoff-reasons.ts`.
+- The timeline orders attributed messages (chat-timeline), and lost replies are re-aligned on resume.
+- Profile-scoped session lineage (bot-lineage) for traces and resolution.
 
 ### Mention autocomplete
 
-- `@Bot` completato contro il **roster live** (`profiles.list`), non contro testo libero: mention non risolta = testo invariato.
-- Popover condiviso (`ChatMentionPopover` / `ChatCompletionPopover`) nel composer.
+- `@Bot` completed against the **live roster** (`profiles.list`), never free text: unresolved mention = unchanged text.
+- Shared popover (`ChatMentionPopover` / `ChatCompletionPopover`) in the composer.
 
 ### Group rooms
 
-- Chat di gruppo integrate nel drawer con **vista final-only** (`GroupRoomView` + `group-room-view-model`).
-- Client RPC autenticato (`group-gateway.ts`): costruito con `requestBotRpc(method, params, storedToken)` — il token MC è necessario altrimenti `groups.*` risponde 401.
-- Stato vuoto onesto quando `groups.list` torna zero rooms.
+- Group chats integrated in the drawer with a **final-only view** (`GroupRoomView` + `group-room-view-model`).
+- Authenticated RPC client (`group-gateway.ts`): built with `requestBotRpc(method, params, storedToken)` — the MC token is required otherwise `groups.*` answers 401.
+- Honest empty state when `groups.list` returns zero rooms.
 
-## Invarianti
+## Invariants
 
-1. Un bot è un profilo Hermes.
-2. L'identità del Bot Chat è `(profile, title = "Bot Chat")`; mai puntatori in `ui_meta`/localStorage.
-3. Creazione con **adopt-before-mint**; race risolta con ri-risoluzione e adozione del vincitore.
-4. Nessun endpoint bot su `local_telemetry_server.py` se il dato è già esposto dal gateway JSON-RPC.
-5. Nessuna modifica al core Hermes (zero-core rule).
+1. A bot is a Hermes profile.
+2. The Bot Chat identity is `(profile, title = "Bot Chat")`; never pointers in `ui_meta`/localStorage.
+3. Creation uses **adopt-before-mint**; races are resolved by re-resolution and winner adoption.
+4. No bot endpoint on `local_telemetry_server.py` if the data is already exposed by the gateway JSON-RPC.
+5. No Hermes core modification (zero-core rule).
 
 ## Failure handling
 
-- roster non disponibile → mention non risolta, testo invariato;
-- canonical lookup fallito → **non creare** nuova sessione;
-- `session.list`/`create`/`title` falliti → errori tipizzati con contesto (`BotRpcError` con `code`/`data`);
-- reply persa durante reconnect → outbox/correlation, mai doppio submit cieco;
-- `requestBotRpc` ha timeout (`RPC_TIMEOUT_MS`) e cleanup socket su ogni esito.
+- roster unavailable → mention unresolved, text unchanged;
+- canonical lookup failed → **do not create** a new session;
+- `session.list`/`create`/`title` failures → typed errors with context (`BotRpcError` with `code`/`data`);
+- reply lost during reconnect → outbox/correlation, never blind double submit;
+- `requestBotRpc` has a timeout (`RPC_TIMEOUT_MS`) and socket cleanup on every outcome.
 
-## Test
+## Tests
 
-Suite dedicata in `tests/` : `bot-chat-routing.test.ts`, `bot-chat-policy.test.ts`, `bot-handoff*.test.ts`, `bot-lineage.test.ts`, `bot-mentions.test.ts`, `bot-create.test.ts`, `bot-gateway.test.ts`, `group-gateway.test.ts`, `group-room*.test.ts`, `chat-ui-contract.test.ts`, più store server-side (`server/tests/test_chat_handoff_store.py`, `test_chat_title_store.py`, `test_last_chat_store.py`).
+Dedicated suite in `tests/`: `bot-chat-routing.test.ts`, `bot-chat-policy.test.ts`, `bot-handoff*.test.ts`, `bot-lineage.test.ts`, `bot-mentions.test.ts`, `bot-create.test.ts`, `bot-gateway.test.ts`, `group-gateway.test.ts`, `group-room*.test.ts`, `chat-ui-contract.test.ts`, plus server-side stores (`server/tests/test_chat_handoff_store.py`, `test_chat_title_store.py`, `test_last_chat_store.py`).
 
-> Implementato nella PR #51 (merged 2026-09-12, merge commit `bac8ad7`). Storico della feature (proposta originale di bot handoff) nel vault: `projects/hermes-mission-control/sections/bot-crossconnection.md` — la feature viva è ora questa doc.
+> Implemented in PR #51 (merged 2026-09-12, merge commit `bac8ad7`). Feature history (original bot handoff proposal) lives in the vault: `projects/hermes-mission-control/sections/bot-crossconnection.md` — this doc is the living reference.
