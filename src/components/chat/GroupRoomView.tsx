@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {AlertTriangle, Check, ChevronRight, Loader2, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon, ChevronDown} from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 import { ChatMessageCard } from '../chat-messages';
