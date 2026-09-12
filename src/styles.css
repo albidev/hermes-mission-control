@@ -5715,27 +5715,25 @@ button {
   transition: color 120ms ease, background 120ms ease;
 }
 
-/* Tiny attention LED on the mode tabs. Palette matches .chat-led:
+/* Tiny attention LED on the Chat|Rooms mode tabs. Palette matches .chat-led:
    is-done (green) = finished / new content below the fold,
-   is-help (amber) = blocked / approval pending. Sits on the opaque rail,
-   so the ring uses the rail surface color to separate it visually. */
+   is-help (amber) = blocked / approval pending. Pure 5px dot in the tab's
+   top-right corner — no label, no ring that could read as a glyph. */
 .chat-mode-tab .tab-led {
   position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 6px;
-  height: 6px;
+  top: 6px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 9999px;
   background: transparent;
   pointer-events: none;
 }
 .chat-mode-tab .tab-led.is-done {
   background: var(--color-success, #22c55e);
-  box-shadow: 0 0 0 2px var(--color-surface-raised);
 }
 .chat-mode-tab .tab-led.is-help {
   background: var(--color-warning, #f59e0b);
-  box-shadow: 0 0 0 2px var(--color-surface-raised);
 }
 .chat-mode-tab:hover {
   color: var(--text-primary, #ebe8ff);
