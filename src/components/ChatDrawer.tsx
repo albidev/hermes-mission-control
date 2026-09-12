@@ -1,6 +1,7 @@
 import { useI18n } from '../lib/i18n';
 import {
   Component,
+  Fragment,
   type ClipboardEvent,
   type CSSProperties,
   type DragEvent,
@@ -817,19 +818,38 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 
     return (
       <>
-        {grouped.map((item) => item.kind === 'run' ? (
-          <ToolRunSummary
-            key={item.id}
-            count={item.messages.filter((message) => message.kind === 'tool').length}
-            expanded={expandedToolRuns.has(item.id)}
-            onToggle={() => toggleToolRun(item.id)}
-          >
-            {item.messages.map((message) => <ChatMessageCard key={message.id} message={message} mentionHandles={mentionHandles} />)}
-          </ToolRunSummary>
-        ) : item.kind === 'other' && item.entry.kind === 'message' ? (
-          <ChatMessageCard key={item.entry.id} message={item.entry.message} mentionHandles={mentionHandles} />
-        ) : item.kind === 'other' ? (
-          <BotHandoffMessage
+        {grouped.map((item, index) => {
+          if (item.kind === 'run') {
+            // While a turn is streaming, the trailing run is the live one:
+            // render its tool traces inline (the canonical chat look).
+            // The reduce only ever leaves the LAST run open-ended — an
+            // assistant row with visible text closes the run — so the live
+            // run is exactly `running && index === last`.
+            const isLiveRun = running && index === grouped.length - 1;
+            if (isLiveRun) {
+              // Still streaming this turn: render the tool traces inline,
+              // exactly like the canonical chat did before the summary.
+              return (
+                <Fragment key={item.id}>
+                  {item.messages.map((message) => <ChatMessageCard key={message.id} message={message} mentionHandles={mentionHandles} />)}
+                </Fragment>
+              );
+            }
+            return (
+              <ToolRunSummary
+                key={item.id}
+                count={item.messages.filter((message) => message.kind === 'tool').length}
+                expanded={expandedToolRuns.has(item.id)}
+                onToggle={() => toggleToolRun(item.id)}
+              >
+                {item.messages.map((message) => <ChatMessageCard key={message.id} message={message} mentionHandles={mentionHandles} />)}
+              </ToolRunSummary>
+            );
+          }
+          return item.kind === 'other' && item.entry.kind === 'message' ? (
+            <ChatMessageCard key={item.entry.id} message={item.entry.message} mentionHandles={mentionHandles} />
+          ) : item.kind === 'other' ? (
+            <BotHandoffMessage
             key={item.entry.id}
             handle={item.entry.handoff.handle}
             displayName={item.entry.handoff.displayName}
@@ -923,7 +943,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
               void runRetry();
             } : undefined}
           />
-        ) : null)}
+        ) : null;
+      })}
       </>
     );
   };
