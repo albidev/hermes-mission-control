@@ -5662,6 +5662,23 @@ button {
   border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
   background: var(--surface-sunken, rgba(0, 0, 0, 0.18));
 }
+
+/* Auto-hide wrapper: collapses the tab rail while scrolling, re-shows after
+   the user stops (see AutoHideModeTabs). */
+.chat-mode-tabs-shell {
+  overflow: hidden;
+  max-height: 48px;
+  opacity: 1;
+  transition: max-height 160ms ease, opacity 160ms ease;
+}
+.chat-mode-tabs-shell.is-hidden {
+  max-height: 0;
+  opacity: 0;
+  border-bottom: 0;
+}
+.chat-mode-tabs-shell.is-hidden .chat-mode-tabs {
+  border-bottom: 0;
+}
 .chat-mode-tab {
   position: relative;
   display: inline-flex;

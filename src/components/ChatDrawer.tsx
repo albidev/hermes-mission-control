@@ -187,6 +187,61 @@ function ChatModeTabs({ active, onSelect }: { active: 'chat' | 'rooms'; onSelect
   );
 }
 
+/**
+ * Auto-hides the mode tab bar while the drawer inner content scrolls and
+ * re-shows it briefly after the user stops scrolling for a while. The tabs
+ * are a compact 51px rail between header and content, so hiding them on
+ * scroll gives back vertical space exactly like mobile app bars do.
+ *
+ * Listens in the capture phase (scroll doesn't bubble): the first scroll
+ * seen on each element is adopted as baseline (the transcript auto-follows
+ * to the bottom on mount and that shouldn't hide the tabs), subsequent
+ * scrolls hide the rail, and a resume poller re-shows it after quiet.
+ */
+const TAB_SCROLL_RESUME_MS = 700;
+function AutoHideModeTabs({ active, onSelect, containerRef }: { active: 'chat' | 'rooms'; onSelect: (mode: 'chat' | 'rooms') => void; containerRef: React.RefObject<HTMLElement | null> }) {
+  const [hidden, setHidden] = useState(false);
+  const hiddenRef = useRef(false);
+  const shownAtRef = useRef(0);
+  const seenRef = useRef(new WeakSet<HTMLElement>());
+  const setHiddenBoth = (next: boolean) => {
+    hiddenRef.current = next;
+    setHidden(next);
+  };
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+    const onScroll = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target || typeof target.scrollTop !== 'number') return;
+      if (!seenRef.current.has(target)) {
+        // first event for this element: auto-follow on mount, don't hide
+        seenRef.current.add(target);
+        return;
+      }
+      shownAtRef.current = performance.now();
+      if (!hiddenRef.current) setHiddenBoth(true);
+    };
+    const resumeTimer = window.setInterval(() => {
+      if (shownAtRef.current !== 0 && performance.now() - shownAtRef.current >= TAB_SCROLL_RESUME_MS) {
+        setHiddenBoth(false);
+      }
+    }, 200);
+    node.addEventListener('scroll', onScroll, true);
+    return () => {
+      node.removeEventListener('scroll', onScroll, true);
+      window.clearInterval(resumeTimer);
+    };
+  }, [containerRef]);
+
+  return (
+    <div className={`chat-mode-tabs-shell ${hidden ? 'is-hidden' : ''}`} aria-hidden={hidden}>
+      <ChatModeTabs active={active} onSelect={onSelect} />
+    </div>
+  );
+}
+
 const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat, onOpenRooms }: CanonicalChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
@@ -1404,7 +1459,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
             </div>
           </div>
         </header>
-        {onOpenRooms ? <ChatModeTabs active="chat" onSelect={(mode) => { if (mode === 'rooms') onOpenRooms(); }} /> : null}
+        {onOpenRooms ? <AutoHideModeTabs active="chat" onSelect={(mode) => { if (mode === 'rooms') onOpenRooms(); }} containerRef={drawerRef} /> : null}
 
         {modelPickerOpen ? (
           <ChatModelPicker
@@ -1767,7 +1822,7 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
             </div>
           ) : null}
         </header>
-        <ChatModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} />
+        <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} />
         <div className="flex min-h-0 flex-1 flex-col">
           {!canUseRooms && !state.loading ? <div className="chat-error m-4" role="status">{t('rooms.driverUnavailable')}</div> : null}
           {creating ? <div className="chat-transcript rooms-empty"><CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /></div> : state.room && canUseRooms ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : canUseRooms ? <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div> : null}
