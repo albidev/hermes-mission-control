@@ -285,15 +285,15 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
   return <section className={`flex min-h-0 flex-1 flex-col ${className}`} aria-label={t('rooms.title')}>
     <StateNotice state={state} />
     {state.error && !state.serviceUnavailable ? <div className="text-xs text-negative" role="alert">{state.error.message}</div> : null}
-    <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto py-0.5" role="tablist" aria-label={t('rooms.members')}>
-      <button type="button" role="tab" aria-selected={!focusedMember} onClick={() => setFocusedMember(null)} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] leading-none ${!focusedMember ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}><Users size={12} />{t('rooms.everyone')}</button>
-      {(state.room?.members ?? []).map((member) => { const status = deriveGroupMemberStatus(member, state.driverStatus, latestByMember[member.id] ?? null); return <button key={member.id} type="button" role="tab" aria-selected={focusedMember === member.id} onClick={() => setFocusedMember(member.id)} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] leading-none ${focusedMember === member.id ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}><StatusBadge status={status} compact /><span>{member.displayName || `@${member.handle}`}</span></button>; })}
-    </div>
-    {hiddenWorking ? <div className="flex items-center gap-2 text-[11px] text-warning" role="status"><Loader2 size={12} className="animate-spin" />{t('rooms.backgroundMemberWorking')}</div> : null}
     <div className="chat-transcript min-h-[220px] flex-1">
       {state.loading ? <div className="chat-empty"><Loader2 size={16} className="chat-spin" />{t('rooms.loading')}</div> : filtered.length === 0 ? <p className="chat-empty">{t('rooms.noMessages')}</p> : (
         filtered.map(({ event, member }, index) => <div key={event.id} style={{ display: 'contents' }}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div> : null}<ChatMessageCard message={groupEventToChatMessage(event, member)} mentionHandles={(state.room?.members ?? []).map((m) => m.handle)} /></div>)
       )}
+    </div>
+    {hiddenWorking ? <div className="flex items-center gap-2 text-[11px] text-warning" role="status"><Loader2 size={12} className="animate-spin" />{t('rooms.backgroundMemberWorking')}</div> : null}
+    <div className="chat-room-filterbar" role="tablist" aria-label={t('rooms.members')}>
+      <button type="button" role="tab" aria-selected={!focusedMember} onClick={() => setFocusedMember(null)} className={`chat-room-filter-chip ${!focusedMember ? 'is-active' : ''}`}><Users size={12} />{t('rooms.everyone')}</button>
+      {(state.room?.members ?? []).map((member) => { const status = deriveGroupMemberStatus(member, state.driverStatus, latestByMember[member.id] ?? null); return <button key={member.id} type="button" role="tab" aria-selected={focusedMember === member.id} onClick={() => setFocusedMember(member.id)} className={`chat-room-filter-chip ${focusedMember === member.id ? 'is-active' : ''}`}><StatusBadge status={status} compact /><span>{member.displayName || `@${member.handle}`}</span></button>; })}
     </div>
     {onSend ? <GroupRoomComposer state={state} onSend={onSend} mentionRoster={mentionRoster} /> : null}
   </section>;
