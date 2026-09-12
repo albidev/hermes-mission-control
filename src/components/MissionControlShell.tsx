@@ -99,6 +99,10 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     : 'general';
   const chatBotProfile = chatSearchParams.get('botProfile');
   const chatRoomId = chatSearchParams.get('roomId');
+  const LAST_ROOM_KEY = 'mission-control-last-room';
+  const readLastRoom = useCallback((): string | null => {
+    try { return localStorage.getItem(LAST_ROOM_KEY); } catch { return null; }
+  }, []);
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const chatButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -122,9 +126,11 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
       params.set('chatMode', 'room');
       params.set('roomId', roomId);
       params.delete('chatSession');
+      try { localStorage.setItem(LAST_ROOM_KEY, roomId); } catch { /* storage unavailable */ }
     } else {
       params.delete('roomId');
       params.delete('chatMode');
+      try { localStorage.removeItem(LAST_ROOM_KEY); } catch { /* storage unavailable */ }
     }
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
@@ -133,12 +139,17 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
   const openRoomsMode = useCallback(() => {
     const params = new URLSearchParams(location.search);
     params.set('chatMode', 'room');
+    // Restore the last room the user had open, so reopening Rooms after a
+    // reload / drawer close lands back on the same room instead of the
+    // bare 'select a room' state.
     params.delete('roomId');
+    const lastRoom = readLastRoom();
+    if (lastRoom) params.set('roomId', lastRoom);
     params.delete('chatSession');
     const search = params.toString();
     setChatOpen(true);
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
-  }, [location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate, readLastRoom]);
 
   const startTaskChat = useCallback(() => {
     const params = new URLSearchParams(location.search);
