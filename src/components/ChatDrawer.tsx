@@ -189,24 +189,29 @@ function ChatModeTabs({ active, onSelect }: { active: 'chat' | 'rooms'; onSelect
 
 /**
  * Auto-hides the mode tab bar while the drawer content scrolls FAST and
- * re-shows it immediately when the user slows down, reaches the bottom
- * (auto-follow keeps it visible), or pauses for a while.
+ * re-shows it when the user slows down, reaches the bottom (auto-follow
+ * keeps it visible), or pauses for a while.
  *
- * Velocity-based: hiding only makes sense while the user is flying through
- * a long transcript; at low speed the rail stays, at the bottom it's always
- * visible because that's where the tab switch matters most. Listens in the
- * capture phase (scroll doesn't bubble); the first scroll on each element is
- * a baseline (mount-time auto-follow must not hide the rail).
+ * Velocity-based with HYSTERESIS to avoid flicker: hide only above
+ * HIDE_SPEED, re-show only below SHOW_SPEED (or at the bottom). Between the
+ * two thresholds the rail keeps its current state, so the natural speed
+ * decay of a flicked scroll (which oscillates around a single threshold)
+ * can't flip the rail hide/show/hide. Speed is averaged over a small rolling
+ * window of scroll samples to smooth trackpad bursts. Capture-phase listen
+ * because scroll doesn't bubble; first scroll per element is baseline.
  */
 const TAB_SCROLL_RESUME_MS = 700;
-const SCROLL_SPEED_HIDE_PX_MS = 0.2; // ≈ 200px/s — below this the rail stays
+const SCROLL_SPEED_HIDE_PX_MS = 0.3; // ≥ 300px/s hides
+const SCROLL_SPEED_SHOW_PX_MS = 0.1; // ≤ 100px/s shows (dead zone in between)
+const SPEED_WINDOW_SAMPLES = 4;
 const BOTTOM_EPSILON_PX = 24;
 function AutoHideModeTabs({ active, onSelect, containerRef }: { active: 'chat' | 'rooms'; onSelect: (mode: 'chat' | 'rooms') => void; containerRef: React.RefObject<HTMLElement | null> }) {
   const [hidden, setHidden] = useState(false);
   const hiddenRef = useRef(false);
   const shownAtRef = useRef(0);
   const seenRef = useRef(new WeakSet<HTMLElement>());
-  const lastScrollRef = useRef(new Map<HTMLElement, { top: number; at: number }>());
+  const samplesRef = useRef(new Map<HTMLElement, number[]>());
+  const prevTopRef = useRef(new Map<HTMLElement, { top: number; at: number }>());
   const setHiddenBoth = (next: boolean) => {
     hiddenRef.current = next;
     setHidden(next);
@@ -222,8 +227,8 @@ function AutoHideModeTabs({ active, onSelect, containerRef }: { active: 'chat' |
       const target = event.target as HTMLElement | null;
       if (!target || typeof target.scrollTop !== 'number') return;
       const now = performance.now();
-      const prev = lastScrollRef.current.get(target);
-      lastScrollRef.current.set(target, { top: target.scrollTop, at: now });
+      const prev = prevTopRef.current.get(target);
+      prevTopRef.current.set(target, { top: target.scrollTop, at: now });
       if (!seenRef.current.has(target)) {
         // first event for this element: auto-follow on mount, baseline only
         seenRef.current.add(target);
@@ -235,11 +240,17 @@ function AutoHideModeTabs({ active, onSelect, containerRef }: { active: 'chat' |
       }
       if (!prev) return;
       const speed = Math.abs(target.scrollTop - prev.top) / Math.max(1, now - prev.at);
-      if (speed >= SCROLL_SPEED_HIDE_PX_MS) {
+      const windowed = samplesRef.current.get(target) ?? [];
+      windowed.push(speed);
+      if (windowed.length > SPEED_WINDOW_SAMPLES) windowed.shift();
+      samplesRef.current.set(target, windowed);
+      const avg = windowed.reduce((a, b) => a + b, 0) / windowed.length;
+
+      if (hiddenRef.current) {
+        if (avg <= SCROLL_SPEED_SHOW_PX_MS) setHiddenBoth(false);
+      } else if (avg >= SCROLL_SPEED_HIDE_PX_MS) {
         shownAtRef.current = now;
-        if (!hiddenRef.current) setHiddenBoth(true);
-      } else {
-        setHiddenBoth(false);
+        setHiddenBoth(true);
       }
     };
     const resumeTimer = window.setInterval(() => {
