@@ -85,6 +85,7 @@ from last_chat_store import get_last_chat, set_last_chat
 from chat_handoff_store import claim_handoff, list_all_handoffs, list_handoffs, upsert_handoff
 from chat_title_store import set_chat_title
 from room_vault_store import clear_room_vault, get_room_vault, list_room_vaults, set_room_vault
+from room_tool_store import build_room_tools_snapshot, read_room_tools
 from chat_runtime_presence import active_runtime_presences, update_runtime_presence
 from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
 import kanban_bridge as kanban_bridge_mod
@@ -2289,6 +2290,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"room_id": room_id, "vault": get_room_vault(room_id)})
                 return
             self._json(200, {"vaults": list_room_vaults()})
+            return
+        if parsed.path == "/api/local/room/tools":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            room_id = (params.get("room_id") or [""])[0].strip()
+            max_age = _parse_int((params.get("max_age") or [None])[0], default=5, minimum=1, maximum=60)
+            try:
+                if room_id:
+                    tools = read_room_tools(room_id, max_age_seconds=max_age)
+                    self._json(200, {"room_id": room_id, "tools": tools})
+                else:
+                    self._json(200, build_room_tools_snapshot())
+            except Exception as exc:
+                import logging
+                logging.warning("room tools read failed: %s", exc)
+                self._json(503, {"error": "room_tools_unavailable", "detail": str(exc)})
             return
         if parsed.path == "/api/local/mission-control/agents":
             if not _is_authorized(self):

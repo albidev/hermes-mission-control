@@ -1070,5 +1070,6 @@
   "rooms.ledOffline": "Sciolta o servizio non disponibile",
   "rooms.renameRoom": "Rinomina stanza",
   "rooms.saveName": "Salva nome",
-  "rooms.scrollLatest": "Vai all’ultimo messaggio"
+  "rooms.scrollLatest": "Vai all’ultimo messaggio",
+  "rooms.toolCalls": "{count} chiamate tool"
 }

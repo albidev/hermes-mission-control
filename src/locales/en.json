@@ -1070,5 +1070,6 @@
   "rooms.ledOffline": "Disbanded or service unavailable",
   "rooms.renameRoom": "Rename room",
   "rooms.saveName": "Save name",
-  "rooms.scrollLatest": "Jump to latest"
+  "rooms.scrollLatest": "Jump to latest",
+  "rooms.toolCalls": "{count} tool calls"
 }

@@ -4,6 +4,7 @@ import { useI18n } from '../../lib/i18n';
 import { ChatMessageCard } from '../chat-messages';
 import { Badge } from '../ui/Badge';
 import { loadMissionControlVaults, type MissionControlVaultDescriptor } from '../../lib/hermes-api';
+import { RoomToolPanel } from './RoomToolPanel';
 import type { GroupEvent } from '../../lib/group-gateway';
 import type { GroupRoomResult } from '../../lib/use-group-room';
 import { ChatMentionPopover, type ChatMentionPopoverHandle } from '../ChatMentionPopover';
@@ -327,6 +328,7 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
           <ChevronDown size={18} />
         </button>
       ) : null}
+      <RoomToolPanel roomId={state.selectedRoomId} eventsTick={state.events.length} />
     </div>
     {hiddenWorking ? <div className="flex items-center gap-2 text-[11px] text-warning" role="status"><Loader2 size={12} className="animate-spin" />{t('rooms.backgroundMemberWorking')}</div> : null}
     <div className="chat-room-filterbar" role="tablist" aria-label={t('rooms.members')}>
