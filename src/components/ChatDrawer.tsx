@@ -1643,6 +1643,7 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
   const state = useGroupRoom({ enabled: open, initialRoomId: roomId ?? null });
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
   const [creating, setCreating] = useState(false);
+  const [roomPickerOpen, setRoomPickerOpen] = useState(false);
   const [botCandidates, setBotCandidates] = useState<BotMentionCandidate[]>([]);
   const drawerRef = useRef<HTMLElement>(null);
   const resizingRef = useRef(false);
@@ -1739,19 +1740,21 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
       {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
       <aside ref={drawerRef} className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
         <div className="chat-drawer-resize-handle" role="separator" aria-orientation="vertical" aria-label={t('chatDrawer.resize')} title={t('chatDrawer.dragToResize')} onMouseDown={startResize} />
-        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2>{!state.selectedRoomId ? <span className="chat-session-title">{t('rooms.selectRoom')}</span> : null}</div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
+        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{state.room?.name || t('rooms.title')}</h2>{!state.selectedRoomId ? <span className="chat-session-title">{t('rooms.selectRoom')}</span> : null}</div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
         <ChatModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} />
         <div className="chat-transcript">
           {!canUseRooms && !state.loading ? <div className="chat-error" role="status">{t('rooms.driverUnavailable')}</div> : null}
           {canUseRooms ? <>
             <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto pb-1" aria-label={t('rooms.title')}>
-                {state.rooms.length > 1 ? (
-                  state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] leading-none ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)
-                ) : state.selectedRoomId ? (
-                  <span className="shrink-0 rounded-full border border-accent bg-accent-subtle px-2.5 py-1 text-[11px] leading-none text-accent">{state.room?.name || state.selectedRoomId}</span>
+              <div className="relative min-w-0 flex-1">
+                <button type="button" onClick={() => setRoomPickerOpen((open) => !open)} disabled={state.rooms.length === 0} className="inline-flex min-h-8 w-full max-w-full items-center gap-1.5 rounded-md border border-border-subtle bg-surface px-2 py-1 text-xs text-text hover:bg-surface-sunken disabled:opacity-50">
+                  <span className="truncate">{state.room?.name || t('rooms.selectRoom')}</span><ChevronDown size={12} className={`shrink-0 transition-transform ${roomPickerOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {roomPickerOpen && state.rooms.length > 0 ? (
+                  <div className="absolute left-0 right-0 top-full z-20 mt-1 flex max-h-56 flex-col overflow-y-auto rounded-lg border border-border-subtle bg-surface shadow-lg">
+                    {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => { void selectRoom(room.id); setRoomPickerOpen(false); }} className={`px-2.5 py-1.5 text-left text-xs ${room.id === state.selectedRoomId ? 'bg-accent-subtle text-accent' : 'text-text hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
+                  </div>
                 ) : null}
-                {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">{t('rooms.noRooms')}</span> : null}
               </div>
               <button type="button" onClick={() => setCreating((current) => !current)} className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50">{creating ? <X size={14} /> : <Plus size={14} />}{creating ? t('rooms.close') : t('rooms.create')}</button>
             </div>
