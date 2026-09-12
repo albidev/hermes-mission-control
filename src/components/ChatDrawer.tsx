@@ -98,7 +98,7 @@ type ChatDrawerProps = {
   onClose: () => void;
   onStartTaskChat?: () => void;
   onOpenRooms?: () => void;
-  onRoomChange?: (roomId: string | null) => void;
+  onRoomChange?: (roomId: string | null, roomName?: string | null) => void;
 };
 
 function formatTokens(tokens: number): string {
@@ -1841,11 +1841,11 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
 
   useEffect(() => {
     if (!open || !state.selectedRoomId || state.selectedRoomId === roomId) return;
-    onRoomChange?.(state.selectedRoomId);
+    onRoomChange?.(state.selectedRoomId, state.room?.name ?? null);
   }, [onRoomChange, open, roomId, state.selectedRoomId]);
 
   const selectRoom = useCallback((nextRoomId: string | null) => {
-    onRoomChange?.(nextRoomId);
+    onRoomChange?.(nextRoomId, state.room?.name ?? null);
     return state.selectRoom(nextRoomId);
   }, [onRoomChange, state.selectRoom]);
 

@@ -22,6 +22,7 @@ import { useI18n } from '../lib/i18n';
 import { ChatDrawer } from './ChatDrawer';
 import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
+import { readLocalLastRoom, writeLocalLastRoom, syncLastRoomToServer, fetchServerLastRoom } from '../lib/room-persistence';
 import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 import { Button } from './ui/Button';
 import { PluginRegistry } from '../core/plugins/registry';
@@ -99,10 +100,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     : 'general';
   const chatBotProfile = chatSearchParams.get('botProfile');
   const chatRoomId = chatSearchParams.get('roomId');
-  const LAST_ROOM_KEY = 'mission-control-last-room';
-  const readLastRoom = useCallback((): string | null => {
-    try { return localStorage.getItem(LAST_ROOM_KEY); } catch { return null; }
-  }, []);
+  const serverLastRoomRef = useRef<{ roomId: string; revision: number } | null>(null);
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const chatButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -120,13 +118,22 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
   }, [location.pathname, location.search, navigate]);
 
-  const changeRoom = useCallback((roomId: string | null) => {
+  const changeRoom = useCallback((roomId: string | null, roomName?: string | null) => {
     const params = new URLSearchParams(location.search);
     if (roomId) {
       params.set('chatMode', 'room');
       params.set('roomId', roomId);
       params.delete('chatSession');
-      try { localStorage.setItem(LAST_ROOM_KEY, roomId); } catch { /* storage unavailable */ }
+      // Local mirror (first paint) + shared cross-device pointer on the
+      // telemetry server, revisioned exactly like the last chat. Whichever
+      // device selects a room last wins for every device.
+      writeLocalLastRoom(roomId);
+      const previous = serverLastRoomRef.current;
+      void syncLastRoomToServer(roomId, roomName ?? null, storedToken || '', previous?.roomId === roomId ? previous.revision : null)
+        .then((result) => {
+          if (result.lastRoom) serverLastRoomRef.current = { roomId: result.lastRoom.roomId, revision: result.lastRoom.revision };
+        })
+        .catch(() => {/* best effort, local mirror stays */});
     } else {
       // Leaving the room / switching to Chat must NOT clear the persisted
       // last-room key: it means "last room the user had open", so reopening
@@ -138,22 +145,37 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     }
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
-  }, [location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate, storedToken]);
 
   const openRoomsMode = useCallback(() => {
     const params = new URLSearchParams(location.search);
     params.set('chatMode', 'room');
     // Restore the last room the user had open, so reopening Rooms after a
     // reload / drawer close lands back on the same room instead of the
-    // bare 'select a room' state.
+    // bare 'select a room' state. Prefer the shared cross-device pointer
+    // (server canonical); localStorage is the fast first-paint fallback.
     params.delete('roomId');
-    const lastRoom = readLastRoom();
-    if (lastRoom) params.set('roomId', lastRoom);
+    const local = readLocalLastRoom();
+    if (local) params.set('roomId', local);
     params.delete('chatSession');
     const search = params.toString();
     setChatOpen(true);
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
-  }, [location.pathname, location.search, navigate, readLastRoom]);
+    if (storedToken) {
+      void fetchServerLastRoom(storedToken).then((server) => {
+        if (!server || !server.roomId) return;
+        serverLastRoomRef.current = { roomId: server.roomId, revision: server.revision };
+        if (server.roomId === local) return;
+        // Another device changed the shared pointer: adopt it.
+        const params2 = new URLSearchParams(location.search);
+        params2.set('chatMode', 'room');
+        params2.set('roomId', server.roomId);
+        params2.delete('chatSession');
+        writeLocalLastRoom(server.roomId);
+        navigate(`${location.pathname}${params2.toString() ? `?${params2}` : ''}`, { replace: true });
+      }).catch(() => {/* offline: local mirror stays */});
+    }
+  }, [location.pathname, location.search, navigate, storedToken]);
 
   const startTaskChat = useCallback(() => {
     const params = new URLSearchParams(location.search);

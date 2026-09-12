@@ -21,3 +21,4 @@ server/whiteboard_state.json
 # External plugin UI symlinks — generated locally by scripts/setup-plugins.sh
 src/plugins/*
 server/room_tools.json
+last_room.json
