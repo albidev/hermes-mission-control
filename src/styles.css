@@ -5265,9 +5265,15 @@ body.modal-open .route-page-scroll {
     gap: 0.35rem;
   }
 
+  .chat-new-button span {
+    display: none;
+  }
+
   .chat-new-button {
-    min-width: 70px;
-    padding-inline: 0.65rem;
+    width: var(--chat-control-size);
+    min-width: var(--chat-control-size);
+    height: var(--chat-control-size);
+    padding: 0;
   }
 
   .chat-transcript {
@@ -5290,15 +5296,8 @@ body.modal-open .route-page-scroll {
 }
 
 @media (max-width: 370px) {
-  .chat-head-copy .chat-model-badge small,
-  .chat-new-button span {
+  .chat-head-copy .chat-model-badge small {
     display: none;
-  }
-
-  .chat-new-button {
-    width: var(--chat-control-size);
-    min-width: var(--chat-control-size);
-    padding: 0;
   }
 }
 
