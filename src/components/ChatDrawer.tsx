@@ -743,13 +743,15 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 
     // Collapse a turn's tool/reasoning activity into a single run summary.
     // The run absorbs EVERY non-turn message (tool, reasoning, event,
-    // system) — invisible event/system entries between a reasoning block
-    // and a tool call must not close the group. Only user/assistant/handoff
-    // content closes the run, so what the user sees between question and
-    // answer collapses into ONE strip.
+    // system) plus EMPTY assistant rows (the live stream emits invisible
+    // assistant placeholders that must not close the group). Only a user
+    // message or an assistant row WITH visible text closes the run.
     const grouped = timeline.reduce<Array<{ id: string; kind: 'run'; messages: ChatMessage[] } | { kind: 'other'; entry: (typeof timelinedMessages)[number] }>>((acc, entry) => {
-      const isTurnContent = entry.kind === 'message' && (entry.message.kind === 'user' || entry.message.kind === 'assistant');
-      if (entry.kind === 'message' && !isTurnContent) {
+      const isTurnBoundary = entry.kind === 'message' && (
+        entry.message.kind === 'user' ||
+        (entry.message.kind === 'assistant' && (entry.message.text?.trim().length ?? 0) > 0)
+      );
+      if (entry.kind === 'message' && !isTurnBoundary) {
         const last = acc[acc.length - 1];
         if (last && last.kind === 'run') {
           last.messages.push(entry.message);
