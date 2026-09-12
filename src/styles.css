@@ -5688,6 +5688,16 @@ button {
   opacity: 0;
   pointer-events: none;
 }
+
+/* The floating tab rail is an opaque overlay (height-0 shell) above the
+   transcript. Give every transcript inside the drawer — the canonical chat
+   one and the rooms transcript (a descendant of the drawer) — a matching
+   top inset so content never slides underneath the rail when scrolling.
+   Fixed, not conditional: toggling padding with the rail would reflow the
+   text below again (the exact bug fixed earlier). 51px = rail height. */
+.chat-drawer .chat-transcript {
+  padding-top: calc(1rem + 51px);
+}
 .chat-mode-tab {
   position: relative;
   display: inline-flex;
