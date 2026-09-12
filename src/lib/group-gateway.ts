@@ -176,6 +176,26 @@ export class GroupGatewayClient {
   async disband(roomId: string, eventId?: string): Promise<unknown> {
     return this.rpc('groups.disband', { room_id: roomId, ...(eventId ? { event_id: eventId } : {}) });
   }
+
+  async stop(roomId: string): Promise<number> {
+    const result = record(await this.rpc('groups.stop', { room_id: roomId }));
+    return typeof result.cancelled === 'number' ? result.cancelled : 0;
+  }
+
+  async approve(roomId: string, params: { memberId?: string | null; taskId?: string | null; executionGeneration?: number; choice?: string | null; requestId?: string | null }): Promise<unknown> {
+    return this.rpc('groups.approve', {
+      room_id: roomId,
+      ...(params.memberId ? { member_id: params.memberId } : {}),
+      ...(params.taskId ? { task_id: params.taskId } : {}),
+      execution_generation: params.executionGeneration ?? 0,
+      ...(params.choice ? { choice: params.choice } : {}),
+      ...(params.requestId ? { request_id: params.requestId } : {}),
+    });
+  }
+
+  async retry(roomId: string, taskId?: string | null): Promise<unknown> {
+    return this.rpc('groups.retry', { room_id: roomId, ...(taskId ? { task_id: taskId } : {}) });
+  }
 }
 
 export { BotRpcError };

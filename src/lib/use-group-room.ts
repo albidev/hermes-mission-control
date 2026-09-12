@@ -44,6 +44,9 @@ export type GroupRoomResult = {
   retry: () => Promise<void>;
   send: (text: string, threadId?: string) => Promise<GroupEvent | null>;
   disband: () => Promise<void>;
+  approve: (params: { memberId?: string | null; taskId?: string | null; executionGeneration?: number; choice?: string | null; requestId?: string | null }) => Promise<unknown>;
+  retryMember: (taskId?: string | null) => Promise<unknown>;
+  stopRoom: () => Promise<number | null>;
   clearAuthorityChange: () => void;
 };
 
@@ -209,6 +212,27 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     catch (cause) { if (mountedRef.current) setError(toGroupRoomError(cause)); }
   }, [loadRoom, selectedRoomId]);
 
+  const approve = useCallback(async (params: { memberId?: string | null; taskId?: string | null; executionGeneration?: number; choice?: string | null; requestId?: string | null }) => {
+    if (!selectedRoomId) throw new Error('No room selected.');
+    const result = await clientRef.current.approve(selectedRoomId, params);
+    if (mountedRef.current) { setError(null); await loadRoom(selectedRoomId); }
+    return result;
+  }, [loadRoom, selectedRoomId]);
+
+  const retryMember = useCallback(async (taskId?: string | null) => {
+    if (!selectedRoomId) throw new Error('No room selected.');
+    const result = await clientRef.current.retry(selectedRoomId, taskId);
+    if (mountedRef.current) { setError(null); await loadRoom(selectedRoomId); }
+    return result;
+  }, [loadRoom, selectedRoomId]);
+
+  const stopRoom = useCallback(async () => {
+    if (!selectedRoomId) return null;
+    const result = await clientRef.current.stop(selectedRoomId);
+    if (mountedRef.current) { setError(null); await loadRoom(selectedRoomId); }
+    return result;
+  }, [loadRoom, selectedRoomId]);
+
   useEffect(() => {
     mountedRef.current = true;
     if (options.enabled === false) { setLoading(false); return () => { mountedRef.current = false; }; }
@@ -242,5 +266,7 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     disbanded: Boolean(room?.disbandedAt), memberActivity, round: deriveRoundCoordinates(events),
     focusHandle: latestMemberEvent?.message.member?.handle ?? null,
     selectRoom, refresh, retry, send, disband, clearAuthorityChange: () => setAuthorityChanged(false),
+    approve, retryMember,
+    stopRoom,
   };
 }

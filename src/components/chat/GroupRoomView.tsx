@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, ChevronRight, Circle, Loader2, Plus, RefreshCw, Send, ShieldAlert, Users, X, XCircle } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Circle, Loader2, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 import { ChatMarkdown } from '../chat-messages';
 import { Badge } from '../ui/Badge';
@@ -38,13 +38,73 @@ function StatusBadge({ status }: { status: GroupMemberStatus }) {
   return <Badge variant={statusVariant[status]} dot>{t(statusKey[status])}</Badge>;
 }
 
+function notEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function stringField(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+type PendingAction = { kind?: unknown; task_id?: unknown; request_id?: unknown; member_id?: unknown; taskId?: unknown; execution_generation?: unknown; choice?: unknown };
+
+function ActionCard({ action, state, busy, onRun }: { action: PendingAction; state: GroupRoomResult; busy: boolean; onRun: (label: string, fn: () => Promise<unknown>) => void }) {
+  const { t } = useI18n();
+  const taskId = stringField(action.taskId) || stringField(action.task_id);
+  const requestId = stringField(action.request_id);
+  const memberId = stringField(action.member_id);
+  const executionGeneration = typeof action.execution_generation === 'number' ? action.execution_generation : 0;
+  const member = state.room?.members.find((m) => m.id === memberId);
+  const label = member?.displayName || (member ? `@${member.handle}` : memberId || t('rooms.member'));
+
+  if (action.kind === 'retry' || taskId) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-lg border border-warning/30 bg-warning-subtle/60 p-2 text-xs text-warning">
+        <span className="inline-flex min-w-0 items-center gap-1.5"><RefreshCw size={12} className="shrink-0" /><span className="truncate">{t('rooms.retryingTask')}{label ? ` · ${label}` : ''}</span></span>
+        <button type="button" disabled={busy} className="shrink-0 rounded bg-warning/20 px-2 py-1 text-xs hover:bg-warning/30 disabled:opacity-50" onClick={() => void onRun('retry-action', () => state.retryMember(taskId || null))}>
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} className="inline" />} {t('rooms.retry')}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg border border-warning/30 bg-warning-subtle/60 p-2 text-xs text-warning">
+      <span className="inline-flex min-w-0 items-center gap-1.5"><AlertTriangle size={12} className="shrink-0" /><span className="truncate">{t('rooms.approveRequest')}{label ? ` · ${label}` : ''}</span></span>
+      <button type="button" disabled={busy} className="shrink-0 rounded bg-warning/20 px-2 py-1 text-xs hover:bg-warning/30 disabled:opacity-50" onClick={() => void onRun('approve-action', () => state.approve({ requestId, memberId, taskId, executionGeneration, choice: 'once' }))}>
+        {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} className="inline" />} {t('rooms.approve')}
+      </button>
+    </div>
+  );
+}
+
 function StateNotice({ state }: { state: GroupRoomResult }) {
   const { t } = useI18n();
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const runAction = useCallback(async (label: string, fn: () => Promise<unknown>) => {
+    setBusyAction(label); setErrorMsg(null);
+    try { await fn(); } catch (cause) { setErrorMsg(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusyAction(null); }
+  }, []);
+
+  const canAct = Boolean(state.selectedRoomId) && !state.disbanded && !state.serviceUnavailable;
   if (state.serviceUnavailable) return <div className="rounded-lg border border-negative/30 bg-negative-subtle p-3 text-sm text-negative" role="alert"><XCircle size={16} className="mr-2 inline" />{t('rooms.serviceUnavailable')} <button type="button" className="underline" onClick={() => void state.retry()}>{t('rooms.retry')}</button></div>;
   if (state.authorityChanged) return <div className="rounded-lg border border-warning/30 bg-warning-subtle p-3 text-sm text-warning" role="status"><ShieldAlert size={16} className="mr-2 inline" />{t('rooms.authorityConflict')}</div>;
   if (state.disbanded) return <div className="rounded-lg border border-border-subtle bg-surface-sunken/50 p-3 text-sm text-text-muted" role="status"><XCircle size={16} className="mr-2 inline" />{t('rooms.disbanded')}</div>;
-  if (state.approval || state.blocked || state.pendingActions.length) return <div className="rounded-lg border border-warning/30 bg-warning-subtle p-3 text-sm text-warning" role="status"><AlertTriangle size={16} className="mr-2 inline" />{t('rooms.pendingApprovalOrRetry')}</div>;
-  return null;
+
+  const actions = Array.isArray(state.pendingActions) ? state.pendingActions as PendingAction[] : [];
+  const pendingOrBlocked = Boolean(state.approval) || state.blocked || actions.length > 0;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {pendingOrBlocked && !(state.blocked && canAct) && actions.length === 0 ? (
+        <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning-subtle p-2 text-xs text-warning" role="status"><AlertTriangle size={13} className="shrink-0" />{t('rooms.pendingApprovalOrRetry')}</div>
+      ) : null}
+      {actions.map((action, index) => <ActionCard key={`${stringField(action.request_id)}-${index}`} action={action} state={state} busy={busyAction === `action-${index}`} onRun={(label, fn) => runAction(label, fn)} />)}
+      {errorMsg ? <div className="rounded-lg border border-negative/30 bg-negative-subtle p-2 text-xs text-negative" role="alert">{errorMsg}</div> : null}
+    </div>
+  );
 }
 
 function GroupRoomComposer({ state, onSend, mentionRoster }: { state: GroupRoomResult; onSend: (text: string) => Promise<unknown>; mentionRoster: BotMentionCandidate[] }) {
@@ -174,6 +234,7 @@ export function CreateRoomForm({ members, onCancel, onCreate }: { members: BotMe
 export function GroupRoomView({ state, onSend, className = '', mentionRoster = [] }: GroupRoomViewProps) {
   const { t } = useI18n();
   const [focusedMember, setFocusedMember] = useState<string | null>(null);
+  const [confirmDisband, setConfirmDisband] = useState(false);
   const entries = useMemo(() => visibleGroupEvents(state.events, state.room?.members ?? []), [state.events, state.room?.members]);
   const latestByMember = useMemo(() => {
     const result: Record<string, GroupEvent> = {};
@@ -186,7 +247,11 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
   return <section className={`flex min-h-0 flex-col gap-3 ${className}`} aria-label={t('rooms.title')}>
     <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-border-subtle bg-surface-raised/40 p-3 sm:p-4">
       <div className="min-w-0"><p className="truncate text-base font-semibold text-text">{state.room?.name || t('rooms.title')}</p><p className="mt-1 text-xs text-text-muted">{state.room?.members.length ?? 0} {t('rooms.members').toLowerCase()} · authority epoch {state.room?.authorityEpoch ?? '—'}</p></div>
-      <button type="button" onClick={() => void state.refresh()} disabled={state.refreshing} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50"><RefreshCw size={14} className={state.refreshing ? 'animate-spin' : ''} />{t('rooms.refresh')}</button>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {!state.disbanded && !state.serviceUnavailable ? <button type="button" onClick={() => void state.stopRoom()} disabled={state.refreshing} title={t('rooms.stop')} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50"><XOctagon size={14} />{t('rooms.stop')}</button> : null}
+        {!state.disbanded && !state.serviceUnavailable ? <button type="button" onClick={() => { if (confirmDisband) { setConfirmDisband(false); void state.disband(); } else { setConfirmDisband(true); window.setTimeout(() => setConfirmDisband(false), 3000); } }} title={t('rooms.disbandAction')} className={`inline-flex min-h-9 items-center gap-1.5 rounded-md border px-2.5 text-xs ${confirmDisband ? 'border-negative bg-negative text-white' : 'border-negative/30 text-negative hover:bg-negative-subtle'}`}>{confirmDisband ? <Check size={14} /> : <Trash2 size={14} />}{t(confirmDisband && state.room ? 'rooms.disbandConfirm' : 'rooms.disbandAction', confirmDisband && state.room ? { name: state.room.name || state.room.id } : {})}</button> : null}
+        <button type="button" onClick={() => void state.refresh()} disabled={state.refreshing} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50"><RefreshCw size={14} className={state.refreshing ? 'animate-spin' : ''} />{t('rooms.refresh')}</button>
+      </div>
     </header>
     <StateNotice state={state} />
     {state.error && !state.serviceUnavailable ? <div className="text-xs text-negative" role="alert">{state.error.message}</div> : null}
