@@ -40,6 +40,7 @@ import {
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatComposer } from './ChatComposer';
 import { ChatTodoPlan } from './chat/ChatTodoPlan';
+import { ToolRunSummary } from './chat/ToolRunSummary';
 import { Modal } from './Modal';
 import { Button } from './ui/Button';
 import type { ChatSlashPopoverHandle } from './ChatSlashPopover';
@@ -303,6 +304,15 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   const [verbTick, setVerbTick] = useState(0);
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
+  const [expandedToolRuns, setExpandedToolRuns] = useState<Set<string>>(new Set());
+  const toggleToolRun = useCallback((runId: string) => {
+    setExpandedToolRuns((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
   const [canvasMountReady, setCanvasMountReady] = useState(false);
   // Desktop drawer width, adjustable via the left-edge resize handle.
   // Default matches the CSS `min(540px, 100vw)`; clamped to a sane range.
@@ -731,24 +741,48 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 
     const timeline = timelinedMessages;
 
+    // Collapse consecutive kind:'tool' messages into tool-run summaries.
+    const grouped = timeline.reduce<Array<{ id: string; kind: 'run'; messages: ChatMessage[] } | { kind: 'other'; entry: (typeof timelinedMessages)[number] }>>((acc, entry) => {
+      if (entry.kind === 'message' && entry.message.kind === 'tool') {
+        const last = acc[acc.length - 1];
+        if (last && last.kind === 'run') {
+          last.messages.push(entry.message);
+        } else {
+          acc.push({ id: `toolrun-${entry.id}-${entry.message.id}`, kind: 'run', messages: [entry.message] });
+        }
+      } else {
+        acc.push({ kind: 'other', entry });
+      }
+      return acc;
+    }, []);
+
     return (
       <>
-        {timeline.map((entry) => entry.kind === 'message' ? (
-          <ChatMessageCard key={entry.id} message={entry.message} mentionHandles={mentionHandles} />
-        ) : (
+        {grouped.map((item) => item.kind === 'run' ? (
+          <ToolRunSummary
+            key={item.id}
+            count={item.messages.length}
+            expanded={expandedToolRuns.has(item.id)}
+            onToggle={() => toggleToolRun(item.id)}
+          >
+            {item.messages.map((message) => <ChatMessageCard key={message.id} message={message} mentionHandles={mentionHandles} />)}
+          </ToolRunSummary>
+        ) : item.kind === 'other' && item.entry.kind === 'message' ? (
+          <ChatMessageCard key={item.entry.id} message={item.entry.message} mentionHandles={mentionHandles} />
+        ) : item.kind === 'other' ? (
           <BotHandoffMessage
-            key={entry.id}
-            handle={entry.handoff.handle}
-            displayName={entry.handoff.displayName}
-            model={botRoster.find((bot) => bot.handle === entry.handoff.handle)?.model}
-            provider={botRoster.find((bot) => bot.handle === entry.handoff.handle)?.provider}
-            request={entry.handoff.request}
-            status={entry.handoff.status}
-            reply={entry.handoff.reply}
-            error={entry.handoff.error}
-            reason={entry.handoff.reason}
-            onRetry={entry.handoff.status === 'failed' && (entry.handoff.retryable !== false) ? () => {
-              const handoff = entry.handoff;
+            key={item.entry.id}
+            handle={item.entry.handoff.handle}
+            displayName={item.entry.handoff.displayName}
+            model={botRoster.find((bot) => bot.handle === item.entry.handoff.handle)?.model}
+            provider={botRoster.find((bot) => bot.handle === item.entry.handoff.handle)?.provider}
+            request={item.entry.handoff.request}
+            status={item.entry.handoff.status}
+            reply={item.entry.handoff.reply}
+            error={item.entry.handoff.error}
+            reason={item.entry.handoff.reason}
+            onRetry={item.entry.handoff.status === 'failed' && (item.entry.handoff.retryable !== false) ? () => {
+              const handoff = item.entry.handoff;
               const handle = handoff.handle;
               rememberActiveBotTarget({
                 handle,
@@ -830,7 +864,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
               void runRetry();
             } : undefined}
           />
-        ))}
+        ) : null)}
       </>
     );
   };
@@ -1848,7 +1882,7 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
             </div>
           </div>
           {roomPickerOpen && state.rooms.length > 0 ? (
-            <div className="absolute left-3 right-3 top-full z-20 mt-1 flex max-h-56 flex-col overflow-y-auto rounded-lg border border-border-subtle bg-surface shadow-lg" role="listbox">
+            <div className="absolute left-3 right-3 top-full z-40 mt-1 flex max-h-56 flex-col overflow-y-auto rounded-lg border border-border-subtle bg-surface shadow-lg" role="listbox">
               {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" role="option" aria-selected={room.id === state.selectedRoomId} onClick={() => { void selectRoom(room.id); setRoomPickerOpen(false); }} className={`px-2.5 py-1.5 text-left text-xs ${room.id === state.selectedRoomId ? 'bg-accent-subtle text-accent' : 'text-text hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
             </div>
           ) : null}
