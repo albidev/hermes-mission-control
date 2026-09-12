@@ -35,6 +35,7 @@ export type GroupRoomResult = {
   pendingActions: unknown[];
   approval: unknown;
   blocked: boolean;
+  working: boolean;
   disbanded: boolean;
   memberActivity: Record<string, GroupEvent>;
   round: RoundCoordinates;
@@ -203,9 +204,12 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     try {
       const result = await clientRef.current.send(selectedRoomId, eventId, { text, ...(threadId ? { threadId } : {}) });
       setEvents((current) => mergeGroupEvents(current.filter((item) => item.id !== eventId && item.seq !== optimistic.seq), [result]));
+      // Refresh the driver status immediately so the UI shows the members
+      // as working right after a send, instead of waiting for the next poll.
+      if (mountedRef.current) void loadRoom(selectedRoomId);
       return result;
     } catch (cause) { if (mountedRef.current) { setEvents((current) => current.filter((item) => item.id !== eventId)); setError(toGroupRoomError(cause)); } return null; }
-  }, [events, room, selectedRoomId]);
+  }, [events, loadRoom, room, selectedRoomId]);
 
   const disband = useCallback(async () => {
     if (!selectedRoomId) return;
@@ -272,6 +276,7 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     capabilities, driverAvailable: capabilities?.driver === true, rooms, room, selectedRoomId, events, cursor, loading, refreshing,
     error, serviceUnavailable: error?.retryable === true && /unavailable|connect|closed|timed out/i.test(error.message), authorityChanged,
     driverStatus, pendingActions: status.pendingActions, approval: status.approval, blocked: status.blocked,
+    working: driverStatus.working === true || status.pendingActions.length > 0,
     disbanded: Boolean(room?.disbandedAt), memberActivity, round: deriveRoundCoordinates(events),
     focusHandle: latestMemberEvent?.message.member?.handle ?? null,
     selectRoom, refresh, retry, send, disband, clearAuthorityChange: () => setAuthorityChanged(false),

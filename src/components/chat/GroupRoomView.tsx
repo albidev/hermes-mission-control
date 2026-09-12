@@ -97,6 +97,12 @@ function StateNotice({ state }: { state: GroupRoomResult }) {
 
   return (
     <div className="flex flex-col gap-2">
+      {state.working && !pendingOrBlocked && actions.length === 0 ? (
+        <div className="flex items-center gap-2 rounded-lg border border-accent/25 bg-accent-subtle/60 p-2 text-xs text-accent" role="status">
+          <Loader2 size={13} className="animate-spin shrink-0" />
+          <span>{t('rooms.status.working')}</span>
+        </div>
+      ) : null}
       {pendingOrBlocked && !(state.blocked && canAct) && actions.length === 0 ? (
         <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning-subtle p-2 text-xs text-warning" role="status"><AlertTriangle size={13} className="shrink-0" />{t('rooms.pendingApprovalOrRetry')}</div>
       ) : null}
