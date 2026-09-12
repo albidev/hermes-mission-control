@@ -5894,3 +5894,25 @@ button {
 .room-tool-panel-body .chat-tool-surface {
   border-color: var(--color-border-subtle);
 }
+
+/* Mobile tap hygiene: on touch devices the browser keeps the :hover/:active
+   state after the finger lifts, so the pressed highlight stays "stuck".
+   Kill the tap highlight and only show hover feedback for devices that can
+   actually hover. :focus-visible keeps keyboard focus rings intact. */
+@media (hover: none) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  .chat-icon-button:hover,
+  .chat-mode-tab:hover,
+  .room-tool-panel-bar:hover {
+    color: inherit;
+    background: transparent;
+    border-color: var(--color-border);
+  }
+  .chat-mode-tab:active,
+  .chat-icon-button:active,
+  .room-tool-panel-bar:active {
+    opacity: 0.6;
+  }
+}
