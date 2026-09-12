@@ -29,6 +29,7 @@ import {
   Loader2,
   MessageSquare,
   Paperclip,
+  Plus,
   ShieldCheck,
   SquarePen,
   X,
@@ -82,7 +83,7 @@ import { compareChatTimelineEntries } from '../lib/chat-timeline';
 import { useGroupRoom } from '../lib/use-group-room';
 import { GroupGatewayClient } from '../lib/group-gateway';
 import type { GroupRoom } from '../lib/group-gateway';
-import { GroupRoomView } from './chat/GroupRoomView';
+import { CreateRoomForm, GroupRoomView } from './chat/GroupRoomView';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -1630,6 +1631,7 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
   const { t } = useI18n();
   const state = useGroupRoom({ enabled: open, initialRoomId: roomId ?? null });
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
+  const [creating, setCreating] = useState(false);
   const [botCandidates, setBotCandidates] = useState<BotMentionCandidate[]>([]);
   const mentionRoster = useMemo(() => (state.room?.members ?? [])
     .filter((member) => member.handle.trim())
@@ -1646,7 +1648,7 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
       .then((payload) => {
         if (cancelled) return;
         setBotCandidates(payload.profiles
-          .filter((profile) => profile.is_bot && profile.name.trim())
+          .filter((profile) => (profile.is_bot || profile.is_default) && profile.name.trim())
           .map((profile) => ({
             handle: profile.name,
             displayName: profile.display_name || profile.name,
@@ -1667,6 +1669,20 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
     return state.selectRoom(nextRoomId);
   }, [onRoomChange, state.selectRoom]);
 
+  const createRoomFromDrawer = useCallback(async (name: string, handles: string[]) => {
+    const client = new GroupGatewayClient();
+    const roster = handles.map((handle, index) => ({
+      id: `member-${handle}-${index}`,
+      profile: handle === 'default' ? 'default' : handle,
+      handle,
+      displayName: (botCandidates.find((m) => m.handle === handle) ?? mentionRoster.find((m) => m.handle === handle))?.displayName,
+    }));
+    const room = await client.create({ roomId: `mc-${Date.now()}`.slice(0, 48), name, roster });
+    setCreating(false);
+    await state.refresh();
+    await state.selectRoom(room.id);
+  }, [botCandidates, mentionRoster, state]);
+
   return (
     <>
       {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
@@ -1675,11 +1691,15 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
         <div className="chat-transcript">
           {!canUseRooms && !state.loading ? <div className="chat-error" role="status">{t('rooms.driverUnavailable')}</div> : null}
           {canUseRooms ? <>
-            <nav className="flex min-w-0 gap-2 overflow-x-auto pb-3" aria-label={t('rooms.title')}>
-              {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
-              {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">{t('rooms.noRooms')}</span> : null}
-            </nav>
-            {state.room ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} onCreateRoom={async (name: string, handles: string[]) => { const client = new GroupGatewayClient(); const roster = handles.map((handle, index) => ({ id: `member-${handle}-${index}`, profile: handle === 'default' ? 'default' : handle, handle, displayName: (botCandidates.find((m) => m.handle === handle) ?? mentionRoster.find((m) => m.handle === handle))?.displayName })); const room = await client.create({ roomId: `mc-${Date.now()}`.slice(0, 48), name, roster }); await state.refresh(); await state.selectRoom(room.id); }} /> : <p className="text-sm text-text-muted">{t('rooms.chooseRoom')}</p>}
+            <div className="flex items-center justify-between gap-2">
+              <nav className="flex min-w-0 gap-2 overflow-x-auto pb-1" aria-label={t('rooms.title')}>
+                {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
+                {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">{t('rooms.noRooms')}</span> : null}
+              </nav>
+              <button type="button" onClick={() => setCreating((current) => !current)} className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50">{creating ? <X size={14} /> : <Plus size={14} />}{creating ? t('rooms.close') : t('rooms.create')}</button>
+            </div>
+            {creating ? <CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /> : null}
+            {state.room ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : <p className="text-sm text-text-muted">{t('rooms.chooseRoom')}</p>}
           </> : null}
           {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
         </div>

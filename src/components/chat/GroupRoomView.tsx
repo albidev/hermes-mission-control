@@ -7,7 +7,6 @@ import type { GroupEvent } from '../../lib/group-gateway';
 import type { GroupRoomResult } from '../../lib/use-group-room';
 import { ChatMentionPopover, type ChatMentionPopoverHandle } from '../ChatMentionPopover';
 import type { BotMentionCandidate } from '../../lib/bot-mentions';
-import { GroupGatewayClient } from '../../lib/group-gateway';
 import { deriveGroupMemberStatus, groupEventLabel, visibleGroupEvents } from './group-room-view-model';
 import type { GroupMemberStatus } from './group-room-view-model';
 export { deriveGroupMemberStatus, groupEventLabel, visibleGroupEvents } from './group-room-view-model';
@@ -15,7 +14,6 @@ export { deriveGroupMemberStatus, groupEventLabel, visibleGroupEvents } from './
 type GroupRoomViewProps = {
   state: GroupRoomResult;
   onSend?: (text: string) => Promise<unknown>;
-  onCreateRoom?: (name: string, members: string[]) => Promise<unknown>;
   className?: string;
   mentionRoster?: BotMentionCandidate[];
 };
@@ -107,7 +105,7 @@ function GroupRoomComposer({ state, onSend, mentionRoster }: { state: GroupRoomR
   );
 }
 
-function CreateRoomForm({ members, onCancel, onCreate }: { members: BotMentionCandidate[]; onCancel: () => void; onCreate: (name: string, handles: string[]) => Promise<unknown> }) {
+export function CreateRoomForm({ members, onCancel, onCreate }: { members: BotMentionCandidate[]; onCancel: () => void; onCreate: (name: string, handles: string[]) => Promise<unknown> }) {
   const { t } = useI18n();
   const [name, setName] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
@@ -173,13 +171,9 @@ function CreateRoomForm({ members, onCancel, onCreate }: { members: BotMentionCa
   );
 }
 
-export function GroupRoomView({ state, onSend, onCreateRoom, className = '', mentionRoster = [] }: GroupRoomViewProps) {
+export function GroupRoomView({ state, onSend, className = '', mentionRoster = [] }: GroupRoomViewProps) {
   const { t } = useI18n();
   const [focusedMember, setFocusedMember] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState('');
-  const clientRef = useRef<GroupGatewayClient | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const entries = useMemo(() => visibleGroupEvents(state.events, state.room?.members ?? []), [state.events, state.room?.members]);
   const latestByMember = useMemo(() => {
     const result: Record<string, GroupEvent> = {};
@@ -189,32 +183,13 @@ export function GroupRoomView({ state, onSend, onCreateRoom, className = '', men
   const filtered = focusedMember ? entries.filter(({ event, member }) => event.actor.kind === 'user' || member?.id === focusedMember) : entries;
   const hiddenWorking = state.room?.members.some((member) => member.id !== focusedMember && deriveGroupMemberStatus(member, state.driverStatus, latestByMember[member.id]) === 'working');
 
-  const createRoom = useCallback(async (name: string, handles: string[]) => {
-    const client = clientRef.current ?? new GroupGatewayClient();
-    clientRef.current = client;
-    const roster = handles.map((handle, index) => ({
-      id: `member-${handle}-${index}`,
-      profile: (handle === 'default' ? 'default' : handle),
-      handle,
-      displayName: mentionRoster.find((m) => m.handle === handle)?.displayName,
-    }));
-    const room = await client.create({ roomId: `mc-${Date.now()}`.slice(0, 48), name, roster });
-    setCreating(false);
-    await state.refresh();
-    await state.selectRoom(room.id);
-  }, [mentionRoster, state]);
-
   return <section className={`flex min-h-0 flex-col gap-3 ${className}`} aria-label={t('rooms.title')}>
     <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-border-subtle bg-surface-raised/40 p-3 sm:p-4">
       <div className="min-w-0"><p className="truncate text-base font-semibold text-text">{state.room?.name || t('rooms.title')}</p><p className="mt-1 text-xs text-text-muted">{state.room?.members.length ?? 0} {t('rooms.members').toLowerCase()} · authority epoch {state.room?.authorityEpoch ?? '—'}</p></div>
-      <div className="flex items-center gap-2">
-        {onCreateRoom ? <button type="button" onClick={() => setCreating((current) => !current)} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50">{creating ? <X size={14} /> : <Plus size={14} />}{creating ? t('rooms.close') : t('rooms.create')}</button> : null}
-        <button type="button" onClick={() => void state.refresh()} disabled={state.refreshing} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50"><RefreshCw size={14} className={state.refreshing ? 'animate-spin' : ''} />{t('rooms.refresh')}</button>
-      </div>
+      <button type="button" onClick={() => void state.refresh()} disabled={state.refreshing} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50"><RefreshCw size={14} className={state.refreshing ? 'animate-spin' : ''} />{t('rooms.refresh')}</button>
     </header>
     <StateNotice state={state} />
     {state.error && !state.serviceUnavailable ? <div className="text-xs text-negative" role="alert">{state.error.message}</div> : null}
-    {creating ? <CreateRoomForm members={mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoom} /> : null}
     <div className="flex min-w-0 gap-2 overflow-x-auto pb-1" role="tablist" aria-label={t('rooms.members')}>
       <button type="button" role="tab" aria-selected={!focusedMember} onClick={() => setFocusedMember(null)} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${!focusedMember ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}><Users size={13} />{t('rooms.everyone')}</button>
       {(state.room?.members ?? []).map((member) => { const status = deriveGroupMemberStatus(member, state.driverStatus, latestByMember[member.id] ?? null); return <button key={member.id} type="button" role="tab" aria-selected={focusedMember === member.id} onClick={() => setFocusedMember(member.id)} className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs ${focusedMember === member.id ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}><span>{member.displayName || `@${member.handle}`}</span><StatusBadge status={status} /></button>; })}
