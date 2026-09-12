@@ -5678,6 +5678,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
+  background: var(--color-surface-raised);
   transform: translateY(0);
   opacity: 1;
   transition: transform 160ms ease, opacity 160ms ease;
