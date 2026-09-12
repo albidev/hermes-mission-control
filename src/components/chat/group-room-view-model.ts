@@ -28,6 +28,14 @@ export function deriveGroupMemberStatus(member: GroupMember, driverStatus: Recor
   const global = statusValue(driverStatus.status) ?? statusValue(driverStatus.state);
   if (global && (!targetedId || targetedId === member.id || targetedId === member.handle)) return global;
   if (latestEvent?.actor.kind === 'member' && (latestEvent.actor.id === member.id || latestEvent.message.member?.id === member.id)) return 'settled';
+
+  // The driver exposes activity as booleans/counts (working: true, counts: {running: N}),
+  // not as a per-member status string. A member with no private state defaults to
+  // 'working' while the room has live tasks; true idle is only when nothing is running.
+  const counts = record(driverStatus.counts);
+  const liveCount = ['queued', 'running', 'stopping', 'indeterminate', 'deferred']
+    .reduce((sum, key) => sum + (typeof counts[key] === 'number' ? counts[key] as number : 0), 0);
+  if (driverStatus.working === true || liveCount > 0) return 'working';
   return 'idle';
 }
 
