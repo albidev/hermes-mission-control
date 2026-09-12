@@ -5696,10 +5696,6 @@ button {
 }
 
 /* Group Rooms: action toolbar inside the composer bubble (stop/disband/refresh). */
-.group-room-composer .chat-composer-toolbar {
-  gap: 0.25rem;
-  padding: 0.15rem 0.5rem 0.4rem;
-}
 
 .chat-room-icon {
   color: var(--color-text-muted);
@@ -5730,9 +5726,6 @@ button {
 }
 
 /* Group Rooms: composer and transcript mirror the canonical chat layout. */
-.group-room-composer {
-  border-top: 1px solid var(--color-border);
-}
 
 .chat-round-divider {
   display: flex;
