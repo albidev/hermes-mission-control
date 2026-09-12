@@ -467,7 +467,7 @@ export function CronRoute() {
               variant="primary"
               iconOnly
               icon={<Plus className="h-4 w-4" />}
-              className="sm:w-auto sm:min-w-0 sm:px-2.5"
+              className="cron-new-button"
               onClick={() => setEditingJob(null)}
               aria-label={t('cron.actions.new')}
               title={t('cron.actions.new')}

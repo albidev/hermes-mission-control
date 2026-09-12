@@ -5318,7 +5318,8 @@ button:not(.mobile-nav-backdrop):not(.chat-backdrop) {
 }
 
 @media (min-width: 641px) {
-  .skills-install-button.mc-icon-only {
+  .skills-install-button.mc-icon-only,
+  .cron-new-button.mc-icon-only {
     width: auto !important;
     min-width: 0 !important;
     padding-inline: 0.625rem !important;
