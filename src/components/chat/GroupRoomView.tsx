@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, ChevronRight, Loader2, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon } from 'lucide-react';
+import {AlertTriangle, Check, ChevronRight, Loader2, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon, ChevronDown} from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 import { ChatMessageCard } from '../chat-messages';
 import { Badge } from '../ui/Badge';
@@ -273,6 +273,9 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
   const { t } = useI18n();
   const [focusedMember, setFocusedMember] = useState<string | null>(null);
   const [confirmDisband, setConfirmDisband] = useState(false);
+  const [nearBottom, setNearBottom] = useState(true);
+  const nearBottomRef = useRef(true);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const entries = useMemo(() => visibleGroupEvents(state.events, state.room?.members ?? []), [state.events, state.room?.members]);
   const latestByMember = useMemo(() => {
     const result: Record<string, GroupEvent> = {};
@@ -282,13 +285,48 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
   const filtered = focusedMember ? entries.filter(({ event, member }) => event.actor.kind === 'user' || member?.id === focusedMember) : entries;
   const hiddenWorking = state.room?.members.some((member) => member.id !== focusedMember && deriveGroupMemberStatus(member, state.driverStatus, latestByMember[member.id]) === 'working');
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const node = transcriptRef.current;
+    if (!node) return;
+    nearBottomRef.current = true;
+    setNearBottom(true);
+    node.scrollTo({ top: node.scrollHeight, behavior });
+  }, []);
+
+  useEffect(() => {
+    if (nearBottomRef.current) scrollToBottom();
+  }, [scrollToBottom, state.events.length]);
+
+  const handleScroll = useCallback(() => {
+    const node = transcriptRef.current;
+    if (!node) return;
+    const position = node.scrollTop + node.clientHeight;
+    const max = node.scrollHeight;
+    const bottom = max - position < 96;
+    if (bottom !== nearBottomRef.current) {
+      nearBottomRef.current = bottom;
+      setNearBottom(bottom);
+    }
+  }, []);
+
   return <section className={`flex min-h-0 flex-1 flex-col ${className}`} aria-label={t('rooms.title')}>
     <StateNotice state={state} />
     {state.error && !state.serviceUnavailable ? <div className="text-xs text-negative" role="alert">{state.error.message}</div> : null}
-    <div className="chat-transcript min-h-[220px] flex-1">
+    <div ref={transcriptRef} onScroll={handleScroll} className="chat-transcript min-h-[220px] flex-1">
       {state.loading ? <div className="chat-empty"><Loader2 size={16} className="chat-spin" />{t('rooms.loading')}</div> : filtered.length === 0 ? <p className="chat-empty">{t('rooms.noMessages')}</p> : (
         filtered.map(({ event, member }, index) => <div key={event.id} style={{ display: 'contents' }}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div> : null}<ChatMessageCard message={groupEventToChatMessage(event, member)} mentionHandles={(state.room?.members ?? []).map((m) => m.handle)} /></div>)
       )}
+      {!nearBottom ? (
+        <button
+          className="chat-scroll-fab"
+          type="button"
+          onClick={() => scrollToBottom('smooth')}
+          aria-label={t('rooms.scrollLatest')}
+          title={t('rooms.scrollLatest')}
+        >
+          <ChevronDown size={18} />
+        </button>
+      ) : null}
     </div>
     {hiddenWorking ? <div className="flex items-center gap-2 text-[11px] text-warning" role="status"><Loader2 size={12} className="animate-spin" />{t('rooms.backgroundMemberWorking')}</div> : null}
     <div className="chat-room-filterbar" role="tablist" aria-label={t('rooms.members')}>

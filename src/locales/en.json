@@ -1069,5 +1069,6 @@
   "rooms.ledPending": "Action pending — needs approval",
   "rooms.ledOffline": "Disbanded or service unavailable",
   "rooms.renameRoom": "Rename room",
-  "rooms.saveName": "Save name"
+  "rooms.saveName": "Save name",
+  "rooms.scrollLatest": "Jump to latest"
 }
