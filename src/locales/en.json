@@ -1062,5 +1062,10 @@
   "rooms.timelineLoadFailed": "Unable to load this room's timeline.",
   "common.cancel": "Cancel",
   "common.refresh": "Refresh",
-  "common.dismiss": "Dismiss"
+  "common.dismiss": "Dismiss",
+  "rooms.membersCount": "{count} members",
+  "rooms.messagesCount": "{count} messages",
+  "rooms.ledOnline": "Room ready",
+  "rooms.ledPending": "Action pending — needs approval",
+  "rooms.ledOffline": "Disbanded or service unavailable"
 }

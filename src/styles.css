@@ -5725,7 +5725,12 @@ button {
   color: #fff;
 }
 
-/* Group Rooms: composer and transcript mirror the canonical chat layout. */
+/* Group Rooms: composer and transcript mirror the canonical chat layout.
+   The composer keeps a full-width top border to separate it from the
+   transcript (the canonical chat relies on surface contrast instead). */
+.group-room-composer {
+  border-top: 1px solid var(--color-border);
+}
 
 .chat-round-divider {
   display: flex;
