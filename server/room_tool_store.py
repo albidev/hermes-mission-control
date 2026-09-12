@@ -80,6 +80,50 @@ def _json_object(value: Any) -> Any:
         return {}
 
 
+def _reasoning_text(*values: Any) -> str:
+    """Extract the member's chain-of-thought from the reasoning columns.
+
+    Columns may hold plain text, a JSON string of items (``codex_reasoning_items``),
+    or a JSON blob with a ``reasoning``/``summary``-style key. Returns the trimmed
+    text or empty string.
+    """
+    for value in values:
+        if value is None or value == "":
+            continue
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        parts = [
+                            str(item.get("summary") or item.get("content") or item.get("text") or "").strip()
+                            for item in parsed
+                            if isinstance(item, dict)
+                        ]
+                        text = "\n".join(part for part in parts if part)
+                        if text:
+                            return text
+                except (TypeError, ValueError):
+                    pass
+            return text[: MAX_TOOL_TEXT] if text else ""
+        if isinstance(value, (dict, list)):
+            if isinstance(value, dict):
+                for key in ("summary", "content", "text", "reasoning"):
+                    if isinstance(value.get(key), str) and value[key].strip():
+                        return value[key].strip()[: MAX_TOOL_TEXT]
+            elif isinstance(value, list):
+                parts = [
+                    str(item.get("summary") or item.get("content") or item.get("text") or "").strip()
+                    for item in value
+                    if isinstance(item, dict)
+                ]
+                joined = "\n".join(part for part in parts if part)
+                if joined:
+                    return joined[: MAX_TOOL_TEXT]
+    return ""
+
+
 def _str(value: Any, max_len: int = MAX_TOOL_TEXT) -> str:
     text = str(value or "").strip()
     return text[:max_len]
@@ -131,17 +175,33 @@ def _member_tool_rows(member: dict[str, str], room_id: str) -> list[dict[str, An
             return []
         session_id = session[0]
         rows = db.execute(
-            "SELECT role, tool_name, content, tool_calls, timestamp "
+            "SELECT role, tool_name, content, tool_calls, timestamp, "
+            "reasoning, reasoning_content, reasoning_details, codex_reasoning_items "
             "FROM messages WHERE session_id = ? "
-            "AND (tool_calls IS NOT NULL OR tool_name IS NOT NULL) "
+            "AND (tool_calls IS NOT NULL OR tool_name IS NOT NULL "
+            "OR reasoning IS NOT NULL OR reasoning_content IS NOT NULL "
+            "OR reasoning_details IS NOT NULL OR codex_reasoning_items IS NOT NULL) "
             "ORDER BY timestamp, rowid",
             (session_id,),
         ).fetchall()
         entries: list[dict[str, Any]] = []
         pending: list[dict[str, Any]] = []
-        for role, tool_name, content, tool_calls, timestamp in rows:
+        for role, tool_name, content, tool_calls, timestamp, reasoning, reasoning_content, reasoning_details, codex_reasoning_items in rows:
             role_s = _str(role)
             ts = float(timestamp or 0.0)
+            # Reasoning blocks (the member's hidden chain-of-thought) belong
+            # in the per-turn strip too — they are part of the same run as
+            # the tool calls. Stored as plain text or JSON items.
+            reason_text = _reasoning_text(reasoning, reasoning_content, reasoning_details, codex_reasoning_items)
+            if reason_text:
+                entries.append({
+                    "kind": "reasoning",
+                    "output": reason_text,
+                    "timestamp": ts,
+                    "memberHandle": member.get("handle", profile),
+                    "memberProfile": profile,
+                    "memberDisplayName": member.get("display_name", profile),
+                })
             if tool_calls:
                 calls_value = _json_object(tool_calls)
                 for call in calls_value:
@@ -190,7 +250,7 @@ def _member_tool_rows(member: dict[str, str], room_id: str) -> list[dict[str, An
                     "memberProfile": profile,
                     "memberDisplayName": member.get("display_name", profile),
                 })
-        return [entry for entry in entries if entry.get("toolName")]
+        return [entry for entry in entries if entry.get("toolName") or entry.get("kind") == "reasoning"]
     except sqlite3.Error as exc:
         LOGGER.warning("member tool read failed for %s: %s", profile, exc)
         return []

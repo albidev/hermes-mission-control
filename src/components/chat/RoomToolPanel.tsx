@@ -1,10 +1,24 @@
 import type { RoomToolTrace } from '../../lib/room-tools';
 import type { ChatMessage } from '../../lib/chat-protocol';
-import { ToolMessage } from './ToolMessage';
+import { ChatMessageCard } from '../chat-messages';
 import { ToolRunSummary } from './ToolRunSummary';
 
 function traceToChatMessage(trace: RoomToolTrace): ChatMessage {
   const text = trace.output ?? trace.toolInput ?? '';
+  if (trace.kind === 'reasoning') {
+    return {
+      id: `room-reasoning-${trace.memberHandle ?? 'member'}-${trace.timestamp ?? 0}-${trace.output?.slice(0, 32) ?? ''}`,
+      role: 'assistant',
+      kind: 'reasoning',
+      text,
+      status: 'complete',
+      createdAt: typeof trace.timestamp === 'number' ? trace.timestamp * 1000 : null,
+      detail: trace.output,
+      attribution: trace.memberHandle
+        ? { handle: trace.memberHandle, displayName: trace.memberDisplayName ?? trace.memberHandle }
+        : undefined,
+    };
+  }
   return {
     id: `room-tool-${trace.memberHandle ?? 'member'}-${trace.timestamp ?? 0}-${trace.toolName}`,
     role: 'tool',
@@ -42,10 +56,12 @@ export function RoomToolStrip({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const toolCount = tools.filter((trace) => trace.kind !== 'reasoning').length;
+  const reasoningCount = tools.filter((trace) => trace.kind === 'reasoning').length;
   return (
-    <ToolRunSummary count={tools.length} label={memberHandle} expanded={expanded} onToggle={onToggle}>
+    <ToolRunSummary count={toolCount} reasoningCount={reasoningCount} label={memberHandle} expanded={expanded} onToggle={onToggle}>
       {tools.map((trace) => (
-        <ToolMessage key={traceToChatMessage(trace).id} message={traceToChatMessage(trace)} />
+        <ChatMessageCard key={traceToChatMessage(trace).id} message={traceToChatMessage(trace)} mentionHandles={[]} />
       ))}
     </ToolRunSummary>
   );

@@ -9,6 +9,7 @@
 import { localApiUrl, buildHeaders, MissionControlAuthError } from './hermes-api';
 
 export type RoomToolTrace = {
+  kind?: 'tool' | 'reasoning';
   toolName: string;
   toolInput?: string;
   output?: string;
