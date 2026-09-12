@@ -1739,17 +1739,21 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
       {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
       <aside ref={drawerRef} className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
         <div className="chat-drawer-resize-handle" role="separator" aria-orientation="vertical" aria-label={t('chatDrawer.resize')} title={t('chatDrawer.dragToResize')} onMouseDown={startResize} />
-        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
+        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2>{!state.selectedRoomId ? <span className="chat-session-title">{t('rooms.selectRoom')}</span> : null}</div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
         <ChatModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} />
         <div className="chat-transcript">
           {!canUseRooms && !state.loading ? <div className="chat-error" role="status">{t('rooms.driverUnavailable')}</div> : null}
           {canUseRooms ? <>
             <div className="flex items-center justify-between gap-2">
-              <nav className="flex min-w-0 gap-2 overflow-x-auto pb-1" aria-label={t('rooms.title')}>
-                {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
+              <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto pb-1" aria-label={t('rooms.title')}>
+                {state.rooms.length > 1 ? (
+                  state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] leading-none ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)
+                ) : state.selectedRoomId ? (
+                  <span className="shrink-0 rounded-full border border-accent bg-accent-subtle px-2.5 py-1 text-[11px] leading-none text-accent">{state.room?.name || state.selectedRoomId}</span>
+                ) : null}
                 {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">{t('rooms.noRooms')}</span> : null}
-              </nav>
-              <button type="button" onClick={() => setCreating((current) => !current)} className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50">{creating ? <X size={14} /> : <Plus size={14} />}{creating ? t('rooms.close') : t('rooms.create')}</button>
+              </div>
+              <button type="button" onClick={() => setCreating((current) => !current)} className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-xs text-text-muted hover:bg-surface-sunken disabled:opacity-50">{creating ? <X size={14} /> : <Plus size={14} />}{creating ? t('rooms.close') : t('rooms.create')}</button>
             </div>
             {creating ? <CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /> : null}
             {state.room ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : <p className="text-sm text-text-muted">{t('rooms.chooseRoom')}</p>}
