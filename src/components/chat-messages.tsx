@@ -69,6 +69,11 @@ export const ChatMessageCard = memo(function ChatMessageCard({
   const messageTime = messageTimestamp === null ? '' : formatChatMessageTime(messageTimestamp);
   const messageText = visualKind === 'user' ? boldLeadingMention(message.text, mentionHandles) : message.text;
   if (isTodoTool) return null;
+  // A live-but-empty body (streaming) may show a placeholder pulse; a settled
+  // empty body must not render a permanently "..." bubble (happens for
+  // assistant rows that carried only reasoning or tool context).
+  const hasVisibleBody = (messageText?.trim().length ?? 0) > 0 || message.status === 'streaming';
+  if (!hasVisibleBody) return null;
   const label = visualKind === 'assistant'
     ? 'Hermes'
     : visualKind === 'user'
