@@ -1644,6 +1644,43 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
   const [creating, setCreating] = useState(false);
   const [botCandidates, setBotCandidates] = useState<BotMentionCandidate[]>([]);
+  const drawerRef = useRef<HTMLElement>(null);
+  const resizingRef = useRef(false);
+
+  // Share the canonical drawer width so Rooms and Chat keep the same size:
+  // read the same localStorage key the chat drawer persists through its resize handle.
+  useEffect(() => {
+    if (!open) return;
+    try {
+      const stored = parseInt(window.localStorage.getItem('mission-control-chat-width') || '', 10);
+      if (Number.isFinite(stored) && stored >= 360 && stored <= 900 && drawerRef.current) {
+        drawerRef.current.style.width = `${stored}px`;
+      }
+    } catch { /* storage unavailable */ }
+  }, [open]);
+
+  const startResize = (event: React.MouseEvent) => {
+    event.preventDefault();
+    resizingRef.current = true;
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 360), Math.min(900, window.innerWidth - 16));
+      if (drawerRef.current) drawerRef.current.style.width = `${width}px`;
+    };
+    const onUp = () => {
+      resizingRef.current = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const finalWidth = drawerRef.current ? Math.min(Math.max(parseInt(drawerRef.current.style.width, 10) || 540, 360), 900) : 540;
+      try { window.localStorage.setItem('mission-control-chat-width', String(finalWidth)); } catch { /* storage unavailable */ }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
   const mentionRoster = useMemo(() => (state.room?.members ?? [])
     .filter((member) => member.handle.trim())
     .map((member) => ({
@@ -1700,7 +1737,8 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
   return (
     <>
       {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
-      <aside className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
+      <aside ref={drawerRef} className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
+        <div className="chat-drawer-resize-handle" role="separator" aria-orientation="vertical" aria-label={t('chatDrawer.resize')} title={t('chatDrawer.dragToResize')} onMouseDown={startResize} />
         <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
         <ChatModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} />
         <div className="chat-transcript">
