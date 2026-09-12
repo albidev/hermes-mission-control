@@ -67,7 +67,8 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     { to: '/', label: t('nav.overview'), icon: 'LayoutDashboard', order: 10 },
     { to: '/sessions', label: t('nav.sessions'), icon: 'MessageSquare', order: 20 },
     { to: '/kanban', label: t('nav.kanban'), icon: 'Kanban', order: 15 },
-    { to: '/agents', label: t('nav.agents'), icon: 'Bot', order: 30 },
+    { to: '/agents', label: t('nav.agents'), icon: 'Workflow', order: 30 },
+    { to: '/bots', label: t('nav.bots'), icon: 'Bot', order: 35 },
     { to: '/usage', label: t('nav.usage'), icon: 'DollarSign', order: 40 },
     { to: '/tools', label: t('nav.tools'), icon: 'Wrench', order: 50 },
     { to: '/cron', label: t('nav.cron'), icon: 'Timer', order: 60 },
@@ -91,19 +92,50 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     setChatOpenState(open);
     try { sessionStorage.setItem('mission-control-chat-open', open ? '1' : '0'); } catch { /* ignore */ }
   }, []);
-  const chatRecoverySessionId = new URLSearchParams(location.search).get('chatSession');
+  const chatSearchParams = new URLSearchParams(location.search);
+  const chatRecoverySessionId = chatSearchParams.get('chatSession');
+  const chatMode = chatSearchParams.get('chatMode') === 'canonical' || chatSearchParams.get('chatMode') === 'task' || chatSearchParams.get('chatMode') === 'room'
+    ? chatSearchParams.get('chatMode') as 'canonical' | 'task' | 'room'
+    : 'general';
+  const chatBotProfile = chatSearchParams.get('botProfile');
+  const chatRoomId = chatSearchParams.get('roomId');
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const chatButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const closeChat = useCallback(() => {
     setChatOpen(false);
     chatButtonRef.current?.focus();
-    if (!chatRecoverySessionId) return;
+    if (!chatRecoverySessionId && !chatRoomId) return;
     const params = new URLSearchParams(location.search);
     params.delete('chatSession');
+    params.delete('chatMode');
+    params.delete('botProfile');
+    params.delete('roomId');
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
-  }, [chatRecoverySessionId, location.pathname, location.search, navigate]);
+  }, [chatRecoverySessionId, chatRoomId, location.pathname, location.search, navigate]);
+
+  const changeRoom = useCallback((roomId: string | null) => {
+    const params = new URLSearchParams(location.search);
+    if (roomId) {
+      params.set('chatMode', 'room');
+      params.set('roomId', roomId);
+      params.delete('chatSession');
+    } else {
+      params.delete('roomId');
+      params.delete('chatMode');
+    }
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
+  const startTaskChat = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete('chatSession');
+    params.set('chatMode', 'task');
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   const activeNav = navItems.find((item) => (item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)));
   const isOverviewRoute = activeNav?.to === '/';
@@ -133,8 +165,8 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
   }, [sideOpen]);
 
   useEffect(() => {
-    if (chatRecoverySessionId) setChatOpen(true);
-  }, [chatRecoverySessionId]);
+    if (chatRecoverySessionId || chatRoomId) setChatOpen(true);
+  }, [chatRecoverySessionId, chatRoomId]);
 
   useEffect(() => {
     if (!chatOpen) return;
@@ -382,7 +414,12 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             open={chatOpen}
             storedToken={storedToken}
             initialSessionId={chatRecoverySessionId}
+            chatMode={chatMode}
+            roomId={chatRoomId}
+            botProfile={chatBotProfile}
             onClose={closeChat}
+            onStartTaskChat={startTaskChat}
+            onRoomChange={changeRoom}
           />
         ) : null}
       </div>

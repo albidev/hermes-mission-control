@@ -8,9 +8,13 @@ payload, enriches read results with output, and exposes a small action API.
 from __future__ import annotations
 
 import importlib
+import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Iterator, Optional
+
+from hermes_paths import hermes_root, get_active_profile
 
 
 _core_module = None
@@ -92,6 +96,62 @@ def _load_core():
     return _core_module
 
 
+_PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _profile_home(profile: str) -> Path:
+    name = str(profile or '').strip().lower()
+    if not name or name == 'default':
+        return hermes_root()
+    if not _PROFILE_RE.fullmatch(name):
+        raise CronBridgeError(400, 'Invalid Hermes profile name')
+    home = hermes_root() / 'profiles' / name
+    if not home.is_dir():
+        raise CronBridgeError(404, f"Profile '{name}' not found")
+    return home
+
+
+def _profile_names() -> list[str]:
+    root = hermes_root()
+    names = ['default']
+    profiles = root / 'profiles'
+    if profiles.is_dir():
+        names.extend(sorted(path.name for path in profiles.iterdir() if path.is_dir() and _PROFILE_RE.fullmatch(path.name)))
+    return names
+
+
+@contextmanager
+def _cron_context(profile: str) -> Iterator[Any]:
+    core = _load_core()
+    use_cron_store = getattr(core, 'use_cron_store', None)
+    if not callable(use_cron_store):
+        # Compatibility with older embedded cores and test doubles. The active
+        # profile remains the only available store in that mode.
+        yield core
+        return
+    with use_cron_store(_profile_home(profile)):
+        yield core
+
+
+def _resolve_profile_for_job(job_id: str, profile: Optional[str] = None) -> str:
+    if profile:
+        return str(profile).strip().lower() or get_active_profile()
+    wanted = str(job_id or '').strip()
+    for candidate in _profile_names():
+        with _cron_context(candidate) as core:
+            try:
+                jobs = core.list_jobs(include_disabled=True)
+            except Exception:
+                continue
+            if any(isinstance(job, dict) and str(job.get('id') or '') == wanted for job in jobs):
+                return candidate
+    return get_active_profile()
+
+
+def _profile_from_payload(payload: Dict[str, Any]) -> str:
+    return str(payload.get('profile') or get_active_profile()).strip().lower() or 'default'
+
+
 def _read_latest_output(core: Any, job_id: str, limit: int = 100_000) -> Optional[str]:
     try:
         output_dir = Path(core.get_cron_output_dir())
@@ -130,26 +190,37 @@ def _latest_execution(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def _enrich_job(core: Any, job: Dict[str, Any], *, include_output: bool = True) -> Dict[str, Any]:
+def _enrich_job(core: Any, job: Dict[str, Any], *, profile: str, include_output: bool = True) -> Dict[str, Any]:
     enriched = dict(job)
+    enriched["profile"] = profile
     enriched["latest_execution"] = _latest_execution(enriched)
     if include_output:
         enriched["last_output"] = _read_latest_output(core, str(enriched.get("id", "")))
     else:
-        # The list endpoint is polled frequently and the UI only needs output
-        # after opening a job detail. Avoid shipping up to 100 KB per job on
-        # every 15/30 second Mission Control refresh.
         enriched.pop("last_output", None)
     return enriched
 
 
-def list_jobs(include_disabled: bool = True, *, include_output: bool = True) -> list[Dict[str, Any]]:
+def list_jobs(include_disabled: bool = True, *, include_output: bool = True, profile: Optional[str] = None) -> list[Dict[str, Any]]:
     core = _load_core()
-    try:
-        jobs = core.list_jobs(include_disabled=include_disabled)
-    except Exception as exc:
-        raise CronBridgeError(500, f"Could not list cron jobs: {exc}") from exc
-    return [_enrich_job(core, job, include_output=include_output) for job in jobs if isinstance(job, dict)]
+    supports_profile_store = callable(getattr(core, 'use_cron_store', None))
+    profiles = [_profile_from_payload({"profile": profile})] if profile else (_profile_names() if supports_profile_store else [get_active_profile()])
+    result: list[Dict[str, Any]] = []
+    for profile_name in profiles:
+        try:
+            with _cron_context(profile_name) as core:
+                jobs = core.list_jobs(include_disabled=include_disabled)
+                result.extend(
+                    _enrich_job(core, job, profile=profile_name, include_output=include_output)
+                    for job in jobs if isinstance(job, dict)
+                )
+        except CronBridgeError:
+            if profile:
+                raise
+        except Exception as exc:
+            if profile:
+                raise CronBridgeError(500, f"Could not list cron jobs: {exc}") from exc
+    return result
 
 
 def get_job(job_id: str) -> Dict[str, Any]:
@@ -168,85 +239,103 @@ def _filtered_payload(payload: Dict[str, Any], fields: Iterable[str]) -> Dict[st
     return {key: payload[key] for key in fields if key in payload}
 
 
-def _job_response(job: Optional[Dict[str, Any]], core: Any) -> Dict[str, Any]:
+def _job_response(job: Optional[Dict[str, Any]], core: Any, profile: str) -> Dict[str, Any]:
     if not isinstance(job, dict):
         raise CronBridgeError(404, "Cron job not found")
-    return {"success": True, "job": _enrich_job(core, job)}
+    return {"success": True, "job": _enrich_job(core, job, profile=profile)}
 
 
 def create_job(payload: Dict[str, Any]) -> Dict[str, Any]:
+    profile = _profile_from_payload(payload)
     values = _filtered_payload(payload, _CREATE_FIELDS)
     if not str(values.get("schedule") or "").strip():
         raise CronBridgeError(400, "schedule is required")
-    core = _load_core()
     try:
-        job = core.create_job(**values)
+        with _cron_context(profile) as core:
+            job = core.create_job(**values)
+            return _job_response(job, core, profile)
     except (ValueError, TypeError) as exc:
         raise CronBridgeError(400, str(exc)) from exc
+    except CronBridgeError:
+        raise
     except Exception as exc:
         raise CronBridgeError(500, f"Could not create cron job: {exc}") from exc
-    return _job_response(job, core)
 
 
 def update_job(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     wanted = str(job_id or "").strip()
     if not wanted:
         raise CronBridgeError(400, "Cron job id is required")
+    profile = _resolve_profile_for_job(wanted, payload.get('profile') if isinstance(payload, dict) else None)
     values = _filtered_payload(payload, _UPDATE_FIELDS)
     if not values:
         raise CronBridgeError(400, "No mutable cron job fields provided")
-    core = _load_core()
     try:
-        job = core.update_job(wanted, values)
+        with _cron_context(profile) as core:
+            job = core.update_job(wanted, values)
+            return _job_response(job, core, profile)
     except (ValueError, TypeError) as exc:
         raise CronBridgeError(400, str(exc)) from exc
+    except CronBridgeError:
+        raise
     except Exception as exc:
         raise CronBridgeError(500, f"Could not update cron job: {exc}") from exc
-    return _job_response(job, core)
 
 
-def pause_job(job_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
-    core = _load_core()
+def pause_job(job_id: str, reason: Optional[str] = None, profile: Optional[str] = None) -> Dict[str, Any]:
+    profile_name = _resolve_profile_for_job(job_id, profile)
     try:
-        job = core.pause_job(str(job_id), reason=reason)
+        with _cron_context(profile_name) as core:
+            job = core.pause_job(str(job_id), reason=reason)
+            return _job_response(job, core, profile_name)
     except (ValueError, TypeError) as exc:
         raise CronBridgeError(400, str(exc)) from exc
+    except CronBridgeError:
+        raise
     except Exception as exc:
         raise CronBridgeError(500, f"Could not pause cron job: {exc}") from exc
-    return _job_response(job, core)
 
 
-def resume_job(job_id: str) -> Dict[str, Any]:
-    core = _load_core()
+def resume_job(job_id: str, profile: Optional[str] = None) -> Dict[str, Any]:
+    profile_name = _resolve_profile_for_job(job_id, profile)
     try:
-        job = core.resume_job(str(job_id))
+        with _cron_context(profile_name) as core:
+            job = core.resume_job(str(job_id))
+            return _job_response(job, core, profile_name)
     except (ValueError, TypeError) as exc:
         raise CronBridgeError(400, str(exc)) from exc
+    except CronBridgeError:
+        raise
     except Exception as exc:
         raise CronBridgeError(500, f"Could not resume cron job: {exc}") from exc
-    return _job_response(job, core)
 
 
-def run_job(job_id: str) -> Dict[str, Any]:
-    core = _load_core()
+def run_job(job_id: str, profile: Optional[str] = None) -> Dict[str, Any]:
+    profile_name = _resolve_profile_for_job(job_id, profile)
     try:
-        job = core.trigger_job(str(job_id))
+        with _cron_context(profile_name) as core:
+            job = core.trigger_job(str(job_id))
+            return _job_response(job, core, profile_name)
     except (ValueError, TypeError) as exc:
         raise CronBridgeError(400, str(exc)) from exc
+    except CronBridgeError:
+        raise
     except Exception as exc:
         raise CronBridgeError(500, f"Could not run cron job: {exc}") from exc
-    return _job_response(job, core)
 
 
-def delete_job(job_id: str) -> Dict[str, Any]:
+def delete_job(job_id: str, profile: Optional[str] = None) -> Dict[str, Any]:
     wanted = str(job_id or "").strip()
     if not wanted:
         raise CronBridgeError(400, "Cron job id is required")
-    core = _load_core()
+    profile_name = _resolve_profile_for_job(wanted, profile)
     try:
-        removed = bool(core.remove_job(wanted))
+        with _cron_context(profile_name) as core:
+            removed = bool(core.remove_job(wanted))
+    except CronBridgeError:
+        raise
     except Exception as exc:
         raise CronBridgeError(500, f"Could not delete cron job: {exc}") from exc
     if not removed:
         raise CronBridgeError(404, f"Cron job '{wanted}' not found")
-    return {"success": True, "job_id": wanted}
+    return {"success": True, "job_id": wanted, "profile": profile_name}

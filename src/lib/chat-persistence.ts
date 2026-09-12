@@ -7,6 +7,8 @@ const STORAGE_KEY = 'mission-control-chat-drawer-v1';
 export type PersistedChat = {
   sessionId: string | null;
   sessionKey: string | null;
+  sessionTitle: string | null;
+  profile: string | null;
   modelIdentity: ChatModelIdentity | null;
   messages: ChatMessage[];
   updatedAt: number;
@@ -16,6 +18,8 @@ export type PersistedChat = {
 const emptyPersistedChat = (): PersistedChat => ({
   sessionId: null,
   sessionKey: null,
+  sessionTitle: null,
+  profile: null,
   modelIdentity: null,
   messages: [],
   updatedAt: 0,
@@ -30,6 +34,8 @@ export function readPersistedChat(): PersistedChat {
     return {
       sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
       sessionKey: typeof parsed.sessionKey === 'string' ? parsed.sessionKey : null,
+      sessionTitle: typeof parsed.sessionTitle === 'string' && parsed.sessionTitle.trim() ? parsed.sessionTitle.trim() : null,
+      profile: typeof parsed.profile === 'string' && parsed.profile.trim() ? parsed.profile.trim() : null,
       modelIdentity: extractSessionModel(parsed.modelIdentity),
       messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
@@ -45,9 +51,11 @@ export function readPersistedChat(): PersistedChat {
 export function persistChat(
   sessionId: string | null,
   sessionKey: string | null,
+  sessionTitle: string | null,
   modelIdentity: ChatModelIdentity | null,
   messages: ChatMessage[],
   revision: number | null = null,
+  profile: string | null = null,
 ) {
   try {
     window.localStorage.setItem(
@@ -55,6 +63,8 @@ export function persistChat(
       JSON.stringify({
         sessionId,
         sessionKey,
+        sessionTitle: sessionTitle?.trim() || null,
+        profile: profile?.trim() || null,
         modelIdentity,
         messages,
         updatedAt: Date.now(),
@@ -66,8 +76,32 @@ export function persistChat(
   }
 }
 
+export async function persistChatTitle(
+  sessionId: string,
+  sessionKey: string | null,
+  title: string,
+  storedToken: string,
+): Promise<void> {
+  const normalizedTitle = title.trim().slice(0, 120);
+  if (!normalizedTitle || (!sessionId.trim() && !sessionKey?.trim())) return;
+  try {
+    await fetch('/api/local/chat/title', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
+      },
+      cache: 'no-store',
+      body: JSON.stringify({ sessionId, sessionKey, title: normalizedTitle }),
+    });
+  } catch {
+    // The gateway/runtime remains authoritative; MC metadata is best effort.
+  }
+}
+
 export type LastChatClaimResult = {
   accepted: boolean;
+  conflict: boolean;
   lastChat: ServerLastChat | null;
 };
 
@@ -85,13 +119,15 @@ function parseLastChatPayload(value: unknown): ServerLastChat | null {
 export async function syncLastChatToServer(
   sessionId: string | null,
   sessionKey: string | null,
+  sessionTitle: string | null,
   modelIdentity: ChatModelIdentity | null,
   storedToken: string,
   expectedRevision: number | null = null,
+  profile?: string | null,
 ): Promise<LastChatClaimResult> {
-  if (!sessionId || !sessionId.trim()) return { accepted: false, lastChat: null };
+  if (!sessionId || !sessionId.trim()) return { accepted: false, conflict: false, lastChat: null };
   try {
-    const body = buildLastChatClaimPayload(sessionId, sessionKey, modelIdentity, expectedRevision);
+    const body = buildLastChatClaimPayload(sessionId, sessionKey, sessionTitle, modelIdentity, expectedRevision, profile);
     const res = await fetch('/api/local/chat/last', {
       method: 'POST',
       headers: {
@@ -102,9 +138,9 @@ export async function syncLastChatToServer(
     });
     const payload = await res.json().catch(() => null);
     const lastChat = parseLastChatPayload(payload);
-    return { accepted: res.ok, lastChat };
+    return { accepted: res.ok, conflict: res.status === 409, lastChat };
   } catch {
-    return { accepted: false, lastChat: null };
+    return { accepted: false, conflict: false, lastChat: null };
   }
 }
 

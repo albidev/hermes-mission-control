@@ -10,8 +10,10 @@ import {
 } from 'react';
 import { ListTodo, Loader2, Paperclip, Pause, Send, X } from 'lucide-react';
 import { ChatSlashPopover, type ChatSlashPopoverHandle, type ChatSlashCompletionResponse } from './ChatSlashPopover';
+import { ChatMentionPopover, type ChatMentionPopoverHandle } from './ChatMentionPopover';
 import { AttachmentIcon } from './chat-messages';
 import type { PendingAttachment } from '../lib/chat-gateway?mc=resume-v2';
+import type { BotMentionCandidate } from '../lib/bot-mentions';
 
 export type ChatComposerProps = {
   draft: string;
@@ -27,6 +29,10 @@ export type ChatComposerProps = {
   completeSlash: (text: string) => Promise<ChatSlashCompletionResponse>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   slashPopoverRef: RefObject<ChatSlashPopoverHandle | null>;
+  mentionPopoverRef: RefObject<ChatMentionPopoverHandle | null>;
+  botRoster: BotMentionCandidate[];
+  activeBotTarget: BotMentionCandidate | null;
+  onClearBotTarget: () => void;
   running: boolean;
   submitting: boolean;
   disabled: boolean;
@@ -48,6 +54,10 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
   completeSlash,
   textareaRef,
   slashPopoverRef,
+  mentionPopoverRef,
+  botRoster,
+  activeBotTarget,
+  onClearBotTarget,
   running,
   submitting,
   disabled,
@@ -79,18 +89,27 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
       ) : null}
       {attachmentNotice ? <p className="chat-attachment-notice" role="status">{attachmentNotice}</p> : null}
       <ChatSlashPopover ref={slashPopoverRef} input={draft} complete={completeSlash} onApply={onDraftChange} />
+      <ChatMentionPopover ref={mentionPopoverRef} input={draft} roster={botRoster} textareaRef={textareaRef} onApply={onDraftChange} />
       <form className="chat-composer" onSubmit={onSubmit}>
         <div className="chat-composer-main">
+          {activeBotTarget ? (
+            <div className="chat-composer-target-pill" role="status">
+              <strong>@{activeBotTarget.handle}</strong>
+              <button type="button" onClick={onClearBotTarget} aria-label={`Torna a Hermes da @${activeBotTarget.handle}`} title="Torna a Hermes">
+                <X size={12} />
+              </button>
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
-            placeholder={running ? 'Steer Hermes…' : 'Message Hermes'}
+            placeholder={running ? 'Steer Hermes…' : activeBotTarget ? `Message ${activeBotTarget.displayName || activeBotTarget.handle}` : 'Message Hermes'}
             rows={1}
             disabled={disabled}
-            aria-label={running ? 'Steer Hermes' : 'Message Hermes'}
+            aria-label={running ? 'Steer Hermes' : activeBotTarget ? `Message ${activeBotTarget.displayName || activeBotTarget.handle}` : 'Message Hermes'}
           />
           <div className="chat-composer-toolbar">
             <button

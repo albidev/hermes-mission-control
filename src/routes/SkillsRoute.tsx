@@ -15,6 +15,7 @@ import {
   loadMissionControlSkillFiles,
   installMissionControlSkill,
   toggleMissionControlSkill,
+  type MissionControlSkillCatalogItem,
   type MissionControlSkillsCatalogSnapshot,
   type MissionControlSkillFilesPayload,
   type MissionControlSkillFile,
@@ -293,12 +294,22 @@ export function SkillsRoute() {
     const normalizedQuery = query.trim().toLowerCase();
     const items = catalog?.skills ?? [];
     if (!normalizedQuery) return items;
-    return items.filter((skill) => {
+    const matching = items.filter((skill) => {
       const haystack = [skill.name, skill.description, skill.source, skill.identifier, skill.repo ?? '', skill.path ?? '', ...skill.tags]
         .join(' ')
         .toLowerCase();
       return haystack.includes(normalizedQuery);
     });
+    const relevance = (skill: MissionControlSkillCatalogItem): number => {
+      const name = skill.name.toLowerCase();
+      const identifier = skill.identifier.toLowerCase();
+      if (name === normalizedQuery) return 0;
+      if (name.startsWith(normalizedQuery)) return 1;
+      if (identifier === normalizedQuery || identifier.endsWith(`/${normalizedQuery}`)) return 2;
+      if (identifier.includes(normalizedQuery)) return 3;
+      return 4;
+    };
+    return matching.sort((left, right) => relevance(left) - relevance(right) || left.name.localeCompare(right.name));
   }, [catalog?.skills, query]);
 
   const catalogInstalledCount = filteredCatalogSkills.filter((skill) => skill.installed || installedNames.has(skill.name.toLowerCase())).length;

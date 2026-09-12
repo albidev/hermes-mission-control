@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from chat_runtime_presence import active_runtime_presences
+from chat_handoff_store import list_all_handoffs
+from chat_title_store import get_chat_title
 
 _log = logging.getLogger(__name__)
 
@@ -34,7 +37,40 @@ _ORIGIN_LABELS = {
 }
 
 
-def _sessions_dir() -> Path:
+def _profile_home(profile: str) -> Path | None:
+    name = str(profile or "").strip()
+    if not name or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
+        return None
+    from hermes_paths import hermes_root
+    root = hermes_root()
+    return root if name == "default" else root / "profiles" / name
+
+
+def _available_profile_names() -> list[str]:
+    """Return local profile names that have a SessionDB or session artifacts."""
+    root = _profile_home("default")
+    if root is None:
+        return []
+    profiles_dir = root / "profiles"
+    try:
+        entries = sorted(profiles_dir.iterdir(), key=lambda entry: entry.name)
+    except OSError:
+        return []
+    return [
+        entry.name
+        for entry in entries
+        if entry.is_dir()
+        and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", entry.name)
+        and ((entry / "state.db").is_file() or (entry / "sessions").is_dir())
+    ]
+
+
+def _sessions_dir(profile: str | None = None) -> Path:
+    if profile is not None:
+        home = _profile_home(profile)
+        if home is None:
+            return Path("/__mission_control_invalid_profile__") / "sessions"
+        return (home / "sessions").resolve()
     from hermes_paths import hermes_sessions_dir
 
     return hermes_sessions_dir().resolve()
@@ -150,14 +186,33 @@ def _build_agent_key(source: str, model: str) -> str:
     return f"{source or 'unknown'}::{model or 'unknown'}"
 
 
+def _bot_profiles_by_session() -> dict[str, list[str]]:
+    """Index durable Bot handoffs once for a Sessions snapshot, never per row."""
+    grouped: dict[str, set[str]] = {}
+    try:
+        rows = list_all_handoffs()
+    except Exception:
+        _log.debug("Failed to read Bot handoff evidence", exc_info=True)
+        return {}
+    for row in rows:
+        session_id = _normalize_text(row.get("sessionId"))
+        handoff = row.get("handoff")
+        if not session_id or not isinstance(handoff, dict):
+            continue
+        profile = _normalize_text(handoff.get("handle"))
+        if profile:
+            grouped.setdefault(session_id, set()).add(profile)
+    return {session_id: sorted(profiles) for session_id, profiles in grouped.items()}
+
+
 def _is_live(last_active_ts: float | None, ended_at: float | None, live_window_seconds: int) -> bool:
     if ended_at is not None or last_active_ts is None:
         return False
     return (time.time() - last_active_ts) < max(30, live_window_seconds)
 
 
-def _read_gateway_sessions_index() -> dict[str, dict[str, Any]]:
-    path = _sessions_dir() / "sessions.json"
+def _read_gateway_sessions_index(profile: str | None = None) -> dict[str, dict[str, Any]]:
+    path = _sessions_dir(profile) / "sessions.json";
     raw = _safe_read_json(path) or {}
     result: dict[str, dict[str, Any]] = {}
     for entry in raw.values():
@@ -177,11 +232,11 @@ def _read_gateway_sessions_index() -> dict[str, dict[str, Any]]:
     return result
 
 
-def _read_session_jsonl(session_id: str) -> list[dict[str, Any]]:
-    return _safe_read_jsonl(_sessions_dir() / f"{session_id}.jsonl")
+def _read_session_jsonl(session_id: str, profile: str | None = None) -> list[dict[str, Any]]:
+    return _safe_read_jsonl(_sessions_dir(profile) / f"{session_id}.jsonl")
 
 
-def _read_session_request_dump(session_id: str) -> list[dict[str, Any]]:
+def _read_session_request_dump(session_id: str, profile: str | None = None) -> list[dict[str, Any]]:
     """Read only the provider request messages needed for a TODO fallback.
 
     A gateway request can fail before the normal JSONL writer flushes a session.
@@ -189,7 +244,7 @@ def _read_session_request_dump(session_id: str) -> list[dict[str, Any]]:
     """
     try:
         paths = sorted(
-            _sessions_dir().glob(f"request_dump_{session_id}_*.json"),
+            _sessions_dir(profile).glob(f"request_dump_{session_id}_*.json"),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
@@ -205,13 +260,13 @@ def _read_session_request_dump(session_id: str) -> list[dict[str, Any]]:
     return []
 
 
-def _session_messages(db: Any, session_id: str) -> list[dict[str, Any]]:
-    return _read_session_jsonl(session_id) or _get_db_messages(db, session_id) or _read_session_request_dump(session_id)
+def _session_messages(db: Any, session_id: str, profile: str | None = None) -> list[dict[str, Any]]:
+    return _read_session_jsonl(session_id, profile) or _get_db_messages(db, session_id) or _read_session_request_dump(session_id, profile)
 
 
-def _iter_db_session_ids() -> list[str]:
-    """Discover session IDs from SessionDB (replaces sidecar-based discovery)."""
-    db = _try_get_session_db()
+def _iter_db_session_ids(profile: str | None = None) -> list[str]:
+    """Discover session IDs from the requested profile's SessionDB."""
+    db = _try_get_session_db(profile)
     try:
         if db is None:
             return []
@@ -219,6 +274,7 @@ def _iter_db_session_ids() -> list[str]:
             limit=2000,
             order_by_last_active=True,
             compact_rows=True,
+            include_hidden=profile is not None,
         )
         return [str(row.get("id", "")) for row in rows if row.get("id")]
     except Exception:
@@ -227,17 +283,27 @@ def _iter_db_session_ids() -> list[str]:
         _close_session_db(db)
 
 
-def _try_get_session_db():
+def _try_get_session_db(profile: str | None = None):
     """Open the Hermes session store strictly read-only for telemetry.
 
     Mission Control only observes sessions.  A writable ``SessionDB()`` runs
     schema/FTS initialization on every request and competes with the gateway's
     writer, which is precisely the wrong thing for a polling sidecar to do.
+    When a Bot profile is supplied, use that profile's DB explicitly instead of
+    following the sidecar process's active-profile environment.
     """
     try:
         from hermes_state import SessionDB
 
-        return SessionDB(read_only=True)
+        db_path = None
+        if profile is not None:
+            home = _profile_home(profile)
+            if home is None:
+                return None
+            db_path = home / "state.db"
+            if not db_path.is_file():
+                return None
+        return SessionDB(db_path=db_path, read_only=True) if db_path is not None else SessionDB(read_only=True)
     except Exception:
         return None
 
@@ -321,6 +387,7 @@ def _resolve_chat_reference(
 def load_chat_transcript(
     session_id: str | None = None,
     session_key: str | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Return the complete, canonical Mission Control display transcript.
 
@@ -332,9 +399,18 @@ def load_chat_transcript(
     if not reference:
         return {"sessionId": "", "sessionKey": "", "messages": [], "complete": True, "count": 0}
 
-    db = _try_get_session_db()
+    db = _try_get_session_db(profile)
     try:
         resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
+        session_title = None
+        try:
+            rich_row = _get_db_rich_row(db, resolved_id) if db is not None else None
+            if isinstance(rich_row, dict):
+                raw_title = rich_row.get("title")
+                if isinstance(raw_title, str) and raw_title.strip():
+                    session_title = raw_title.strip()
+        except Exception:
+            session_title = None
         display_rows = db.get_resume_conversations(resolved_id)[1] if db is not None else []
         messages: list[dict[str, Any]] = []
         for row in display_rows:
@@ -373,6 +449,7 @@ def load_chat_transcript(
         return {
             "sessionId": resolved_id,
             "sessionKey": resolved_key,
+            "sessionTitle": session_title,
             "messages": messages,
             "complete": True,
             "count": len(messages),
@@ -393,13 +470,14 @@ def load_chat_transcript(
 def load_chat_message_timestamps(
     session_id: str | None = None,
     session_key: str | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Return canonical SessionDB message metadata for legacy resume repair."""
     reference = str(session_key or session_id or "").strip()
     if not reference:
         return {"sessionId": "", "sessionKey": "", "messages": []}
 
-    db = _try_get_session_db()
+    db = _try_get_session_db(profile)
     try:
         resolved_id, resolved_key = _resolve_chat_reference(db, session_id, session_key)
         rows = _get_db_messages(db, resolved_id) or []
@@ -672,6 +750,8 @@ def _build_session_item(
     live_window_seconds: int,
     recent_messages: list[dict[str, Any]] | None = None,
     todo_plan: dict[str, Any] | None = None,
+    profile: str | None = None,
+    bot_profiles: list[str] | None = None,
 ) -> dict[str, Any]:
     sidecar_messages = sidecar.get("messages") if isinstance(sidecar, dict) and isinstance(sidecar.get("messages"), list) else None
     source = str(
@@ -700,6 +780,13 @@ def _build_session_item(
         _normalize_text((db_row or {}).get("preview")),
         _normalize_text((index_entry or {}).get("display_name")),
     )
+    stored_title = get_chat_title(
+        session_id,
+        (db_row or {}).get("session_key"),
+        (index_entry or {}).get("session_key"),
+    )
+    if stored_title:
+        title = stored_title
     preview = _derive_preview(sidecar_messages, _normalize_text((db_row or {}).get("preview")))
     message_count = max(
         _coerce_int((sidecar or {}).get("message_count"), 0),
@@ -712,6 +799,9 @@ def _build_session_item(
     origin = _classify_session_origin(source, platform, index_entry)
     return {
         "sessionId": session_id,
+        "sessionKey": _normalize_text((db_row or {}).get("session_key") or (index_entry or {}).get("session_key") or session_id),
+        "profile": profile or _normalize_text((db_row or {}).get("profile_name")) or None,
+        "botProfiles": bot_profiles or [],
         "agentId": agent_id,
         "title": title,
         "source": source,
@@ -749,6 +839,8 @@ def _build_runtime_presence_item(presence: dict[str, Any]) -> dict[str, Any]:
     now = _parse_timestamp(presence.get("updatedAt")) or time.time()
     return {
         "sessionId": session_id,
+        "sessionKey": _normalize_text(presence.get("sessionKey")) or None,
+        "profile": _normalize_text(presence.get("profile")) or None,
         "agentId": _build_agent_key(source, model),
         "title": title,
         "source": source,
@@ -804,14 +896,44 @@ def _presence_aliases(presence: dict[str, Any]) -> list[str]:
     ]
 
 
-def _apply_runtime_presence(items: list[dict[str, Any]], filters: dict[str, str] | None = None) -> None:
+def _presence_matches_profile(presence: dict[str, Any], profile: str | None) -> bool:
+    """Keep a profile-scoped runtime lease out of other profiles' snapshots."""
+    lease_profile = _normalize_text(presence.get("profile")) or None
+    if lease_profile is None:
+        # Old clients did not publish a profile; retain their legacy behavior.
+        return True
+    return lease_profile == (profile or "default")
+
+
+def _item_aliases(item: dict[str, Any]) -> list[str]:
+    return [
+        value
+        for value in (
+            _normalize_text(item.get("sessionId")),
+            _normalize_text(item.get("sessionKey")),
+        )
+        if value
+    ]
+
+
+def _apply_runtime_presence(
+    items: list[dict[str, Any]],
+    filters: dict[str, str] | None = None,
+    profile: str | None = None,
+) -> None:
     """Overlay active resumed runtimes without mutating canonical SessionDB rows."""
     presences = active_runtime_presences()
     if not presences:
         return
 
-    by_id = {str(item.get("sessionId") or ""): item for item in items}
+    by_id = {
+        alias: item
+        for item in items
+        for alias in _item_aliases(item)
+    }
     for presence in presences:
+        if not _presence_matches_profile(presence, profile):
+            continue
         aliases = _presence_aliases(presence)
         if not aliases:
             continue
@@ -820,7 +942,8 @@ def _apply_runtime_presence(items: list[dict[str, Any]], filters: dict[str, str]
             item = _build_runtime_presence_item(presence)
             if _session_matches_filters(item, filters):
                 items.append(item)
-                by_id[str(item.get("sessionId") or "")] = item
+                for alias in _item_aliases(item):
+                    by_id[alias] = item
             continue
         # Prefer the canonical SessionDB item (resumedFrom/sessionKey) when the
         # runtime has a different ephemeral id. This prevents one conversation
@@ -917,10 +1040,14 @@ def _collect_agent_sessions(
     session_id: str | None = None,
     include_recent_messages: bool = True,
     filters: dict[str, str] | None = None,
+    profile: str | None = None,
 ) -> list[dict[str, Any]]:
-    index_map = _read_gateway_sessions_index()
+    index_map = _read_gateway_sessions_index(profile)
+    bot_profiles_by_session = _bot_profiles_by_session()
     presence_by_id: dict[str, dict[str, Any]] = {}
     for presence in active_runtime_presences():
+        if not _presence_matches_profile(presence, profile):
+            continue
         for alias in _presence_aliases(presence):
             presence_by_id.setdefault(alias, presence)
     # _iter_db_session_ids already returns ids ordered by last_active (recency).
@@ -928,7 +1055,7 @@ def _collect_agent_sessions(
     # normally live gateway sessions that have not reached SessionDB yet; if we
     # append them after a large DB history, a small first page hides the active
     # session entirely.
-    db_ids = _iter_db_session_ids()
+    db_ids = _iter_db_session_ids(profile)
     db_id_set = set(db_ids)
     index_only_ids = [
         sid for sid in index_map.keys()
@@ -943,7 +1070,7 @@ def _collect_agent_sessions(
         # Narrow to a single session for the chat drawer preview. Keep the
         # recency ordering contract; the id either exists or yields nothing.
         ordered_ids = [sid for sid in ordered_ids if sid == session_id]
-        if not ordered_ids and (_read_session_jsonl(session_id) or _read_session_request_dump(session_id)):
+        if not ordered_ids and (_read_session_jsonl(session_id, profile) or _read_session_request_dump(session_id, profile)):
             ordered_ids = [session_id]
     # With filters, pagination must happen after item classification. Without
     # filters retain the cheap id-level window used by existing consumers.
@@ -952,12 +1079,12 @@ def _collect_agent_sessions(
             ordered_ids = ordered_ids[offset:]
         if limit is not None:
             ordered_ids = ordered_ids[:limit]
-    db = _try_get_session_db()
+    db = _try_get_session_db(profile)
     try:
         items: list[dict[str, Any]] = []
         for session_id in ordered_ids:
             db_row = _get_db_rich_row(db, session_id)
-            session_messages = _session_messages(db, session_id) if include_recent_messages else None
+            session_messages = _session_messages(db, session_id, profile) if include_recent_messages else None
             recent_messages = _recent_chat_messages(db, session_id, messages=session_messages) if include_recent_messages else []
             todo_plan = _derive_todo_plan(session_messages) if include_recent_messages else None
             item = _build_session_item(
@@ -968,12 +1095,14 @@ def _collect_agent_sessions(
                 live_window_seconds,
                 recent_messages,
                 todo_plan,
+                profile,
+                bot_profiles_by_session.get(session_id),
             )
             if presence := presence_by_id.get(session_id):
                 _overlay_runtime_presence_item(item, presence)
             if _session_matches_filters(item, filters):
                 items.append(item)
-        _apply_runtime_presence(items, filters)
+        _apply_runtime_presence(items, filters, profile)
         # Items already follow the ordered_ids sequence (recency first). Do NOT
         # re-sort here — the client may also re-sort, but the page boundaries
         # must stay contiguous, which requires a stable single ordering.
@@ -987,6 +1116,46 @@ def _collect_agent_sessions(
         _close_session_db(db)
 
 
+def _collect_snapshot_sessions(
+    live_window_seconds: int = 300,
+    limit: int | None = None,
+    offset: int = 0,
+    session_id: str | None = None,
+    include_recent_messages: bool = True,
+    filters: dict[str, str] | None = None,
+    profile: str | None = None,
+) -> list[dict[str, Any]]:
+    """Collect sessions from one profile, or all local profiles for the list."""
+    scopes: list[str | None] = [profile] if profile is not None else [None, *_available_profile_names()]
+    # Only the first global page needs transcript previews. Read at most the
+    # requested page depth from each profile, then merge/sort globally below.
+    # Scanning every JSONL transcript before returning 50 rows exceeds the
+    # handler's socket deadline and turns a slow list into a proxy 500.
+    per_scope_limit = None if filters else ((offset or 0) + limit if limit is not None else None)
+    items: list[dict[str, Any]] = []
+    for scope in scopes:
+        items.extend(_collect_agent_sessions(
+            live_window_seconds=live_window_seconds,
+            limit=per_scope_limit,
+            offset=0,
+            session_id=session_id,
+            include_recent_messages=include_recent_messages,
+            filters=filters,
+            profile=scope,
+        ))
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in items:
+        item_id = str(item.get("sessionId") or "").strip()
+        if item_id:
+            deduped[(str(item.get("profile") or "default"), item_id)] = item
+    ordered = sorted(deduped.values(), key=lambda item: _parse_timestamp(item.get("lastActiveAt")) or 0, reverse=True)
+    if offset:
+        ordered = ordered[offset:]
+    if limit is not None:
+        ordered = ordered[:limit]
+    return ordered
+
+
 def _load_agents_sessions_snapshot_uncached(
     limit: int = 100,
     live_window_seconds: int = 300,
@@ -995,31 +1164,35 @@ def _load_agents_sessions_snapshot_uncached(
     include_facets: bool = True,
     include_recent_messages: bool = True,
     filters: dict[str, str] | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     clamped_limit = max(1, min(limit, 500))
-    visible_items = _collect_agent_sessions(
+    visible_items = _collect_snapshot_sessions(
         live_window_seconds=live_window_seconds,
         limit=clamped_limit,
         offset=offset,
         session_id=session_id,
         filters=filters,
         include_recent_messages=include_recent_messages,
+        profile=profile,
     )
     if include_facets and not session_id:
         # Facets are collected without recent message previews. This keeps the
         # global counts correct without loading conversation content for every
         # historical session on each request.
-        all_items = _collect_agent_sessions(
+        all_items = _collect_snapshot_sessions(
             live_window_seconds=live_window_seconds,
             include_recent_messages=False,
+            profile=profile,
         )
     else:
         all_items = visible_items
     if filters and not session_id:
-        filtered_items = _collect_agent_sessions(
+        filtered_items = _collect_snapshot_sessions(
             live_window_seconds=live_window_seconds,
             include_recent_messages=False,
             filters=filters,
+            profile=profile,
         )
     else:
         filtered_items = all_items
@@ -1063,6 +1236,7 @@ def load_agents_sessions_snapshot(
     include_facets: bool = True,
     include_recent_messages: bool = True,
     filters: dict[str, str] | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Return a short-lived, coalesced snapshot for polling clients.
 
@@ -1079,6 +1253,7 @@ def load_agents_sessions_snapshot(
         session_id,
         include_facets,
         include_recent_messages,
+        profile,
         tuple(sorted((filters or {}).items())),
     )
     while True:
@@ -1119,6 +1294,7 @@ def load_agents_sessions_snapshot(
                 include_facets=include_facets,
                 include_recent_messages=include_recent_messages,
                 filters=filters,
+                profile=profile,
             )
         except BaseException:
             with _SESSION_SNAPSHOT_CACHE_LOCK:
@@ -1495,7 +1671,33 @@ def _build_trace_from_messages(
     limit: int,
     compact: bool,
     warnings: list[str] | None = None,
+    handoff_id: str | None = None,
 ) -> dict[str, Any]:
+    trace_warnings = list(warnings or [])
+    if handoff_id:
+        marker = f"handoff_id: {handoff_id.strip()}"
+        start_index = next(
+            (
+                index
+                for index, message in enumerate(messages)
+                if marker in _normalize_text(message.get("content"))
+            ),
+            None,
+        )
+        if start_index is None:
+            messages = []
+            trace_warnings.append(f"Handoff {handoff_id} was not found in this session transcript.")
+        else:
+            end_index = next(
+                (
+                    index
+                    for index in range(start_index + 1, len(messages))
+                    if str(messages[index].get("role") or "") == "user"
+                ),
+                len(messages),
+            )
+            messages = messages[start_index:end_index]
+
     session_ref = _normalize_trace_session_ref(session_item)
     base_ts = None
     if session_ref:
@@ -1675,14 +1877,20 @@ def _build_trace_from_messages(
         "nodes": nodes,
         "edges": _build_sequence_edges(events),
         "stats": _trace_stats(events, session_ref),
-        "warnings": warnings or [],
+        "warnings": trace_warnings,
     }
     return _slice_trace_payload(payload, limit)
 
 
-def _build_trace_from_transcript(session_id: str, limit: int = 300, compact: bool = False) -> dict[str, Any] | None:
-    session_item = next((item for item in _collect_agent_sessions(include_recent_messages=False) if item["sessionId"] == session_id), None)
-    jsonl_rows = _read_session_jsonl(session_id)
+def _build_trace_from_transcript(
+    session_id: str,
+    limit: int = 300,
+    compact: bool = False,
+    profile: str | None = None,
+    handoff_id: str | None = None,
+) -> dict[str, Any] | None:
+    session_item = next((item for item in _collect_agent_sessions(include_recent_messages=False, profile=profile) if item["sessionId"] == session_id), None)
+    jsonl_rows = _read_session_jsonl(session_id, profile)
     if jsonl_rows:
         messages = [row for row in jsonl_rows if row.get("role") != "session_meta"]
         if messages:
@@ -1693,12 +1901,19 @@ def _build_trace_from_transcript(session_id: str, limit: int = 300, compact: boo
                 limit=limit,
                 compact=compact,
                 warnings=["Native tool-call trace unavailable; built from transcript artifacts."],
+                handoff_id=handoff_id,
             )
     return None
 
 
-def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False) -> dict[str, Any] | None:
-    db = _try_get_session_db()
+def _build_trace_native(
+    session_id: str,
+    limit: int = 300,
+    compact: bool = False,
+    profile: str | None = None,
+    handoff_id: str | None = None,
+) -> dict[str, Any] | None:
+    db = _try_get_session_db(profile)
     try:
         if db is None:
             return None
@@ -1706,8 +1921,8 @@ def _build_trace_native(session_id: str, limit: int = 300, compact: bool = False
         if not messages:
             return None
         row = _get_db_rich_row(db, session_id)
-        session_item = _build_session_item(session_id, _read_gateway_sessions_index().get(session_id), None, row, 300)
-        return _build_trace_from_messages(session_item, messages, trace_mode=_TRACE_MODE_NATIVE, limit=limit, compact=compact)
+        session_item = _build_session_item(session_id, _read_gateway_sessions_index(profile).get(session_id), None, row, 300)
+        return _build_trace_from_messages(session_item, messages, trace_mode=_TRACE_MODE_NATIVE, limit=limit, compact=compact, handoff_id=handoff_id)
     finally:
         _close_session_db(db)
 
@@ -1750,16 +1965,34 @@ def _pick_default_session_id() -> str | None:
     return chosen.get("sessionId")
 
 
-def load_agent_trace_snapshot(session_id: str | None = None, limit: int = 300, compact: bool = False) -> dict[str, Any]:
+def load_agent_trace_snapshot(
+    session_id: str | None = None,
+    limit: int = 300,
+    compact: bool = False,
+    profile: str | None = None,
+    handoff_id: str | None = None,
+) -> dict[str, Any]:
     resolved_session_id = session_id or _pick_default_session_id()
     if not resolved_session_id:
         return _fallback_unavailable_trace(None, "No session artifacts were found for Mission Control trace.")
 
-    native = _build_trace_native(resolved_session_id, limit=limit, compact=compact)
+    native = _build_trace_native(
+        resolved_session_id,
+        limit=limit,
+        compact=compact,
+        profile=profile,
+        handoff_id=handoff_id,
+    )
     if native is not None:
         return native
 
-    transcript = _build_trace_from_transcript(resolved_session_id, limit=limit, compact=compact)
+    transcript = _build_trace_from_transcript(
+        resolved_session_id,
+        limit=limit,
+        compact=compact,
+        profile=profile,
+        handoff_id=handoff_id,
+    )
     if transcript is not None:
         return transcript
 

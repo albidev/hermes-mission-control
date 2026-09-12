@@ -3,6 +3,7 @@ import type { ChatMessage, ChatTimestampMetadata, GatewayEvent, GatewayTranscrip
 export type CanonicalChatTranscript = {
   sessionId: string;
   sessionKey: string;
+  sessionTitle?: string | null;
   messages: GatewayTranscriptMessage[];
   complete: boolean;
   count: number;
@@ -12,7 +13,7 @@ export type ChatSyncEnvelope = {
   session_id: string;
   relay_seq: number;
   dedupe_key: string;
-  kind: 'gateway_event' | 'user_message' | 'system_message';
+  kind: 'gateway_event' | 'user_message' | 'system_message' | 'assistant_message';
   payload: Record<string, unknown>;
 };
 
@@ -57,7 +58,7 @@ export function chatSyncStreamUrl(sessionId: string, accessToken: string, since?
 export function publishChatSync(
   accessToken: string,
   sessionId: string,
-  kind: 'gateway_event' | 'user_message' | 'system_message',
+  kind: 'gateway_event' | 'user_message' | 'system_message' | 'assistant_message',
   payload: Record<string, unknown>,
   dedupeKey?: string,
 ): Promise<void> {
@@ -92,10 +93,12 @@ export async function fetchChatTimestampMetadata(
   accessToken: string,
   sessionId: string | null,
   sessionKey: string | null,
+  profile?: string | null,
 ): Promise<ChatTimestampMetadata[]> {
   const params = new URLSearchParams();
   if (sessionId?.trim()) params.set('session_id', sessionId.trim());
   if (sessionKey?.trim()) params.set('session_key', sessionKey.trim());
+  if (profile?.trim()) params.set('profile', profile.trim());
   if (!params.toString()) return [];
   try {
     const response = await fetch(`/api/local/chat/timestamps?${params.toString()}`, {
@@ -117,10 +120,12 @@ export async function fetchChatTranscript(
   accessToken: string,
   sessionId: string | null,
   sessionKey: string | null,
+  profile?: string | null,
 ): Promise<CanonicalChatTranscript | null> {
   const params = new URLSearchParams();
   if (sessionId?.trim()) params.set('session_id', sessionId.trim());
   if (sessionKey?.trim()) params.set('session_key', sessionKey.trim());
+  if (profile?.trim()) params.set('profile', profile.trim());
   if (!params.toString()) return null;
   try {
     const response = await fetch(`/api/local/chat/transcript?${params.toString()}`, {
@@ -132,6 +137,9 @@ export async function fetchChatTranscript(
     const rawMessages = Array.isArray(payload.messages) ? payload.messages : [];
     const sessionIdValue = typeof payload.sessionId === 'string' ? payload.sessionId : sessionId || '';
     const sessionKeyValue = typeof payload.sessionKey === 'string' ? payload.sessionKey : sessionKey || sessionIdValue;
+    const sessionTitleValue = typeof payload.sessionTitle === 'string' && payload.sessionTitle.trim()
+      ? payload.sessionTitle.trim()
+      : null;
     const count = typeof payload.count === 'number' && Number.isFinite(payload.count)
       ? Math.max(0, Math.floor(payload.count))
       : rawMessages.length;
@@ -139,6 +147,7 @@ export async function fetchChatTranscript(
     return {
       sessionId: sessionIdValue,
       sessionKey: sessionKeyValue,
+      sessionTitle: sessionTitleValue,
       messages: rawMessages.filter((item): item is GatewayTranscriptMessage => Boolean(item) && typeof item === 'object') as GatewayTranscriptMessage[],
       complete,
       count,
@@ -156,10 +165,7 @@ export function applySyncedChatMessage(messages: ChatMessage[], message: ChatMes
 }
 
 export const applySyncedUserMessage = applySyncedChatMessage;
-
-function findMatchingMessage(messages: ChatMessage[], candidate: ChatMessage, excluded = new Set<number>()): number {
-  return messages.findIndex((message, index) => !excluded.has(index) && message.id === candidate.id);
-}
+export const applySyncedAssistantMessage = applySyncedChatMessage;
 
 function mergeStreamingMessage(durable: ChatMessage, local: ChatMessage): ChatMessage {
   if (local.kind === 'assistant' && local.status === 'streaming') {
@@ -188,6 +194,19 @@ function mergeMessagePair(durable: ChatMessage, local: ChatMessage): ChatMessage
 }
 
 /** Merge a server snapshot without dropping any visible local message. */
+const CANONICAL_LIVE_DEDUPE_WINDOW_MS = 15_000;
+
+function semanticallyMatchesCanonicalMessage(local: ChatMessage, canonical: ChatMessage): boolean {
+  if (local.id === canonical.id) return true;
+  const canonicalLivePair = (local.source === 'live' && canonical.source === 'canonical')
+    || (local.source === 'canonical' && canonical.source === 'live');
+  if (!canonicalLivePair) return false;
+  if (local.role !== canonical.role || local.kind !== canonical.kind || local.text !== canonical.text) return false;
+  if (local.kind === 'tool' && local.toolId && canonical.toolId && local.toolId !== canonical.toolId) return false;
+  if (typeof local.createdAt !== 'number' || typeof canonical.createdAt !== 'number') return false;
+  return Math.abs(local.createdAt - canonical.createdAt) <= CANONICAL_LIVE_DEDUPE_WINDOW_MS;
+}
+
 export function mergeDurableChatMessages(local: ChatMessage[], durable: ChatMessage[]): ChatMessage[] {
   if (durable.length === 0) return local;
 
@@ -199,7 +218,7 @@ export function mergeDurableChatMessages(local: ChatMessage[], durable: ChatMess
   const consumed = new Set<number>();
 
   for (const durableMessage of durable) {
-    const match = findMatchingMessage(merged, durableMessage, consumed);
+    const match = merged.findIndex((message, index) => !consumed.has(index) && semanticallyMatchesCanonicalMessage(message, durableMessage));
     if (match >= 0) {
       consumed.add(match);
       merged[match] = mergeMessagePair(durableMessage, merged[match]);
@@ -233,15 +252,17 @@ export function mergeDurableChatMessages(local: ChatMessage[], durable: ChatMess
 
 /** Replace the durable view with a complete canonical projection.
  *
- * Only explicitly live rows survive outside the projection. Matching is by the
- * SessionDB-derived id; repeated text/tool payloads are never identity keys.
+ * Only explicitly live rows survive outside the projection. Matching prefers the
+ * SessionDB-derived id, with a narrow canonical/live timestamp+content fallback
+ * for replayed rows whose runtime IDs differ. Repeated text alone is never an
+ * identity key.
  */
 export function replaceWithCanonicalChatMessages(local: ChatMessage[], canonical: ChatMessage[]): ChatMessage[] {
   const merged: ChatMessage[] = canonical.map((message) => ({ ...message, source: 'canonical' as const }));
   const canonicalIds = new Set(merged.map((message) => message.id));
   const live = local.filter((message) => message.source === 'live' || message.status === 'streaming');
   for (const liveMessage of live) {
-    const match = merged.findIndex((message) => message.id === liveMessage.id);
+    const match = merged.findIndex((message) => semanticallyMatchesCanonicalMessage(message, liveMessage));
     if (match >= 0) {
       merged[match] = mergeMessagePair(merged[match], liveMessage);
     } else if (!canonicalIds.has(liveMessage.id)) {

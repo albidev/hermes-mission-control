@@ -18,6 +18,8 @@ import {
   type MissionControlCapabilities,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { loadAllPersistedBotHandoffs } from '../lib/bot-handoff-persistence';
+import { buildBotLineageRows, type BotLineageRecord } from '../lib/bot-lineage';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
@@ -205,17 +207,23 @@ export function AgentsRoute() {
   const [searchParams] = useSearchParams();
   const requestedMode = searchParams.get('mode');
   const requestedSession = searchParams.get('session');
+  const requestedProfile = searchParams.get('profile');
   const { snapshot, storedToken } = useMissionControl();
-  const [view, setView] = useState<'timeline' | 'dag'>('timeline');
-  const [liveMode, setLiveMode] = useState(() => requestedMode !== 'post');
+  const [view, setView] = useState<'timeline' | 'dag' | 'delegation'>('timeline');
+  const [liveMode, setLiveMode] = useState(() => requestedMode !== 'post' && !requestedProfile);
   const [liveTraceScope, setLiveTraceScope] = useState<LiveTraceScope>('current');
   const [selectedActionFilters, setSelectedActionFilters] = useState<TraceActionFilter[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>(requestedSession ?? '');
+  const [selectedSessionProfile, setSelectedSessionProfile] = useState<string | null>(requestedProfile?.trim() || null);
   const [agentSessions, setAgentSessions] = useState<MissionControlAgentSessionItem[]>([]);
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [trace, setTrace] = useState<MissionControlAgentTraceSnapshot | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [capabilities, setCapabilities] = useState<MissionControlCapabilities>(getFallbackCapabilities());
+  const [botLineage, setBotLineage] = useState<BotLineageRecord[]>([]);
+  const [selectedLineageId, setSelectedLineageId] = useState('');
   const [sseFallbackToPolling, setSseFallbackToPolling] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<MissionControlAgentTraceEvent | null>(null);
   const [rawPayloadViewer, setRawPayloadViewer] = useState<{ title: string; content: string } | null>(null);
@@ -236,10 +244,15 @@ export function AgentsRoute() {
         setCapabilities(getFallbackCapabilities());
       }
       try {
-        const resolved = await loadMissionControlAgentSessions(storedToken, 200);
+        const resolved = await loadMissionControlAgentSessions(
+          storedToken,
+          liveMode ? 200 : 500,
+          0,
+          !liveMode && view !== 'delegation' && normalizedSessionSearch ? { query: normalizedSessionSearch } : undefined,
+        );
         setAgentSessions(resolved.items);
       } catch {
-        setAgentSessions([]);
+        // Keep the last known registry during a transient refresh failure.
       }
       if (selectedSessionId) {
         try {
@@ -248,10 +261,12 @@ export function AgentsRoute() {
             storedToken || undefined,
             liveMode ? LIVE_TRACE_LIMIT : 0,
             liveMode && traceCompactAvailable,
+            selectedSessionProfile,
+            selectedLineageId,
           );
           setTrace(payload);
         } catch {
-          setTrace(null);
+          // Keep the last known trace during a transient refresh failure.
         }
       }
     } finally {
@@ -273,12 +288,25 @@ export function AgentsRoute() {
     if (requestedMode === 'post') setLiveMode(false);
   }, [requestedMode]);
 
-  const selectSession = (sessionId: string, manual = false) => {
+  const selectSession = (sessionId: string, manual = false, profile: string | null = null, handoffId: string | null = null) => {
     manualSessionSelectionRef.current = manual;
     hasTraceRef.current = false;
     setTrace(null);
     setTraceLoading(Boolean(sessionId));
+    setSelectedSessionProfile(profile?.trim() || null);
+    setSelectedLineageId(handoffId?.trim() || '');
     setSelectedSessionId(sessionId);
+  };
+
+  const openBotLineage = (row: BotLineageRecord) => {
+    const targetSessionId = row.handoff.targetSessionId?.trim();
+    setView('delegation');
+    if (targetSessionId) {
+      setLiveMode(false);
+      selectSession(targetSessionId, true, row.handoff.handle, row.handoff.id);
+      return;
+    }
+    selectSession(row.originSessionId, true, null, row.handoff.id);
   };
 
   const orderedSessions = useMemo<MissionControlAgentSessionItem[]>(
@@ -293,6 +321,39 @@ export function AgentsRoute() {
 
   const baseSessions = liveMode ? trulyLiveSessions : orderedSessions;
   const selectableSessions = baseSessions;
+  const normalizedSessionSearch = sessionSearch.trim().toLocaleLowerCase();
+  const inspectableLineages = useMemo(() => {
+    if (!normalizedSessionSearch) return botLineage;
+    return botLineage.filter((row) => [
+      row.handoff.id,
+      row.handoff.handle,
+      row.handoff.displayName,
+      row.handoff.request,
+      row.handoff.status,
+      row.originSessionId,
+      row.handoff.targetSessionId,
+    ].some((value) => String(value ?? '').toLocaleLowerCase().includes(normalizedSessionSearch)));
+  }, [botLineage, normalizedSessionSearch]);
+  const selectedLineage = botLineage.find((row) => row.handoff.id === selectedLineageId);
+  const sessionOptions = useMemo(() => {
+    if (liveMode || !normalizedSessionSearch) return selectableSessions;
+    return selectableSessions.filter((session) => [
+      session.title,
+      session.sessionId,
+      session.source,
+      session.model,
+      session.preview,
+    ].some((value) => String(value ?? '').toLocaleLowerCase().includes(normalizedSessionSearch)));
+  }, [liveMode, normalizedSessionSearch, selectableSessions]);
+  const selectedSessionFromList = selectableSessions.find((session) => session.sessionId === selectedSessionId);
+  const externalSelectedSession = selectedSessionProfile && selectedSessionId
+    && !selectableSessions.some((session) => session.sessionId === selectedSessionId)
+    ? { sessionId: selectedSessionId, title: `${selectedSessionProfile} Bot Chat`, source: selectedSessionProfile }
+    : trace?.session && trace.session.id === selectedSessionId
+      ? { sessionId: trace.session.id, title: trace.session.title, source: trace.session.source }
+      : null;
+  const selectedSessionOption = selectedSessionFromList ?? externalSelectedSession;
+  const selectedSessionFilteredOut = Boolean(selectedSessionOption && !sessionOptions.some((session) => session.sessionId === selectedSessionOption.sessionId));
 
   useEffect(() => {
     if (selectedSessionId) return;
@@ -391,6 +452,8 @@ export function AgentsRoute() {
 
   const actionFilterSet = useMemo(() => new Set(selectedActionFilters), [selectedActionFilters]);
   const actionFilterActive = selectedActionFilters.length > 0;
+  const lineageTraceActive = view === 'delegation' && Boolean(selectedLineageId);
+  const tracePanelVisible = view !== 'delegation' || lineageTraceActive;
 
   const toggleActionFilter = (filter: TraceActionFilter) => {
     setSelectedActionFilters((current) =>
@@ -523,14 +586,23 @@ export function AgentsRoute() {
 
   useEffect(() => {
     let cancelled = false;
+    void loadAllPersistedBotHandoffs(storedToken).then((entries) => {
+      if (!cancelled) setBotLineage(buildBotLineageRows(entries));
+    });
+    return () => { cancelled = true; };
+  }, [storedToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSessionsLoading(true);
 
     const refreshAgentSessions = async () => {
       try {
         const resolved = await loadMissionControlAgentSessions(
           storedToken,
-          200,
+          liveMode ? 200 : 500,
           0,
-          liveMode ? { tab: 'live' } : undefined,
+          !liveMode && normalizedSessionSearch && view !== 'delegation' ? { query: normalizedSessionSearch } : liveMode ? { tab: 'live' } : undefined,
         );
         if (!cancelled) {
           setAgentSessions(resolved.items);
@@ -538,6 +610,8 @@ export function AgentsRoute() {
       } catch {
         // Keep the last known registry during transient DB/network failures.
         // Clearing it makes a live session disappear even though it is still running.
+      } finally {
+        if (!cancelled) setSessionsLoading(false);
       }
     };
 
@@ -550,7 +624,7 @@ export function AgentsRoute() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [liveMode, storedToken]);
+  }, [liveMode, view, storedToken, normalizedSessionSearch]);
 
   useEffect(() => {
     setSseFallbackToPolling(false);
@@ -568,11 +642,12 @@ export function AgentsRoute() {
   }, [selectedEvent, filteredTrace]);
 
   useEffect(() => {
+    if (selectedSessionProfile) return;
     if (!selectedSessionId) return;
     if (selectableSessions.some((session) => session.sessionId === selectedSessionId)) return;
     manualSessionSelectionRef.current = false;
     selectSession(selectableSessions[0]?.sessionId ?? '');
-  }, [selectedSessionId, selectableSessions]);
+  }, [selectedSessionId, selectedSessionProfile, selectableSessions]);
 
   useEffect(() => {
     if (!liveMode) return;
@@ -606,8 +681,10 @@ export function AgentsRoute() {
     }
 
     if (selectableSessions.length === 0) {
-      setTrace(null);
-      setTraceLoading(false);
+      if (!sessionsLoading) {
+        setTrace(null);
+        setTraceLoading(false);
+      }
       return;
     }
 
@@ -620,6 +697,8 @@ export function AgentsRoute() {
     const officialBase = (import.meta.env.VITE_HERMES_API_BASE_URL || '/api').replace(/\/$/, '');
     const params = new URLSearchParams();
     if (selectedSessionId) params.set('session_id', selectedSessionId);
+    if (selectedSessionProfile) params.set('profile', selectedSessionProfile);
+    if (selectedLineageId) params.set('handoff_id', selectedLineageId);
     params.set('limit', String(LIVE_TRACE_LIMIT));
     params.set('interval', '1.5');
     if (storedToken) params.set('access_token', storedToken);
@@ -684,7 +763,7 @@ export function AgentsRoute() {
     return () => {
       source?.close();
     };
-  }, [selectedSessionId, liveMode, storedToken, sseFallbackToPolling, selectableSessions.length, traceCompactAvailable, traceNamedSseEventAvailable, traceStreamAvailable]);
+  }, [selectedSessionId, selectedSessionProfile, selectedLineageId, liveMode, storedToken, sessionsLoading, sseFallbackToPolling, selectableSessions.length, traceCompactAvailable, traceNamedSseEventAvailable, traceStreamAvailable]);
 
   useEffect(() => {
     if (liveMode && !sseFallbackToPolling && traceStreamAvailable) {
@@ -694,6 +773,11 @@ export function AgentsRoute() {
     let cancelled = false;
 
     const fetchTrace = async () => {
+      if (sessionsLoading && !selectedSessionId && selectableSessions.length === 0) {
+        setTraceLoading(true);
+        return;
+      }
+
       if (!selectedSessionId && selectableSessions.length === 0) {
         setTrace(null);
         setTraceLoading(false);
@@ -703,15 +787,23 @@ export function AgentsRoute() {
       if (!hasTraceRef.current) {
         setTraceLoading(true);
       }
-      const payload = await loadMissionControlAgentTrace(
-        selectedSessionId || undefined,
-        storedToken || undefined,
-        liveMode ? LIVE_TRACE_LIMIT : 0,
-        liveMode && traceCompactAvailable,
-      );
-      if (!cancelled) {
-        setTrace(payload);
-        setTraceLoading(false);
+      try {
+        const payload = await loadMissionControlAgentTrace(
+          selectedSessionId || undefined,
+          storedToken || undefined,
+          liveMode ? LIVE_TRACE_LIMIT : 0,
+          liveMode && traceCompactAvailable,
+          selectedSessionProfile,
+          selectedLineageId,
+        );
+        if (!cancelled) {
+          setTrace(payload);
+          setTraceLoading(false);
+        }
+      } catch {
+        if (!cancelled && !hasTraceRef.current) {
+          setTraceLoading(false);
+        }
       }
     };
 
@@ -730,7 +822,7 @@ export function AgentsRoute() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSessionId, liveMode, storedToken, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
+  }, [selectedSessionId, selectedSessionProfile, selectedLineageId, liveMode, storedToken, sessionsLoading, selectableSessions.length, sseFallbackToPolling, traceCompactAvailable, traceStreamAvailable]);
 
   return (
     <div ref={containerRef} className="route-page-scroll flex min-w-0 flex-col gap-6 h-full overflow-x-hidden overflow-y-auto">
@@ -740,7 +832,7 @@ export function AgentsRoute() {
           eyebrow={t('nav.agents')}
           title={t('agents.title')}
           description={t('agents.description')}
-          meta={selectedSessionId ? t('agents.selectedSessionMeta') : t('agents.noSessionMeta')}
+          meta={selectedLineageId ? t('agents.selectedLineageMeta') : selectedSessionId ? t('agents.selectedSessionMeta') : t('agents.noSessionMeta')}
           actions={<button type="button" onClick={() => void refreshPage()} className="inline-flex items-center justify-center gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-text-muted hover:bg-surface-sunken hover:text-text !px-0 sm:!px-2.5" aria-label={t('common.refresh')} title={t('common.refresh')} disabled={refreshing}>
             <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /><span className="hidden sm:inline">{t('common.refresh')}</span>
           </button>}
@@ -782,86 +874,147 @@ export function AgentsRoute() {
           />
         </div>
       </Card>
-
       <Card padding="none">
         <div className="border-b border-border-subtle">
-          <div className="flex min-w-0 flex-col gap-4 px-4 py-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
-            <div className="min-w-0 flex-1">
-              <span className="eyebrow">{t('agents.executionTrace')}</span>
-              <h3 className="mt-1 text-base font-semibold leading-6 text-text">
-                {t('agents.fullChain')}
-              </h3>
+          <div className="flex min-w-0 flex-col gap-3 px-4 py-4">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <span className="eyebrow">{t('agents.executionTrace')}</span>
+                <h3 className="mt-1 text-base font-semibold leading-6 text-text">
+                  {t('agents.fullChain')}
+                </h3>
+              </div>
+              <button type="button" aria-pressed={liveMode} className={`pill pill-button shrink-0 whitespace-nowrap !min-h-9 !min-w-0 px-2.5 text-xs ${liveMode ? 'status-online' : 'pill-subtle'}`} onClick={() => setLiveMode((v) => !v)}>
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${liveMode ? 'bg-positive animate-pulse' : 'bg-text-subtle'}`} />
+                {liveMode ? t('agents.live') : t('agents.post')}
+              </button>
             </div>
 
-            <div className="flex min-w-0 max-w-full flex-col gap-3 sm:flex-[0_1_auto] sm:flex-row sm:items-end sm:gap-3">
-              <div className="flex min-w-0 max-w-full flex-1 flex-row items-end gap-2">
-                <div className="flex min-w-0 flex-1 flex-col gap-1.5" role="group" aria-label={t('agents.view')}>
-                  <span className="eyebrow">{t('agents.view')}</span>
-                  <div className="flex min-w-0 max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-visible sm:pb-0">
-                    <button type="button" aria-pressed={view === 'timeline'} className={`pill pill-button shrink-0 whitespace-nowrap ${view === 'timeline' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setView('timeline')}>
-                      <ListTree className="h-3.5 w-3.5" /> {t('agents.timeline')}
+            <div className="flex min-w-0 max-w-full flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-2">
+              <div className="flex min-w-0 max-w-full flex-col gap-2 md:flex-row md:items-center">
+                <div className="w-full min-w-0 md:w-auto" role="group" aria-label={t('agents.view')}>
+                  <span className="sr-only">{t('agents.view')}</span>
+                  <div className="grid w-full min-w-0 grid-cols-3 items-center gap-0.5 rounded-md bg-surface-sunken p-0.5 md:inline-grid md:!w-max">
+                    <button type="button" aria-pressed={view === 'timeline'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${view === 'timeline' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => setView('timeline')}>
+                      <ListTree className="hidden h-3.5 w-3.5 shrink-0 sm:block" /> {t('agents.timeline')}
                     </button>
-                    <button type="button" aria-pressed={view === 'dag'} className={`pill pill-button shrink-0 whitespace-nowrap ${view === 'dag' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setView('dag')}>
-                      <GitBranch className="h-3.5 w-3.5" /> {t('agents.dag')}
+                    <button type="button" aria-pressed={view === 'dag'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${view === 'dag' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => setView('dag')}>
+                      <GitBranch className="hidden h-3.5 w-3.5 shrink-0 sm:block" /> {t('agents.dag')}
+                    </button>
+                    <button type="button" aria-pressed={view === 'delegation'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${view === 'delegation' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => { setView('delegation'); setLiveMode(false); setSelectedLineageId(''); setSessionSearch(''); }}>
+                      <GitBranch className="hidden h-3.5 w-3.5 shrink-0 sm:block" /> {t('agents.delegation')}
+                      {botLineage.length > 0 ? <span className="text-text-subtle">{botLineage.length}</span> : null}
                     </button>
                   </div>
                 </div>
 
-                <div className="flex shrink-0 flex-col gap-1.5" role="group" aria-label={t('agents.stream')}>
-                  <span className="eyebrow">{t('agents.stream')}</span>
-                  <button type="button" aria-pressed={liveMode} className={`pill pill-button shrink-0 whitespace-nowrap ${liveMode ? 'status-online' : 'pill-subtle'}`} onClick={() => setLiveMode((v) => !v)}>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${liveMode ? 'bg-positive animate-pulse' : 'bg-text-subtle'}`} />
-                    {liveMode ? t('agents.live') : t('agents.post')}
-                  </button>
-                  {!capabilities.trace.stream ? (
-                    <p className="max-w-[14rem] text-[10px] leading-4 text-warning">Compatibility mode: live SSE stream unavailable, using polling fallback.</p>
-                  ) : null}
-                </div>
+                {liveMode ? (
+                  <div className="w-full min-w-0 md:w-auto" role="group" aria-label={t('agents.scope')}>
+                    <span className="sr-only">{t('agents.scope')}</span>
+                    <div className="grid w-full min-w-0 grid-cols-3 items-center gap-0.5 rounded-md bg-surface-sunken p-0.5 md:inline-grid md:!w-max">
+                      <button type="button" aria-pressed={liveTraceScope === 'current'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${liveTraceScope === 'current' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => setLiveTraceScope('current')}>
+                        {t('agents.currentTurn')}
+                      </button>
+                      <button type="button" aria-pressed={liveTraceScope === 'last3'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${liveTraceScope === 'last3' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => setLiveTraceScope('last3')}>
+                        {t('agents.last3Turns')}
+                      </button>
+                      <button type="button" aria-pressed={liveTraceScope === 'full'} className={`pill pill-button min-w-0 justify-center whitespace-nowrap !min-h-9 !min-w-0 !rounded-md !border-0 px-1.5 text-[11px] sm:px-2 sm:text-xs ${liveTraceScope === 'full' ? 'nav-link-active' : 'text-text-muted hover:bg-surface-raised hover:text-text'}`} onClick={() => setLiveTraceScope('full')}>
+                        {t('agents.fullSession')}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-
-              {liveMode ? (
-                <div className="flex min-w-0 flex-col gap-1.5 sm:flex-1" role="group" aria-label={t('agents.scope')}>
-                  <span className="eyebrow">{t('agents.scope')}</span>
-                  <div className="flex min-w-0 max-w-full flex-nowrap items-center gap-1 overflow-x-auto pb-1 pr-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-x-auto sm:pb-0 sm:pr-4">
-                    <button type="button" aria-pressed={liveTraceScope === 'current'} className={`pill pill-button shrink-0 whitespace-nowrap sm:px-2 sm:text-xs ${liveTraceScope === 'current' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setLiveTraceScope('current')}>
-                      {t('agents.currentTurn')}
-                    </button>
-                    <button type="button" aria-pressed={liveTraceScope === 'last3'} className={`pill pill-button shrink-0 whitespace-nowrap sm:px-2 sm:text-xs ${liveTraceScope === 'last3' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setLiveTraceScope('last3')}>
-                      {t('agents.last3Turns')}
-                    </button>
-                    <button type="button" aria-pressed={liveTraceScope === 'full'} className={`pill pill-button mr-4 shrink-0 whitespace-nowrap sm:px-2 sm:text-xs ${liveTraceScope === 'full' ? 'nav-link-active' : 'pill-subtle'}`} onClick={() => setLiveTraceScope('full')}>
-                      {t('agents.fullSession')}
-                    </button>
-                  </div>
-                </div>
+              {!capabilities.trace.stream ? (
+                <p className="px-1 text-[10px] leading-4 text-warning">Compatibility mode: live SSE stream unavailable, using polling fallback.</p>
               ) : null}
             </div>
           </div>
         </div>
 
         <div className="flex flex-col gap-4 p-4">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <label className="text-xs text-text-muted shrink-0">{t('agents.selectedSession')}</label>
-            <select
-              className="h-11 w-full min-w-0 rounded-md bg-surface px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:h-9"
-              value={selectedSessionId}
-              onChange={(event) => selectSession(event.target.value, true)}
-              disabled={selectableSessions.length === 0}
-            >
-              {selectableSessions.length === 0 ? (
-                <option value="">
-                  {liveMode ? t('agents.noLiveSessions') : t('agents.noSessions')}
-                </option>
-              ) : null}
-              {selectableSessions.map((session) => (
-                <option key={session.sessionId} value={session.sessionId}>
-                  {session.title} · {session.source} · {formatRelativeTime(session.lastActiveAt ?? session.startedAt ?? 0)}
-                </option>
-              ))}
-            </select>
-          </div>
+          {view === 'delegation' ? (
+            <label className="flex min-w-0 flex-col gap-1.5 text-xs text-text-muted">
+              <span className="eyebrow">{t('agents.searchLineages')}</span>
+              <input
+                type="search"
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
+                placeholder={t('agents.searchLineagesPlaceholder')}
+                autoComplete="off"
+                className="h-11 min-w-0 w-full rounded-md border border-border-subtle bg-surface-sunken px-3 text-xs text-text outline-none placeholder:text-text-subtle focus:ring-1 focus:ring-accent/40 sm:h-9"
+              />
+            </label>
+          ) : !liveMode ? (
+            <label className="flex min-w-0 flex-col gap-1.5 text-xs text-text-muted">
+              <span className="eyebrow">{t('agents.searchSessions')}</span>
+              <input
+                type="search"
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
+                placeholder={t('agents.searchSessionsPlaceholder')}
+                autoComplete="off"
+                className="h-11 min-w-0 w-full rounded-md border border-border-subtle bg-surface-sunken px-3 text-xs text-text outline-none placeholder:text-text-subtle focus:ring-1 focus:ring-accent/40 sm:h-9"
+              />
+            </label>
+          ) : null}
 
-          {visibleTrace ? (
+          {view === 'delegation' ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label htmlFor="delegation-lineage-select" className="text-xs text-text-muted shrink-0">{t('agents.selectedLineage')}</label>
+              <select
+                id="delegation-lineage-select"
+                className="h-11 w-full min-w-0 rounded-md bg-surface px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:h-9"
+                value={selectedLineageId}
+                onChange={(event) => {
+                  const row = botLineage.find((item) => item.handoff.id === event.target.value);
+                  if (row) openBotLineage(row);
+                }}
+                disabled={botLineage.length === 0}
+              >
+                <option value="">
+                  {botLineage.length === 0 ? t('agents.noBotLineage') : inspectableLineages.length === 0 ? t('agents.noMatchingLineages') : t('agents.inspectLineage')}
+                </option>
+                {inspectableLineages.map((row) => (
+                  <option key={row.handoff.id} value={row.handoff.id}>
+                    @{row.handoff.handle} · {row.handoff.request} · {row.handoff.status}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label htmlFor="agent-session-select" className="text-xs text-text-muted shrink-0">{t('agents.selectedSession')}</label>
+              <select
+                id="agent-session-select"
+                className="h-11 w-full min-w-0 rounded-md bg-surface px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40 sm:h-9"
+                value={selectedSessionId}
+                onChange={(event) => selectSession(event.target.value, true)}
+                disabled={selectableSessions.length === 0 && !externalSelectedSession}
+              >
+                {selectedSessionFilteredOut && selectedSessionOption ? (
+                  <option value={selectedSessionOption.sessionId}>
+                    {selectedSessionOption.title} · {selectedSessionOption.source}
+                  </option>
+                ) : null}
+                {selectableSessions.length === 0 ? (
+                  <option value="">
+                    {liveMode ? t('agents.noLiveSessions') : t('agents.noSessions')}
+                  </option>
+                ) : null}
+                {selectableSessions.length > 0 && sessionOptions.length === 0 ? (
+                  <option value="" disabled>{t('agents.noMatchingSessions')}</option>
+                ) : null}
+                {sessionOptions.map((session) => (
+                  <option key={session.sessionId} value={session.sessionId}>
+                    {session.title} · {session.source} · {formatRelativeTime(session.lastActiveAt ?? session.startedAt ?? 0)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {tracePanelVisible && visibleTrace ? (
             <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-col gap-0.5">
@@ -899,11 +1052,15 @@ export function AgentsRoute() {
             </div>
           ) : null}
 
-          {visibleTrace?.session ? (
+          {tracePanelVisible && visibleTrace?.session ? (
             <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-subtle">
                 <Badge variant={visibleTrace.mode === 'live' ? 'positive' : 'default'}>{visibleTrace.mode}</Badge>
-                <span className="min-w-0 flex-1 truncate">{visibleTrace.session.title} · {visibleTrace.session.model}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {selectedLineage
+                    ? `@${selectedLineage.handoff.handle} · ${selectedLineage.handoff.request}`
+                    : `${visibleTrace.session.title} · ${visibleTrace.session.model}`}
+                </span>
               </div>
               <div className="-mx-1 flex max-w-[calc(100% + 0.5rem)] flex-nowrap items-center gap-1.5 overflow-x-auto px-1 pb-1 text-[11px] text-text-subtle [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:max-w-none sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
                 <span className="shrink-0 rounded-full bg-surface px-2 py-0.5">{t('ui.turns')} {visibleTrace.stats.turns}</span>
@@ -934,27 +1091,52 @@ export function AgentsRoute() {
             </div>
           ) : null}
 
-          {liveMode && trace && visibleTrace && trace.events.length > visibleTrace.events.length ? (
+          {tracePanelVisible && liveMode && trace && visibleTrace && trace.events.length > visibleTrace.events.length ? (
             <p className="text-xs text-text-subtle">
               Showing {visibleTrace.events.length} of {trace.events.length} events in live scope.
             </p>
           ) : null}
 
-          {actionFilterActive && visibleTrace && filteredTrace ? (
+          {tracePanelVisible && actionFilterActive && visibleTrace && filteredTrace ? (
             <p className="text-xs text-text-subtle">
               Filtered to {filteredTrace.events.length} of {visibleTrace.events.length} scoped events: {selectedActionFilters.map(getTraceActionLabel).join(', ')}.
             </p>
           ) : null}
 
-          {traceLoading ? <p className="text-sm text-text-muted">{t('agents.loadingTrace')}</p> : null}
-
-          {!traceLoading && visibleTrace && visibleTrace.stats.toolCalls === 0 && visibleTrace.stats.skills === 0 ? (
-            <div className="card p-3 text-xs text-text-muted">
-              Questa sessione ha solo user/assistant. Per vedere tool calls e skills, cambia sessione con una run più lunga.
+          {(traceLoading || sessionsLoading) && !visibleTrace && tracePanelVisible ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-border-subtle bg-surface/50 p-3" role="status" aria-live="polite">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+                <span className="text-sm font-medium text-text">{t('agents.loadingTrace')}</span>
+              </div>
+              <p className="text-xs text-text-subtle">{t('agents.loadingTraceHint')}</p>
+              <div className="flex flex-col gap-2" aria-hidden="true">
+                <div className="h-16 animate-pulse rounded-lg bg-surface-raised" />
+                <div className="h-16 animate-pulse rounded-lg bg-surface-raised opacity-80" />
+                <div className="h-16 animate-pulse rounded-lg bg-surface-raised opacity-60" />
+              </div>
             </div>
           ) : null}
 
-          {!traceLoading && visibleTrace && view === 'timeline' ? (
+          {!traceLoading && !sessionsLoading && !visibleTrace && tracePanelVisible ? (
+            <div className="rounded-lg border border-dashed border-border-subtle bg-surface/30 p-4 text-sm text-text-muted">
+              {selectedSessionId && selectableSessions.length > 0
+                ? t('agents.noTrace')
+                : liveMode
+                  ? t('agents.noLiveSessions')
+                  : t('agents.noSessionMeta')}
+            </div>
+          ) : null}
+
+          {!traceLoading && tracePanelVisible && visibleTrace && visibleTrace.stats.toolCalls === 0 && visibleTrace.stats.skills === 0 ? (
+            <div className="card p-3 text-xs text-text-muted">
+              {selectedLineageId
+                ? 'Questa lineage non contiene tool call o skill.'
+                : 'Questa sessione ha solo user/assistant. Per vedere tool calls e skills, cambia sessione con una run più lunga.'}
+            </div>
+          ) : null}
+
+          {!traceLoading && visibleTrace && (view === 'timeline' || lineageTraceActive) ? (
             <div className="flex flex-col gap-2">
               {timelineEvents.length > 0 ? (
                 timelineEvents.map((event) => {

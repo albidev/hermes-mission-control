@@ -13,6 +13,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -32,6 +33,7 @@ import {
   SquarePen,
   X,
   XCircle,
+  Users,
 } from 'lucide-react';
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatComposer } from './ChatComposer';
@@ -56,19 +58,41 @@ import {
 } from '../lib/chat-gateway?mc=resume-v2';
 import { markChatPresenceRead } from '../lib/chat-presence';
 import { normalizeClarifyInteraction } from '../lib/chat-interactions';
-import { previewText, type ChatAttachmentUpload, type GatewayInteractionRequest } from '../lib/chat-protocol';
+import { previewText, type ChatAttachmentUpload, type ChatMessage, type GatewayInteractionRequest } from '../lib/chat-protocol';
 import {
   loadMissionControlSessionPreview,
   type MissionControlAgentSessionItem,
   type MissionControlSessionPreviewMessage,
 } from '../lib/hermes-api';
 import { deriveTodoPlan, type TodoPlan } from '../lib/todo-plan';
+import { loadBotProfiles } from '../lib/bot-gateway';
+import type { BotMentionCandidate } from '../lib/bot-mentions';
+import type { ChatMentionPopoverHandle } from './ChatMentionPopover';
+import { createHandoffEnvelope, createHandoffDedupe, formatHandoffPrompt } from '../lib/bot-handoff';
+import { addChatProfile } from '../lib/chat-session-params';
+import { createHandoffObserver } from '../lib/bot-handoff-observer';
+import { findHandoffCompletion } from '../lib/bot-handoff-recovery';
+import { openHandoffClient } from '../lib/bot-handoff-client';
+import { extractMentionRequest } from '../lib/bot-mentions';
+import { canonicalChatCommand } from '../lib/bot-chat-policy';
+import { classifyHandoffFailure } from '../lib/bot-handoff-reasons';
+import { BotHandoffMessage } from './chat/BotHandoffMessage';
+import { claimBotHandoff, loadPersistedBotHandoffs, persistBotHandoff, type PersistedBotHandoff } from '../lib/bot-handoff-persistence';
+import { compareChatTimelineEntries } from '../lib/chat-timeline';
+import { useGroupRoom } from '../lib/use-group-room';
+import type { GroupRoom } from '../lib/group-gateway';
+import { GroupRoomView } from './chat/GroupRoomView';
 
 type ChatDrawerProps = {
   open: boolean;
   storedToken: string;
   initialSessionId?: string | null;
+  chatMode?: 'general' | 'canonical' | 'task' | 'room';
+  roomId?: string | null;
+  botProfile?: string | null;
   onClose: () => void;
+  onStartTaskChat?: () => void;
+  onRoomChange?: (roomId: string | null) => void;
 };
 
 function formatTokens(tokens: number): string {
@@ -142,7 +166,9 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
   );
 }
 
-export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialSessionId, onClose }: ChatDrawerProps) {
+type CanonicalChatDrawerProps = Omit<ChatDrawerProps, 'chatMode'> & { chatMode?: 'general' | 'canonical' | 'task' };
+
+const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat }: CanonicalChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -159,6 +185,15 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
   const programmaticScrollRef = useRef(false);
   const scrollFrameRef = useRef<number | null>(null);
   const slashPopoverRef = useRef<ChatSlashPopoverHandle | null>(null);
+  const mentionPopoverRef = useRef<ChatMentionPopoverHandle | null>(null);
+  const [botRoster, setBotRoster] = useState<BotMentionCandidate[]>([]);
+  const [activeBotTarget, setActiveBotTarget] = useState<BotMentionCandidate | null>(null);
+  const [handoffs, setHandoffs] = useState<PersistedBotHandoff[]>([]);
+  const handoffDedupeRef = useRef(createHandoffDedupe());
+  const handoffObserverRef = useRef<ReturnType<typeof createHandoffObserver> | null>(null);
+  const handoffRecoveryRef = useRef(new Set<string>());
+  const loadedHandoffIdsRef = useRef(new Set<string>());
+  const titleRecoveryRef = useRef(new Set<string>());
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [verbTick, setVerbTick] = useState(0);
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
@@ -212,11 +247,71 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    appendChatMessage,
+    titleSession,
+    ensureSession,
+    claimLastChatPointer,
     appendSystemMessage,
     respondInteraction,
     interrupt,
     reset,
-  } = useGatewayChat(storedToken, open, initialSessionId);
+  } = useGatewayChat(storedToken, open, initialSessionId, botProfile);
+
+  const activeTargetStorageKey = sessionId ? `mission-control-active-bot-target:${sessionId}` : null;
+  const clearActiveBotTarget = useCallback(() => {
+    setActiveBotTarget(null);
+    if (!activeTargetStorageKey) return;
+    try { window.localStorage.setItem(activeTargetStorageKey, 'cleared'); } catch { /* storage unavailable */ }
+  }, [activeTargetStorageKey]);
+
+  const rememberActiveBotTarget = useCallback((target: BotMentionCandidate) => {
+    setActiveBotTarget(target);
+    if (!activeTargetStorageKey) return;
+    try { window.localStorage.removeItem(activeTargetStorageKey); } catch { /* storage unavailable */ }
+  }, [activeTargetStorageKey]);
+
+  useEffect(() => {
+    if (!open || !sessionId) return;
+    let cancelled = false;
+    loadedHandoffIdsRef.current.clear();
+    const references = [...new Set([sessionId, sessionKey].map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+    void Promise.all(references.map((reference) => loadPersistedBotHandoffs(storedToken, reference))).then((batches) => {
+      const rows = [...new Map(batches.flat().map((row) => [row.id, row])).values()];
+      if (cancelled) return;
+      for (const row of rows) loadedHandoffIdsRef.current.add(row.id);
+      setHandoffs(rows);
+      let targetCleared = false;
+      try { targetCleared = activeTargetStorageKey ? window.localStorage.getItem(activeTargetStorageKey) === 'cleared' : false; } catch { /* storage unavailable */ }
+      const latest = [...rows].sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))[0];
+      setActiveBotTarget(!targetCleared && latest ? {
+        handle: latest.handle,
+        displayName: latest.displayName,
+        model: latest.model,
+        provider: latest.provider,
+      } : null);
+    });
+    return () => { cancelled = true; };
+  }, [open, sessionId, sessionKey, storedToken, activeTargetStorageKey]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    loadBotProfiles(storedToken || undefined).then((result) => {
+      if (cancelled) return;
+      setBotRoster(result.profiles
+        .filter((profile) => profile.is_bot === true)
+        .map((profile) => ({
+          handle: profile.name,
+          displayName: profile.display_name || profile.name,
+          description: profile.description || undefined,
+          model: profile.model,
+          provider: profile.provider,
+        })));
+    }).catch(() => {
+      if (!cancelled) setBotRoster([]);
+    });
+    return () => { cancelled = true; };
+  }, [open, storedToken]);
 
   useEffect(() => {
     if (!running) {
@@ -268,7 +363,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     const timeout = window.setTimeout(() => {
       if (!cancelled) setPreviewLoading(false);
     }, 6000);
-    loadMissionControlSessionPreview(token, initialSessionId).then((item) => {
+    loadMissionControlSessionPreview(token, initialSessionId, botProfile).then((item) => {
       if (!cancelled) {
         setPreview(item);
         setPreviewTodoPlan(item?.todoPlan ?? null);
@@ -283,7 +378,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [previewMode, initialSessionId, storedToken]);
+  }, [botProfile, initialSessionId, previewMode, storedToken]);
 
   useEffect(() => {
     return () => {
@@ -377,6 +472,55 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     programmaticScrollRef.current = false;
   }, []);
 
+  const mentionHandles = useMemo(() => botRoster.map((bot) => bot.handle), [botRoster]);
+  const handoffRequestIds = useMemo(
+    () => new Set(handoffs.map((handoff) => `bot-request-${handoff.id}`)),
+    [handoffs],
+  );
+  const existingMessageIds = useMemo(
+    () => new Set(messages.map((message: ChatMessage) => message.id)),
+    [messages],
+  );
+  const timelinedMessages = useMemo(() => [
+    ...messages
+      .filter((message: ChatMessage) => !handoffRequestIds.has(message.id))
+      .map((message: ChatMessage) => ({ kind: 'message' as const, createdAt: message.createdAt ?? 0, order: 0, id: message.id, message })),
+    ...handoffs.flatMap((handoff) => {
+      const createdAt = handoff.createdAt ?? handoff.updatedAt;
+      const requestMessage: ChatMessage = {
+        id: `bot-request-${handoff.id}`,
+        role: 'user',
+        kind: 'user',
+        source: 'live',
+        text: `@${handoff.handle} ${handoff.request}`.trim(),
+        status: 'complete',
+        createdAt,
+      };
+      const replyMessage: ChatMessage | null = handoff.reply && !existingMessageIds.has(`bot-reply-${handoff.id}`)
+        ? {
+          id: `bot-reply-${handoff.id}`,
+          role: 'assistant',
+          kind: 'assistant',
+          source: 'live',
+          text: handoff.reply,
+          status: 'complete',
+          createdAt: handoff.updatedAt,
+          attribution: {
+            handle: handoff.handle,
+            displayName: handoff.displayName,
+            model: handoff.model,
+            provider: handoff.provider,
+          },
+        }
+        : null;
+      return [
+        { kind: 'message' as const, createdAt, order: 0, id: requestMessage.id, message: requestMessage },
+        { kind: 'handoff' as const, createdAt, order: 1, id: handoff.id, handoff },
+        ...(replyMessage ? [{ kind: 'message' as const, createdAt: handoff.updatedAt, order: 2, id: replyMessage.id, message: replyMessage }] : []),
+      ];
+    }),
+  ].sort(compareChatTimelineEntries), [handoffs, handoffRequestIds, messages, existingMessageIds]);
+
   const renderMessages = () => {
     if (previewMode) {
       if (previewLoading) {
@@ -390,6 +534,9 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
         );
       }
       if (preview) {
+        const previewMessages = (preview.recentMessages ?? []).filter((message) => !handoffs.some((handoff) => (
+          handoff.reply?.trim() && handoff.reply.trim() === message.text.trim()
+        )));
         return (
           <section className="chat-preview-surface">
             <div className="chat-preview-heading">
@@ -403,11 +550,25 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
               </span>
             </div>
             <div className="chat-preview-body">
-              {(preview.recentMessages ?? []).length > 0 ? preview.recentMessages!.map((msg, index) => (
+              {previewMessages.length > 0 ? previewMessages.map((msg, index) => (
                 <ChatPreviewBubble key={`${msg.role}-${msg.timestamp ?? 'na'}-${index}`} message={msg} />
               )) : (
                 <p className="chat-preview-fallback">{preview.preview || 'No recent messages available.'}</p>
               )}
+              {handoffs.map((handoff) => (
+                <BotHandoffMessage
+                  key={`preview-${handoff.id}`}
+                  handle={handoff.handle}
+                  displayName={handoff.displayName}
+                  model={handoff.model}
+                  provider={handoff.provider}
+                  request={handoff.request}
+                  status={handoff.status}
+                  reply={handoff.reply}
+                  error={handoff.error}
+                  reason={handoff.reason}
+                />
+              ))}
             </div>
             <button
               type="button"
@@ -423,6 +584,24 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       }
       return (
         <section className="chat-preview-surface">
+          {handoffs.length > 0 ? (
+            <div className="chat-preview-body">
+              {handoffs.map((handoff) => (
+                <BotHandoffMessage
+                  key={`preview-unavailable-${handoff.id}`}
+                  handle={handoff.handle}
+                  displayName={handoff.displayName}
+                  model={handoff.model}
+                  provider={handoff.provider}
+                  request={handoff.request}
+                  status={handoff.status}
+                  reply={handoff.reply}
+                  error={handoff.error}
+                  reason={handoff.reason}
+                />
+              ))}
+            </div>
+          ) : null}
           <div className="chat-preview-empty">
             <MessageSquare size={20} />
             <p>{t('chatDrawer.previewUnavailable')}</p>
@@ -435,7 +614,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       );
     }
 
-    if (messages.length === 0) {
+    if (messages.length === 0 && handoffs.length === 0) {
       return (
         <section className="chat-empty">
           <MessageSquare size={22} />
@@ -445,7 +624,110 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       );
     }
 
-    return <>{messages.map((message) => <ChatMessageCard key={message.id} message={message} />)}</>;
+    const timeline = timelinedMessages;
+
+    return (
+      <>
+        {timeline.map((entry) => entry.kind === 'message' ? (
+          <ChatMessageCard key={entry.id} message={entry.message} mentionHandles={mentionHandles} />
+        ) : (
+          <BotHandoffMessage
+            key={entry.id}
+            handle={entry.handoff.handle}
+            displayName={entry.handoff.displayName}
+            model={botRoster.find((bot) => bot.handle === entry.handoff.handle)?.model}
+            provider={botRoster.find((bot) => bot.handle === entry.handoff.handle)?.provider}
+            request={entry.handoff.request}
+            status={entry.handoff.status}
+            reply={entry.handoff.reply}
+            error={entry.handoff.error}
+            reason={entry.handoff.reason}
+            onRetry={entry.handoff.status === 'failed' && (entry.handoff.retryable !== false) ? () => {
+              const handoff = entry.handoff;
+              const handle = handoff.handle;
+              rememberActiveBotTarget({
+                handle,
+                displayName: handoff.displayName,
+                model: handoff.model,
+                provider: handoff.provider,
+              });
+              if (!handoffDedupeRef.current.tryClaim(handle)) return;
+              upsertHandoffState(handoff.id, { status: 'queued', error: null });
+              const envelope = createHandoffEnvelope(
+                { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
+                { profile: handle, canonicalTitle: 'Bot Chat' },
+                handoff.request,
+              );
+              const runRetry = async (): Promise<void> => {
+                let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
+                try {
+                  client = await openHandoffClient({ accessToken: storedToken || undefined });
+                  const canonical = await client.resolveCanonical(handle);
+                  upsertHandoffState(handoff.id, { targetSessionId: canonical.openedId });
+                  const staleRuntimeId = await client.resume(handle, canonical.registryId);
+                  await client.closeSession(staleRuntimeId);
+                  upsertHandoffState(handoff.id, { status: 'running' });
+                  const delivery = await client.deliver(handle, formatHandoffPrompt(envelope));
+                  if (!delivery.deferred) {
+                    handoffDedupeRef.current.release(handle);
+                    client.close();
+                    upsertHandoffState(handoff.id, { status: 'completed', reply: delivery.reply });
+                    return;
+                  }
+                  const runtimeId = await client.resume(handle, canonical.registryId);
+                  const baseline = await client.eventsSince(0);
+                  const initialLastSeen = Math.max(
+                    baseline.latest_seq ?? 0,
+                    ...(baseline.events ?? []).map((event) => event.seq ?? 0),
+                  );
+                  const completedReply = findHandoffCompletion(baseline.events ?? [], envelope.handoffId);
+                  if (completedReply) {
+                    handoffDedupeRef.current.release(handle);
+                    client.close();
+                    upsertHandoffState(handoff.id, { status: 'completed', reply: completedReply });
+                    return;
+                  }
+                  handoffObserverRef.current = createHandoffObserver(
+                    { eventsSince: (params) => client!.eventsSince(params.last_seen) },
+                    {
+                      sessionId: runtimeId,
+                      initialLastSeen,
+                      intervalMs: 1200,
+                      onEvent: () => {},
+                      onComplete: (reply) => {
+                        handoffDedupeRef.current.release(handle);
+                        client?.close();
+                        upsertHandoffState(handoff.id, { status: 'completed', reply });
+                      },
+                      onError: (message) => {
+                        handoffDedupeRef.current.release(handle);
+                        client?.close();
+                        const failure = classifyHandoffFailure(message);
+                        upsertHandoffState(handoff.id, { status: 'failed', error: message, reason: failure.reason, retryable: failure.retryable });
+                      },
+                    },
+                  );
+                  void handoffObserverRef.current.start();
+                } catch (err) {
+                  handoffDedupeRef.current.release(handle);
+                  client?.close();
+                  const message = err instanceof Error ? err.message : 'Handoff failed.';
+                  const failure = classifyHandoffFailure(err);
+                  setHandoffs((current) => current.map((item) => item.id === handoff.id ? {
+                    ...item,
+                    status: 'failed',
+                    error: message,
+                    reason: failure.reason,
+                    retryable: failure.retryable,
+                  } : item));
+                }
+              };
+              void runRetry();
+            } : undefined}
+          />
+        ))}
+      </>
+    );
   };
 
   useEffect(() => {
@@ -469,7 +751,13 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     : connectionState === 'reconnecting' || connectionState === 'connecting' || connectionState === 'ticket'
       ? 'is-pending'
       : 'is-offline';
-  const headerSessionTitle = sessionTitle || preview?.title || 'Untitled session';
+  const headerSessionTitle = sessionTitle || preview?.title || t('chatDrawer.untitledSession');
+  const contextEyebrow = chatMode === 'canonical'
+    ? t('chatDrawer.primaryChat')
+    : chatMode === 'task'
+      ? t('chatDrawer.freshTaskChat')
+      : t('chatDrawer.eyebrow');
+  const contextTitle = botProfile?.trim() || t('chat.button');
   const streamingVerb = TUI_VERBS[verbTick % TUI_VERBS.length] || 'processing';
   const streamingKaomoji = TUI_KAOMOJI[verbTick % TUI_KAOMOJI.length] || '(._.)';
   const statusLineLabel = interaction
@@ -570,6 +858,60 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     }
   };
 
+  const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>, originSessionId = sessionId ?? '') => {
+    setHandoffs((current) => {
+      const existing = current.find((item) => item.id === id);
+      if (!existing) return current;
+      const updated: PersistedBotHandoff = { ...existing, ...patch, updatedAt: Date.now() };
+      void persistBotHandoff(storedToken, originSessionId, updated, sessionKey);
+      return current.map((item) => item.id === id ? updated : item);
+    });
+  }, [sessionId, sessionKey, storedToken]);
+
+  useEffect(() => {
+    if (!open || !sessionId || !storedToken.trim()) return;
+    const loaded = handoffs.filter((handoff) => loadedHandoffIdsRef.current.has(handoff.id));
+    const pending = loaded.filter((handoff) => handoff.status === 'queued' || handoff.status === 'running');
+    if (loaded.length === 0) return;
+    let cancelled = false;
+
+    const recover = async (): Promise<void> => {
+      const titleHandoff = loaded[0];
+      if (titleHandoff && !titleRecoveryRef.current.has(titleHandoff.id) && (!sessionTitle?.trim() || sessionTitle === 'Untitled session')) {
+        titleRecoveryRef.current.add(titleHandoff.id);
+        await titleSession(sessionId, titleHandoff.request);
+      }
+      for (const handoff of pending) {
+        if (cancelled || handoffRecoveryRef.current.has(handoff.id)) continue;
+        handoffRecoveryRef.current.add(handoff.id);
+        let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
+        try {
+          client = await openHandoffClient({ accessToken: storedToken });
+          const canonical = await client.resolveCanonical(handoff.handle, handoff.targetSessionId);
+          await client.resume(handoff.handle, canonical.registryId);
+          const snapshot = await client.eventsSince(0);
+          const reply = findHandoffCompletion(snapshot.events ?? [], handoff.id);
+          if (!cancelled && reply) {
+            upsertHandoffState(handoff.id, {
+              targetSessionId: canonical.openedId,
+              status: 'completed',
+              reply,
+              error: null,
+            }, sessionId);
+          }
+        } catch {
+          // The Bot may still be working or the gateway may be unavailable.
+          // Leave the durable handoff state untouched; the next reopen retries.
+        } finally {
+          client?.close();
+          handoffRecoveryRef.current.delete(handoff.id);
+        }
+      }
+    };
+    void recover();
+    return () => { cancelled = true; };
+  }, [handoffs, open, sessionId, sessionTitle, storedToken, titleSession, upsertHandoffState]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = draft;
@@ -579,6 +921,200 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       return;
     }
     setAttachmentNotice(null);
+
+    // Bot handoff: a mention to a roster-marked Bot routes the request into the
+    // target canonical Bot Chat. The origin transcript stays untouched; the
+    // attributed reply is rendered as a dedicated handoff card.
+    const mention = extractMentionRequest(text, botRoster);
+    const trimmedText = text.trim();
+    const followUp = !mention
+      && activeBotTarget
+      && pendingAttachments.length === 0
+      && Boolean(trimmedText)
+      && !trimmedText.startsWith('/')
+      && !trimmedText.startsWith('@');
+    const handoffMention = mention ?? (followUp ? {
+      mention: `@${activeBotTarget.handle}`,
+      request: trimmedText,
+    } : null);
+    if (handoffMention) {
+      let originSessionId = await ensureSession();
+      originSessionId = await claimLastChatPointer('submit', originSessionId);
+      if (originSessionId !== sessionId) {
+        originSessionId = await ensureSession(originSessionId);
+      }
+      const handle = handoffMention.mention.slice(1);
+      const candidate = botRoster.find((item) => item.handle === handle) ?? (activeBotTarget?.handle === handle ? activeBotTarget : undefined);
+      // Dedupe: a second submit for the same Bot while one is in flight is
+      // ignored (double click, StrictMode, reconnect). The claim is released
+      // when the handoff settles so an explicit Retry can re-run it.
+      if (!handoffDedupeRef.current.tryClaim(handle)) {
+        setAttachmentNotice('A request to this Bot is already in flight.');
+        return;
+      }
+      const envelope = createHandoffEnvelope(
+        { connectionId: 'local', profile: 'default', sessionId: originSessionId },
+        { profile: handle, canonicalTitle: 'Bot Chat' },
+        handoffMention.request,
+      );
+      const handoffId = envelope.handoffId;
+      await titleSession(originSessionId, handoffMention.request || `@${handle}`);
+      appendChatMessage({
+        id: `bot-request-${handoffId}`,
+        role: 'user',
+        kind: 'user',
+        source: 'live',
+        text: `${handoffMention.mention} ${handoffMention.request}`.trim(),
+        status: 'complete',
+        createdAt: Date.now(),
+      }, 'user_message');
+      const initialHandoff: PersistedBotHandoff = {
+        id: handoffId,
+        handle,
+        displayName: candidate?.displayName,
+        model: candidate?.model,
+        provider: candidate?.provider,
+        request: handoffMention.request,
+        status: 'queued',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const claimResult = await claimBotHandoff(storedToken, originSessionId, initialHandoff);
+      if (claimResult === false) {
+        handoffDedupeRef.current.release(handle);
+        setAttachmentNotice('This handoff was already claimed by another Mission Control client.');
+        return;
+      }
+      rememberActiveBotTarget({
+        handle,
+        displayName: candidate?.displayName,
+        model: candidate?.model,
+        provider: candidate?.provider,
+      });
+      setHandoffs((current) => [...current, initialHandoff]);
+      void persistBotHandoff(storedToken, originSessionId, initialHandoff, sessionKey);
+      setDraft('');
+      const runHandoff = async (): Promise<void> => {
+        let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
+        try {
+          client = await openHandoffClient({ accessToken: storedToken || undefined });
+          const canonical = await client.resolveCanonical(handle);
+          upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, originSessionId);
+          // A dashboard-local Bot Chat may still be live with a stale MCP snapshot.
+          // Close only that runtime; the canonical transcript/profile remains intact.
+          const staleRuntimeId = await client.resume(handle, canonical.registryId);
+          await client.closeSession(staleRuntimeId);
+          upsertHandoffState(handoffId, { status: 'running' }, originSessionId);
+          const delivery = await client.deliver(handle, formatHandoffPrompt(envelope));
+          if (!delivery.deferred) {
+            handoffDedupeRef.current.release(handle);
+            client.close();
+            const attributedReply: ChatMessage = {
+              id: `bot-reply-${handoffId}`,
+              role: 'assistant',
+              kind: 'assistant',
+              source: 'live',
+              text: delivery.reply,
+              status: 'complete',
+              createdAt: Date.now(),
+              attribution: {
+                handle,
+                displayName: candidate?.displayName,
+                model: candidate?.model,
+                provider: candidate?.provider,
+              },
+            };
+            appendChatMessage(attributedReply, 'assistant_message');
+            upsertHandoffState(handoffId, { status: 'completed', reply: delivery.reply }, originSessionId);
+            return;
+          }
+
+          // The target Bot Chat is already live in this gateway. The relay has queued
+          // the request there; attach an observer so the UI keeps the working state
+          // and receives the actual Bot reply instead of the transport acknowledgement.
+          const runtimeId = await client.resume(handle, canonical.registryId);
+          const baseline = await client.eventsSince(0);
+          const initialLastSeen = Math.max(
+            baseline.latest_seq ?? 0,
+            ...(baseline.events ?? []).map((event) => event.seq ?? 0),
+          );
+          const completedReply = findHandoffCompletion(baseline.events ?? [], handoffId);
+          if (completedReply) {
+            handoffDedupeRef.current.release(handle);
+            client.close();
+            appendChatMessage({
+              id: `bot-reply-${handoffId}`,
+              role: 'assistant',
+              kind: 'assistant',
+              source: 'live',
+              text: completedReply,
+              status: 'complete',
+              createdAt: Date.now(),
+              attribution: {
+                handle,
+                displayName: candidate?.displayName,
+                model: candidate?.model,
+                provider: candidate?.provider,
+              },
+            }, 'assistant_message');
+            upsertHandoffState(handoffId, { status: 'completed', reply: completedReply }, originSessionId);
+            return;
+          }
+          handoffObserverRef.current = createHandoffObserver(
+            { eventsSince: (params) => client!.eventsSince(params.last_seen) },
+            {
+              sessionId: runtimeId,
+              initialLastSeen,
+              intervalMs: 1200,
+              onEvent: () => {},
+              onComplete: (reply) => {
+                handoffDedupeRef.current.release(handle);
+                client?.close();
+                const attributedReply: ChatMessage = {
+                  id: `bot-reply-${handoffId}`,
+                  role: 'assistant',
+                  kind: 'assistant',
+                  source: 'live',
+                  text: reply,
+                  status: 'complete',
+                  createdAt: Date.now(),
+                  attribution: {
+                    handle,
+                    displayName: candidate?.displayName,
+                    model: candidate?.model,
+                    provider: candidate?.provider,
+                  },
+                };
+                appendChatMessage(attributedReply, 'assistant_message');
+                upsertHandoffState(handoffId, { status: 'completed', reply }, originSessionId);
+              },
+              onError: (message) => {
+                handoffDedupeRef.current.release(handle);
+                client?.close();
+                const failure = classifyHandoffFailure(message);
+                upsertHandoffState(handoffId, { status: 'failed', error: message, reason: failure.reason, retryable: failure.retryable }, originSessionId);
+              },
+            },
+          );
+          void handoffObserverRef.current.start();
+        } catch (err) {
+          handoffDedupeRef.current.release(handle);
+          client?.close();
+          const message = err instanceof Error ? err.message : 'Handoff failed.';
+          const failure = classifyHandoffFailure(err);
+          setHandoffs((current) => current.map((item) => item.id === handoffId ? {
+            ...item,
+            status: 'failed',
+            error: message,
+            reason: failure.reason,
+            retryable: failure.retryable,
+          } : item));
+        }
+      };
+      void runHandoff();
+      return;
+    }
+
     try {
       const uploads: ChatAttachmentUpload[] = [];
       for (const attachment of pendingAttachments) {
@@ -592,7 +1128,11 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           dataUrl,
         });
       }
-      const sent = await submitPrompt(running && !uploads.length ? `/steer ${text}` : text, uploads);
+      const sent = await submitPrompt(running && !uploads.length
+        ? `/steer ${text}`
+        : text.trim().startsWith('/')
+          ? canonicalChatCommand(chatMode, text.trim().slice(1))
+          : text, uploads);
       if (!sent) return;
       setDraft('');
       // Sending a message always snaps back to the bottom, even if the user
@@ -612,6 +1152,7 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (slashPopoverRef.current?.handleKey(event)) return;
+    if (mentionPopoverRef.current?.handleKey(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
@@ -666,8 +1207,10 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
     if (newChatLoading) return;
     setNewChatConfirmOpen(false);
     setNewChatLoading(true);
+    clearActiveBotTarget();
     try {
       await reset();
+      if (chatMode === 'canonical') onStartTaskChat?.();
     } finally {
       setNewChatLoading(false);
     }
@@ -812,8 +1355,8 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
             <div className="chat-head-identity">
               <span className="chat-mark" aria-hidden><Bot size={18} /></span>
               <div className="chat-head-copy">
-                <p className="eyebrow">{t('chatDrawer.eyebrow')}</p>
-                <h2 id="chat-drawer-title">{t('chat.button')}</h2>
+                <p className="eyebrow">{contextEyebrow}</p>
+                <h2 id="chat-drawer-title">{contextTitle}</h2>
                 <span className="chat-session-title" title={headerSessionTitle}>{headerSessionTitle}</span>
               </div>
             </div>
@@ -1019,6 +1562,10 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
           completeSlash={completeSlash}
           textareaRef={textareaRef}
           slashPopoverRef={slashPopoverRef}
+          mentionPopoverRef={mentionPopoverRef}
+          botRoster={botRoster}
+          activeBotTarget={activeBotTarget}
+          onClearBotTarget={clearActiveBotTarget}
           running={running}
           submitting={submitting}
           disabled={connectionState !== 'connected'}
@@ -1070,4 +1617,53 @@ export const ChatDrawer = memo(function ChatDrawer({ open, storedToken, initialS
       </Modal>
     </>
   );
+});
+
+function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProps) {
+  const { t } = useI18n();
+  const state = useGroupRoom({ enabled: open, initialRoomId: roomId ?? null });
+  const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
+  const mentionRoster = useMemo(() => (state.room?.members ?? [])
+    .filter((member) => member.handle.trim())
+    .map((member) => ({
+      handle: member.handle,
+      displayName: member.displayName || member.profile || member.handle,
+      description: member.profile ? `profile: ${member.profile}` : undefined,
+    })), [state.room?.members]);
+
+  useEffect(() => {
+    if (!open || !state.selectedRoomId || state.selectedRoomId === roomId) return;
+    onRoomChange?.(state.selectedRoomId);
+  }, [onRoomChange, open, roomId, state.selectedRoomId]);
+
+  const selectRoom = useCallback((nextRoomId: string | null) => {
+    onRoomChange?.(nextRoomId);
+    return state.selectRoom(nextRoomId);
+  }, [onRoomChange, state.selectRoom]);
+
+  return (
+    <>
+      {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
+      <aside className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
+        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
+        <div className="chat-transcript">
+          {!canUseRooms && !state.loading ? <div className="chat-error" role="status">{t('rooms.driverUnavailable')}</div> : null}
+          {canUseRooms ? <>
+            <nav className="flex min-w-0 gap-2 overflow-x-auto pb-3" aria-label={t('rooms.title')}>
+              {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
+              {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">{t('rooms.noRooms')}</span> : null}
+            </nav>
+            {state.room ? <GroupRoomView state={state} mentionRoster={mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : <p className="text-sm text-text-muted">{t('rooms.chooseRoom')}</p>}
+          </> : null}
+          {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
+        </div>
+      </aside>
+    </>
+  );
+}
+
+export const ChatDrawer = memo(function ChatDrawer(props: ChatDrawerProps) {
+  if (props.chatMode === 'room') return <GroupChatDrawer {...props} />;
+  const { chatMode, roomId: _roomId, onRoomChange: _onRoomChange, ...canonicalProps } = props;
+  return <CanonicalChatDrawer {...canonicalProps} chatMode={chatMode} />;
 });

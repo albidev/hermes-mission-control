@@ -82,6 +82,8 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
+from chat_handoff_store import claim_handoff, list_all_handoffs, list_handoffs, upsert_handoff
+from chat_title_store import set_chat_title
 from chat_runtime_presence import active_runtime_presences, update_runtime_presence
 from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
 import kanban_bridge as kanban_bridge_mod
@@ -1490,9 +1492,53 @@ def _collect_skills_catalog(query: str = "", source: str = "all", limit: int = 5
             "installed": name.lower() in installed_names,
         })
 
-    trust_rank = {"builtin": 0, "trusted": 1, "community": 2}
+    for md_path in _find_skill_md_files(hermes_root() / "skills"):
+        try:
+            rel = md_path.relative_to(hermes_root() / "skills")
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+        parts = rel.parts[:-1]
+        if not parts:
+            continue
+        frontmatter = _parse_skill_yaml_frontmatter(text)
+        name = str(frontmatter.get("name") or parts[-1]).strip()
+        if not name:
+            continue
+        item_source = "local"
+        if source_filter not in {"all", item_source}:
+            continue
+        description = str(frontmatter.get("description") or name)
+        tags = []
+        metadata = frontmatter.get("metadata")
+        if isinstance(metadata, dict) and isinstance(metadata.get("hermes"), dict):
+            raw_tags = metadata["hermes"].get("tags", [])
+            tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
+        rel_dir = "/".join(parts)
+        identifier = f"local:{rel_dir}"
+        haystack = " ".join([name, description, item_source, identifier, *tags]).lower()
+        if normalized_query and normalized_query not in haystack:
+            continue
+        items.append({
+            "id": identifier,
+            "name": name,
+            "description": description,
+            "source": item_source,
+            "identifier": identifier,
+            "trustLevel": "local",
+            "repo": None,
+            "path": rel_dir,
+            "tags": tags,
+            "installed": name.lower() in installed_names,
+        })
+        source_counts[item_source] = source_counts.get(item_source, 0) + 1
+
+    trust_rank = {"builtin": 0, "trusted": 1, "community": 2, "local": 3}
     items.sort(key=lambda item: (trust_rank.get(str(item.get("trustLevel")), 3), str(item.get("source")) != "official", str(item.get("name", "")).lower()))
-    items = items[:requested_limit]
+    local_items = [item for item in items if item.get("source") == "local"]
+    non_local_items = [item for item in items if item.get("source") != "local"]
+    items = non_local_items[:max(0, requested_limit - len(local_items))] + local_items[:requested_limit]
+    items = items[:requested_limit] if len(local_items) > requested_limit else items
 
     return {
         "available": True,
@@ -1527,6 +1573,48 @@ def _resolve_hermes_cli() -> Optional[Path]:
         except OSError:
             continue
     return None
+
+
+def _install_local_profile_skill(profile: str, identifier: str) -> tuple[int, Dict[str, Any]]:
+    """Copy one local, cataloged skill from the shared Hermes skill store into a profile."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile):
+        return 400, {"success": False, "error": "invalid_profile", "detail": "Invalid Hermes profile name."}
+    if not identifier.startswith("local:"):
+        return 400, {"success": False, "error": "invalid_identifier", "detail": "This is not a local skill identifier."}
+    relative = identifier[len("local:"):].strip("/")
+    source_root = (hermes_root() / "skills").resolve()
+    source = (source_root / relative).resolve()
+    try:
+        source.relative_to(source_root)
+    except ValueError:
+        return 400, {"success": False, "error": "invalid_identifier", "detail": "Skill path escapes the Hermes skill store."}
+    if not source.is_dir() or not (source / "SKILL.md").is_file():
+        return 404, {"success": False, "error": "skill_not_found", "detail": "Local skill not found."}
+    profile_root = (hermes_root() / "profiles" / profile).resolve()
+    if not profile_root.is_dir():
+        return 404, {"success": False, "error": "profile_not_found", "detail": f"Profile '{profile}' not found."}
+    target = profile_root / "skills" / relative
+    if target.exists():
+        return 409, {"success": False, "error": "already_installed", "skillName": source.name, "detail": "This skill is already installed in the Bot."}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.parent / f".{target.name}.installing-{os.getpid()}-{threading.get_ident()}"
+    try:
+        shutil.copytree(source, temporary, symlinks=False)
+        os.replace(temporary, target)
+        verified = (target / "SKILL.md").is_file()
+        if not verified:
+            shutil.rmtree(target, ignore_errors=True)
+            return 500, {"success": False, "error": "install_unverified", "detail": "Skill copy could not be verified."}
+        return 200, {
+            "success": True, "skillName": source.name, "identifier": identifier,
+            "installed": True, "verified": True, "profile": profile,
+        }
+    except FileExistsError:
+        shutil.rmtree(temporary, ignore_errors=True)
+        return 409, {"success": False, "error": "already_installed", "skillName": source.name, "detail": "This skill is already installed in the Bot."}
+    except OSError as exc:
+        shutil.rmtree(temporary, ignore_errors=True)
+        return 500, {"success": False, "error": "install_failed", "skillName": source.name, "detail": str(exc)[:240]}
 
 
 def _install_catalog_skill(identifier: str) -> tuple[int, Dict[str, Any]]:
@@ -1940,11 +2028,11 @@ class Handler(BaseHTTPRequestHandler):
                     job_id = urllib.parse.unquote(parts[0])
                     action = parts[1]
                     if action == "pause":
-                        result = cron_bridge_mod.pause_job(job_id, reason=payload.get("reason"))
+                        result = cron_bridge_mod.pause_job(job_id, reason=payload.get("reason"), profile=payload.get("profile"))
                     elif action == "resume":
-                        result = cron_bridge_mod.resume_job(job_id)
+                        result = cron_bridge_mod.resume_job(job_id, profile=payload.get("profile"))
                     else:
-                        result = cron_bridge_mod.run_job(job_id)
+                        result = cron_bridge_mod.run_job(job_id, profile=payload.get("profile"))
                     self._json(200, result)
                     return
             self._json(404, {"error": "not_found", "path": parsed.path})
@@ -2030,9 +2118,9 @@ class Handler(BaseHTTPRequestHandler):
             event_id = str(payload.get("event_id") or "").strip()
             dedupe_key = core_event_dedupe_key(session_id, event, event_id)
             relay_payload = event
-        elif kind in {"user_message", "system_message"}:
+        elif kind in {"user_message", "system_message", "assistant_message"}:
             message = payload.get("message")
-            expected_role = "user" if kind == "user_message" else "system"
+            expected_role = {"user_message": "user", "system_message": "system", "assistant_message": "assistant"}[kind]
             if not isinstance(message, dict) or not str(message.get("id") or "").strip() or message.get("role") != expected_role:
                 self._json(400, {"error": "bad_request", "detail": f"{kind} requires a {expected_role} message with an id."})
                 return
@@ -2049,7 +2137,15 @@ class Handler(BaseHTTPRequestHandler):
         result = chat_sync_relay.publish(session_id, client_id, kind, relay_payload, dedupe_key)
         self._json(200, {"success": True, "relay": result})
 
-    def _stream_trace(self, session_id: str | None, limit: int, compact: bool, interval: float) -> None:
+    def _stream_trace(
+        self,
+        session_id: str | None,
+        limit: int,
+        compact: bool,
+        interval: float,
+        profile: str | None = None,
+        handoff_id: str | None = None,
+    ) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache, no-store")
@@ -2059,7 +2155,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
         while True:
-            payload = load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact)
+            payload = load_agent_trace_snapshot(
+                session_id=session_id,
+                limit=limit,
+                compact=compact,
+                profile=profile,
+                handoff_id=handoff_id,
+            )
             frame = f"event: trace\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
             try:
                 self.wfile.write(frame)
@@ -2190,7 +2292,8 @@ class Handler(BaseHTTPRequestHandler):
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
             offset = _parse_int((params.get("offset") or [None])[0], default=0, minimum=0, maximum=100000)
             session_id = (params.get("session_id") or [None])[0] or None
-            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset, session_id=session_id, filters=_session_filter_params(params)))
+            profile = (params.get("profile") or [None])[0] or None
+            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset, session_id=session_id, filters=_session_filter_params(params), profile=profile))
             return
         if parsed.path == "/api/local/sessions":
             if not _is_authorized(self):
@@ -2198,7 +2301,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             limit = _parse_int((params.get("limit") or [None])[0], default=100, minimum=1, maximum=500)
             offset = _parse_int((params.get("offset") or [None])[0], default=0, minimum=0, maximum=100000)
-            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset, filters=_session_filter_params(params)))
+            profile = (params.get("profile") or [None])[0] or None
+            self._json(200, load_agents_sessions_snapshot(limit=limit, offset=offset, filters=_session_filter_params(params), profile=profile))
             return
         if parsed.path == "/api/local/sessions/usage":
             if not _is_authorized(self):
@@ -2223,19 +2327,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._unauthorized()
                 return
             session_id = (params.get("session_id") or [None])[0] or None
+            profile = (params.get("profile") or [None])[0] or None
+            handoff_id = (params.get("handoff_id") or [None])[0] or None
             limit = _parse_int((params.get("limit") or [None])[0], default=300, minimum=0, maximum=1000)
             compact = _parse_bool((params.get("compact") or [None])[0], default=False)
-            self._json(200, load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact))
+            self._json(200, load_agent_trace_snapshot(session_id=session_id, limit=limit, compact=compact, profile=profile, handoff_id=handoff_id))
             return
         if parsed.path == "/api/local/mission-control/agents/trace/stream":
             if not _is_authorized(self, allow_query_token=True):
                 self._unauthorized()
                 return
             session_id = (params.get("session_id") or [None])[0] or None
+            profile = (params.get("profile") or [None])[0] or None
+            handoff_id = (params.get("handoff_id") or [None])[0] or None
             limit = _parse_int((params.get("limit") or [None])[0], default=300, minimum=0, maximum=1000)
             compact = _parse_bool((params.get("compact") or [None])[0], default=True)
             interval = _parse_float((params.get("interval") or [None])[0], default=2.0, minimum=0.5, maximum=30.0)
-            self._stream_trace(session_id=session_id, limit=limit, compact=compact, interval=interval)
+            self._stream_trace(session_id=session_id, limit=limit, compact=compact, interval=interval, profile=profile, handoff_id=handoff_id)
             return
         if parsed.path == '/api/local/status':
             if not _is_authorized(self):
@@ -2352,10 +2460,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             session_id = ((params.get('session_id') or params.get('sessionId') or [''])[0]).strip() or None
             session_key = ((params.get('session_key') or params.get('sessionKey') or [''])[0]).strip() or None
+            profile = ((params.get('profile') or [''])[0]).strip() or None
             if not session_id and not session_key:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id or session_key.'})
                 return
-            self._json(200, load_chat_transcript(session_id, session_key))
+            self._json(200, load_chat_transcript(session_id, session_key, profile))
             return
         if parsed.path in ('/api/local/chat/timestamps', '/api/local/chat/message-timestamps'):
             if not _is_authorized(self):
@@ -2363,10 +2472,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             session_id = ((params.get('session_id') or params.get('sessionId') or [''])[0]).strip() or None
             session_key = ((params.get('session_key') or params.get('sessionKey') or [''])[0]).strip() or None
+            profile = ((params.get('profile') or [''])[0]).strip() or None
             if not session_id and not session_key:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id or session_key.'})
                 return
-            self._json(200, load_chat_message_timestamps(session_id, session_key))
+            self._json(200, load_chat_message_timestamps(session_id, session_key, profile))
             return
         if parsed.path == '/api/local/plugins':
             if not _is_authorized(self):
@@ -2385,6 +2495,22 @@ class Handler(BaseHTTPRequestHandler):
                 'success': True,
                 'leases': active_runtime_presences(),
             })
+            return
+        if parsed.path == '/api/local/chat/handoffs/all':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, {'handoffs': list_all_handoffs()})
+            return
+        if parsed.path == '/api/local/chat/handoffs':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            session_id = (params.get('session_id') or params.get('sessionId') or [''])[0].strip()
+            if not session_id:
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id.'})
+                return
+            self._json(200, {'sessionId': session_id, 'handoffs': list_handoffs(session_id)})
             return
         if parsed.path == '/api/local/chat/last':
             if not _is_authorized(self):
@@ -2683,6 +2809,65 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # defensive: relay must not kill the sidecar worker
                 self._json(500, {'error': 'chat_sync_failed', 'detail': str(exc)[:240]})
             return
+        if parsed.path == '/api/local/chat/title':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None or not isinstance(payload, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            try:
+                saved = set_chat_title(
+                    str(payload.get('sessionId') or payload.get('session_id') or ''),
+                    str(payload.get('sessionKey') or payload.get('session_key') or ''),
+                    str(payload.get('title') or ''),
+                )
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+                return
+            self._json(200, {'success': True, **saved})
+            return
+        if parsed.path == '/api/local/chat/handoffs/claim':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None or not isinstance(payload, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            session_id = str(payload.get('session_id') or payload.get('sessionId') or '').strip()
+            handoff = payload.get('handoff')
+            if not session_id or not isinstance(handoff, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'session_id and handoff are required.'})
+                return
+            try:
+                accepted = claim_handoff(session_id, handoff)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+                return
+            self._json(200, {'success': True, 'accepted': accepted, 'sessionId': session_id})
+            return
+        if parsed.path == '/api/local/chat/handoffs':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None or not isinstance(payload, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            session_id = str(payload.get('session_id') or payload.get('sessionId') or '').strip()
+            handoff = payload.get('handoff')
+            if not session_id or not isinstance(handoff, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'session_id and handoff are required.'})
+                return
+            try:
+                saved = upsert_handoff(session_id, handoff)
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+                return
+            self._json(200, {'success': True, 'sessionId': session_id, 'handoff': saved})
+            return
         if parsed.path == '/api/local/gateway/restart':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2803,6 +2988,21 @@ class Handler(BaseHTTPRequestHandler):
                 import logging
                 logging.exception('Canvas addon handler error for %s', addon_id)
                 self._json(500, {'error': 'internal_error', 'detail': 'Internal server error'})
+            return
+        if parsed.path == '/api/local/profile/skills/install':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            profile = payload.get('profile')
+            identifier = payload.get('identifier')
+            if not isinstance(profile, str) or not isinstance(identifier, str):
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing profile or skill identifier.'})
+                return
+            status, result = _install_local_profile_skill(profile.strip(), identifier.strip())
+            self._json(status, result)
             return
         if parsed.path == '/api/local/skills/install':
             if not _is_authorized(self):

@@ -147,6 +147,10 @@
   }
 }
 
+body.modal-open .route-page-scroll {
+  overflow: hidden !important;
+}
+
 /* ============================================
    Component Utilities
    ============================================ */
@@ -1350,6 +1354,14 @@
   text-transform: uppercase;
 }
 
+.chat-message-attribution {
+  color: var(--color-text-subtle);
+  font-size: 0.65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: none;
+  font-weight: 500;
+}
+
 .chat-message-time {
   margin-left: auto;
   font-weight: 500;
@@ -1426,6 +1438,142 @@
 .chat-message-user .chat-message-body code {
   color: white;
   background: rgba(255, 255, 255, 0.16);
+}
+
+/* Bot handoff cards live in the same message stream as ChatMessageCard.
+   Keep them a real message surface; without this block the semantic markup
+   collapses into unstyled paragraphs (the screenshot regression). */
+.bot-handoff-card {
+  align-self: flex-start;
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: min(92%, 42rem);
+  padding: 0.75rem 0.875rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface-raised));
+  color: var(--color-text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  overflow-wrap: anywhere;
+}
+
+.bot-handoff-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bot-handoff-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: 0.5rem;
+  color: white;
+  background: var(--color-accent);
+}
+
+.bot-handoff-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-handoff-model {
+  min-width: 0;
+  max-width: 42%;
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.625rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-handoff-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.bot-handoff-card[data-status='completed'] .bot-handoff-status {
+  color: var(--color-positive);
+}
+
+.bot-handoff-card[data-status='failed'] .bot-handoff-status,
+.bot-handoff-error {
+  color: var(--color-negative);
+}
+
+.bot-handoff-request,
+.bot-handoff-reply,
+.bot-handoff-error {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.bot-handoff-request {
+  color: var(--color-text-muted);
+}
+
+.bot-handoff-reply {
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.bot-handoff-error {
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-md);
+  background: var(--color-negative-subtle);
+}
+
+.bot-handoff-retry {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.625rem;
+  border: 1px solid color-mix(in srgb, var(--color-negative) 35%, var(--color-border));
+  border-radius: var(--radius-md);
+  color: var(--color-negative);
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.bot-handoff-retry:hover {
+  background: var(--color-negative-subtle);
+}
+
+@media (max-width: 640px) {
+  .bot-handoff-card {
+    width: 100%;
+  }
+
+  .bot-handoff-status {
+    font-size: 0.625rem;
+  }
 }
 
 .chat-message-body pre {
@@ -3271,6 +3419,30 @@
   max-width: 100%;
 }
 
+.bot-handoff-tool-surface {
+  align-self: flex-start;
+  width: min(96%, 42rem);
+  box-sizing: border-box;
+}
+
+.bot-handoff-tool-surface .chat-tool-heading {
+  flex: 1 1 auto;
+}
+
+.bot-handoff-tool-surface .chat-tool-heading span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-handoff-tool-surface .chat-tool-section pre {
+  max-height: none;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .chat-tool-section pre,
 .chat-tool-live pre {
   width: 100%;
@@ -4871,6 +5043,64 @@
   padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
   border: 0;
   background: transparent;
+}
+
+.chat-composer-target-pill {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  height: 18px;
+  min-height: 18px;
+  max-width: calc(100% - 1.5rem);
+  gap: 0.15rem;
+  margin: 0.25rem 0.75rem 0.1rem;
+  padding: 0 0.1rem 0 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 34%, var(--color-border-subtle));
+  border-radius: 999px;
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.chat-composer-target-label {
+  display: none;
+}
+
+.chat-composer-target-pill strong {
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.chat-composer-target-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-composer-target-pill button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.95rem !important;
+  height: 0.95rem !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  margin-left: 0 !important;
+  padding: 0 !important;
+  line-height: 1;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  background: transparent;
+}
+
+.chat-composer-target-pill button:hover {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
 }
 
 .chat-composer-main {

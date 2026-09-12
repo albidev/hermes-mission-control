@@ -16,7 +16,141 @@ SPEC.loader.exec_module(mission_control_agents)
 
 
 class MissionControlSessionOrderTests(unittest.TestCase):
-    def test_index_only_sessions_fill_first_page_before_db_history(self):
+    def test_canonical_transcript_uses_requested_profile_scope(self):
+        calls = []
+
+        class FakeDb:
+            def list_sessions_rich(self, **kwargs):
+                return []
+
+            def resolve_resume_session_id(self, session_id):
+                return session_id
+
+            def get_resume_conversations(self, session_id):
+                return [], [{
+                    "_row_id": 77,
+                    "role": "assistant",
+                    "content": "Crossconnection reply",
+                    "timestamp": 1789047549.0,
+                }]
+
+        def open_db(profile=None):
+            calls.append(profile)
+            return FakeDb()
+
+        with patch.object(mission_control_agents, "_try_get_session_db", side_effect=open_db):
+            payload = mission_control_agents.load_chat_transcript(
+                "bot-session", "bot-session-key", profile="crossnection"
+            )
+
+        self.assertEqual(calls, ["crossnection"])
+        self.assertEqual(payload["sessionId"], "bot-session-key")
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["messages"][0]["content"], "Crossconnection reply")
+
+    def test_runtime_presence_overlays_canonical_session_key_in_its_profile(self):
+        canonical = {
+            "sessionId": "stored-bot-session",
+            "sessionKey": "stored-bot-session",
+            "profile": "crossnection",
+            "status": "idle",
+            "endedAt": 1,
+            "lastActiveAt": 1,
+            "messageCount": 42,
+        }
+        presence = {
+            "runtimeSessionId": "runtime-alias",
+            "resumedFrom": "stored-bot-session",
+            "sessionKey": "stored-bot-session",
+            "profile": "crossnection",
+            "updatedAt": 2,
+            "source": "mission-control",
+        }
+        with patch.object(mission_control_agents, "active_runtime_presences", return_value=[presence]):
+            items = [dict(canonical)]
+            mission_control_agents._apply_runtime_presence(items, profile="crossnection")
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]["messageCount"], 42)
+            self.assertEqual(items[0]["runtimeSessionId"], "runtime-alias")
+            self.assertEqual(items[0]["status"], "live")
+
+            default_items = []
+            mission_control_agents._apply_runtime_presence(default_items, profile=None)
+            self.assertEqual(default_items, [])
+
+    def test_agent_trace_uses_requested_profile_scope(self):
+        calls = []
+
+        class FakeDb:
+            def get_messages(self, session_id):
+                return [{"role": "assistant", "content": "Bot trace reply", "timestamp": 1789047549.0}]
+
+            def _get_session_rich_row(self, session_id, **kwargs):
+                return {"id": session_id, "title": "Bot Chat"}
+
+            def close(self):
+                pass
+
+        def open_db(profile=None):
+            calls.append(profile)
+            return FakeDb()
+
+        with (
+            patch.object(mission_control_agents, "_try_get_session_db", side_effect=open_db),
+            patch.object(mission_control_agents, "_read_gateway_sessions_index", return_value={}),
+        ):
+            payload = mission_control_agents.load_agent_trace_snapshot(
+                session_id="bot-session", profile="crossnection", limit=20, compact=True
+            )
+
+        self.assertEqual(calls, ["crossnection"])
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["traceMode"], "native")
+        self.assertGreater(len(payload["events"]), 0)
+
+    def test_agent_trace_filters_to_requested_handoff_and_keeps_reasoning_and_tools(self):
+        messages = [
+            {
+                "role": "user",
+                "content": "[MISSION CONTROL HANDOFF — NEW REQUEST]\\nhandoff_id: h1\\nCURRENT REQUEST:\\nfirst",
+                "timestamp": 1789047540.0,
+            },
+            {
+                "role": "assistant",
+                "reasoning": "Reasoning for first handoff",
+                "tool_calls": [{"id": "call-1", "function": {"name": "search", "arguments": "{\\\"q\\\":\\\"first\\\"}"}}],
+                "timestamp": 1789047541.0,
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "first tool result", "timestamp": 1789047542.0},
+            {"role": "assistant", "content": "first answer", "timestamp": 1789047543.0},
+            {
+                "role": "user",
+                "content": "[MISSION CONTROL HANDOFF — NEW REQUEST]\\nhandoff_id: h2\\nCURRENT REQUEST:\\nsecond",
+                "timestamp": 1789047550.0,
+            },
+            {"role": "assistant", "reasoning": "Reasoning for second handoff", "content": "second answer", "timestamp": 1789047551.0},
+        ]
+        session_item = {"sessionId": "bot-session", "title": "Bot Chat", "model": "test", "status": "ended"}
+        with (
+            patch.object(mission_control_agents, "_build_trace_native", return_value=None),
+            patch.object(mission_control_agents, "_collect_agent_sessions", return_value=[session_item]),
+            patch.object(mission_control_agents, "_read_session_jsonl", return_value=messages) as read_jsonl,
+        ):
+            payload = mission_control_agents.load_agent_trace_snapshot(
+                session_id="bot-session",
+                profile="researcher",
+                handoff_id="h1",
+                limit=50,
+            )
+
+        read_jsonl.assert_called_once_with("bot-session", "researcher")
+        self.assertEqual([event["type"] for event in payload["events"]], [
+            "turn_started", "user_message", "thought", "tool_call_started", "tool_call_completed", "assistant_response",
+        ])
+        self.assertTrue(all("second" not in event.get("detail", "") for event in payload["events"]))
+        self.assertEqual(payload["stats"]["toolCalls"], 1)
+        self.assertEqual(payload["stats"]["thoughts"], 1)
+
         index = {
             "gateway-live": {
                 "session_id": "gateway-live",
@@ -139,10 +273,12 @@ class MissionControlSessionOrderTests(unittest.TestCase):
                     "last_active": "2026-08-28T10:00:00+00:00",
                 },
                 300,
+                bot_profiles=["crossnection"],
             )
 
         self.assertEqual(item["category"], "conversation")
         self.assertEqual(item["originLabel"], "Desktop")
+        self.assertEqual(item["botProfiles"], ["crossnection"])
         self.assertTrue(item["isResumable"])
 
     def test_session_item_exposes_canonical_origin_metadata(self):
@@ -232,6 +368,7 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         }
         with (
             patch.object(mission_control_agents, "_read_gateway_sessions_index", return_value=index),
+            patch.object(mission_control_agents, "_available_profile_names", return_value=[]),
             patch.object(mission_control_agents, "_iter_db_session_ids", return_value=[]),
             patch.object(mission_control_agents, "_try_get_session_db", return_value=None),
             patch.object(mission_control_agents, "_read_session_jsonl", return_value=[]),

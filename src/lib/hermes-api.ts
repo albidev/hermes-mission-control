@@ -55,6 +55,8 @@ export type MissionControlMachineStatus = {
 
 export type MissionControlSessionItem = {
   id: string;
+  sessionKey?: string | null;
+  profile?: string | null;
   source: string;
   model: string;
   title: string;
@@ -138,6 +140,7 @@ export type MissionControlCronExecution = {
 export type MissionControlCronJob = {
   id: string;
   label: string;
+  profile?: string;
   enabled: boolean;
   state: string;
   scheduleDisplay: string;
@@ -395,6 +398,9 @@ export type MissionControlSessionPreviewMessage = {
 
 export type MissionControlAgentSessionItem = {
   sessionId: string;
+  sessionKey?: string | null;
+  profile?: string | null;
+  botProfiles: string[];
   agentId: string;
   title: string;
   source: string;
@@ -835,6 +841,8 @@ function normalizeSessionItem(input: Partial<MissionControlSessionItem> | undefi
     : input?.endedAt === null || input?.endedAt === undefined ? 'idle' : 'ended';
   return {
     id: input?.id ?? 'unknown-session',
+    sessionKey: input?.sessionKey ?? null,
+    profile: input?.profile ?? null,
     source: input?.source ?? 'unknown',
     model: input?.model ?? 'unknown',
     title: input?.title ?? 'Untitled session',
@@ -934,6 +942,11 @@ function normalizeAgentSessionItem(input: Record<string, unknown> | undefined): 
         : 'unknown';
   return {
     sessionId: readString(input?.sessionId, readString(input?.id, 'unknown-session')),
+    sessionKey: input?.sessionKey === null || input?.sessionKey === undefined ? null : readString(input.sessionKey),
+    profile: input?.profile === null || input?.profile === undefined ? null : readString(input.profile),
+    botProfiles: Array.isArray(input?.botProfiles)
+      ? input.botProfiles.filter((profile): profile is string => typeof profile === 'string' && profile.trim().length > 0).map((profile) => profile.trim())
+      : [],
     agentId: readString(input?.agentId, getAgentKey(source, model)),
     title: readString(input?.title, 'Untitled session'),
     source,
@@ -1558,9 +1571,11 @@ async function fetchMissionControlAgentSessions(
   offset = 0,
   sessionId?: string | null,
   filters?: MissionControlAgentSessionFilters,
+  profile?: string | null,
 ): Promise<OfficialMissionControlAgentSessionsPayload | null> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (sessionId) params.set('session_id', sessionId);
+  if (profile?.trim()) params.set('profile', profile.trim());
   for (const [key, value] of Object.entries(filters ?? {})) {
     if (value && value !== 'all') params.set(key, value);
   }
@@ -1684,11 +1699,15 @@ async function fetchMissionControlAgentTrace(
   accessToken?: string,
   limit = 300,
   compact = false,
+  profile?: string | null,
+  handoffId?: string | null,
 ): Promise<Partial<MissionControlAgentTraceSnapshot> | null> {
   const params = new URLSearchParams();
   if (sessionId) params.set('session_id', sessionId);
   params.set('limit', String(limit));
   if (compact) params.set('compact', '1');
+  if (profile?.trim()) params.set('profile', profile.trim());
+  if (handoffId?.trim()) params.set('handoff_id', handoffId.trim());
   const { payload: local } = await maybeFetchLocalJson<Partial<MissionControlAgentTraceSnapshot>>(
     `/mission-control/agents/trace?${params.toString()}`,
     accessToken,
@@ -1816,6 +1835,7 @@ function normalizeOfficialCronJob(input: Record<string, unknown>): MissionContro
   return normalizeCronJob({
     id: readString(input.id, 'scheduled-job'),
     label: readString(input.name) || readString(input.label) || readString(input.id, 'Scheduled job'),
+    profile: readNullableString(input.profile) ?? undefined,
     enabled,
     state,
     scheduleDisplay,
@@ -2046,17 +2066,22 @@ export async function loadMissionControlAgentSessions(
   limit = 100,
   offset = 0,
   filters?: MissionControlAgentSessionFilters,
+  profile?: string | null,
 ): Promise<MissionControlAgentsSessionsSnapshot> {
-  const payload = await fetchMissionControlAgentSessions(accessToken, limit, offset, null, filters);
+  const payload = await fetchMissionControlAgentSessions(accessToken, limit, offset, null, filters, profile);
   if (!payload) {
     throw new Error('Mission Control sessions endpoint unavailable.');
   }
   return normalizeAgentSessionsSnapshot(payload);
 }
 
-export async function loadMissionControlSessionPreview(accessToken?: string, sessionId?: string | null): Promise<MissionControlAgentSessionItem | null> {
+export async function loadMissionControlSessionPreview(
+  accessToken?: string,
+  sessionId?: string | null,
+  profile?: string | null,
+): Promise<MissionControlAgentSessionItem | null> {
   if (!sessionId) return null;
-  const payload = await fetchMissionControlAgentSessions(accessToken, 1, 0, sessionId);
+  const payload = await fetchMissionControlAgentSessions(accessToken, 1, 0, sessionId, undefined, profile);
   if (!payload?.items?.length) return null;
   const normalized = normalizeAgentSessionsSnapshot(payload);
   return normalized.items[0] ?? null;
@@ -2070,6 +2095,7 @@ export async function loadMissionControlSessions(accessToken?: string): Promise<
       const items = normalized.items.map((item) =>
         normalizeSessionItem({
           id: item.sessionId,
+          profile: item.profile,
           source: item.source,
           model: item.model,
           title: item.title,
@@ -2129,9 +2155,11 @@ export async function loadMissionControlAgentTrace(
   accessToken?: string,
   limit = 300,
   compact = false,
+  profile?: string | null,
+  handoffId?: string | null,
 ): Promise<MissionControlAgentTraceSnapshot> {
   try {
-    const payload = await fetchMissionControlAgentTrace(sessionId, accessToken, limit, compact);
+    const payload = await fetchMissionControlAgentTrace(sessionId, accessToken, limit, compact, profile, handoffId);
     if (payload) {
       return normalizeAgentTracePayload(payload);
     }

@@ -13,6 +13,8 @@ server/push_subscriptions.json
 
 # Runtime state files
 server/last_chat.json
+server/chat_handoffs.json
+server/chat_titles.json
 server/whiteboard_state.json
 
 # External plugin UI symlinks — generated locally by scripts/setup-plugins.sh

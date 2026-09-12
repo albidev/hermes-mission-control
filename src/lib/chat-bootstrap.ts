@@ -7,6 +7,7 @@ export type ServerLastChat = {
   sessionKey?: string | null;
   sessionTitle?: string | null;
   modelIdentity?: ChatModelIdentity | null;
+  profile?: string | null;
   revision: number;
   updatedAt?: number;
 };
@@ -68,13 +69,28 @@ export function shouldAdoptServerPointer(local: LocalLastChat, server: ServerLas
   return local.revision !== server.revision;
 }
 
+/**
+ * A mobile deep link can carry the short-lived runtime session ID while the
+ * server pointer keeps the durable SessionDB key. Resolve only an exact alias:
+ * a pointer for another chat must never clobber an explicit Resume selection.
+ */
+export function serverPointerMatchesRequestedSession(requestedSessionId: string | null | undefined, server: ServerLastChat | null): boolean {
+  const requested = requestedSessionId?.trim();
+  if (!requested || !server?.sessionId) return false;
+  return requested === server.sessionId || requested === server.sessionKey?.trim();
+}
+
 export function buildLastChatClaimPayload(
   sessionId: string,
   sessionKey: string | null,
+  sessionTitle: string | null,
   modelIdentity: ChatModelIdentity | null,
   expectedRevision: number | null,
+  profile?: string | null,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { sessionId, sessionKey, modelIdentity };
+  if (sessionTitle?.trim()) body.sessionTitle = sessionTitle.trim();
+  if (profile?.trim()) body.profile = profile.trim();
   if (typeof expectedRevision === 'number' && Number.isInteger(expectedRevision) && expectedRevision > 0) {
     body.expectedRevision = expectedRevision;
   }
@@ -96,6 +112,7 @@ export function normalizeServerLastChat(value: unknown): ServerLastChat | null {
     modelIdentity: record.modelIdentity && typeof record.modelIdentity === 'object'
       ? record.modelIdentity as ChatModelIdentity
       : null,
+    profile: typeof record.profile === 'string' && record.profile.trim() ? record.profile.trim() : null,
     revision,
     updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : undefined,
   };

@@ -11,9 +11,10 @@ type ModalProps = {
   footer?: ReactNode;
   className?: string;
   borderless?: boolean;
+  fixedHeight?: boolean;
 };
 
-export function Modal({ open, title, subtitle, onClose, children, footer, className, borderless = false }: ModalProps) {
+export function Modal({ open, title, subtitle, onClose, children, footer, className, borderless = false, fixedHeight = false }: ModalProps) {
   const { t } = useI18n();
   useEffect(() => {
     if (!open || typeof window === 'undefined') {
@@ -37,8 +38,10 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    document.body.classList.add('modal-open');
     return () => {
       document.body.style.overflow = previousOverflow;
+      document.body.classList.remove('modal-open');
     };
   }, [open]);
 
@@ -54,7 +57,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
     >
       <section
         className={[
-          'w-full h-[92vh] sm:h-auto sm:max-h-[88vh] sm:w-[min(920px,92vw)]',
+          fixedHeight ? 'w-full h-[min(760px,92vh)] sm:h-[min(760px,88vh)] sm:max-h-[88vh] sm:w-[min(920px,92vw)]' : 'w-full h-[92vh] sm:h-auto sm:max-h-[88vh] sm:w-[min(920px,92vw)]',
           'mobile-modal',
           'rounded-t-2xl sm:rounded-2xl bg-surface shadow-2xl',
           borderless ? '!border-0' : 'border border-border',
@@ -82,7 +85,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div>
 
         {footer ? <div className={`modal-footer px-4 py-3 bg-surface-raised/40 ${borderless ? '!border-t-0' : 'border-t border-border-subtle'}`}>{footer}</div> : null}
       </section>

@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import type { ChatMessage, GatewayEvent } from '../src/lib/chat-protocol.ts';
-import { applySyncedChatMessage, applySyncedUserMessage, mergeDurableChatMessages, shouldApplySequencedEvent } from '../src/lib/chat-sync.ts';
+import { applySyncedChatMessage, applySyncedUserMessage, mergeDurableChatMessages, replaceWithCanonicalChatMessages, shouldApplySequencedEvent } from '../src/lib/chat-sync.ts';
 
 const message = (partial: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'role' | 'text'>): ChatMessage => ({
   createdAt: 1,
@@ -92,6 +92,27 @@ const repeatedPromptUnion = mergeDurableChatMessages(
 );
 assert.equal(repeatedPromptUnion.filter((entry) => entry.role === 'user' && entry.text === 'same prompt').length, 4);
 assert.equal(new Set(repeatedPromptUnion.map((entry) => entry.id)).size, 4);
+
+// Canonical hydration and live replay can carry different IDs for the same
+// transcript row. Near-identical rows must collapse, otherwise one turn is
+// rendered twice after reconnect/resume.
+const canonicalPing = message({ id: 'db:ping', role: 'user', kind: 'user', text: 'ping', createdAt: 1_000_000, source: 'canonical' });
+const livePing = message({ id: 'live-ping', role: 'user', kind: 'user', text: 'ping', createdAt: 1_005_000, source: 'live' });
+const canonicalReasoning = message({ id: 'db:pong:reasoning', role: 'tool', kind: 'reasoning', text: 'health check', createdAt: 2_000_000, source: 'canonical' });
+const liveReasoning = message({ id: 'live-reasoning', role: 'tool', kind: 'reasoning', text: 'health check', createdAt: 2_004_000, source: 'live' });
+const canonicalPong = message({ id: 'db:pong', role: 'assistant', kind: 'assistant', text: 'pong — vivo. Cosa serve?', createdAt: 2_000_000, source: 'canonical' });
+const livePong = message({ id: 'live-pong', role: 'assistant', kind: 'assistant', text: 'pong — vivo. Cosa serve?', createdAt: 2_006_000, source: 'live' });
+const replayCollapsed = replaceWithCanonicalChatMessages(
+  [livePing, liveReasoning, livePong],
+  [canonicalPing, canonicalReasoning, canonicalPong],
+);
+assert.deepEqual(replayCollapsed.map((entry) => entry.id), ['db:ping', 'db:pong:reasoning', 'db:pong']);
+
+const farApartSameText = replaceWithCanonicalChatMessages(
+  [message({ id: 'live-later', role: 'user', kind: 'user', text: 'ping', createdAt: 90_000, source: 'live' })],
+  [message({ id: 'db-earlier', role: 'user', kind: 'user', text: 'ping', createdAt: 1_000, source: 'canonical' })],
+);
+assert.equal(farApartSameText.length, 2);
 
 const syncedUser = message({ id: 'user-shared-1', role: 'user', kind: 'user', text: 'shared across devices' });
 assert.equal(applySyncedUserMessage([], syncedUser).length, 1);
