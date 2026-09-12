@@ -5663,18 +5663,21 @@ button {
   background: var(--surface-sunken, rgba(0, 0, 0, 0.18));
 }
 
-/* Auto-hide wrapper: the slot keeps a FIXED 48px height so the content
-   below never reflows while the tabs slide in/out inside their own space
-   (translateY + opacity). This is what keeps the transcript text still
-   while the rail appears/disappears. */
+/* Auto-hide wrapper: zero-space overlay. The shell takes NO layout height —
+   the tabs float absolutely above the transcript (mobile app-bar pattern).
+   Hiding = slide up + fade inside the same overlay, so the transcript is
+   never resized and its text never reflows; when visible the rail covers
+   the top edge of the transcript instead of pushing it down. */
 .chat-mode-tabs-shell {
-  height: 48px;
-  overflow: hidden;
   position: relative;
+  height: 0;
+  z-index: 30;
 }
 .chat-mode-tabs-shell .chat-mode-tabs {
   position: absolute;
-  inset: 0 0 auto 0;
+  top: 0;
+  left: 0;
+  right: 0;
   transform: translateY(0);
   opacity: 1;
   transition: transform 160ms ease, opacity 160ms ease;
@@ -5682,6 +5685,7 @@ button {
 .chat-mode-tabs-shell.is-hidden .chat-mode-tabs {
   transform: translateY(-100%);
   opacity: 0;
+  pointer-events: none;
 }
 .chat-mode-tab {
   position: relative;
