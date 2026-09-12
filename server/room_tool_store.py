@@ -174,21 +174,35 @@ def _member_tool_rows(member: dict[str, str], room_id: str) -> list[dict[str, An
         if not session:
             return []
         session_id = session[0]
+        # Some member profiles may still have an old schema without the
+        # reasoning columns — detect what exists and only query what's there.
+        has_reasoning_columns = any(
+            row[1] in ("reasoning", "reasoning_content", "reasoning_details", "codex_reasoning_items")
+            for row in db.execute("PRAGMA table_info(messages)").fetchall()
+        )
+        reasoning_select = ", reasoning, reasoning_content, reasoning_details, codex_reasoning_items" if has_reasoning_columns else ""
+        reason_filter = (
+            " OR reasoning IS NOT NULL OR reasoning_content IS NOT NULL "
+            "OR reasoning_details IS NOT NULL OR codex_reasoning_items IS NOT NULL"
+        ) if has_reasoning_columns else ""
         rows = db.execute(
-            "SELECT role, tool_name, content, tool_calls, timestamp, "
-            "reasoning, reasoning_content, reasoning_details, codex_reasoning_items "
+            f"SELECT role, tool_name, content, tool_calls, timestamp{reasoning_select} "
             "FROM messages WHERE session_id = ? "
-            "AND (tool_calls IS NOT NULL OR tool_name IS NOT NULL "
-            "OR reasoning IS NOT NULL OR reasoning_content IS NOT NULL "
-            "OR reasoning_details IS NOT NULL OR codex_reasoning_items IS NOT NULL) "
+            "AND (tool_calls IS NOT NULL OR tool_name IS NOT NULL"
+            f"{reason_filter}) "
             "ORDER BY timestamp, rowid",
             (session_id,),
         ).fetchall()
         entries: list[dict[str, Any]] = []
         pending: list[dict[str, Any]] = []
-        for role, tool_name, content, tool_calls, timestamp, reasoning, reasoning_content, reasoning_details, codex_reasoning_items in rows:
-            role_s = _str(role)
-            ts = float(timestamp or 0.0)
+        for row in rows:
+            role_s = _str(row[0])
+            tool_name, content, tool_calls = row[1], row[2], row[3]
+            ts = float(row[4] or 0.0)
+            reasoning = row[5] if len(row) > 5 else None
+            reasoning_content = row[6] if len(row) > 6 else None
+            reasoning_details = row[7] if len(row) > 7 else None
+            codex_reasoning_items = row[8] if len(row) > 8 else None
             # Reasoning blocks (the member's hidden chain-of-thought) belong
             # in the per-turn strip too — they are part of the same run as
             # the tool calls. Stored as plain text or JSON items.
