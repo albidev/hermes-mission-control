@@ -1054,6 +1054,5 @@
   "rooms.timelineLoadFailed": "Unable to load this room's timeline.",
   "common.cancel": "Cancel",
   "common.refresh": "Refresh",
-  "common.dismiss": "Dismiss",
-  "rooms.backToChat": "Back to chat"
+  "common.dismiss": "Dismiss"
 }

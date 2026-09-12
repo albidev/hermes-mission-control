@@ -5652,3 +5652,45 @@ button {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
 }
+
+/* Chat mode tabs: Chat | Rooms switching inside the drawer */
+.chat-mode-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 14px 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.18));
+}
+.chat-mode-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted, rgba(235, 232, 255, 0.6));
+  background: transparent;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+.chat-mode-tab:hover {
+  color: var(--text-primary, #ebe8ff);
+  background: rgba(255, 255, 255, 0.05);
+}
+.chat-mode-tab.is-active {
+  color: var(--accent, #8b7cf6);
+}
+.chat-mode-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent, #8b7cf6);
+}

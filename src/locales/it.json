@@ -1054,6 +1054,5 @@
   "rooms.timelineLoadFailed": "Impossibile caricare la timeline di questa stanza.",
   "common.cancel": "Annulla",
   "common.refresh": "Aggiorna",
-  "common.dismiss": "Chiudi",
-  "rooms.backToChat": "Torna alla chat"
+  "common.dismiss": "Chiudi"
 }

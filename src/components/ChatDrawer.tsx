@@ -171,6 +171,20 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
 
 type CanonicalChatDrawerProps = Omit<ChatDrawerProps, 'chatMode'> & { chatMode?: 'general' | 'canonical' | 'task' };
 
+function ChatModeTabs({ active, onSelect }: { active: 'chat' | 'rooms'; onSelect: (mode: 'chat' | 'rooms') => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="chat-mode-tabs" role="tablist" aria-label="Chat mode">
+      <button type="button" className={`chat-mode-tab ${active === 'chat' ? 'is-active' : ''}`} role="tab" aria-selected={active === 'chat'} onClick={() => onSelect('chat')}>
+        <MessageSquare size={14} />{t('chatDrawer.title')}
+      </button>
+      <button type="button" className={`chat-mode-tab ${active === 'rooms' ? 'is-active' : ''}`} role="tab" aria-selected={active === 'rooms'} onClick={() => onSelect('rooms')}>
+        <Users size={14} />{t('rooms.title')}
+      </button>
+    </div>
+  );
+}
+
 const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat, onOpenRooms }: CanonicalChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
@@ -1393,6 +1407,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
             </div>
           </div>
         </header>
+        {onOpenRooms ? <ChatModeTabs active="chat" onSelect={(mode) => { if (mode === 'rooms') onOpenRooms(); }} /> : null}
 
         {modelPickerOpen ? (
           <ChatModelPicker
@@ -1687,7 +1702,8 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
     <>
       {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
       <aside className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
-        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={() => onRoomChange ? onRoomChange(null) : onClose()} aria-label={t('rooms.backToChat')}><ArrowLeft size={18} /></button></div></header>
+        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
+        <ChatModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} />
         <div className="chat-transcript">
           {!canUseRooms && !state.loading ? <div className="chat-error" role="status">{t('rooms.driverUnavailable')}</div> : null}
           {canUseRooms ? <>
