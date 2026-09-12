@@ -128,9 +128,13 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
       params.delete('chatSession');
       try { localStorage.setItem(LAST_ROOM_KEY, roomId); } catch { /* storage unavailable */ }
     } else {
+      // Leaving the room / switching to Chat must NOT clear the persisted
+      // last-room key: it means "last room the user had open", so reopening
+      // Rooms lands back on it. Removing it here is why the app "sometimes
+      // loses the last room and picks another one" (the first list entry was
+      // selected as fallback and then rewritten as the new last room).
       params.delete('roomId');
       params.delete('chatMode');
-      try { localStorage.removeItem(LAST_ROOM_KEY); } catch { /* storage unavailable */ }
     }
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
