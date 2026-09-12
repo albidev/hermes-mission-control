@@ -1137,6 +1137,7 @@ body.modal-open .route-page-scroll {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-sunken);
+  position: relative;
 }
 
 .chat-head-main {
