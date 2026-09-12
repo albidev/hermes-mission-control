@@ -146,6 +146,14 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     setRoom((current) => current ? { ...current, latestSeq: Math.max(current.latestSeq, page.latestSeq) } : current);
   }, []);
 
+  // The gateway reports has_more as cursor < latest_seq where latest_seq is the
+  // room's GLOBAL next_seq (it keeps advancing while members write). On a busy
+  // room that never converges, so cap the catch-up pagination: first page renders
+  // immediately, the poll (5s) keeps syncing the tail. Without the cap the room
+  // stayed in "Loading room…" forever even though the transcript was already
+  // populated (this room: 122 events, first page clipped at 100 by bytes).
+  const MAX_LOG_PAGES = 8;
+
   const loadRoom = useCallback(async (roomId: string, reset = false) => {
     const state: GroupState = await clientRef.current.state(roomId);
     if (!mountedRef.current) return;
@@ -158,9 +166,11 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     }
     let page = await clientRef.current.log(roomId, reset ? { sinceSeq: 0 } : { ...(cursor === null ? { sinceSeq: state.room.latestSeq } : { cursor }) });
     applyLog(page);
-    while (page.hasMore && page.cursor !== null) {
+    let pageCount = 1;
+    while (page.hasMore && page.cursor !== null && pageCount < MAX_LOG_PAGES) {
       page = await clientRef.current.log(roomId, { cursor: page.cursor });
       applyLog(page);
+      pageCount += 1;
     }
   }, [applyLog, cursor]);
 
