@@ -71,7 +71,7 @@ export function groupEventToChatMessage(event: GroupEvent, member: GroupMember |
     role: kind,
     kind,
     text: event.message.text,
-    createdAt: typeof event.createdAt === 'number' || typeof event.createdAt === 'string' ? new Date(event.createdAt).getTime() : null,
+    createdAt: typeof event.createdAt === 'number' ? event.createdAt : null,
     attribution: kind === 'assistant'
       ? { handle: handle ?? 'room', displayName, model: undefined, provider: undefined }
       : undefined,
