@@ -1071,5 +1071,6 @@
   "rooms.renameRoom": "Rinomina stanza",
   "rooms.saveName": "Salva nome",
   "rooms.scrollLatest": "Vai all’ultimo messaggio",
-  "rooms.toolCalls": "{count} chiamate tool"
+  "rooms.toolCalls": "{count} chiamate tool",
+  "rooms.reasoningCount": "{count} reasoning"
 }

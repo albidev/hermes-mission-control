@@ -1071,5 +1071,6 @@
   "rooms.renameRoom": "Rename room",
   "rooms.saveName": "Save name",
   "rooms.scrollLatest": "Jump to latest",
-  "rooms.toolCalls": "{count} tool calls"
+  "rooms.toolCalls": "{count} tool calls",
+  "rooms.reasoningCount": "{count} reasoning"
 }

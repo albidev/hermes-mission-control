@@ -839,6 +839,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
               <ToolRunSummary
                 key={item.id}
                 count={item.messages.filter((message) => message.kind === 'tool').length}
+                reasoningCount={item.messages.filter((message) => message.kind === 'reasoning').length}
                 expanded={expandedToolRuns.has(item.id)}
                 onToggle={() => toggleToolRun(item.id)}
               >

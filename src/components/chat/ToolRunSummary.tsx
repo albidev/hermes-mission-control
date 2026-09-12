@@ -17,15 +17,22 @@ export function ToolRunSummary({
   expanded,
   onToggle,
   children,
+  reasoningCount = 0,
 }: {
   count: number;
   label?: string | null;
   expanded: boolean;
   onToggle: () => void;
   children: React.ReactNode;
+  reasoningCount?: number;
 }) {
   const { t } = useI18n();
   const hasTools = count > 0;
+  const runLabel = [
+    hasTools ? t('rooms.toolCalls', { count }) : null,
+    reasoningCount > 0 ? t('rooms.reasoningCount', { count: reasoningCount }) : null,
+    label ?? null,
+  ].filter(Boolean).join(' · ') || 'Reasoning';
   return (
     <div className="room-tool-strip" style={{ display: expanded ? 'contents' : undefined }}>
       <button
@@ -33,12 +40,11 @@ export function ToolRunSummary({
         className="room-tool-panel-bar"
         onClick={onToggle}
         aria-expanded={expanded}
-        title={hasTools ? t('rooms.toolCalls', { count }) : 'Reasoning'}
+        title={hasTools ? runLabel : 'Reasoning'}
       >
         <Wrench size={13} aria-hidden />
         <span>
-          {hasTools ? t('rooms.toolCalls', { count }) : 'Reasoning'}
-          {label ? ` · ${label}` : ''}
+          {runLabel}
         </span>
         {expanded ? <ChevronUp size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
       </button>
