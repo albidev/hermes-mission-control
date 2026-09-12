@@ -741,14 +741,17 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 
     const timeline = timelinedMessages;
 
-    // Collapse consecutive kind:'tool' messages into tool-run summaries.
+    // Collapse a turn's tool/reasoning activity into a single run summary.
+    // Reasoning blocks are part of the run (a model thinking between tool
+    // calls must not break the group into N single-call strips); the run
+    // closes only on user/assistant/handoff content.
     const grouped = timeline.reduce<Array<{ id: string; kind: 'run'; messages: ChatMessage[] } | { kind: 'other'; entry: (typeof timelinedMessages)[number] }>>((acc, entry) => {
-      if (entry.kind === 'message' && entry.message.kind === 'tool') {
+      if (entry.kind === 'message' && (entry.message.kind === 'tool' || entry.message.kind === 'reasoning')) {
         const last = acc[acc.length - 1];
         if (last && last.kind === 'run') {
           last.messages.push(entry.message);
         } else {
-          acc.push({ id: `toolrun-${entry.id}-${entry.message.id}`, kind: 'run', messages: [entry.message] });
+          acc.push({ id: `toolrun-${entry.message.id}`, kind: 'run', messages: [entry.message] });
         }
       } else {
         acc.push({ kind: 'other', entry });
@@ -761,7 +764,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         {grouped.map((item) => item.kind === 'run' ? (
           <ToolRunSummary
             key={item.id}
-            count={item.messages.length}
+            count={item.messages.filter((message) => message.kind === 'tool').length}
             expanded={expandedToolRuns.has(item.id)}
             onToggle={() => toggleToolRun(item.id)}
           >

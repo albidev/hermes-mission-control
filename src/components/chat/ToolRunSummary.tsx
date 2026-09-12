@@ -25,7 +25,7 @@ export function ToolRunSummary({
   children: React.ReactNode;
 }) {
   const { t } = useI18n();
-  if (count <= 0) return null;
+  const hasTools = count > 0;
   return (
     <div className="room-tool-strip" style={{ display: expanded ? 'contents' : undefined }}>
       <button
@@ -33,11 +33,11 @@ export function ToolRunSummary({
         className="room-tool-panel-bar"
         onClick={onToggle}
         aria-expanded={expanded}
-        title={t('rooms.toolCalls', { count })}
+        title={hasTools ? t('rooms.toolCalls', { count }) : 'Reasoning'}
       >
         <Wrench size={13} aria-hidden />
         <span>
-          {t('rooms.toolCalls', { count })}
+          {hasTools ? t('rooms.toolCalls', { count }) : 'Reasoning'}
           {label ? ` · ${label}` : ''}
         </span>
         {expanded ? <ChevronUp size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
