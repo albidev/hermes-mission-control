@@ -109,11 +109,19 @@ function StateNotice({ state }: { state: GroupRoomResult }) {
   );
 }
 
-function GroupRoomComposer({ state, onSend, mentionRoster }: { state: GroupRoomResult; onSend: (text: string) => Promise<unknown>; mentionRoster: BotMentionCandidate[] }) {
+export function GroupRoomComposer({ state, onSend, mentionRoster }: { state: GroupRoomResult; onSend: (text: string) => Promise<unknown>; mentionRoster: BotMentionCandidate[] }) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
+  const [confirmDisband, setConfirmDisband] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mentionPopoverRef = useRef<ChatMentionPopoverHandle | null>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+  }, [draft]);
 
   const submitDraft = useCallback(async () => {
     const text = draft.trim();
@@ -136,34 +144,42 @@ function GroupRoomComposer({ state, onSend, mentionRoster }: { state: GroupRoomR
   }, [submitDraft]);
 
   return (
-    <form onSubmit={submit} className="group-room-composer flex shrink-0 gap-2">
-      <div className="min-w-0 flex-1">
-        <ChatMentionPopover
-          ref={mentionPopoverRef}
-          input={draft}
-          roster={mentionRoster}
-          textareaRef={textareaRef}
-          onApply={setDraft}
-        />
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={state.disbanded || state.serviceUnavailable}
-          placeholder={t('rooms.messagePlaceholder')}
-          enterKeyHint="send"
-          autoCapitalize="sentences"
-          autoCorrect="on"
-          spellCheck
-          rows={1}
-          className="group-room-composer-input w-full rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm text-text outline-none focus:border-accent"
-        />
-      </div>
-      <button type="submit" disabled={!draft.trim() || state.disbanded || state.serviceUnavailable} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm text-white disabled:opacity-50">
-        <Send size={14} />{t('rooms.send')}
-      </button>
-    </form>
+    <>
+      <ChatMentionPopover
+        ref={mentionPopoverRef}
+        input={draft}
+        roster={mentionRoster}
+        textareaRef={textareaRef}
+        onApply={setDraft}
+      />
+      <form onSubmit={submit} className="chat-composer group-room-composer shrink-0">
+        <div className="chat-composer-main">
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={state.disbanded || state.serviceUnavailable}
+            placeholder={t('rooms.messagePlaceholder')}
+            enterKeyHint="send"
+            autoCapitalize="sentences"
+            autoCorrect="on"
+            spellCheck
+            rows={1}
+            aria-label={t('rooms.messagePlaceholder')}
+          />
+          <div className="chat-composer-toolbar chat-room-actions">
+            {!state.disbanded && !state.serviceUnavailable ? <button type="button" onClick={() => void state.stopRoom()} disabled={state.refreshing} title={t('rooms.stop')} className="chat-room-action"><XOctagon size={12} />{t('rooms.stop')}</button> : null}
+            {!state.disbanded && !state.serviceUnavailable ? <button type="button" onClick={() => { if (confirmDisband) { setConfirmDisband(false); void state.disband(); } else { setConfirmDisband(true); window.setTimeout(() => setConfirmDisband(false), 3000); } }} title={t('rooms.disbandAction')} className={`chat-room-action chat-room-action-danger ${confirmDisband ? 'is-confirm' : ''}`}>{confirmDisband ? <Check size={12} /> : <Trash2 size={12} />}{t(confirmDisband && state.room ? 'rooms.disbandConfirm' : 'rooms.disbandAction', confirmDisband && state.room ? { name: state.room.name || state.room.id } : {})}</button> : null}
+            <button type="button" onClick={() => void state.refresh()} disabled={state.refreshing} title={t('rooms.refresh')} className="chat-room-action"><RefreshCw size={12} className={state.refreshing ? 'animate-spin' : ''} />{t('rooms.refresh')}</button>
+            <span className="ml-auto text-[10px] text-text-subtle">{t('rooms.round', { round: state.round.round })} · {t('rooms.latestEvent', { sequence: state.events.at(-1)?.seq ?? '—' })}</span>
+          </div>
+        </div>
+        <button type="submit" disabled={!draft.trim() || state.disbanded || state.serviceUnavailable} className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md bg-accent px-3 text-sm text-white disabled:opacity-50">
+          <Send size={14} />{t('rooms.send')}
+        </button>
+      </form>
+    </>
   );
 }
 
@@ -273,25 +289,16 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
   const filtered = focusedMember ? entries.filter(({ event, member }) => event.actor.kind === 'user' || member?.id === focusedMember) : entries;
   const hiddenWorking = state.room?.members.some((member) => member.id !== focusedMember && deriveGroupMemberStatus(member, state.driverStatus, latestByMember[member.id]) === 'working');
 
-  return <section className={`flex min-h-0 flex-col gap-2 ${className}`} aria-label={t('rooms.title')}>
+  return <section className={`flex min-h-0 flex-1 flex-col ${className}`} aria-label={t('rooms.title')}>
     <StateNotice state={state} />
     {state.error && !state.serviceUnavailable ? <div className="text-xs text-negative" role="alert">{state.error.message}</div> : null}
-    {!state.disbanded && !state.serviceUnavailable ? (
-      <div className="flex items-center gap-1.5">
-        <button type="button" onClick={() => void state.stopRoom()} disabled={state.refreshing} title={t('rooms.stop')} className="inline-flex min-h-7 items-center gap-1 rounded-md border border-border-subtle px-1.5 text-[11px] text-text-muted hover:bg-surface-sunken disabled:opacity-50"><XOctagon size={12} />{t('rooms.stop')}</button>
-        <button type="button" onClick={() => { if (confirmDisband) { setConfirmDisband(false); void state.disband(); } else { setConfirmDisband(true); window.setTimeout(() => setConfirmDisband(false), 3000); } }} title={t('rooms.disbandAction')} className={`inline-flex min-h-7 items-center gap-1 rounded-md border px-1.5 text-[11px] ${confirmDisband ? 'border-negative bg-negative text-white' : 'border-negative/30 text-negative hover:bg-negative-subtle'}`}>{confirmDisband ? <Check size={12} /> : <Trash2 size={12} />}{t(confirmDisband && state.room ? 'rooms.disbandConfirm' : 'rooms.disbandAction', confirmDisband && state.room ? { name: state.room.name || state.room.id } : {})}</button>
-        <button type="button" onClick={() => void state.refresh()} disabled={state.refreshing} className="inline-flex min-h-7 items-center gap-1 rounded-md border border-border-subtle px-1.5 text-[11px] text-text-muted hover:bg-surface-sunken disabled:opacity-50"><RefreshCw size={12} className={state.refreshing ? 'animate-spin' : ''} />{t('rooms.refresh')}</button>
-      </div>
-    ) : null}
     <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto py-0.5" role="tablist" aria-label={t('rooms.members')}>
       <button type="button" role="tab" aria-selected={!focusedMember} onClick={() => setFocusedMember(null)} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] leading-none ${!focusedMember ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}><Users size={12} />{t('rooms.everyone')}</button>
       {(state.room?.members ?? []).map((member) => { const status = deriveGroupMemberStatus(member, state.driverStatus, latestByMember[member.id] ?? null); return <button key={member.id} type="button" role="tab" aria-selected={focusedMember === member.id} onClick={() => setFocusedMember(member.id)} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] leading-none ${focusedMember === member.id ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}><StatusBadge status={status} compact /><span>{member.displayName || `@${member.handle}`}</span></button>; })}
     </div>
     {hiddenWorking ? <div className="flex items-center gap-2 text-[11px] text-warning" role="status"><Loader2 size={12} className="animate-spin" />{t('rooms.backgroundMemberWorking')}</div> : null}
-    <div className="min-h-[220px] flex-1 overflow-y-auto rounded-xl border border-border-subtle bg-surface-sunken/20 p-3 sm:p-4">
-      {state.loading ? <div className="flex items-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />{t('rooms.loading')}</div> : filtered.length === 0 ? <p className="text-sm text-text-muted">{t('rooms.noMessages')}</p> : <div className="flex flex-col gap-4">{filtered.map(({ event, member }, index) => <div key={event.id}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-widest text-text-subtle"><span className="h-px flex-1 bg-border-subtle" />{t('rooms.round', { round: event.round })}<span className="h-px flex-1 bg-border-subtle" /></div> : null}<article className={`chat-message chat-message-${event.actor.kind === 'user' ? 'user' : 'assistant'}`}><div className="chat-message-meta"><span className="chat-message-kind-icon" aria-hidden>{event.actor.kind === 'user' ? <MessageSquare size={12} /> : <Bot size={12} />}</span><span>{event.actor.kind === 'user' ? t('rooms.you') : member?.displayName || (member ? `@${member.handle}` : event.message.member?.displayName || t('rooms.member'))}</span>{event.kind === 'message.user' || event.kind === 'message.member' || event.message.member ? <span className="chat-message-attribution">{event.actor.kind === 'user' ? t('rooms.you') : t('rooms.finalAnswer')}</span> : <span className="chat-message-attribution">{groupEventLabel(event)}</span>}{formatTime(event.createdAt) ? <time className="chat-message-time" dateTime={typeof event.createdAt === 'number' || typeof event.createdAt === 'string' ? new Date(event.createdAt).toISOString() : undefined}>{formatTime(event.createdAt)}</time> : null}</div><div className={`chat-message-body ${event.actor.kind === 'user' ? 'chat-user-body' : 'chat-assistant-body'}`}><ChatMarkdown text={event.message.text} placeholder="…" /></div></article></div>)}</div>}
+    <div className="chat-transcript min-h-[220px]">{state.loading ? <div className="chat-empty"><Loader2 size={16} className="chat-spin" />{t('rooms.loading')}</div> : filtered.length === 0 ? <p className="chat-empty">{t('rooms.noMessages')}</p> : <div className="flex flex-col gap-4">{filtered.map(({ event, member }, index) => <div key={event.id}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div> : null}<article className={`chat-message chat-message-${event.actor.kind === 'user' ? 'user' : 'assistant'}`}><div className="chat-message-meta"><span className="chat-message-kind-icon" aria-hidden>{event.actor.kind === 'user' ? <MessageSquare size={12} /> : <Bot size={12} />}</span><span>{event.actor.kind === 'user' ? t('rooms.you') : member?.displayName || (member ? `@${member.handle}` : event.message.member?.displayName || t('rooms.member'))}</span>{event.kind === 'message.user' || event.kind === 'message.member' || event.message.member ? <span className="chat-message-attribution">{event.actor.kind === 'user' ? t('rooms.you') : t('rooms.finalAnswer')}</span> : <span className="chat-message-attribution">{groupEventLabel(event)}</span>}{formatTime(event.createdAt) ? <time className="chat-message-time" dateTime={typeof event.createdAt === 'number' || typeof event.createdAt === 'string' ? new Date(event.createdAt).toISOString() : undefined}>{formatTime(event.createdAt)}</time> : null}</div><div className={`chat-message-body ${event.actor.kind === 'user' ? 'chat-user-body' : 'chat-assistant-body'}`}><ChatMarkdown text={event.message.text} placeholder="…" /></div></article></div>)}</div>}
     </div>
     {onSend ? <GroupRoomComposer state={state} onSend={onSend} mentionRoster={mentionRoster} /> : null}
-    <footer className="flex flex-wrap items-center gap-3 text-[11px] text-text-subtle"><span>{t('rooms.round', { round: state.round.round })}</span><span>·</span><span>{t('rooms.latestEvent', { sequence: state.events.at(-1)?.seq ?? '—' })}</span>{state.focusHandle ? <span className="inline-flex items-center gap-1 text-accent"><ChevronRight size={12} />{t('rooms.focus', { handle: state.focusHandle })}</span> : null}<span className="ml-auto inline-flex items-center gap-1"><Check size={12} />{t('rooms.protocolVersion', { version: state.capabilities?.protocolVersion ?? '—' })}</span></footer>
   </section>;
 }
