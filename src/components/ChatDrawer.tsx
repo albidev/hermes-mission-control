@@ -1390,11 +1390,6 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                 {newChatLoading ? <Loader2 size={15} className="chat-spin" /> : <SquarePen size={15} />}
                 <span>{t('kanban.new')}</span>
               </button>
-              {onOpenRooms ? (
-                <button className="chat-control chat-icon-button" type="button" onClick={onOpenRooms} title={t('rooms.title')} aria-label={t('rooms.title')}>
-                  <Users size={16} />
-                </button>
-              ) : null}
               <CanvasAddonPicker
                 addons={CANVAS_ADDONS}
                 activeAddon={activeAddon}
