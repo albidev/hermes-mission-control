@@ -129,6 +129,16 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
   }, [location.pathname, location.search, navigate]);
 
+  const openRoomsMode = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    params.set('chatMode', 'room');
+    params.delete('roomId');
+    params.delete('chatSession');
+    const search = params.toString();
+    setChatOpen(true);
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
   const startTaskChat = useCallback(() => {
     const params = new URLSearchParams(location.search);
     params.delete('chatSession');
@@ -419,6 +429,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             botProfile={chatBotProfile}
             onClose={closeChat}
             onStartTaskChat={startTaskChat}
+            onOpenRooms={openRoomsMode}
             onRoomChange={changeRoom}
           />
         ) : null}
