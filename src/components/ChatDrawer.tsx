@@ -84,6 +84,7 @@ import { useGroupRoom } from '../lib/use-group-room';
 import { GroupGatewayClient } from '../lib/group-gateway';
 import type { GroupRoom } from '../lib/group-gateway';
 import { CreateRoomForm, GroupRoomView } from './chat/GroupRoomView';
+import { persistRoomVault } from '../lib/hermes-api';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -1637,7 +1638,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   );
 });
 
-function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProps) {
+function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: ChatDrawerProps) {
   const { t } = useI18n();
   const state = useGroupRoom({ enabled: open, initialRoomId: roomId ?? null });
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
@@ -1679,7 +1680,7 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
     return state.selectRoom(nextRoomId);
   }, [onRoomChange, state.selectRoom]);
 
-  const createRoomFromDrawer = useCallback(async (name: string, handles: string[]) => {
+  const createRoomFromDrawer = useCallback(async (name: string, handles: string[], vaultId?: string) => {
     const client = new GroupGatewayClient();
     const roster = handles.map((handle, index) => ({
       id: `member-${handle}-${index}`,
@@ -1688,10 +1689,13 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
       displayName: (botCandidates.find((m) => m.handle === handle) ?? mentionRoster.find((m) => m.handle === handle))?.displayName,
     }));
     const room = await client.create({ roomId: `mc-${Date.now()}`.slice(0, 48), name, roster });
+    if (vaultId) {
+      void persistRoomVault(room.id, vaultId, storedToken?.trim() || undefined).catch(() => undefined);
+    }
     setCreating(false);
     await state.refresh();
     await state.selectRoom(room.id);
-  }, [botCandidates, mentionRoster, state]);
+  }, [botCandidates, mentionRoster, state, storedToken]);
 
   return (
     <>

@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronRight, Circle, Loader2, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 import { ChatMarkdown } from '../chat-messages';
 import { Badge } from '../ui/Badge';
+import { loadMissionControlVaults, type MissionControlVaultDescriptor } from '../../lib/hermes-api';
 import type { GroupEvent } from '../../lib/group-gateway';
 import type { GroupRoomResult } from '../../lib/use-group-room';
 import { ChatMentionPopover, type ChatMentionPopoverHandle } from '../ChatMentionPopover';
@@ -165,12 +166,28 @@ function GroupRoomComposer({ state, onSend, mentionRoster }: { state: GroupRoomR
   );
 }
 
-export function CreateRoomForm({ members, onCancel, onCreate }: { members: BotMentionCandidate[]; onCancel: () => void; onCreate: (name: string, handles: string[]) => Promise<unknown> }) {
+export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '' }: { members: BotMentionCandidate[]; onCancel: () => void; onCreate: (name: string, handles: string[], vaultId: string) => Promise<unknown>; initialVault?: string }) {
   const { t } = useI18n();
   const [name, setName] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
+  const [vault, setVault] = useState<string>(initialVault);
+  const [vaultOptions, setVaultOptions] = useState<MissionControlVaultDescriptor[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('mission-control-token')?.trim() || undefined : undefined;
+    void loadMissionControlVaults(token)
+      .then((list) => {
+        if (cancelled) return;
+        setVaultOptions(list.vaults);
+        if (!vault && list.default_vault) setVault(list.default_vault);
+      })
+      .catch(() => { /* vault list is best-effort; the nightly derives from members */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggle = useCallback((handle: string) => {
     setSelected((current) => current.includes(handle) ? current.filter((item) => item !== handle) : [...current, handle]);
@@ -182,13 +199,13 @@ export function CreateRoomForm({ members, onCancel, onCreate }: { members: BotMe
     if (selected.length < 2) { setError(t('rooms.memberRequired')); return; }
     setSaving(true); setError(null);
     try {
-      await onCreate(name.trim(), selected);
+      await onCreate(name.trim(), selected, vault);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSaving(false);
     }
-  }, [name, onCreate, selected, t]);
+  }, [name, onCreate, selected, t, vault]);
 
   const toggleAll = useCallback(() => {
     setSelected((current) => current.length === members.length ? [] : members.map((m) => m.handle));
@@ -203,6 +220,17 @@ export function CreateRoomForm({ members, onCancel, onCreate }: { members: BotMe
       <label className="flex flex-col gap-1.5 text-xs text-text-muted">
         <span>{t('rooms.name')}</span>
         <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={t('rooms.namePlaceholder')} className="mc-input h-9" />
+      </label>
+      <label className="flex flex-col gap-1.5 text-xs text-text-muted">
+        <span>{t('rooms.vault')}</span>
+        <select value={vault} onChange={(event) => setVault(event.target.value)} className="mc-input h-9">
+          {vaultOptions.length === 0 ? <option value="">{t('rooms.vaultDefault')}</option> : null}
+          {vaultOptions.map((item) => (
+            <option key={item.id} value={item.id}>{item.label || item.name || item.id}</option>
+          ))}
+          {vault && !vaultOptions.some((item) => item.id === vault) ? <option value={vault}>{vault}</option> : null}
+        </select>
+        <span className="text-[11px] text-text-subtle">{t('rooms.vaultHint')}</span>
       </label>
       <div className="flex flex-col gap-1.5 text-xs text-text-muted">
         <span>{t('rooms.members')} ({selected.length}/{members.length})</span>
