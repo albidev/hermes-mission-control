@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Bot, Check, ChevronRight, Loader2, MessageSquare, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Loader2, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
-import { ChatMarkdown } from '../chat-messages';
+import { ChatMessageCard } from '../chat-messages';
 import { Badge } from '../ui/Badge';
 import { loadMissionControlVaults, type MissionControlVaultDescriptor } from '../../lib/hermes-api';
 import type { GroupEvent } from '../../lib/group-gateway';
 import type { GroupRoomResult } from '../../lib/use-group-room';
 import { ChatMentionPopover, type ChatMentionPopoverHandle } from '../ChatMentionPopover';
 import type { BotMentionCandidate } from '../../lib/bot-mentions';
-import { deriveGroupMemberStatus, groupEventLabel, visibleGroupEvents } from './group-room-view-model';
+import { deriveGroupMemberStatus, groupEventToChatMessage, visibleGroupEvents } from './group-room-view-model';
 import type { GroupMemberStatus } from './group-room-view-model';
 export { deriveGroupMemberStatus, groupEventLabel, visibleGroupEvents } from './group-room-view-model';
 
@@ -19,12 +19,6 @@ type GroupRoomViewProps = {
   mentionRoster?: BotMentionCandidate[];
 };
 
-
-function formatTime(value: string | number | null): string {
-  if (value === null) return '';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
 
 const statusKey: Record<GroupMemberStatus, string> = {
   idle: 'rooms.status.idle',
@@ -298,7 +292,7 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
     {hiddenWorking ? <div className="flex items-center gap-2 text-[11px] text-warning" role="status"><Loader2 size={12} className="animate-spin" />{t('rooms.backgroundMemberWorking')}</div> : null}
     <div className="chat-transcript min-h-[220px] flex-1">
       {state.loading ? <div className="chat-empty"><Loader2 size={16} className="chat-spin" />{t('rooms.loading')}</div> : filtered.length === 0 ? <p className="chat-empty">{t('rooms.noMessages')}</p> : (
-        filtered.map(({ event, member }, index) => <div key={event.id} style={{ display: 'contents' }}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div> : null}<article className={`chat-message chat-message-${event.actor.kind === 'user' ? 'user' : 'assistant'}`}><div className="chat-message-meta"><span className="chat-message-kind-icon" aria-hidden>{event.actor.kind === 'user' ? <MessageSquare size={12} /> : <Bot size={12} />}</span><span>{event.actor.kind === 'user' ? t('rooms.you') : member?.displayName || (member ? `@${member.handle}` : event.message.member?.displayName || t('rooms.member'))}</span>{event.kind === 'message.user' || event.kind === 'message.member' || event.message.member ? <span className="chat-message-attribution">{event.actor.kind === 'user' ? t('rooms.you') : t('rooms.finalAnswer')}</span> : <span className="chat-message-attribution">{groupEventLabel(event)}</span>}{formatTime(event.createdAt) ? <time className="chat-message-time" dateTime={typeof event.createdAt === 'number' || typeof event.createdAt === 'string' ? new Date(event.createdAt).toISOString() : undefined}>{formatTime(event.createdAt)}</time> : null}</div><div className={`chat-message-body ${event.actor.kind === 'user' ? 'chat-user-body' : 'chat-assistant-body'}`}><ChatMarkdown text={event.message.text} placeholder="…" /></div></article></div>)
+        filtered.map(({ event, member }, index) => <div key={event.id} style={{ display: 'contents' }}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div> : null}<ChatMessageCard message={groupEventToChatMessage(event, member)} mentionHandles={(state.room?.members ?? []).map((m) => m.handle)} /></div>)
       )}
     </div>
     {onSend ? <GroupRoomComposer state={state} onSend={onSend} mentionRoster={mentionRoster} /> : null}

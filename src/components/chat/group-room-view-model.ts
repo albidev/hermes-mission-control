@@ -1,3 +1,4 @@
+import type { ChatMessage } from '../../lib/chat-protocol.ts';
 import type { GroupEvent, GroupMember } from '../../lib/group-gateway.ts';
 
 export type GroupMemberStatus = 'idle' | 'working' | 'settled' | 'unavailable';
@@ -54,4 +55,25 @@ export function groupEventLabel(event: GroupEvent): string {
   if (event.kind === 'message.member' || event.message.member) return 'Final answer';
   const label = event.kind.replace(/[._-]+/g, ' ');
   return label ? `${label[0].toUpperCase()}${label.slice(1)}` : 'Activity';
+}
+
+/**
+ * Adapter from a room event to the canonical chat message shape so the
+ * room transcript can render with the exact same ChatMessageCard used by
+ * the normal chat drawer (same meta, attribution, time, streaming UI).
+ */
+export function groupEventToChatMessage(event: GroupEvent, member: GroupMember | null): ChatMessage {
+  const kind = event.actor.kind === 'user' ? 'user' : 'assistant';
+  const handle = member?.handle ?? event.message.member?.handle;
+  const displayName = member?.displayName ?? event.message.member?.displayName ?? event.actor.displayName;
+  return {
+    id: event.id,
+    role: kind,
+    kind,
+    text: event.message.text,
+    createdAt: typeof event.createdAt === 'number' || typeof event.createdAt === 'string' ? new Date(event.createdAt).getTime() : null,
+    attribution: kind === 'assistant'
+      ? { handle: handle ?? 'room', displayName, model: undefined, provider: undefined }
+      : undefined,
+  };
 }
