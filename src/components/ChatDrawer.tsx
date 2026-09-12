@@ -174,18 +174,61 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
 
 type CanonicalChatDrawerProps = Omit<ChatDrawerProps, 'chatMode'> & { chatMode?: 'general' | 'canonical' | 'task' };
 
-function ChatModeTabs({ active, onSelect }: { active: 'chat' | 'rooms'; onSelect: (mode: 'chat' | 'rooms') => void }) {
+function TabLed({ state }: { state: 'none' | 'done' | 'help' }) {
+  if (state === 'none') return null;
+  return <span className={`tab-led ${state === 'done' ? 'is-done' : 'is-help'}`} aria-hidden />;
+}
+
+function ChatModeTabs({ active, onSelect, chatLed = 'none', roomsLed = 'none' }: {
+  active: 'chat' | 'rooms';
+  onSelect: (mode: 'chat' | 'rooms') => void;
+  chatLed?: 'none' | 'done' | 'help';
+  roomsLed?: 'none' | 'done' | 'help';
+}) {
   const { t } = useI18n();
   return (
     <div className="chat-mode-tabs" role="tablist" aria-label="Chat mode">
       <button type="button" className={`chat-mode-tab ${active === 'chat' ? 'is-active' : ''}`} role="tab" aria-selected={active === 'chat'} onClick={() => onSelect('chat')}>
-        <MessageSquare size={14} />{t('chatDrawer.title')}
+        <MessageSquare size={14} />{t('chatDrawer.title')}<TabLed state={chatLed} />
       </button>
       <button type="button" className={`chat-mode-tab ${active === 'rooms' ? 'is-active' : ''}`} role="tab" aria-selected={active === 'rooms'} onClick={() => onSelect('rooms')}>
-        <Users size={14} />{t('rooms.title')}
+        <Users size={14} />{t('rooms.title')}<TabLed state={roomsLed} />
       </button>
     </div>
   );
+}
+
+/** Attention state for a mode tab. `done` = finished/new content below the
+ *  fold (green), `help` = blocked/approval pending (amber). The dot clears
+ *  when the user scrolls to the bottom, resolves the action, or switches
+ *  into the mode. */
+export type TabAttention = 'none' | 'done' | 'help';
+
+function useTabAttention({ needsAction, atBottom, contentCount }: {
+  needsAction: boolean;
+  atBottom: boolean;
+  contentCount: number;
+}): TabAttention {
+  const [state, setState] = useState<TabAttention>('none');
+  const stateRef = useRef<TabAttention>('none');
+  const prevCountRef = useRef(contentCount);
+  const grownRef = useRef(false);
+  useEffect(() => {
+    if (atBottom) {
+      // Reading the content clears the attention dot immediately.
+      grownRef.current = false;
+      if (stateRef.current !== 'none') { stateRef.current = 'none'; setState('none'); }
+      return;
+    }
+    if (contentCount !== prevCountRef.current) {
+      grownRef.current = contentCount > prevCountRef.current || grownRef.current;
+      if (contentCount < prevCountRef.current) grownRef.current = false;
+      prevCountRef.current = contentCount;
+    }
+    const target: TabAttention = needsAction ? 'help' : grownRef.current ? 'done' : 'none';
+    if (target !== stateRef.current) { stateRef.current = target; setState(target); }
+  }, [atBottom, contentCount, needsAction]);
+  return state;
 }
 
 /**
@@ -206,7 +249,13 @@ const SCROLL_SPEED_HIDE_PX_MS = 0.3; // ≥ 300px/s hides
 const SCROLL_SPEED_SHOW_PX_MS = 0.1; // ≤ 100px/s shows (dead zone in between)
 const SPEED_WINDOW_SAMPLES = 4;
 const BOTTOM_EPSILON_PX = 24;
-function AutoHideModeTabs({ active, onSelect, containerRef }: { active: 'chat' | 'rooms'; onSelect: (mode: 'chat' | 'rooms') => void; containerRef: React.RefObject<HTMLElement | null> }) {
+function AutoHideModeTabs({ active, onSelect, containerRef, chatLed = 'none', roomsLed = 'none' }: {
+  active: 'chat' | 'rooms';
+  onSelect: (mode: 'chat' | 'rooms') => void;
+  containerRef: React.RefObject<HTMLElement | null>;
+  chatLed?: 'none' | 'done' | 'help';
+  roomsLed?: 'none' | 'done' | 'help';
+}) {
   const [hidden, setHidden] = useState(false);
   const hiddenRef = useRef(false);
   const shownAtRef = useRef(0);
@@ -269,7 +318,7 @@ function AutoHideModeTabs({ active, onSelect, containerRef }: { active: 'chat' |
 
   return (
     <div className={`chat-mode-tabs-shell ${hidden ? 'is-hidden' : ''}`} aria-hidden={hidden}>
-      <ChatModeTabs active={active} onSelect={onSelect} />
+      <ChatModeTabs active={active} onSelect={onSelect} chatLed={chatLed} roomsLed={roomsLed} />
     </div>
   );
 }
@@ -371,6 +420,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     interrupt,
     reset,
   } = useGatewayChat(storedToken, open, initialSessionId, botProfile);
+  const chatHelpAttention = useTabAttention({ needsAction: Boolean(interaction) || Boolean(error), atBottom: nearBottom, contentCount: messages.length });
+  const roomsBackgroundAttention = useTabAttention({ needsAction: false, atBottom: true, contentCount: 0 });
 
   const activeTargetStorageKey = sessionId ? `mission-control-active-bot-target:${sessionId}` : null;
   const clearActiveBotTarget = useCallback(() => {
@@ -1532,7 +1583,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
             </div>
           </div>
         </header>
-        {onOpenRooms ? <AutoHideModeTabs active="chat" onSelect={(mode) => { if (mode === 'rooms') onOpenRooms(); }} containerRef={drawerRef} /> : null}
+        {onOpenRooms ? <AutoHideModeTabs active="chat" onSelect={(mode) => { if (mode === 'rooms') onOpenRooms(); }} containerRef={drawerRef} chatLed={chatHelpAttention} roomsLed={roomsBackgroundAttention} /> : null}
 
         {modelPickerOpen ? (
           <ChatModelPicker
@@ -1821,6 +1872,14 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
       description: member.profile ? `profile: ${member.profile}` : undefined,
     })), [state.room?.members]);
 
+  const [roomsNearBottom, setRoomsNearBottom] = useState(true);
+  const roomsNearBottomRef = useRef(true);
+  const roomAttention = useTabAttention({
+    needsAction: state.pendingActions?.length > 0 || state.blocked,
+    atBottom: roomsNearBottom || !state.room,
+    contentCount: state.events?.length ?? 0,
+  });
+
   useEffect(() => {
     if (!open || botCandidates.length > 0) return;
     let cancelled = false;
@@ -1895,10 +1954,10 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
             </div>
           ) : null}
         </header>
-        <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} />
+        <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} chatLed="none" roomsLed={roomAttention} />
         <div className="flex min-h-0 flex-1 flex-col">
           {!canUseRooms && !state.loading ? <div className="chat-error m-4" role="status">{t('rooms.driverUnavailable')}</div> : null}
-          {creating ? <div className="chat-transcript rooms-empty"><CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /></div> : state.room && canUseRooms ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : canUseRooms ? <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div> : null}
+          {creating ? <div className="chat-transcript rooms-empty"><CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /></div> : state.room && canUseRooms ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} onNearBottomChange={(near) => { roomsNearBottomRef.current = near; setRoomsNearBottom(near); }} /> : canUseRooms ? <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div> : null}
           {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
         </div>
       </aside>

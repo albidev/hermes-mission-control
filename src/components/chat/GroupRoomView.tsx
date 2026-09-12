@@ -19,6 +19,7 @@ type GroupRoomViewProps = {
   onSend?: (text: string) => Promise<unknown>;
   className?: string;
   mentionRoster?: BotMentionCandidate[];
+  onNearBottomChange?: (nearBottom: boolean) => void;
 };
 
 
@@ -271,7 +272,7 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '' 
   );
 }
 
-export function GroupRoomView({ state, onSend, className = '', mentionRoster = [] }: GroupRoomViewProps) {
+export const GroupRoomView = memo(function GroupRoomView({ state, onSend, className = '', mentionRoster = [], onNearBottomChange }: GroupRoomViewProps) {
   const { t } = useI18n();
   const [focusedMember, setFocusedMember] = useState<string | null>(null);
   const [confirmDisband, setConfirmDisband] = useState(false);
@@ -360,8 +361,9 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
     if (bottom !== nearBottomRef.current) {
       nearBottomRef.current = bottom;
       setNearBottom(bottom);
+      onNearBottomChange?.(bottom);
     }
-  }, []);
+  }, [onNearBottomChange]);
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className}`} aria-label={t('rooms.title')}>
     <StateNotice state={state} />
@@ -389,4 +391,4 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
     </div>
     {onSend ? <GroupRoomComposer state={state} onSend={onSend} mentionRoster={mentionRoster} /> : null}
   </section>;
-}
+});
