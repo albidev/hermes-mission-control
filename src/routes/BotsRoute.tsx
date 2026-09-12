@@ -113,6 +113,8 @@ function mcpToolChanges(details: BotProfileDetails, draft: BotDraft): { enable: 
 }
 
 function profileInitials(name: string): string {
+  const parts = name.split('-').filter(Boolean);
+  if (parts.length > 1) return parts.slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   return name.slice(0, 2).toUpperCase();
 }
 
@@ -948,7 +950,6 @@ export function BotsRoute() {
         eyebrow={t('bots.eyebrow')}
         title={t('bots.title')}
         description={t('bots.description')}
-        meta={selectedSummary ? `${t('bots.profilesCount', { count: profiles.length })} · ${selectedSummary.name}` : t('bots.profilesCount', { count: profiles.length })}
         actions={(
           <div className="bots-page-actions flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             <Button size="sm" className="min-w-0 flex-1 sm:flex-none" variant="secondary" icon={<RefreshCw size={14} className={loading ? 'animate-spin' : ''} />} onClick={() => void refreshRoster(selectedName)} disabled={loading}>

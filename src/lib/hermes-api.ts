@@ -2628,6 +2628,70 @@ export async function revertMissionControlSynthesis(
   return payload as Record<string, unknown>;
 }
 
+// ---------- Curate vaults (room → vault routing, candidates vault selector) ----------
+
+export interface MissionControlVaultDescriptor {
+  id: string;
+  label?: string | null;
+  name?: string | null;
+  candidate_enabled?: boolean;
+  candidates_dir?: string | null;
+  candidate_count?: number;
+  pending_count?: number;
+}
+
+export interface MissionControlVaultList {
+  vaults: MissionControlVaultDescriptor[];
+  default_vault?: string | null;
+}
+
+export async function loadMissionControlVaults(accessToken?: string): Promise<MissionControlVaultList> {
+  const response = await fetch(localApiUrl('/candidates/vaults'), {
+    headers: buildHeaders(accessToken),
+    cache: 'no-store',
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Vault list failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  const data = (await response.json()) as Partial<MissionControlVaultList>;
+  return { vaults: Array.isArray(data.vaults) ? data.vaults : [], default_vault: data.default_vault ?? null };
+}
+
+export interface MissionControlRoomVaultResponse {
+  room_id?: string;
+  vault?: string;
+  vaults?: Record<string, string>;
+}
+
+export async function persistRoomVault(roomId: string, vault: string, accessToken?: string): Promise<MissionControlRoomVaultResponse> {
+  const response = await fetch(localApiUrl('/room/vault'), {
+    method: 'POST',
+    headers: { ...buildHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room_id: roomId, vault }),
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const detail = payload?.detail || payload?.error || '';
+    throw new Error(`Room vault persist failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  return (await response.json()) as MissionControlRoomVaultResponse;
+}
+
+export async function loadRoomVault(roomId: string, accessToken?: string): Promise<{ room_id: string; vault: string }> {
+  const params = new URLSearchParams({ room_id: roomId });
+  const response = await fetch(localApiUrl(`/room/vault?${params.toString()}`), {
+    headers: buildHeaders(accessToken),
+    cache: 'no-store',
+  });
+  if (response.status === 401) throw new MissionControlAuthError();
+  if (!response.ok) throw new Error(`Room vault load failed (${response.status})`);
+  return (await response.json()) as { room_id: string; vault: string };
+}
+
 // ---------- Session synthesis candidates (BDH pre-write gate) ----------
 
 export interface MissionControlSessionSynthesisSafeProvenance {

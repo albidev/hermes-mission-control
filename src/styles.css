@@ -1137,6 +1137,7 @@ body.modal-open .route-page-scroll {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-sunken);
+  position: relative;
 }
 
 .chat-head-main {
@@ -5651,4 +5652,288 @@ button {
 @keyframes addon-sheet-up {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
+}
+
+/* Chat mode tabs: Chat | Rooms switching inside the drawer */
+.chat-mode-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 14px 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.18));
+}
+
+/* Auto-hide wrapper: zero-space overlay. The shell takes NO layout height —
+   the tabs float absolutely above the transcript (mobile app-bar pattern).
+   Hiding = slide up + fade inside the same overlay, so the transcript is
+   never resized and its text never reflows; when visible the rail covers
+   the top edge of the transcript instead of pushing it down. */
+.chat-mode-tabs-shell {
+  position: relative;
+  height: 0;
+  z-index: 30;
+}
+.chat-mode-tabs-shell .chat-mode-tabs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--color-surface-raised);
+  transform: translateY(0);
+  opacity: 1;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+.chat-mode-tabs-shell.is-hidden .chat-mode-tabs {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The floating tab rail is an opaque overlay (height-0 shell) above the
+   transcript. Give every transcript inside the drawer — the canonical chat
+   one and the rooms transcript (a descendant of the drawer) — a matching
+   top inset so content never slides underneath the rail when scrolling.
+   Fixed, not conditional: toggling padding with the rail would reflow the
+   text below again (the exact bug fixed earlier). 51px = rail height. */
+.chat-drawer .chat-transcript {
+  padding-top: calc(1rem + 51px);
+}
+.chat-mode-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted, rgba(235, 232, 255, 0.6));
+  background: transparent;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+/* Tiny attention LED on the Chat|Rooms mode tabs. Palette matches .chat-led:
+   is-done (green) = finished / new content below the fold,
+   is-help (amber) = blocked / approval pending. Pure 5px dot in the tab's
+   top-right corner — no label, no ring that could read as a glyph. */
+.chat-mode-tab .tab-led {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: transparent;
+  pointer-events: none;
+}
+.chat-mode-tab .tab-led.is-done {
+  background: var(--color-success, #22c55e);
+}
+.chat-mode-tab .tab-led.is-help {
+  background: var(--color-warning, #f59e0b);
+}
+.chat-mode-tab:hover {
+  color: var(--text-primary, #ebe8ff);
+  background: rgba(255, 255, 255, 0.05);
+}
+.chat-mode-tab.is-active {
+  color: var(--accent, #8b7cf6);
+}
+.chat-mode-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent, #8b7cf6);
+}
+
+/* Group Rooms: member filter chips as a slim statusline above the composer.
+   Purposefully lower than the canonical chat status line: 24px chips,
+   tighter padding. */
+
+.chat-room-filterbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.75rem;
+  overflow-x: auto;
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+}
+
+.chat-room-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 0 0 auto;
+  height: 24px;
+  min-height: 24px !important;
+  min-width: 0 !important;
+  padding: 0 0.625rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-room-filter-chip:hover:not([aria-selected='true']) {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+
+.chat-room-filter-chip[aria-selected='true'] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* Group Rooms: composer actions (stop/disband/refresh) keep the muted
+   icon look of the canonical chat toolbar. */
+
+.chat-room-icon {
+  color: var(--color-text-muted);
+}
+
+.chat-room-icon:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+
+.chat-room-icon:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chat-room-icon-danger {
+  color: var(--color-negative);
+}
+
+.chat-room-icon-danger:hover:not(:disabled) {
+  background: var(--color-negative-subtle);
+  color: var(--color-negative);
+}
+
+.chat-room-icon-danger.is-confirm {
+  background: var(--color-negative);
+  color: #fff;
+}
+
+/* Group Rooms: composer and transcript mirror the canonical chat layout.
+   The composer keeps a full-width top border to separate it from the
+   transcript (the canonical chat relies on surface contrast instead). */
+.group-room-composer {
+  border-top: 1px solid var(--color-border);
+}
+
+.chat-round-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-text-subtle);
+}
+
+.chat-round-divider::before,
+.chat-round-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+/* Room tool activity strip: slim per-turn collapsed bar (anti-noise) that
+   expands into the canonical chat ToolMessage surfaces. Sits inline in the
+   transcript, right above the member reply it belongs to. */
+.room-tool-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0.25rem 0 0.125rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-surface);
+  overflow: visible;
+}
+
+.room-tool-panel-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  text-align: left;
+}
+
+.room-tool-panel-bar:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover, var(--color-surface));
+}
+
+.room-tool-panel-bar svg {
+  flex: 0 0 auto;
+}
+
+.room-tool-panel-bar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.room-tool-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.room-tool-panel-body .chat-tool-surface {
+  border-color: var(--color-border-subtle);
+}
+
+/* Mobile tap hygiene: on touch devices the browser keeps the :hover/:active
+   state after the finger lifts, so the pressed highlight stays "stuck".
+   Kill the tap highlight and only show hover feedback for devices that can
+   actually hover. :focus-visible keeps keyboard focus rings intact. */
+@media (hover: none) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  .chat-icon-button:hover,
+  .chat-mode-tab:hover,
+  .room-tool-panel-bar:hover {
+    color: inherit;
+    background: transparent;
+    border-color: var(--color-border);
+  }
+  .chat-mode-tab:active,
+  .chat-icon-button:active,
+  .room-tool-panel-bar:active {
+    opacity: 0.6;
+  }
 }

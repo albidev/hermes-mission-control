@@ -59,6 +59,25 @@ export default defineConfig(({ mode }) => {
       watch: {
         ignored: ['**/.worktrees/**', '**/.hermes/**', '**/dist/**'],
       },
+      // Vite's built-in CORS middleware already answers OPTIONS preflights for
+      // /api/* — but its default allowlist only covers localhost, so clients
+      // reached through Tailscale serve saw preflights come back without
+      // Access-Control-Allow-Origin ("due to access control checks"). Extend
+      // the allowlist to the tailnet host plus the local hosts.
+      cors: {
+        origin: (origin, callback) => {
+          if (!origin) return callback(null, false);
+          try {
+            const host = new URL(origin).hostname;
+            const ok = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local') || /\.taild7292a\.ts\.net$/.test(host) || host.endsWith('.ts.net');
+            return callback(null, ok);
+          } catch { return callback(null, false); }
+        },
+        methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+        allowedHeaders: ['Authorization', 'Content-Type', 'X-API-Key'],
+        credentials: true,
+        maxAge: 0,
+      },
       allowedHosts: ALL_ALLOWED_HOSTS.length ? ALL_ALLOWED_HOSTS : true,
       proxy: {
         '/api/local': {

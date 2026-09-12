@@ -82,8 +82,11 @@ from push_server import (
 )
 
 from last_chat_store import get_last_chat, set_last_chat
+from last_room_store import get_last_room, set_last_room
 from chat_handoff_store import claim_handoff, list_all_handoffs, list_handoffs, upsert_handoff
 from chat_title_store import set_chat_title
+from room_vault_store import clear_room_vault, get_room_vault, list_room_vaults, set_room_vault
+from room_tool_store import build_room_tools_snapshot, read_room_tools
 from chat_runtime_presence import active_runtime_presences, update_runtime_presence
 from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
 import kanban_bridge as kanban_bridge_mod
@@ -2279,6 +2282,33 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, payload)
             return
+        if parsed.path == "/api/local/room/vault":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            room_id = (params.get("room_id") or [""])[0].strip()
+            if room_id:
+                self._json(200, {"room_id": room_id, "vault": get_room_vault(room_id)})
+                return
+            self._json(200, {"vaults": list_room_vaults()})
+            return
+        if parsed.path == "/api/local/room/tools":
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            room_id = (params.get("room_id") or [""])[0].strip()
+            max_age = _parse_int((params.get("max_age") or [None])[0], default=5, minimum=1, maximum=60)
+            try:
+                if room_id:
+                    tools = read_room_tools(room_id, max_age_seconds=max_age)
+                    self._json(200, {"room_id": room_id, "tools": tools})
+                else:
+                    self._json(200, build_room_tools_snapshot())
+            except Exception as exc:
+                import logging
+                logging.warning("room tools read failed: %s", exc)
+                self._json(503, {"error": "room_tools_unavailable", "detail": str(exc)})
+            return
         if parsed.path == "/api/local/mission-control/agents":
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2517,6 +2547,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._unauthorized()
                 return
             self._json(200, {'lastChat': get_last_chat()})
+            return
+        if parsed.path == '/api/local/room/last':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            self._json(200, {'lastRoom': get_last_room()})
             return
         if parsed.path == '/api/local/chat/whiteboard':
             if not _is_authorized(self):
@@ -2771,6 +2807,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, result)
             return
+        if parsed.path == '/api/local/room/vault':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None or not isinstance(payload, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            try:
+                result = set_room_vault(str(payload.get('room_id') or ''), str(payload.get('vault') or ''))
+            except ValueError as exc:
+                self._json(400, {'error': 'bad_request', 'detail': str(exc)})
+                return
+            self._json(200, result)
+            return
         if parsed.path.startswith("/api/local/cron/"):
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2923,6 +2974,42 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
             self._json(200, {'success': True, 'lastChat': saved['lastChat']})
+            return
+        if parsed.path == '/api/local/room/last':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            if length == 0:
+                self._json(400, {'error': 'bad_request', 'detail': 'Empty body.'})
+                return
+            body = self.rfile.read(length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid JSON body.'})
+                return
+            if not isinstance(data, dict):
+                self._json(400, {'error': 'bad_request', 'detail': 'JSON body must be an object.'})
+                return
+            if not str(data.get('roomId', '')).strip():
+                self._json(400, {'error': 'bad_request', 'detail': 'Missing roomId.'})
+                return
+            expected_revision = data.get('expectedRevision')
+            if expected_revision is not None and (
+                isinstance(expected_revision, bool) or not isinstance(expected_revision, int)
+            ):
+                self._json(400, {'error': 'bad_request', 'detail': 'expectedRevision must be an integer.'})
+                return
+            saved = set_last_room(data, expected_revision=expected_revision)
+            if not saved['accepted']:
+                self._json(409, {
+                    'error': 'revision_conflict',
+                    'detail': 'Last-room pointer changed since it was read.',
+                    'lastRoom': saved['lastRoom'],
+                })
+                return
+            self._json(200, {'success': True, 'lastRoom': saved['lastRoom']})
             return
         if parsed.path == '/api/local/chat/whiteboard':
             if not _is_authorized(self):

@@ -35,6 +35,7 @@ export type GroupRoomResult = {
   pendingActions: unknown[];
   approval: unknown;
   blocked: boolean;
+  working: boolean;
   disbanded: boolean;
   memberActivity: Record<string, GroupEvent>;
   round: RoundCoordinates;
@@ -44,6 +45,10 @@ export type GroupRoomResult = {
   retry: () => Promise<void>;
   send: (text: string, threadId?: string) => Promise<GroupEvent | null>;
   disband: () => Promise<void>;
+  approve: (params: { memberId?: string | null; taskId?: string | null; executionGeneration?: number; choice?: string | null; requestId?: string | null }) => Promise<unknown>;
+  retryMember: (taskId?: string | null) => Promise<unknown>;
+  renameRoom: (name: string) => Promise<void>;
+  stopRoom: () => Promise<number | null>;
   clearAuthorityChange: () => void;
 };
 
@@ -141,6 +146,14 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     setRoom((current) => current ? { ...current, latestSeq: Math.max(current.latestSeq, page.latestSeq) } : current);
   }, []);
 
+  // The gateway reports has_more as cursor < latest_seq where latest_seq is the
+  // room's GLOBAL next_seq (it keeps advancing while members write). On a busy
+  // room that never converges, so cap the catch-up pagination: first page renders
+  // immediately, the poll (5s) keeps syncing the tail. Without the cap the room
+  // stayed in "Loading room…" forever even though the transcript was already
+  // populated (this room: 122 events, first page clipped at 100 by bytes).
+  const MAX_LOG_PAGES = 8;
+
   const loadRoom = useCallback(async (roomId: string, reset = false) => {
     const state: GroupState = await clientRef.current.state(roomId);
     if (!mountedRef.current) return;
@@ -153,9 +166,11 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     }
     let page = await clientRef.current.log(roomId, reset ? { sinceSeq: 0 } : { ...(cursor === null ? { sinceSeq: state.room.latestSeq } : { cursor }) });
     applyLog(page);
-    while (page.hasMore && page.cursor !== null) {
+    let pageCount = 1;
+    while (page.hasMore && page.cursor !== null && pageCount < MAX_LOG_PAGES) {
       page = await clientRef.current.log(roomId, { cursor: page.cursor });
       applyLog(page);
+      pageCount += 1;
     }
   }, [applyLog, cursor]);
 
@@ -199,15 +214,47 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     try {
       const result = await clientRef.current.send(selectedRoomId, eventId, { text, ...(threadId ? { threadId } : {}) });
       setEvents((current) => mergeGroupEvents(current.filter((item) => item.id !== eventId && item.seq !== optimistic.seq), [result]));
+      // Refresh the driver status immediately so the UI shows the members
+      // as working right after a send, instead of waiting for the next poll.
+      if (mountedRef.current) void loadRoom(selectedRoomId);
       return result;
     } catch (cause) { if (mountedRef.current) { setEvents((current) => current.filter((item) => item.id !== eventId)); setError(toGroupRoomError(cause)); } return null; }
-  }, [events, room, selectedRoomId]);
+  }, [events, loadRoom, room, selectedRoomId]);
 
   const disband = useCallback(async () => {
     if (!selectedRoomId) return;
     try { await clientRef.current.disband(selectedRoomId, `mc-${Date.now()}`); await loadRoom(selectedRoomId); }
     catch (cause) { if (mountedRef.current) setError(toGroupRoomError(cause)); }
   }, [loadRoom, selectedRoomId]);
+
+  const approve = useCallback(async (params: { memberId?: string | null; taskId?: string | null; executionGeneration?: number; choice?: string | null; requestId?: string | null }) => {
+    if (!selectedRoomId) throw new Error('No room selected.');
+    const result = await clientRef.current.approve(selectedRoomId, params);
+    if (mountedRef.current) { setError(null); await loadRoom(selectedRoomId); }
+    return result;
+  }, [loadRoom, selectedRoomId]);
+
+  const retryMember = useCallback(async (taskId?: string | null) => {
+    if (!selectedRoomId) throw new Error('No room selected.');
+    const result = await clientRef.current.retry(selectedRoomId, taskId);
+    if (mountedRef.current) { setError(null); await loadRoom(selectedRoomId); }
+    return result;
+  }, [loadRoom, selectedRoomId]);
+
+  const stopRoom = useCallback(async () => {
+    if (!selectedRoomId) return null;
+    const result = await clientRef.current.stop(selectedRoomId);
+    if (mountedRef.current) { setError(null); await loadRoom(selectedRoomId); }
+    return result;
+  }, [loadRoom, selectedRoomId]);
+
+  const renameRoom = useCallback(async (name: string) => {
+    if (!selectedRoomId || !name.trim()) return;
+    try {
+      await clientRef.current.rename(selectedRoomId, `mc-${Date.now()}`, name.trim());
+      if (mountedRef.current) { setError(null); await loadRooms(); await loadRoom(selectedRoomId); }
+    } catch (cause) { if (mountedRef.current) setError(toGroupRoomError(cause)); }
+  }, [loadRoom, loadRooms, selectedRoomId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -239,8 +286,11 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
     capabilities, driverAvailable: capabilities?.driver === true, rooms, room, selectedRoomId, events, cursor, loading, refreshing,
     error, serviceUnavailable: error?.retryable === true && /unavailable|connect|closed|timed out/i.test(error.message), authorityChanged,
     driverStatus, pendingActions: status.pendingActions, approval: status.approval, blocked: status.blocked,
+    working: driverStatus.working === true || status.pendingActions.length > 0,
     disbanded: Boolean(room?.disbandedAt), memberActivity, round: deriveRoundCoordinates(events),
     focusHandle: latestMemberEvent?.message.member?.handle ?? null,
     selectRoom, refresh, retry, send, disband, clearAuthorityChange: () => setAuthorityChanged(false),
+    approve, retryMember, renameRoom,
+    stopRoom,
   };
 }

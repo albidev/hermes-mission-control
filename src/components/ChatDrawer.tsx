@@ -1,6 +1,7 @@
 import { useI18n } from '../lib/i18n';
 import {
   Component,
+  Fragment,
   type ClipboardEvent,
   type CSSProperties,
   type DragEvent,
@@ -29,6 +30,8 @@ import {
   Loader2,
   MessageSquare,
   Paperclip,
+  Pen,
+  Plus,
   ShieldCheck,
   SquarePen,
   X,
@@ -38,6 +41,7 @@ import {
 import { ChatModelPicker } from './ChatModelPicker';
 import { ChatComposer } from './ChatComposer';
 import { ChatTodoPlan } from './chat/ChatTodoPlan';
+import { ToolRunSummary } from './chat/ToolRunSummary';
 import { Modal } from './Modal';
 import { Button } from './ui/Button';
 import type { ChatSlashPopoverHandle } from './ChatSlashPopover';
@@ -80,8 +84,10 @@ import { BotHandoffMessage } from './chat/BotHandoffMessage';
 import { claimBotHandoff, loadPersistedBotHandoffs, persistBotHandoff, type PersistedBotHandoff } from '../lib/bot-handoff-persistence';
 import { compareChatTimelineEntries } from '../lib/chat-timeline';
 import { useGroupRoom } from '../lib/use-group-room';
+import { GroupGatewayClient } from '../lib/group-gateway';
 import type { GroupRoom } from '../lib/group-gateway';
-import { GroupRoomView } from './chat/GroupRoomView';
+import { CreateRoomForm, GroupRoomView } from './chat/GroupRoomView';
+import { persistRoomVault } from '../lib/hermes-api';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -92,7 +98,8 @@ type ChatDrawerProps = {
   botProfile?: string | null;
   onClose: () => void;
   onStartTaskChat?: () => void;
-  onRoomChange?: (roomId: string | null) => void;
+  onOpenRooms?: () => void;
+  onRoomChange?: (roomId: string | null, roomName?: string | null) => void;
 };
 
 function formatTokens(tokens: number): string {
@@ -168,7 +175,156 @@ function ChatPreviewBubble({ message }: { message: MissionControlSessionPreviewM
 
 type CanonicalChatDrawerProps = Omit<ChatDrawerProps, 'chatMode'> & { chatMode?: 'general' | 'canonical' | 'task' };
 
-const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat }: CanonicalChatDrawerProps) {
+function TabLed({ state }: { state: 'none' | 'done' | 'help' }) {
+  if (state === 'none') return null;
+  return <span className={`tab-led ${state === 'done' ? 'is-done' : 'is-help'}`} aria-hidden />;
+}
+
+function ChatModeTabs({ active, onSelect, chatLed = 'none', roomsLed = 'none' }: {
+  active: 'chat' | 'rooms';
+  onSelect: (mode: 'chat' | 'rooms') => void;
+  chatLed?: 'none' | 'done' | 'help';
+  roomsLed?: 'none' | 'done' | 'help';
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="chat-mode-tabs" role="tablist" aria-label="Chat mode">
+      <button type="button" className={`chat-mode-tab ${active === 'chat' ? 'is-active' : ''}`} role="tab" aria-selected={active === 'chat'} onClick={() => onSelect('chat')}>
+        <MessageSquare size={14} />{t('chatDrawer.title')}<TabLed state={chatLed} />
+      </button>
+      <button type="button" className={`chat-mode-tab ${active === 'rooms' ? 'is-active' : ''}`} role="tab" aria-selected={active === 'rooms'} onClick={() => onSelect('rooms')}>
+        <Users size={14} />{t('rooms.title')}<TabLed state={roomsLed} />
+      </button>
+    </div>
+  );
+}
+
+/** Attention state for a mode tab. `done` = finished/new content below the
+ *  fold (green), `help` = blocked/approval pending (amber). The dot clears
+ *  when the user scrolls to the bottom, resolves the action, or switches
+ *  into the mode. */
+export type TabAttention = 'none' | 'done' | 'help';
+
+function useTabAttention({ needsAction, atBottom, contentCount }: {
+  needsAction: boolean;
+  atBottom: boolean;
+  contentCount: number;
+}): TabAttention {
+  const [state, setState] = useState<TabAttention>('none');
+  const stateRef = useRef<TabAttention>('none');
+  const prevCountRef = useRef(contentCount);
+  const grownRef = useRef(false);
+  useEffect(() => {
+    if (atBottom) {
+      // Reading the content clears the attention dot immediately.
+      grownRef.current = false;
+      if (stateRef.current !== 'none') { stateRef.current = 'none'; setState('none'); }
+      return;
+    }
+    if (contentCount !== prevCountRef.current) {
+      grownRef.current = contentCount > prevCountRef.current || grownRef.current;
+      if (contentCount < prevCountRef.current) grownRef.current = false;
+      prevCountRef.current = contentCount;
+    }
+    const target: TabAttention = needsAction ? 'help' : grownRef.current ? 'done' : 'none';
+    if (target !== stateRef.current) { stateRef.current = target; setState(target); }
+  }, [atBottom, contentCount, needsAction]);
+  return state;
+}
+
+/**
+ * Auto-hides the mode tab bar while the drawer content scrolls FAST and
+ * re-shows it when the user slows down, reaches the bottom (auto-follow
+ * keeps it visible), or pauses for a while.
+ *
+ * Velocity-based with HYSTERESIS to avoid flicker: hide only above
+ * HIDE_SPEED, re-show only below SHOW_SPEED (or at the bottom). Between the
+ * two thresholds the rail keeps its current state, so the natural speed
+ * decay of a flicked scroll (which oscillates around a single threshold)
+ * can't flip the rail hide/show/hide. Speed is averaged over a small rolling
+ * window of scroll samples to smooth trackpad bursts. Capture-phase listen
+ * because scroll doesn't bubble; first scroll per element is baseline.
+ */
+const TAB_SCROLL_RESUME_MS = 700;
+const SCROLL_SPEED_HIDE_PX_MS = 0.3; // ≥ 300px/s hides
+const SCROLL_SPEED_SHOW_PX_MS = 0.1; // ≤ 100px/s shows (dead zone in between)
+const SPEED_WINDOW_SAMPLES = 4;
+const BOTTOM_EPSILON_PX = 24;
+function AutoHideModeTabs({ active, onSelect, containerRef, chatLed = 'none', roomsLed = 'none' }: {
+  active: 'chat' | 'rooms';
+  onSelect: (mode: 'chat' | 'rooms') => void;
+  containerRef: React.RefObject<HTMLElement | null>;
+  chatLed?: 'none' | 'done' | 'help';
+  roomsLed?: 'none' | 'done' | 'help';
+}) {
+  const [hidden, setHidden] = useState(false);
+  const hiddenRef = useRef(false);
+  const shownAtRef = useRef(0);
+  const seenRef = useRef(new WeakSet<HTMLElement>());
+  const samplesRef = useRef(new Map<HTMLElement, number[]>());
+  const prevTopRef = useRef(new Map<HTMLElement, { top: number; at: number }>());
+  const setHiddenBoth = (next: boolean) => {
+    hiddenRef.current = next;
+    setHidden(next);
+  };
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+    const regionEls = () => node.querySelectorAll<HTMLElement>('.chat-transcript, [data-scroll-region]');
+    const atBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_EPSILON_PX;
+
+    const onScroll = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target || typeof target.scrollTop !== 'number') return;
+      const now = performance.now();
+      const prev = prevTopRef.current.get(target);
+      prevTopRef.current.set(target, { top: target.scrollTop, at: now });
+      if (!seenRef.current.has(target)) {
+        // first event for this element: auto-follow on mount, baseline only
+        seenRef.current.add(target);
+        return;
+      }
+      if (atBottom(target)) {
+        setHiddenBoth(false);
+        return;
+      }
+      if (!prev) return;
+      const speed = Math.abs(target.scrollTop - prev.top) / Math.max(1, now - prev.at);
+      const windowed = samplesRef.current.get(target) ?? [];
+      windowed.push(speed);
+      if (windowed.length > SPEED_WINDOW_SAMPLES) windowed.shift();
+      samplesRef.current.set(target, windowed);
+      const avg = windowed.reduce((a, b) => a + b, 0) / windowed.length;
+
+      if (hiddenRef.current) {
+        if (avg <= SCROLL_SPEED_SHOW_PX_MS) setHiddenBoth(false);
+      } else if (avg >= SCROLL_SPEED_HIDE_PX_MS) {
+        shownAtRef.current = now;
+        setHiddenBoth(true);
+      }
+    };
+    const resumeTimer = window.setInterval(() => {
+      regionEls().forEach((el) => { if (atBottom(el)) setHiddenBoth(false); });
+      if (shownAtRef.current !== 0 && performance.now() - shownAtRef.current >= TAB_SCROLL_RESUME_MS) {
+        setHiddenBoth(false);
+      }
+    }, 200);
+    node.addEventListener('scroll', onScroll, true);
+    return () => {
+      node.removeEventListener('scroll', onScroll, true);
+      window.clearInterval(resumeTimer);
+    };
+  }, [containerRef]);
+
+  return (
+    <div className={`chat-mode-tabs-shell ${hidden ? 'is-hidden' : ''}`} aria-hidden={hidden}>
+      <ChatModeTabs active={active} onSelect={onSelect} chatLed={chatLed} roomsLed={roomsLed} />
+    </div>
+  );
+}
+
+const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat, onOpenRooms }: CanonicalChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -198,6 +354,15 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   const [verbTick, setVerbTick] = useState(0);
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
+  const [expandedToolRuns, setExpandedToolRuns] = useState<Set<string>>(new Set());
+  const toggleToolRun = useCallback((runId: string) => {
+    setExpandedToolRuns((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
   const [canvasMountReady, setCanvasMountReady] = useState(false);
   // Desktop drawer width, adjustable via the left-edge resize handle.
   // Default matches the CSS `min(540px, 100vw)`; clamped to a sane range.
@@ -256,6 +421,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     interrupt,
     reset,
   } = useGatewayChat(storedToken, open, initialSessionId, botProfile);
+  const chatHelpAttention = useTabAttention({ needsAction: Boolean(interaction) || Boolean(error), atBottom: nearBottom, contentCount: messages.length });
+  const roomsBackgroundAttention = useTabAttention({ needsAction: false, atBottom: true, contentCount: 0 });
 
   const activeTargetStorageKey = sessionId ? `mission-control-active-bot-target:${sessionId}` : null;
   const clearActiveBotTarget = useCallback(() => {
@@ -626,24 +793,76 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 
     const timeline = timelinedMessages;
 
+    // Collapse a turn's tool/reasoning activity into a single run summary.
+    // The run absorbs EVERY non-turn message (tool, reasoning, event,
+    // system) plus EMPTY assistant rows (the live stream emits invisible
+    // assistant placeholders that must not close the group). Only a user
+    // message or an assistant row WITH visible text closes the run.
+    const grouped = timeline.reduce<Array<{ id: string; kind: 'run'; messages: ChatMessage[] } | { kind: 'other'; entry: (typeof timelinedMessages)[number] }>>((acc, entry) => {
+      const isTurnBoundary = entry.kind === 'message' && (
+        entry.message.kind === 'user' ||
+        (entry.message.kind === 'assistant' && (entry.message.text?.trim().length ?? 0) > 0)
+      );
+      if (entry.kind === 'message' && !isTurnBoundary) {
+        const last = acc[acc.length - 1];
+        if (last && last.kind === 'run') {
+          last.messages.push(entry.message);
+        } else {
+          acc.push({ id: `toolrun-${entry.message.id}`, kind: 'run', messages: [entry.message] });
+        }
+      } else {
+        acc.push({ kind: 'other', entry });
+      }
+      return acc;
+    }, []);
+
     return (
       <>
-        {timeline.map((entry) => entry.kind === 'message' ? (
-          <ChatMessageCard key={entry.id} message={entry.message} mentionHandles={mentionHandles} />
-        ) : (
-          <BotHandoffMessage
-            key={entry.id}
-            handle={entry.handoff.handle}
-            displayName={entry.handoff.displayName}
-            model={botRoster.find((bot) => bot.handle === entry.handoff.handle)?.model}
-            provider={botRoster.find((bot) => bot.handle === entry.handoff.handle)?.provider}
-            request={entry.handoff.request}
-            status={entry.handoff.status}
-            reply={entry.handoff.reply}
-            error={entry.handoff.error}
-            reason={entry.handoff.reason}
-            onRetry={entry.handoff.status === 'failed' && (entry.handoff.retryable !== false) ? () => {
-              const handoff = entry.handoff;
+        {grouped.map((item, index) => {
+          if (item.kind === 'run') {
+            // While a turn is streaming, the trailing run is the live one:
+            // render its tool traces inline (the canonical chat look).
+            // The reduce only ever leaves the LAST run open-ended — an
+            // assistant row with visible text closes the run — so the live
+            // run is exactly `running && index === last`.
+            const isLiveRun = running && index === grouped.length - 1;
+            if (isLiveRun) {
+              // Still streaming this turn: render the tool traces inline,
+              // exactly like the canonical chat did before the summary.
+              return (
+                <Fragment key={item.id}>
+                  {item.messages.map((message) => <ChatMessageCard key={message.id} message={message} mentionHandles={mentionHandles} />)}
+                </Fragment>
+              );
+            }
+            return (
+              <ToolRunSummary
+                key={item.id}
+                count={item.messages.filter((message) => message.kind === 'tool').length}
+                reasoningCount={item.messages.filter((message) => message.kind === 'reasoning').length}
+                expanded={expandedToolRuns.has(item.id)}
+                onToggle={() => toggleToolRun(item.id)}
+              >
+                {item.messages.map((message) => <ChatMessageCard key={message.id} message={message} mentionHandles={mentionHandles} />)}
+              </ToolRunSummary>
+            );
+          }
+          return item.kind === 'other' && item.entry.kind === 'message' ? (
+            <ChatMessageCard key={item.entry.id} message={item.entry.message} mentionHandles={mentionHandles} />
+          ) : item.kind === 'other' ? (
+            <BotHandoffMessage
+            key={item.entry.id}
+            handle={item.entry.handoff.handle}
+            displayName={item.entry.handoff.displayName}
+            model={botRoster.find((bot) => bot.handle === item.entry.handoff.handle)?.model}
+            provider={botRoster.find((bot) => bot.handle === item.entry.handoff.handle)?.provider}
+            request={item.entry.handoff.request}
+            status={item.entry.handoff.status}
+            reply={item.entry.handoff.reply}
+            error={item.entry.handoff.error}
+            reason={item.entry.handoff.reason}
+            onRetry={item.entry.handoff.status === 'failed' && (item.entry.handoff.retryable !== false) ? () => {
+              const handoff = item.entry.handoff;
               const handle = handoff.handle;
               rememberActiveBotTarget({
                 handle,
@@ -725,7 +944,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
               void runRetry();
             } : undefined}
           />
-        ))}
+        ) : null;
+      })}
       </>
     );
   };
@@ -1385,6 +1605,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
             </div>
           </div>
         </header>
+        {onOpenRooms ? <AutoHideModeTabs active="chat" onSelect={(mode) => { if (mode === 'rooms') onOpenRooms(); }} containerRef={drawerRef} chatLed={chatHelpAttention} roomsLed={roomsBackgroundAttention} /> : null}
 
         {modelPickerOpen ? (
           <ChatModelPicker
@@ -1619,10 +1840,52 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   );
 });
 
-function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProps) {
+function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: ChatDrawerProps) {
   const { t } = useI18n();
   const state = useGroupRoom({ enabled: open, initialRoomId: roomId ?? null });
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
+  const [creating, setCreating] = useState(false);
+  const [roomPickerOpen, setRoomPickerOpen] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [botCandidates, setBotCandidates] = useState<BotMentionCandidate[]>([]);
+  const drawerRef = useRef<HTMLElement>(null);
+  const resizingRef = useRef(false);
+
+  // Share the canonical drawer width so Rooms and Chat keep the same size:
+  // read the same localStorage key the chat drawer persists through its resize handle.
+  useEffect(() => {
+    if (!open) return;
+    try {
+      const stored = parseInt(window.localStorage.getItem('mission-control-chat-width') || '', 10);
+      if (Number.isFinite(stored) && stored >= 360 && stored <= 900 && drawerRef.current) {
+        drawerRef.current.style.width = `${stored}px`;
+      }
+    } catch { /* storage unavailable */ }
+  }, [open]);
+
+  const startResize = (event: React.MouseEvent) => {
+    event.preventDefault();
+    resizingRef.current = true;
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 360), Math.min(900, window.innerWidth - 16));
+      if (drawerRef.current) drawerRef.current.style.width = `${width}px`;
+    };
+    const onUp = () => {
+      resizingRef.current = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const finalWidth = drawerRef.current ? Math.min(Math.max(parseInt(drawerRef.current.style.width, 10) || 540, 360), 900) : 540;
+      try { window.localStorage.setItem('mission-control-chat-width', String(finalWidth)); } catch { /* storage unavailable */ }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
   const mentionRoster = useMemo(() => (state.room?.members ?? [])
     .filter((member) => member.handle.trim())
     .map((member) => ({
@@ -1631,30 +1894,92 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
       description: member.profile ? `profile: ${member.profile}` : undefined,
     })), [state.room?.members]);
 
+  const [roomsNearBottom, setRoomsNearBottom] = useState(true);
+  const roomsNearBottomRef = useRef(true);
+  const roomAttention = useTabAttention({
+    needsAction: state.pendingActions?.length > 0 || state.blocked,
+    atBottom: roomsNearBottom || !state.room,
+    contentCount: state.events?.length ?? 0,
+  });
+
+  useEffect(() => {
+    if (!open || botCandidates.length > 0) return;
+    let cancelled = false;
+    void loadBotProfiles()
+      .then((payload) => {
+        if (cancelled) return;
+        setBotCandidates(payload.profiles
+          .filter((profile) => (profile.is_bot || profile.is_default) && profile.name.trim())
+          .map((profile) => ({
+            handle: profile.name,
+            displayName: profile.display_name || profile.name,
+            description: profile.model ? `model: ${profile.model}` : undefined,
+          })));
+      })
+      .catch(() => { /* roster is best-effort for creation UI */ });
+    return () => { cancelled = true; };
+  }, [botCandidates.length, open]);
+
   useEffect(() => {
     if (!open || !state.selectedRoomId || state.selectedRoomId === roomId) return;
-    onRoomChange?.(state.selectedRoomId);
+    onRoomChange?.(state.selectedRoomId, state.room?.name ?? null);
   }, [onRoomChange, open, roomId, state.selectedRoomId]);
 
   const selectRoom = useCallback((nextRoomId: string | null) => {
-    onRoomChange?.(nextRoomId);
+    onRoomChange?.(nextRoomId, state.room?.name ?? null);
     return state.selectRoom(nextRoomId);
   }, [onRoomChange, state.selectRoom]);
+
+  const createRoomFromDrawer = useCallback(async (name: string, handles: string[], vaultId?: string) => {
+    const client = new GroupGatewayClient();
+    const roster = handles.map((handle, index) => ({
+      id: `member-${handle}-${index}`,
+      profile: handle === 'default' ? 'default' : handle,
+      handle,
+      displayName: (botCandidates.find((m) => m.handle === handle) ?? mentionRoster.find((m) => m.handle === handle))?.displayName,
+    }));
+    const room = await client.create({ roomId: `mc-${Date.now()}`.slice(0, 48), name, roster });
+    if (vaultId) {
+      void persistRoomVault(room.id, vaultId, storedToken?.trim() || undefined).catch(() => undefined);
+    }
+    setCreating(false);
+    await state.refresh();
+    await state.selectRoom(room.id);
+  }, [botCandidates, mentionRoster, state, storedToken]);
 
   return (
     <>
       {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
-      <aside className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
-        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
-        <div className="chat-transcript">
-          {!canUseRooms && !state.loading ? <div className="chat-error" role="status">{t('rooms.driverUnavailable')}</div> : null}
-          {canUseRooms ? <>
-            <nav className="flex min-w-0 gap-2 overflow-x-auto pb-3" aria-label={t('rooms.title')}>
-              {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" onClick={() => void selectRoom(room.id)} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${room.id === state.selectedRoomId ? 'border-accent bg-accent-subtle text-accent' : 'border-border-subtle text-text-muted hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
-              {state.rooms.length === 0 && !state.loading ? <span className="text-xs text-text-muted">{t('rooms.noRooms')}</span> : null}
-            </nav>
-            {state.room ? <GroupRoomView state={state} mentionRoster={mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} /> : <p className="text-sm text-text-muted">{t('rooms.chooseRoom')}</p>}
-          </> : null}
+      <aside ref={drawerRef} className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
+        <div className="chat-drawer-resize-handle" role="separator" aria-orientation="vertical" aria-label={t('chatDrawer.resize')} title={t('chatDrawer.dragToResize')} onMouseDown={startResize} />
+        <header className="chat-drawer-head">
+          <div className="chat-head-main">
+            <div className="chat-head-identity">
+              <span className="chat-mark" aria-hidden><Users size={18} /></span>
+              <div className="chat-head-copy">
+                <p className="eyebrow">{t('rooms.eyebrow')}</p>
+                {editingName && state.room ? <form onSubmit={(event) => { event.preventDefault(); if (nameDraft.trim() && nameDraft.trim() !== state.room?.name) void state.renameRoom(nameDraft); setEditingName(false); }} className="flex min-w-0 items-center gap-1"><input autoFocus value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => setEditingName(false)} onKeyDown={(event) => { if (event.key === 'Escape') setEditingName(false); }} aria-label={t('rooms.name')} className="mc-input h-7 min-w-0 flex-1 text-xs" /><button type="submit" aria-label={t('rooms.saveName')} title={t('rooms.saveName')} className="chat-control chat-icon-button !h-7 !w-7"><Check size={14} /></button></form> : <h2 title={state.rooms.length > 0 ? t('rooms.selectRoom') : undefined} className={state.rooms.length > 0 ? 'inline-flex cursor-pointer items-center gap-1 hover:text-accent' : ''} onClick={state.rooms.length > 0 ? () => setRoomPickerOpen((open) => !open) : undefined}>{state.room?.name || t('rooms.title')}{state.rooms.length > 0 ? <ChevronDown size={13} className={`shrink-0 transition-transform ${roomPickerOpen ? 'rotate-180' : ''}`} /> : null}</h2>}
+                {state.room && !state.disbanded ? <span className="chat-session-title">{t('rooms.membersCount', { count: state.room.members.length })} · {t('rooms.messagesCount', { count: state.events.length })}</span> : <span className="chat-session-title">{t('rooms.selectRoom')}</span>}
+              </div>
+            </div>
+            <div className="chat-head-actions">
+              {state.refreshing ? <Loader2 size={16} className="chat-spin chat-header-loader" aria-label={t('rooms.refresh')} /> : null}
+              <span className={`chat-led ${state.disbanded || state.serviceUnavailable ? 'is-offline' : state.pendingActions.length > 0 || state.blocked ? 'is-pending' : 'is-online'}`} title={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')} aria-label={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')}><span className="chat-led-dot" /></span>
+              <button className="chat-control chat-icon-button" type="button" onClick={() => { if (state.room) { setNameDraft(state.room.name ?? ''); setEditingName(true); } }} title={t('rooms.renameRoom')} aria-label={t('rooms.renameRoom')} disabled={!state.room || state.disbanded}><Pen size={15} /></button>
+              <button className="chat-control chat-icon-button" type="button" onClick={() => setCreating((current) => !current)} title={creating ? t('rooms.close') : t('rooms.create')} aria-label={creating ? t('rooms.close') : t('rooms.create')}>{creating ? <X size={16} /> : <Plus size={16} />}</button>
+              <button className="chat-control chat-icon-button" type="button" onClick={onClose} title={t('rooms.close')} aria-label={t('rooms.close')}><X size={18} /></button>
+            </div>
+          </div>
+          {roomPickerOpen && state.rooms.length > 0 ? (
+            <div className="absolute left-3 right-3 top-full z-40 mt-1 flex max-h-56 flex-col overflow-y-auto rounded-lg border border-border-subtle bg-surface shadow-lg" role="listbox">
+              {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" role="option" aria-selected={room.id === state.selectedRoomId} onClick={() => { void selectRoom(room.id); setRoomPickerOpen(false); }} className={`px-2.5 py-1.5 text-left text-xs ${room.id === state.selectedRoomId ? 'bg-accent-subtle text-accent' : 'text-text hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
+            </div>
+          ) : null}
+        </header>
+        <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} chatLed="none" roomsLed={roomAttention} />
+        <div className="flex min-h-0 flex-1 flex-col">
+          {!canUseRooms && !state.loading ? <div className="chat-error m-4" role="status">{t('rooms.driverUnavailable')}</div> : null}
+          {creating ? <div className="chat-transcript rooms-empty"><CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /></div> : state.room && canUseRooms ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} onNearBottomChange={(near) => { roomsNearBottomRef.current = near; setRoomsNearBottom(near); }} /> : canUseRooms ? <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div> : null}
           {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
         </div>
       </aside>

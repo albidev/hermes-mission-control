@@ -22,6 +22,7 @@ import { useI18n } from '../lib/i18n';
 import { ChatDrawer } from './ChatDrawer';
 import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
+import { readLocalLastRoom, writeLocalLastRoom, syncLastRoomToServer, fetchServerLastRoom } from '../lib/room-persistence';
 import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 import { Button } from './ui/Button';
 import { PluginRegistry } from '../core/plugins/registry';
@@ -99,35 +100,82 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     : 'general';
   const chatBotProfile = chatSearchParams.get('botProfile');
   const chatRoomId = chatSearchParams.get('roomId');
+  const serverLastRoomRef = useRef<{ roomId: string; revision: number } | null>(null);
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const chatButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const closeChat = useCallback(() => {
     setChatOpen(false);
     chatButtonRef.current?.focus();
-    if (!chatRecoverySessionId && !chatRoomId) return;
     const params = new URLSearchParams(location.search);
+    const hasChatParams = params.has('chatSession') || params.has('chatMode') || params.has('botProfile') || params.has('roomId');
+    if (!hasChatParams) return;
     params.delete('chatSession');
     params.delete('chatMode');
     params.delete('botProfile');
     params.delete('roomId');
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
-  }, [chatRecoverySessionId, chatRoomId, location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate]);
 
-  const changeRoom = useCallback((roomId: string | null) => {
+  const changeRoom = useCallback((roomId: string | null, roomName?: string | null) => {
     const params = new URLSearchParams(location.search);
     if (roomId) {
       params.set('chatMode', 'room');
       params.set('roomId', roomId);
       params.delete('chatSession');
+      // Local mirror (first paint) + shared cross-device pointer on the
+      // telemetry server, revisioned exactly like the last chat. Whichever
+      // device selects a room last wins for every device.
+      writeLocalLastRoom(roomId);
+      const previous = serverLastRoomRef.current;
+      void syncLastRoomToServer(roomId, roomName ?? null, storedToken || '', previous?.roomId === roomId ? previous.revision : null)
+        .then((result) => {
+          if (result.lastRoom) serverLastRoomRef.current = { roomId: result.lastRoom.roomId, revision: result.lastRoom.revision };
+        })
+        .catch(() => {/* best effort, local mirror stays */});
     } else {
+      // Leaving the room / switching to Chat must NOT clear the persisted
+      // last-room key: it means "last room the user had open", so reopening
+      // Rooms lands back on it. Removing it here is why the app "sometimes
+      // loses the last room and picks another one" (the first list entry was
+      // selected as fallback and then rewritten as the new last room).
       params.delete('roomId');
       params.delete('chatMode');
     }
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
-  }, [location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate, storedToken]);
+
+  const openRoomsMode = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    params.set('chatMode', 'room');
+    // Restore the last room the user had open, so reopening Rooms after a
+    // reload / drawer close lands back on the same room instead of the
+    // bare 'select a room' state. Prefer the shared cross-device pointer
+    // (server canonical); localStorage is the fast first-paint fallback.
+    params.delete('roomId');
+    const local = readLocalLastRoom();
+    if (local) params.set('roomId', local);
+    params.delete('chatSession');
+    const search = params.toString();
+    setChatOpen(true);
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+    if (storedToken) {
+      void fetchServerLastRoom(storedToken).then((server) => {
+        if (!server || !server.roomId) return;
+        serverLastRoomRef.current = { roomId: server.roomId, revision: server.revision };
+        if (server.roomId === local) return;
+        // Another device changed the shared pointer: adopt it.
+        const params2 = new URLSearchParams(location.search);
+        params2.set('chatMode', 'room');
+        params2.set('roomId', server.roomId);
+        params2.delete('chatSession');
+        writeLocalLastRoom(server.roomId);
+        navigate(`${location.pathname}${params2.toString() ? `?${params2}` : ''}`, { replace: true });
+      }).catch(() => {/* offline: local mirror stays */});
+    }
+  }, [location.pathname, location.search, navigate, storedToken]);
 
   const startTaskChat = useCallback(() => {
     const params = new URLSearchParams(location.search);
@@ -419,6 +467,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             botProfile={chatBotProfile}
             onClose={closeChat}
             onStartTaskChat={startTaskChat}
+            onOpenRooms={openRoomsMode}
             onRoomChange={changeRoom}
           />
         ) : null}

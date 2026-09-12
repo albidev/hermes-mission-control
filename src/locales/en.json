@@ -1,7 +1,6 @@
 {
   "app.loading": "Loading Mission Control…",
   "app.workspace": "Workspace",
-
   "nav.missionControl": "Hermes Mission Control",
   "nav.operatorPanel": "Operator panel",
   "nav.miniNote": "Gateway, sessions, agents, Bots, usage, tools, skills, config, logs, curate",
@@ -17,7 +16,6 @@
   "nav.config": "Config",
   "nav.logs": "Logs",
   "nav.curate": "Curate",
-
   "bots.eyebrow": "Bot Mode",
   "bots.title": "Bots",
   "bots.description": "Manage Hermes profiles as named agents. The roster is live from the gateway, not a decorative list cached in Mission Control.",
@@ -105,7 +103,6 @@
   "nav.collapseSidebar": "Collapse navigation",
   "nav.openMenu": "Open navigation menu",
   "nav.closeMenu": "Close navigation",
-
   "chat.button": "Chat",
   "chat.working": "Hermes · working",
   "chat.completed": "Hermes · completed",
@@ -113,7 +110,6 @@
   "chat.workingCompact": "Working…",
   "chat.doneCompact": "Done",
   "chat.needsYouCompact": "Needs you",
-
   "chatPlan.ariaLabel": "Current task plan",
   "chatPlan.title": "Mission plan",
   "chatPlan.progress": "{completed} of {total} complete",
@@ -130,7 +126,6 @@
   "chatPlan.item.inProgress": "In progress",
   "chatPlan.item.completed": "Completed",
   "chatPlan.item.cancelled": "Cancelled",
-
   "auth.accessRequired": "Access required",
   "auth.lockedTitle": "Locked cockpit.",
   "auth.lede": "Mission Control is visible but frozen until you enter the bearer token. Nice dashboard, shame if someone actually got in.",
@@ -141,7 +136,6 @@
   "auth.useDifferentToken": "Use a different token",
   "auth.lock": "Lock",
   "auth.lockDashboard": "Lock dashboard",
-
   "overview.systemHealth": "System health",
   "overview.providerUsage": "Provider usage",
   "overview.tokenUsage": "Token usage",
@@ -178,7 +172,6 @@
   "overview.controls": "Controls",
   "overview.restartGateway": "Restart gateway",
   "overview.settings": "Settings",
-
   "statusbar.model": "Model",
   "statusbar.fallback": "fallback",
   "statusbar.agentCount": "{count} agent",
@@ -187,7 +180,6 @@
   "statusbar.status.thinking": "Thinking",
   "statusbar.status.toolUse": "Using tools",
   "statusbar.status.error": "Error",
-
   "health.system": "System",
   "health.title": "Health",
   "health.cpuLoad": "CPU load",
@@ -200,7 +192,6 @@
   "health.noSensor": "No thermal sensor detected on this host",
   "health.thermalSysfs": "sysfs thermal zone",
   "health.thermalLmSensors": "lm-sensors",
-
   "usage.eyebrow": "Usage",
   "usage.title": "Token consumption & cost estimate",
   "usage.description": "Session token consumption and estimated cost by model",
@@ -237,7 +228,6 @@
   "usage.allPriced": "all sessions priced",
   "usage.sortAsc": "{label} ↑",
   "usage.sortDesc": "{label} ↓",
-
   "provider.eyebrow": "Provider usage",
   "provider.title": "Cloud limits & balances",
   "provider.unavailable": "Provider usage is temporarily unavailable.",
@@ -262,7 +252,6 @@
   "provider.enabled": "enabled",
   "provider.disabled": "disabled",
   "provider.resetCreditsCount": "{count} reset credits",
-
   "agentsPanel.eyebrow": "Agents",
   "agentsPanel.title": "Runtime footprint",
   "agentsPanel.active": "{count} active",
@@ -270,7 +259,6 @@
   "agentsPanel.trackedSessions": "Tracked sessions",
   "agentsPanel.topModels": "Top models",
   "agentsPanel.noLiveModelUsage": "No live model usage right now.",
-
   "attention.eyebrow": "Attention",
   "attention.title": "Needs review",
   "attention.allClear": "All clear",
@@ -283,12 +271,10 @@
   "attention.viewAll": "View all",
   "attention.infoCount": "{count} info",
   "attention.alert": "{category} alert",
-
   "activity.eyebrow": "Events",
   "activity.title": "Live feed",
   "activity.live": "Live",
   "activity.noSignals": "No signals yet.",
-
   "sessions.eyebrow": "Sessions",
   "sessions.title": "Conversation runtime archive",
   "sessions.tracked": "{count} tracked",
@@ -314,7 +300,7 @@
   "sessions.resumeAria": "Resume chat for {title}",
   "sessions.trace": "Trace",
   "sessions.noSessions": "No sessions yet.",
-  "sessions.loading": "Loading…",
+  "sessions.loading": "Loading sessions…",
   "sessions.loadMore": "Load more",
   "sessions.inputTitle": "Input: {count}",
   "sessions.outputTitle": "Output: {count}",
@@ -355,7 +341,6 @@
   "sessions.unableToLoad": "Unable to load sessions",
   "sessions.noMatches": "No sessions match these filters.",
   "sessions.retry": "Retry",
-  "sessions.loading": "Loading sessions…",
   "sessions.loadMoreOf": "Load more · {loaded} of {total}",
   "sessions.noPreview": "No preview available.",
   "sessions.activeNow": "Active",
@@ -372,7 +357,6 @@
   "sessions.output": "Output",
   "sessions.cache": "Cache",
   "sessions.searchAction": "Inspect session",
-
   "agents.eyebrow": "Agents",
   "agents.title": "Execution trace",
   "agents.description": "Inspect session execution through Timeline, DAG, and Bot delegation.",
@@ -431,7 +415,6 @@
   "agents.actionTaxonomy": "Action taxonomy",
   "agents.actionTaxonomyHint": "Select event classes to filter Timeline and DAG.",
   "agents.clearFilters": "Clear filters",
-
   "knowledge.eyebrow": "Knowledge",
   "knowledge.title": "Hermes memory and linked files",
   "knowledge.synced": "synced",
@@ -450,7 +433,6 @@
   "knowledge.noPreview": "No file preview available.",
   "knowledge.authRequired": "Access token required to read full file content.",
   "knowledge.failedLoad": "Failed to load full file content.",
-
   "skills.eyebrow": "Skills",
   "skills.title": "Installed skills and Skills Hub catalog",
   "skills.description": "Manage installed capabilities and browse the Skills Hub catalog.",
@@ -500,7 +482,6 @@
   "skills.detail.enable": "Enable",
   "skills.catalogUnavailable": "Skills catalog unavailable.",
   "skills.toolsetDetail": "Toolset detail",
-
   "tools.eyebrow": "Tools",
   "tools.title": "Runtime tool inventory",
   "tools.description": "Inspect the toolsets available to the Hermes runtime.",
@@ -523,7 +504,6 @@
   "tools.composite": "composite",
   "tools.direct": "direct",
   "tools.notFound": "Toolset not found.",
-
   "config.eyebrow": "Config",
   "config.title": "config.yaml editor",
   "config.description": "Inspect and safely edit the active Hermes configuration.",
@@ -582,7 +562,6 @@
   "config.disabled": "disabled",
   "config.noMatches": "No configuration sections match this filter.",
   "config.fixArrayBeforeSave": "Fix invalid array YAML before saving.",
-
   "logs.eyebrow": "Logs",
   "logs.title": "Live tail from ~/.hermes/logs",
   "logs.description": "Monitor recent runtime output and inspect the latest entries by log file.",
@@ -609,7 +588,6 @@
   "logs.authRequired": "Access token required to read log files.",
   "logs.failedLoad": "Failed to load logs.",
   "logs.scrollToTop": "Scroll to top",
-
   "curate.title": "Curate",
   "curate.subtitle": "Nightly brain candidates. Approve to enter quarantine (1 day), or reject with an optional reason used as model feedback.",
   "curate.refresh": "Refresh",
@@ -627,7 +605,6 @@
   "curate.failedLoad": "Failed to load candidates",
   "curate.approveFailed": "Approve failed",
   "curate.rejectFailed": "Reject failed",
-
   "kanban.eyebrow": "Kanban",
   "kanban.addTaskAria": "Add task to {name}",
   "kanban.noTasks": "— no tasks —",
@@ -754,11 +731,8 @@
   "kanban.loadingLog": "Loading log…",
   "kanban.noWorkerLog": "— no worker log yet —",
   "kanban.showingLastLog": "Showing the last 100 KB.",
-
   "kanban.deleteFailed": "Delete failed.",
-  "kanban.deleteBoardAria": "Delete board {name}",
   "kanban.addCommentPosting": "…",
-
   "chatDrawer.eyebrow": "Hermes",
   "chatDrawer.primaryChat": "Primary chat",
   "chatDrawer.freshTaskChat": "New chat · fresh context",
@@ -812,8 +786,6 @@
   "chatDrawer.contextTokens": "{used} / {total} context tokens",
   "chatDrawer.contextTokensLabel": "context tokens",
   "chatDrawer.contextWindowUsage": "Context window usage",
-
-
   "chatDrawer.retry": "Retry",
   "chatDrawer.chatLabel": "Hermes chat",
   "chatDrawer.modelVia": "{model} via {provider}",
@@ -822,7 +794,6 @@
   "chatDrawer.preparingWorkspace": "Preparing workspace…",
   "chatDrawer.chooseModel": "Choose model",
   "chatDrawer.runtime": "Runtime",
-
   "interaction.title.approval": "Approval needed",
   "interaction.title.clarify": "Clarification needed",
   "interaction.title.secret": "Secret needed",
@@ -844,7 +815,6 @@
   "interaction.password": "Password",
   "interaction.secretValue": "Secret value",
   "interaction.sudoPassword": "Sudo password",
-
   "modelPicker.choose": "Choose model",
   "modelPicker.active": "ACTIVE",
   "modelPicker.provider": "Provider",
@@ -865,10 +835,8 @@
   "modelPicker.chooseAria": "Choose Hermes model",
   "modelPicker.models": "Models",
   "modelPicker.modelProviders": "Model providers",
-
   "slash.commands": "Commands",
   "slash.commandsAria": "Slash commands",
-
   "tldraw.sessionCanvas": "Session canvas",
   "canvasAddon.title": "Canvas addons",
   "canvasAddon.active": "Active addon",
@@ -884,9 +852,7 @@
   "tldraw.loading": "Loading TLDrawCanvas…",
   "tldraw.canvasActions": "Canvas actions",
   "tldraw.actionsApplied": "Canvas actions applied: {summary}",
-
   "tldraw.attachedToChat": "Questa whiteboard è associata alla Chat corrente.",
-
   "theme.label": "Theme",
   "theme.light": "Light",
   "theme.dark": "Dark",
@@ -894,23 +860,18 @@
   "theme.darkTitle": "Dark theme",
   "theme.enableLight": "Enable light theme",
   "theme.enableDark": "Enable dark theme",
-
   "push.on": "Push: On",
   "push.off": "Push: Off",
   "push.onTitle": "Push notifications are on",
   "push.blocked": "Notifications blocked in browser settings",
   "push.enable": "Enable push notifications for Hermes responses",
-
   "modal.detailView": "Detail view",
   "modal.closeDialog": "Close dialog",
-
   "pull.reloading": "Reloading…",
   "pull.release": "Release to reload",
   "pull.pull": "Pull to reload",
-
   "common.unknown": "unknown",
   "common.all": "All",
-
   "lang.label": "Language",
   "lang.english": "English",
   "lang.italian": "Italiano",
@@ -948,9 +909,6 @@
   "error.reloadTitle": "Mission Control needs to reload",
   "error.reloadMessage": "The page was interrupted while returning to the foreground.",
   "error.reloadAction": "Reload Mission Control",
-  "ui.screenshotToChat": "Screenshot to chat",
-  "ui.sendSelectionToChat": "Send selection to chat",
-  "ui.clearBoard": "Clear board",
   "ui.arrangeCockpit": "Arrange your cockpit",
   "ui.yourCockpit": "Your cockpit",
   "ui.autoSaved": "Auto-saved",
@@ -1065,6 +1023,14 @@
   "rooms.protocolVersion": "Protocol v{version}",
   "rooms.finalAnswer": "Final answer",
   "rooms.you": "You",
+  "rooms.vault": "Vault",
+  "rooms.vaultDefault": "Auto (from members)",
+  "rooms.vaultHint": "Destination for nightly synthesis when the room goes idle.",
+  "rooms.approve": "Approve",
+  "rooms.approveRequest": "Approval requested",
+  "rooms.retryingTask": "Task stuck",
+  "rooms.stop": "Stop work",
+  "rooms.disbandAction": "Disband room",
   "rooms.member": "Member",
   "rooms.send": "Send",
   "rooms.messagePlaceholder": "Message the room…",
@@ -1096,5 +1062,15 @@
   "rooms.timelineLoadFailed": "Unable to load this room's timeline.",
   "common.cancel": "Cancel",
   "common.refresh": "Refresh",
-  "common.dismiss": "Dismiss"
+  "common.dismiss": "Dismiss",
+  "rooms.membersCount": "{count} members",
+  "rooms.messagesCount": "{count} messages",
+  "rooms.ledOnline": "Room ready",
+  "rooms.ledPending": "Action pending — needs approval",
+  "rooms.ledOffline": "Disbanded or service unavailable",
+  "rooms.renameRoom": "Rename room",
+  "rooms.saveName": "Save name",
+  "rooms.scrollLatest": "Jump to latest",
+  "rooms.toolCalls": "{count} tool calls",
+  "rooms.reasoningCount": "{count} reasoning"
 }

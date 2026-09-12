@@ -28,7 +28,8 @@ export type GroupEvent = {
   kind: string;
   actor: GroupActor;
   message: GroupMessage;
-  createdAt: string | number | null;
+  /** Normalized epoch milliseconds (unix seconds from the wire are converted once). */
+  createdAt: number | null;
   round?: number;
   coordinates?: { x: number; y: number };
 };
@@ -73,6 +74,14 @@ export function normalizeGroupRoom(value: unknown): GroupRoom {
   };
 }
 
+function normalizeEventTime(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  const numeric = typeof value === 'string' ? Number(value) : value;
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  // Hosted rooms emit unix seconds (~1.7e9); canonical chat rows use ms (~1.7e12).
+  return numeric > 1e11 ? numeric : numeric * 1000;
+}
+
 export function normalizeGroupEvent(value: unknown): GroupEvent {
   const item = record(value); const actor = record(item.actor); const payload = record(item.payload); const member = record(payload.member);
   const hasMember = Object.keys(member).length > 0;
@@ -84,7 +93,7 @@ export function normalizeGroupEvent(value: unknown): GroupEvent {
     id: stringValue(item.event_id ?? item.id), seq: numberValue(item.seq), kind: stringValue(item.kind),
     actor: { kind: (['user', 'member', 'gateway', 'system'].includes(actor.kind as string) ? actor.kind : 'system') as GroupActorKind, id: stringValue(actor.id) },
     message: { text: stringValue(payload.text), threadId: optionalString(payload.thread_id) ?? null, member: hasMember ? { id: stringValue(member.member_id ?? member.id), ...(optionalString(member.handle) ? { handle: member.handle as string } : {}), ...(optionalString(member.display_name) ? { displayName: member.display_name as string } : {}) } : null },
-    createdAt: (typeof item.created_at === 'string' || typeof item.created_at === 'number') ? item.created_at : null,
+    createdAt: normalizeEventTime(item.created_at),
     ...(round >= 0 ? { round } : {}),
     ...(x >= 0 && y >= 0 ? { coordinates: { x, y } } : {}),
   };
@@ -175,6 +184,26 @@ export class GroupGatewayClient {
 
   async disband(roomId: string, eventId?: string): Promise<unknown> {
     return this.rpc('groups.disband', { room_id: roomId, ...(eventId ? { event_id: eventId } : {}) });
+  }
+
+  async stop(roomId: string): Promise<number> {
+    const result = record(await this.rpc('groups.stop', { room_id: roomId }));
+    return typeof result.cancelled === 'number' ? result.cancelled : 0;
+  }
+
+  async approve(roomId: string, params: { memberId?: string | null; taskId?: string | null; executionGeneration?: number; choice?: string | null; requestId?: string | null }): Promise<unknown> {
+    return this.rpc('groups.approve', {
+      room_id: roomId,
+      ...(params.memberId ? { member_id: params.memberId } : {}),
+      ...(params.taskId ? { task_id: params.taskId } : {}),
+      execution_generation: params.executionGeneration ?? 0,
+      ...(params.choice ? { choice: params.choice } : {}),
+      ...(params.requestId ? { request_id: params.requestId } : {}),
+    });
+  }
+
+  async retry(roomId: string, taskId?: string | null): Promise<unknown> {
+    return this.rpc('groups.retry', { room_id: roomId, ...(taskId ? { task_id: taskId } : {}) });
   }
 }
 
