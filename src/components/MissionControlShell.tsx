@@ -105,15 +105,16 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
   const closeChat = useCallback(() => {
     setChatOpen(false);
     chatButtonRef.current?.focus();
-    if (!chatRecoverySessionId && !chatRoomId) return;
     const params = new URLSearchParams(location.search);
+    const hasChatParams = params.has('chatSession') || params.has('chatMode') || params.has('botProfile') || params.has('roomId');
+    if (!hasChatParams) return;
     params.delete('chatSession');
     params.delete('chatMode');
     params.delete('botProfile');
     params.delete('roomId');
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
-  }, [chatRecoverySessionId, chatRoomId, location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate]);
 
   const changeRoom = useCallback((roomId: string | null) => {
     const params = new URLSearchParams(location.search);
