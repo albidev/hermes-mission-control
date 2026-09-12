@@ -1687,7 +1687,7 @@ function GroupChatDrawer({ open, roomId, onClose, onRoomChange }: ChatDrawerProp
     <>
       {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
       <aside className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
-        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={onClose} aria-label={t('rooms.close')}><X size={18} /></button></div></header>
+        <header className="chat-drawer-head"><div className="chat-head-main"><div className="chat-head-identity"><span className="chat-mark" aria-hidden><Users size={18} /></span><div className="chat-head-copy"><p className="eyebrow">{t('rooms.eyebrow')}</p><h2>{t('rooms.title')}</h2><span className="chat-session-title">{state.room?.name || t('rooms.selectRoom')}</span></div></div><button className="chat-control chat-icon-button" type="button" onClick={() => onRoomChange ? onRoomChange(null) : onClose()} aria-label={t('rooms.backToChat')}><ArrowLeft size={18} /></button></div></header>
         <div className="chat-transcript">
           {!canUseRooms && !state.loading ? <div className="chat-error" role="status">{t('rooms.driverUnavailable')}</div> : null}
           {canUseRooms ? <>
