@@ -188,22 +188,25 @@ function ChatModeTabs({ active, onSelect }: { active: 'chat' | 'rooms'; onSelect
 }
 
 /**
- * Auto-hides the mode tab bar while the drawer inner content scrolls and
- * re-shows it briefly after the user stops scrolling for a while. The tabs
- * are a compact 51px rail between header and content, so hiding them on
- * scroll gives back vertical space exactly like mobile app bars do.
+ * Auto-hides the mode tab bar while the drawer content scrolls FAST and
+ * re-shows it immediately when the user slows down, reaches the bottom
+ * (auto-follow keeps it visible), or pauses for a while.
  *
- * Listens in the capture phase (scroll doesn't bubble): the first scroll
- * seen on each element is adopted as baseline (the transcript auto-follows
- * to the bottom on mount and that shouldn't hide the tabs), subsequent
- * scrolls hide the rail, and a resume poller re-shows it after quiet.
+ * Velocity-based: hiding only makes sense while the user is flying through
+ * a long transcript; at low speed the rail stays, at the bottom it's always
+ * visible because that's where the tab switch matters most. Listens in the
+ * capture phase (scroll doesn't bubble); the first scroll on each element is
+ * a baseline (mount-time auto-follow must not hide the rail).
  */
 const TAB_SCROLL_RESUME_MS = 700;
+const SCROLL_SPEED_HIDE_PX_MS = 0.2; // ≈ 200px/s — below this the rail stays
+const BOTTOM_EPSILON_PX = 24;
 function AutoHideModeTabs({ active, onSelect, containerRef }: { active: 'chat' | 'rooms'; onSelect: (mode: 'chat' | 'rooms') => void; containerRef: React.RefObject<HTMLElement | null> }) {
   const [hidden, setHidden] = useState(false);
   const hiddenRef = useRef(false);
   const shownAtRef = useRef(0);
   const seenRef = useRef(new WeakSet<HTMLElement>());
+  const lastScrollRef = useRef(new Map<HTMLElement, { top: number; at: number }>());
   const setHiddenBoth = (next: boolean) => {
     hiddenRef.current = next;
     setHidden(next);
@@ -212,18 +215,35 @@ function AutoHideModeTabs({ active, onSelect, containerRef }: { active: 'chat' |
   useEffect(() => {
     const node = containerRef.current;
     if (!node) return;
+    const regionEls = () => node.querySelectorAll<HTMLElement>('.chat-transcript, [data-scroll-region]');
+    const atBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_EPSILON_PX;
+
     const onScroll = (event: Event) => {
       const target = event.target as HTMLElement | null;
       if (!target || typeof target.scrollTop !== 'number') return;
+      const now = performance.now();
+      const prev = lastScrollRef.current.get(target);
+      lastScrollRef.current.set(target, { top: target.scrollTop, at: now });
       if (!seenRef.current.has(target)) {
-        // first event for this element: auto-follow on mount, don't hide
+        // first event for this element: auto-follow on mount, baseline only
         seenRef.current.add(target);
         return;
       }
-      shownAtRef.current = performance.now();
-      if (!hiddenRef.current) setHiddenBoth(true);
+      if (atBottom(target)) {
+        setHiddenBoth(false);
+        return;
+      }
+      if (!prev) return;
+      const speed = Math.abs(target.scrollTop - prev.top) / Math.max(1, now - prev.at);
+      if (speed >= SCROLL_SPEED_HIDE_PX_MS) {
+        shownAtRef.current = now;
+        if (!hiddenRef.current) setHiddenBoth(true);
+      } else {
+        setHiddenBoth(false);
+      }
     };
     const resumeTimer = window.setInterval(() => {
+      regionEls().forEach((el) => { if (atBottom(el)) setHiddenBoth(false); });
       if (shownAtRef.current !== 0 && performance.now() - shownAtRef.current >= TAB_SCROLL_RESUME_MS) {
         setHiddenBoth(false);
       }
