@@ -4,7 +4,8 @@ import { useI18n } from '../../lib/i18n';
 import { ChatMessageCard } from '../chat-messages';
 import { Badge } from '../ui/Badge';
 import { loadMissionControlVaults, type MissionControlVaultDescriptor } from '../../lib/hermes-api';
-import { RoomToolPanel } from './RoomToolPanel';
+import { loadRoomTools, type RoomToolTrace } from '../../lib/room-tools';
+import { RoomToolStrip } from './RoomToolPanel';
 import type { GroupEvent } from '../../lib/group-gateway';
 import type { GroupRoomResult } from '../../lib/use-group-room';
 import { ChatMentionPopover, type ChatMentionPopoverHandle } from '../ChatMentionPopover';
@@ -277,6 +278,34 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
   const [nearBottom, setNearBottom] = useState(true);
   const nearBottomRef = useRef(true);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const [roomTools, setRoomTools] = useState<RoomToolTrace[]>([]);
+  const [expandedStrips, setExpandedStrips] = useState<Set<string>>(new Set());
+
+  const toggleStrip = useCallback((eventId: string) => {
+    setExpandedStrips((current) => {
+      const next = new Set(current);
+      if (next.has(eventId)) {
+        next.delete(eventId);
+      } else {
+        next.add(eventId);
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!state.selectedRoomId) {
+      setRoomTools([]);
+      return () => { cancelled = true; };
+    }
+    let token: string | undefined;
+    try { token = localStorage.getItem('mission-control-token') ?? undefined; } catch { token = undefined; }
+    loadRoomTools(state.selectedRoomId, token)
+      .then((tools) => { if (!cancelled) setRoomTools(tools); })
+      .catch(() => { if (!cancelled) setRoomTools([]); });
+    return () => { cancelled = true; };
+  }, [state.selectedRoomId]);
   const entries = useMemo(() => visibleGroupEvents(state.events, state.room?.members ?? []), [state.events, state.room?.members]);
   const latestByMember = useMemo(() => {
     const result: Record<string, GroupEvent> = {};
@@ -285,6 +314,30 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
   }, [state.events]);
   const filtered = focusedMember ? entries.filter(({ event, member }) => event.actor.kind === 'user' || member?.id === focusedMember) : entries;
   const hiddenWorking = state.room?.members.some((member) => member.id !== focusedMember && deriveGroupMemberStatus(member, state.driverStatus, latestByMember[member.id]) === 'working');
+
+  // Tools per member-final turn: attach each trace whose timestamp falls
+  // between the previous member reply and this member reply, matching the
+  // member handle. trace timestamps are unix seconds; event createdAt is ms.
+  const toolsByMemberReply = useMemo(() => {
+    const result = new Map<string, RoomToolTrace[]>();
+    if (!roomTools.length) return result;
+    const memberSequence = filtered.filter(({ event }) => event.actor.kind === 'member');
+    memberSequence.forEach(({ event, member }, index) => {
+      const replyTs = typeof event.createdAt === 'number' ? event.createdAt : null;
+      if (replyTs === null) return;
+      const boundary = index > 0 && typeof memberSequence[index - 1].event.createdAt === 'number'
+        ? (memberSequence[index - 1].event.createdAt as number)
+        : 0;
+      const handle = member?.handle ?? event.message.member?.handle;
+      const turnTools = roomTools.filter((trace) => {
+        if (trace.memberHandle !== handle) return false;
+        const traceTs = typeof trace.timestamp === 'number' ? trace.timestamp * 1000 : 0;
+        return traceTs > boundary && traceTs <= replyTs;
+      });
+      if (turnTools.length > 0) result.set(event.id, turnTools);
+    });
+    return result;
+  }, [filtered, roomTools]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const node = transcriptRef.current;
@@ -315,7 +368,7 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
     {state.error && !state.serviceUnavailable ? <div className="text-xs text-negative" role="alert">{state.error.message}</div> : null}
     <div ref={transcriptRef} onScroll={handleScroll} className="chat-transcript min-h-[220px] flex-1">
       {state.loading ? <div className="chat-empty"><Loader2 size={16} className="chat-spin" />{t('rooms.loading')}</div> : filtered.length === 0 ? <p className="chat-empty">{t('rooms.noMessages')}</p> : (
-        filtered.map(({ event, member }, index) => <div key={event.id} style={{ display: 'contents' }}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div> : null}<ChatMessageCard message={groupEventToChatMessage(event, member)} mentionHandles={(state.room?.members ?? []).map((m) => m.handle)} /></div>)
+        filtered.map(({ event, member }, index) => <div key={event.id} style={{ display: 'contents' }}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div> : null}{event.actor.kind === 'member' && toolsByMemberReply.has(event.id) ? <RoomToolStrip tools={toolsByMemberReply.get(event.id) ?? []} memberHandle={member?.handle ?? ''} expanded={expandedStrips.has(event.id)} onToggle={() => toggleStrip(event.id)} /> : null}<ChatMessageCard message={groupEventToChatMessage(event, member)} mentionHandles={(state.room?.members ?? []).map((m) => m.handle)} /></div>)
       )}
       {!nearBottom ? (
         <button
@@ -328,7 +381,6 @@ export function GroupRoomView({ state, onSend, className = '', mentionRoster = [
           <ChevronDown size={18} />
         </button>
       ) : null}
-      <RoomToolPanel roomId={state.selectedRoomId} eventsTick={state.events.length} />
     </div>
     {hiddenWorking ? <div className="flex items-center gap-2 text-[11px] text-warning" role="status"><Loader2 size={12} className="animate-spin" />{t('rooms.backgroundMemberWorking')}</div> : null}
     <div className="chat-room-filterbar" role="tablist" aria-label={t('rooms.members')}>

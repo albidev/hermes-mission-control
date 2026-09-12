@@ -5800,11 +5800,20 @@ button {
   background: var(--color-border);
 }
 
-/* Room tool activity panel: slim collapsed bar (anti-noise) that expands
-   into the canonical chat ToolMessage surfaces. */
-.room-tool-panel {
-  border-top: 1px solid var(--color-border-subtle);
+/* Room tool activity strip: slim per-turn collapsed bar (anti-noise) that
+   expands into the canonical chat ToolMessage surfaces. Sits inline in the
+   transcript, right above the member reply it belongs to. */
+.room-tool-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0.25rem 0 0.125rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
   background: var(--color-surface);
+  overflow: visible;
 }
 
 .room-tool-panel-bar {
@@ -5840,10 +5849,7 @@ button {
   flex: 1 1 auto;
 }
 
-.room-tool-panel-body {
-  max-height: 320px;
-  overflow-y: auto;
-  padding: 0.25rem 0.5rem 0.5rem;
+.room-tool-inline {
   display: flex;
   flex-direction: column;
   gap: 0.375rem;
