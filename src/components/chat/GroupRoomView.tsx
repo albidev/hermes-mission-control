@@ -169,15 +169,14 @@ export function GroupRoomComposer({ state, onSend, mentionRoster }: { state: Gro
             aria-label={t('rooms.messagePlaceholder')}
           />
           <div className="chat-composer-toolbar chat-room-actions">
-            {!state.disbanded && !state.serviceUnavailable ? <button type="button" onClick={() => void state.stopRoom()} disabled={state.refreshing} title={t('rooms.stop')} className="chat-room-action"><XOctagon size={12} />{t('rooms.stop')}</button> : null}
-            {!state.disbanded && !state.serviceUnavailable ? <button type="button" onClick={() => { if (confirmDisband) { setConfirmDisband(false); void state.disband(); } else { setConfirmDisband(true); window.setTimeout(() => setConfirmDisband(false), 3000); } }} title={t('rooms.disbandAction')} className={`chat-room-action chat-room-action-danger ${confirmDisband ? 'is-confirm' : ''}`}>{confirmDisband ? <Check size={12} /> : <Trash2 size={12} />}{t(confirmDisband && state.room ? 'rooms.disbandConfirm' : 'rooms.disbandAction', confirmDisband && state.room ? { name: state.room.name || state.room.id } : {})}</button> : null}
-            <button type="button" onClick={() => void state.refresh()} disabled={state.refreshing} title={t('rooms.refresh')} className="chat-room-action"><RefreshCw size={12} className={state.refreshing ? 'animate-spin' : ''} />{t('rooms.refresh')}</button>
-            <span className="ml-auto text-[10px] text-text-subtle">{t('rooms.round', { round: state.round.round })} · {t('rooms.latestEvent', { sequence: state.events.at(-1)?.seq ?? '—' })}</span>
+            {!state.disbanded && !state.serviceUnavailable ? <button type="button" onClick={() => void state.stopRoom()} disabled={state.refreshing} title={t('rooms.stop')} aria-label={t('rooms.stop')} className="chat-composer-action chat-room-icon"><XOctagon size={16} /></button> : null}
+            {!state.disbanded && !state.serviceUnavailable ? <button type="button" onClick={() => { if (confirmDisband) { setConfirmDisband(false); void state.disband(); } else { setConfirmDisband(true); window.setTimeout(() => setConfirmDisband(false), 3000); } }} title={t('rooms.disbandAction')} aria-label={t('rooms.disbandAction')} className={`chat-composer-action chat-room-icon chat-room-icon-danger ${confirmDisband ? 'is-confirm' : ''}`}>{confirmDisband ? <Check size={16} /> : <Trash2 size={16} />}</button> : null}
+            <button type="button" onClick={() => void state.refresh()} disabled={state.refreshing} title={t('rooms.refresh')} aria-label={t('rooms.refresh')} className="chat-composer-action chat-room-icon"><RefreshCw size={16} className={state.refreshing ? 'animate-spin' : ''} /></button>
+            <span className="chat-composer-hint">{t('rooms.round', { round: state.round.round })} · {t('rooms.latestEvent', { sequence: state.events.at(-1)?.seq ?? '—' })}</span>
+            <span className="chat-composer-spacer" />
+            <button type="submit" disabled={!draft.trim() || state.disbanded || state.serviceUnavailable} aria-label={t('rooms.send')} title={t('rooms.send')} className="chat-composer-action chat-send"><Send size={16} /></button>
           </div>
         </div>
-        <button type="submit" disabled={!draft.trim() || state.disbanded || state.serviceUnavailable} className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md bg-accent px-3 text-sm text-white disabled:opacity-50">
-          <Send size={14} />{t('rooms.send')}
-        </button>
       </form>
     </>
   );
