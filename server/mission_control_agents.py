@@ -1113,12 +1113,28 @@ def _collect_agent_sessions(
         reverse=True,
     )
     ordered_ids = index_only_ids + db_ids
+    db = _try_get_session_db(profile)
     if session_id:
         # Narrow to a single session for the chat drawer preview. Keep the
         # recency ordering contract; the id either exists or yields nothing.
-        ordered_ids = [sid for sid in ordered_ids if sid == session_id]
-        if not ordered_ids and (_read_session_jsonl(session_id, profile) or _read_session_request_dump(session_id, profile)):
-            ordered_ids = [session_id]
+        #
+        # The reference may be a CANONICAL SESSION KEY rather than an id: a
+        # platform chat (Discord DM, Telegram) keys its sessions as
+        # `agent:<profile>:<platform>:<type>:<chat_id>` while its rows carry
+        # timestamp ids, and the drawer holds the key from the last-chat pointer.
+        # Matching it against the id list never hits, so resolve it to the owning
+        # id first — otherwise the preview comes back empty and the chat cannot be
+        # resumed (the gateway has no key resolver either). Resolution picks the
+        # newest row for that key, which is the live conversation among the
+        # rotations sharing it.
+        resolved = session_id
+        if session_id not in db_id_set:
+            candidate_id, _ = _resolve_chat_session(db, session_id)
+            if candidate_id and candidate_id != session_id:
+                resolved = candidate_id
+        ordered_ids = [sid for sid in ordered_ids if sid == resolved]
+        if not ordered_ids and (_read_session_jsonl(resolved, profile) or _read_session_request_dump(resolved, profile)):
+            ordered_ids = [resolved]
     # With filters, pagination must happen after item classification. Without
     # filters retain the cheap id-level window used by existing consumers.
     if not filters:
@@ -1126,7 +1142,6 @@ def _collect_agent_sessions(
             ordered_ids = ordered_ids[offset:]
         if limit is not None:
             ordered_ids = ordered_ids[:limit]
-    db = _try_get_session_db(profile)
     try:
         items: list[dict[str, Any]] = []
         for session_id in ordered_ids:

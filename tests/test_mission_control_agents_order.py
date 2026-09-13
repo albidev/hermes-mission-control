@@ -48,6 +48,66 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["messages"][0]["content"], "Example Bot reply")
 
+    def test_session_preview_resolves_a_canonical_session_key_to_its_id(self):
+        """A platform chat keys its sessions canonically
+        (`agent:<profile>:<platform>:<type>:<chat_id>`) while the rows carry
+        timestamp ids, so filtering the id list by the key never hits: the preview
+        came back empty and the chat could not be resumed."""
+
+        class FakeDb:
+            def list_sessions_rich(self, **kwargs):
+                # Mirrors SessionDB: a session_key query resolves, an id query does not.
+                if kwargs.get("session_key") == "agent:main:discord:dm:123":
+                    return [{"id": "20260913_152827_5ed6a5cf"}]
+                return []
+
+            def _get_session_rich_row(self, session_id, **kwargs):
+                return {"id": session_id, "source": "discord", "message_count": 78}
+
+            def resolve_resume_session_id(self, session_id):
+                return session_id
+
+            def get_resume_conversations(self, session_id):
+                return [], [{"_row_id": 1, "role": "user", "content": "ciao"}]
+
+        with patch.object(mission_control_agents, "_try_get_session_db", return_value=FakeDb()), \
+             patch.object(mission_control_agents, "_iter_db_session_ids",
+                          return_value=["20260913_152827_5ed6a5cf"]):
+            payload = mission_control_agents.load_agents_sessions_snapshot(
+                limit=1, offset=0, session_id="agent:main:discord:dm:123"
+            )
+
+        items = payload.get("items") or []
+        self.assertEqual(len(items), 1, "the key must resolve to the owning session")
+        self.assertEqual(items[0]["sessionId"], "20260913_152827_5ed6a5cf")
+
+    def test_session_preview_still_filters_by_a_plain_id(self):
+        """The id path must not gain a resolver round trip or change its result."""
+
+        class FakeDb:
+            def list_sessions_rich(self, **kwargs):
+                return []
+
+            def _get_session_rich_row(self, session_id, **kwargs):
+                return {"id": session_id, "source": "tui", "message_count": 3}
+
+            def resolve_resume_session_id(self, session_id):
+                return session_id
+
+            def get_resume_conversations(self, session_id):
+                return [], [{"_row_id": 2, "role": "user", "content": "hi"}]
+
+        with patch.object(mission_control_agents, "_try_get_session_db", return_value=FakeDb()), \
+             patch.object(mission_control_agents, "_iter_db_session_ids",
+                          return_value=["20260913_120000_aaaaaa"]):
+            payload = mission_control_agents.load_agents_sessions_snapshot(
+                limit=1, offset=0, session_id="20260913_120000_aaaaaa"
+            )
+
+        items = payload.get("items") or []
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["sessionId"], "20260913_120000_aaaaaa")
+
     def test_tool_rows_expose_the_result_separately_from_the_arguments(self):
         """A tool row's `content` is the RESULT. The client reads `content` as the input
         fallback and the result from `result_text`, so emitting the result as `content`

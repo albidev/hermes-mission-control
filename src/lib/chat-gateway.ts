@@ -152,6 +152,34 @@ async function resolveSessionProfile(accessToken: string, sessionId: string | nu
   }
 }
 
+/**
+ * Translate the reference held by the drawer into something `session.resume` can
+ * resolve.
+ *
+ * The reference is usually an id, but a platform chat (Discord DM, Telegram)
+ * keys its sessions as a canonical key (`agent:<profile>:<platform>:<type>:<chat_id>`),
+ * and that is what the last-chat pointer carries. The gateway resolves an id or a
+ * title only, so a key comes back "session not found" and the drawer silently
+ * falls back to an empty chat. The sessions index resolves either form, and it is
+ * also where a key's many rotations collapse to the newest one.
+ *
+ * Returns null when the reference already resolves to itself (nothing to change)
+ * or the index cannot answer (best effort — the caller keeps what it had).
+ */
+async function resolveResumableSessionId(accessToken: string, reference: string | null): Promise<string | null> {
+  const wanted = reference?.trim();
+  // A platform key is the only form the gateway cannot resolve; skip the round
+  // trip for everything else, which is the overwhelmingly common case.
+  if (!wanted || !wanted.includes(':')) return null;
+  try {
+    const item = await loadMissionControlSessionPreview(accessToken, wanted);
+    const resolved = item?.sessionId?.trim();
+    return resolved && resolved !== wanted ? resolved : null;
+  } catch {
+    return null;
+  }
+}
+
 function applyLiveGatewayEvent(messages: ChatMessage[], event: GatewayEvent): ChatMessage[] {
   const existingIds = new Set(messages.map((message) => message.id));
   return applyGatewayEvent(messages, event).map((message) => existingIds.has(message.id)
@@ -740,16 +768,27 @@ export function useGatewayChat(
     const existingKey = sessionKeyRef.current || explicitSessionId || requestedSessionIdRef.current || sessionIdRef.current;
     const isExplicitResume = Boolean(explicitSessionId);
     if (existingKey) {
+      // The gateway's `session.resume` resolves an id or a title — never a
+      // canonical session key (`agent:<profile>:<platform>:<type>:<chat_id>`),
+      // which is what a platform chat (Discord DM, Telegram) stores as its key.
+      // Sending the key 4007s with "session not found" and the drawer then falls
+      // back to an empty chat. The sessions index resolves the key to the owning
+      // id, so translate before the RPC; a miss leaves the reference alone.
+      const resumableId = await resolveResumableSessionId(storedToken, existingKey);
+      if (resumableId) {
+        sessionIdRef.current = resumableId;
+        requestedSessionIdRef.current = resumableId;
+      }
       // A resume without a known profile resolves the owner first: the id lives
       // in exactly one profile's store, and resuming against the wrong one
       // 4007s (or comes back empty) for a session the index can see.
       if (!sessionProfileRef.current) {
-        const owner = await resolveSessionProfile(storedToken, existingKey);
+        const owner = await resolveSessionProfile(storedToken, resumableId ?? existingKey);
         if (owner) sessionProfileRef.current = owner;
       }
       try {
         const resumed = await request<unknown>('session.resume', addChatProfile({
-          session_id: existingKey,
+          session_id: resumableId ?? existingKey,
           cols: 80,
           eager_build: true,
           source: 'mission-control',
@@ -763,7 +802,7 @@ export function useGatewayChat(
         sessionKeyRef.current = resolvedSessionKey;
         setResumedRuntime({
           runtimeSessionId: resolvedSessionId,
-          resumedFrom: existingKey,
+          resumedFrom: resumableId ?? existingKey,
           sessionKey: resolvedSessionKey,
         });
         const { inflight } = await hydrateSessionSnapshot(resumed, resolvedSessionId, resolvedSessionKey);
@@ -772,7 +811,7 @@ export function useGatewayChat(
       } catch (err) {
         recordReloadDiagnostic('chat-session-resume-fallback', {
           reason: 'requested-session-unavailable',
-          requested: existingKey,
+          requested: resumableId ?? existingKey,
           error: err instanceof Error ? err.message : String(err),
         });
         if (isExplicitResume) throw err;
