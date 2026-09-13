@@ -412,6 +412,7 @@ def load_chat_transcript(
         except Exception:
             session_title = None
         display_rows = db.get_resume_conversations(resolved_id)[1] if db is not None else []
+        tool_args = _collect_tool_call_arguments(display_rows)
         messages: list[dict[str, Any]] = []
         for row in display_rows:
             if not isinstance(row, dict):
@@ -421,14 +422,25 @@ def load_chat_transcript(
                 # A display row without a DB id cannot satisfy the canonical
                 # identity contract, so do not expose it as a durable message.
                 continue
+            row_role = str(row.get("role") or "").strip().lower()
+            raw_content = row.get("content")
             message: dict[str, Any] = {
                 "id": f"db:{row_id}",
                 "canonical_id": f"db:{row_id}",
                 "session_id": resolved_id,
                 "role": row.get("role"),
-                "content": row.get("content"),
+                "content": raw_content,
                 "timestamp": _parse_timestamp(row.get("timestamp")),
             }
+            if row_role == "tool":
+                # A tool row's `content` is the tool RESULT, not the arguments. The client
+                # treats `content` as the input fallback and reads the result from
+                # `result_text`, so emitting the result as `content` showed the output
+                # labelled "Input" while "Output" stayed empty. Split the two here: the
+                # result rides `result_text`, the arguments come from the assistant row's
+                # matching tool_call.
+                message["result_text"] = raw_content
+                message["content"] = tool_args.get(str(row.get("tool_call_id") or ""), "")
             for key in (
                 "tool_call_id",
                 "tool_name",
@@ -465,6 +477,41 @@ def load_chat_transcript(
         }
     finally:
         _close_session_db(db)
+
+
+def _collect_tool_call_arguments(display_rows: list[Any]) -> dict[str, str]:
+    """Map ``tool_call_id`` -> serialized arguments, from the assistant rows.
+
+    A tool row stores only its RESULT; the arguments live on the assistant row that
+    requested the call. The client renders the two separately (input vs output), so the
+    transcript projection has to carry both.
+    """
+    arguments: dict[str, str] = {}
+    for row in display_rows or []:
+        if not isinstance(row, dict):
+            continue
+        calls = row.get("tool_calls")
+        if isinstance(calls, str):
+            try:
+                calls = json.loads(calls)
+            except (ValueError, TypeError):
+                continue
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            call_id = str(call.get("id") or call.get("call_id") or "").strip()
+            if not call_id:
+                continue
+            function = call.get("function") if isinstance(call.get("function"), dict) else call
+            raw_arguments = function.get("arguments") if isinstance(function, dict) else None
+            if raw_arguments is None:
+                continue
+            text = raw_arguments if isinstance(raw_arguments, str) else json.dumps(raw_arguments, ensure_ascii=False)
+            if text:
+                arguments.setdefault(call_id, text)
+    return arguments
 
 
 def load_chat_message_timestamps(
