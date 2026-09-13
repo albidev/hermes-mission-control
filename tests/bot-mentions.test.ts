@@ -15,16 +15,16 @@ const ROSTER: BotMentionCandidate[] = [
 
 describe('findMentionAtCaret', () => {
   it('returns matches for a partial handle after @', () => {
-    const match = findMentionAtCaret('fai @cro', 8, ROSTER);
+    const match = findMentionAtCaret('fai @exa', 8, ROSTER);
     assert.ok(match);
     assert.strictEqual(match.start, 4);
     assert.strictEqual(match.end, 8);
-    assert.strictEqual(match.query, 'cro');
+    assert.strictEqual(match.query, 'exa');
     assert.deepStrictEqual(match.matches.map((c) => c.handle), ['example-bot']);
   });
 
   it('matches case-insensitively', () => {
-    const match = findMentionAtCaret('@CROSS', 6, ROSTER);
+    const match = findMentionAtCaret('@EXA', 4, ROSTER);
     assert.ok(match);
     assert.deepStrictEqual(match.matches.map((c) => c.handle), ['example-bot']);
   });
@@ -38,7 +38,7 @@ describe('findMentionAtCaret', () => {
   });
 
   it('returns null when roster is empty', () => {
-    assert.strictEqual(findMentionAtCaret('@cro', 4, []), null);
+    assert.strictEqual(findMentionAtCaret('@exa', 4, []), null);
   });
 
   it('shows the full roster for a bare @', () => {
@@ -77,7 +77,7 @@ describe('extractMentionRequest', () => {
   });
 
   it('matches handle case-insensitively and returns canonical casing', () => {
-    const parsed = extractMentionRequest('@Example Bot fai x', ROSTER);
+    const parsed = extractMentionRequest('@Example-Bot fai x', ROSTER);
     assert.strictEqual(parsed?.mention, '@example-bot');
   });
 });

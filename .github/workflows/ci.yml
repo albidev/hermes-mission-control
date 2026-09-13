@@ -32,6 +32,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: pnpm test:frontend
       - run: pnpm test:vite-config
       - run: pnpm test:rooms
       - run: pnpm test:chat-profile
