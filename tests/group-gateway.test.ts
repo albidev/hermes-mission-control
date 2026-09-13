@@ -38,7 +38,7 @@ assertEqual(normalizeGroupEvent({
 }), {
   id: 'evt-1', seq: 1, kind: 'message.member', actor: { kind: 'member', id: 'member-a' },
   message: { text: 'hello', threadId: 'thread-1', member: { id: 'member-a', handle: 'albi' } },
-  createdAt: '2026-09-10T20:00:00Z',
+  createdAt: Date.parse('2026-09-10T20:00:00Z'),
 });
 
 assertEqual(normalizeGroupLog({
@@ -46,7 +46,7 @@ assertEqual(normalizeGroupLog({
   cursor: 1, latest_seq: 2, has_more: true,
   authority: { gateway_id: 'gateway-a', epoch: 3 },
 }), {
-  events: [{ id: 'evt-1', seq: 1, kind: 'message.user', actor: { kind: 'user', id: 'desktop' }, message: { text: 'x', threadId: null, member: null }, createdAt: 123 }],
+  events: [{ id: 'evt-1', seq: 1, kind: 'message.user', actor: { kind: 'user', id: 'desktop' }, message: { text: 'x', threadId: null, member: null }, createdAt: 123000 }],
   cursor: 1, latestSeq: 2, hasMore: true, authority: { gatewayId: 'gateway-a', epoch: 3 },
 });
 

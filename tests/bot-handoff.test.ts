@@ -61,6 +61,20 @@ describe('submitHandoff', () => {
     assert.match(record.submits[0].text, /CURRENT REQUEST:\nanalizza questo trace/);
   });
 
+  it('delivers the transcript context in the submitted prompt', async () => {
+    const record = { submits: [] as Array<{ session_id: string; text: string }> };
+    const rpc = makeRpc(record);
+    const envelope = createHandoffEnvelope(
+      ORIGIN,
+      { profile: 'example-bot', canonicalTitle: 'Bot Chat' },
+      'follow up',
+      { mode: 'transcript', messages: [{ role: 'user', text: 'earlier message' }] },
+    );
+    await submitHandoff(rpc, envelope);
+    assert.match(record.submits[0].text, /CONVERSATION CONTEXT:\nuser: earlier message/);
+    assert.match(record.submits[0].text, /CURRENT REQUEST:\nfollow up/);
+  });
+
   it('does not submit twice for the same handoffId', async () => {
     const record = { submits: [] as Array<{ session_id: string; text: string }> };
     const rpc = makeRpc(record);

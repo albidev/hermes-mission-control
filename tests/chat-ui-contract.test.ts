@@ -37,11 +37,14 @@ assertIncludes(component, "id: `bot-request-${handoffId}`", 'first Bot mention i
 assertIncludes(component, 'const previewMessages = (preview.recentMessages ?? []).filter', 'resume preview filters the duplicate Bot reply');
 assertIncludes(component, 'previewMessages.map((msg, index)', 'resume preview renders the filtered transcript');
 assertIncludes(chatGateway, 'if (since !== undefined && typeof ready.latest_seq === \'number\')', 'fresh relay subscribers replay existing MC messages');
-assertIncludes(component, 'const handoffRequestIds = new Set(', 'only the technical Bot request row is grouped');
-assertIncludes(component, "filter((message: ChatMessage) => !handoffRequestIds.has(message.id))", 'the attributed Bot assistant reply remains visible');
+// The dedupe set moved from a bare `new Set(` to a `useMemo(...)` when the timeline
+// became memoized; assert the BEHAVIOUR (a set of `bot-request-<id>` keys consulted
+// before rendering a user row) instead of the expression that builds it.
+assertIncludes(component, 'new Set(handoffs.map((handoff) => `bot-request-${handoff.id}`))', 'only the technical Bot request row is grouped');
+assertIncludes(component, '!handoffRequestIds.has(message.id)', 'the attributed Bot assistant reply remains visible');
 assertIncludes(component, 'const titleHandoff = loaded[0];', 'recovery derives the primary title from the first Bot request');
 assertIncludes(component, 'await titleSession(sessionId, titleHandoff.request);', 'recovery persists the missing primary title');
-assertIncludes(component, 'const existingMessageIds = new Set(messages.map((message: ChatMessage) => message.id));', 'resume checks actual transcript IDs before reconstructing the reply');
+assertIncludes(component, 'new Set(messages.map((message: ChatMessage) => message.id))', 'resume checks actual transcript IDs before reconstructing the reply');
 assertIncludes(component, '!existingMessageIds.has(`bot-reply-${handoff.id}`)', 'missing attributed replies are reconstructed exactly once');
 assertIncludes(component, 'order: 2, id: replyMessage.id', 'the attributed assistant reply closes the Bot turn');
 assertIncludes(component, 'const requestMessage: ChatMessage = {', 'Bot handoff reconstructs the user bubble on resume');

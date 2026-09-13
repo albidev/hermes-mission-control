@@ -77,7 +77,9 @@ import { addChatProfile } from '../lib/chat-session-params';
 import { createHandoffObserver } from '../lib/bot-handoff-observer';
 import { findHandoffCompletion } from '../lib/bot-handoff-recovery';
 import { openHandoffClient } from '../lib/bot-handoff-client';
-import { extractMentionRequest } from '../lib/bot-mentions';
+import { extractMentionRequests } from '../lib/bot-mentions';
+import { serializeHandoffContext } from '../lib/bot-handoff-context';
+import { createHandoffObserverRegistry } from '../lib/bot-reply-delivery';
 import { canonicalChatCommand } from '../lib/bot-chat-policy';
 import { classifyHandoffFailure } from '../lib/bot-handoff-reasons';
 import { BotHandoffMessage } from './chat/BotHandoffMessage';
@@ -346,7 +348,10 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   const [activeBotTarget, setActiveBotTarget] = useState<BotMentionCandidate | null>(null);
   const [handoffs, setHandoffs] = useState<PersistedBotHandoff[]>([]);
   const handoffDedupeRef = useRef(createHandoffDedupe());
-  const handoffObserverRef = useRef<ReturnType<typeof createHandoffObserver> | null>(null);
+  // One observer per in-flight handoff: a multi-mention submit fans out several, and a
+  // single shared ref would let the last writer orphan every earlier one (its socket is
+  // never closed and its completion never lands).
+  const handoffObserversRef = useRef(createHandoffObserverRegistry());
   const handoffRecoveryRef = useRef(new Set<string>());
   const loadedHandoffIdsRef = useRef(new Set<string>());
   const titleRecoveryRef = useRef(new Set<string>());
@@ -412,6 +417,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    deliverBotReply,
     appendChatMessage,
     titleSession,
     ensureSession,
@@ -865,7 +871,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
             reply={item.entry.handoff.reply}
             error={item.entry.handoff.error}
             reason={item.entry.handoff.reason}
-            onRetry={item.entry.handoff.status === 'failed' && (item.entry.handoff.retryable !== false) ? () => {
+            onRetry={item.entry.handoff.status === 'failed' && (item.entry.handoff.retryable !== false) ? async () => {
               const handoff = item.entry.handoff;
               const handle = handoff.handle;
               rememberActiveBotTarget({
@@ -874,12 +880,26 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                 model: handoff.model,
                 provider: handoff.provider,
               });
+              // Resolve the origin at CLICK time (not render time) and before claiming the
+              // dedupe slot: the click handler can await, but the claim must not be held
+              // while a session round-trip is in flight.
+              let retryOriginSessionId: string;
+              try {
+                retryOriginSessionId = await ensureSession();
+                retryOriginSessionId = await claimLastChatPointer('submit', retryOriginSessionId);
+              } catch {
+                return;
+              }
               if (!handoffDedupeRef.current.tryClaim(handle)) return;
-              upsertHandoffState(handoff.id, { status: 'queued', error: null });
+              upsertHandoffState(handoff.id, { status: 'queued', error: null }, sessionKey ?? retryOriginSessionId);
               const envelope = createHandoffEnvelope(
                 { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
                 { profile: handle, canonicalTitle: 'Bot Chat' },
                 handoff.request,
+                (() => {
+                  const contextMessages = serializeHandoffContext(timelinedMessages);
+                  return contextMessages.length > 0 ? { mode: 'transcript', messages: contextMessages } : { mode: 'none', messages: [] };
+                })(),
               );
               const runRetry = async (): Promise<void> => {
                 let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
@@ -894,7 +914,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                   if (!delivery.deferred) {
                     handoffDedupeRef.current.release(handle);
                     client.close();
-                    upsertHandoffState(handoff.id, { status: 'completed', reply: delivery.reply });
+                    upsertHandoffState(handoff.id, { status: 'completed', reply: delivery.reply }, sessionKey ?? retryOriginSessionId);
+                    void deliverBotReply(retryOriginSessionId, delivery.reply, handle, handoff.request);
                     return;
                   }
                   const runtimeId = await client.resume(handle, canonical.registryId);
@@ -907,10 +928,11 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                   if (completedReply) {
                     handoffDedupeRef.current.release(handle);
                     client.close();
-                    upsertHandoffState(handoff.id, { status: 'completed', reply: completedReply });
+                    upsertHandoffState(handoff.id, { status: 'completed', reply: completedReply }, sessionKey ?? retryOriginSessionId);
+                    void deliverBotReply(retryOriginSessionId, completedReply, handle, handoff.request);
                     return;
                   }
-                  handoffObserverRef.current = createHandoffObserver(
+                  const retryObserver = createHandoffObserver(
                     { eventsSince: (params) => client!.eventsSince(params.last_seen) },
                     {
                       sessionId: runtimeId,
@@ -920,7 +942,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                       onComplete: (reply) => {
                         handoffDedupeRef.current.release(handle);
                         client?.close();
-                        upsertHandoffState(handoff.id, { status: 'completed', reply });
+                        upsertHandoffState(handoff.id, { status: 'completed', reply }, sessionKey ?? retryOriginSessionId);
+                        void deliverBotReply(retryOriginSessionId, reply, handle, handoff.request);
                       },
                       onError: (message) => {
                         handoffDedupeRef.current.release(handle);
@@ -930,7 +953,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                       },
                     },
                   );
-                  void handoffObserverRef.current.start();
+                  handoffObserversRef.current.set(handoff.id, retryObserver);
+                  void retryObserver.start();
                 } catch (err) {
                   handoffDedupeRef.current.release(handle);
                   client?.close();
@@ -1082,11 +1106,14 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     }
   };
 
-  const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>, originSessionId = sessionId ?? '') => {
+  const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>, originSessionId = sessionKey ?? sessionId ?? '') => {
     setHandoffs((current) => {
       const existing = current.find((item) => item.id === id);
       if (!existing) return current;
       const updated: PersistedBotHandoff = { ...existing, ...patch, updatedAt: Date.now() };
+      // Carry the CANONICAL session key, never the transient runtime id.
+      // Runtime ids change on each resume and may not match any SessionDB row;
+      // the canonical key is what Sessions and cross-device deep links use.
       void persistBotHandoff(storedToken, originSessionId, updated, sessionKey);
       return current.map((item) => item.id === id ? updated : item);
     });
@@ -1149,24 +1176,34 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     // Bot handoff: a mention to a roster-marked Bot routes the request into the
     // target canonical Bot Chat. The origin transcript stays untouched; the
     // attributed reply is rendered as a dedicated handoff card.
-    const mention = extractMentionRequest(text, botRoster);
+    const mentions = extractMentionRequests(text, botRoster);
     const trimmedText = text.trim();
-    const followUp = !mention
+    const followUp = mentions.length === 0
       && activeBotTarget
       && pendingAttachments.length === 0
       && Boolean(trimmedText)
       && !trimmedText.startsWith('/')
       && !trimmedText.startsWith('@');
-    const handoffMention = mention ?? (followUp ? {
+    const handoffMentions = mentions.length > 0 ? mentions : (followUp ? [{
       mention: `@${activeBotTarget.handle}`,
       request: trimmedText,
-    } : null);
-    if (handoffMention) {
+    }] : []);
+    if (handoffMentions.length > 0) {
+      const contextMessages = serializeHandoffContext(timelinedMessages);
+      // Resolve the origin ONCE for the whole submit, before fanning out: every mention in
+      // this submit shares one origin, and the reply-delivery path must not re-derive it
+      // later (a settle can arrive minutes after the user moved to another chat).
       let originSessionId = await ensureSession();
       originSessionId = await claimLastChatPointer('submit', originSessionId);
       if (originSessionId !== sessionId) {
         originSessionId = await ensureSession(originSessionId);
       }
+      for (const handoffMention of handoffMentions) {
+      // Prefer the canonical session key for handoff persistence: runtime ids
+      // change on each resume and may not match any SessionDB row, making
+      // post-hoc lookups impossible. sessionKey is updated synchronously by
+      // ensureSession via sessionKeyRef.current.
+      const canonicalSessionRef = sessionKey ?? originSessionId;
       const handle = handoffMention.mention.slice(1);
       const candidate = botRoster.find((item) => item.handle === handle) ?? (activeBotTarget?.handle === handle ? activeBotTarget : undefined);
       // Dedupe: a second submit for the same Bot while one is in flight is
@@ -1174,12 +1211,13 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       // when the handoff settles so an explicit Retry can re-run it.
       if (!handoffDedupeRef.current.tryClaim(handle)) {
         setAttachmentNotice('A request to this Bot is already in flight.');
-        return;
+        continue;
       }
       const envelope = createHandoffEnvelope(
         { connectionId: 'local', profile: 'default', sessionId: originSessionId },
         { profile: handle, canonicalTitle: 'Bot Chat' },
         handoffMention.request,
+        contextMessages.length > 0 ? { mode: 'transcript', messages: contextMessages } : { mode: 'none', messages: [] },
       );
       const handoffId = envelope.handoffId;
       await titleSession(originSessionId, handoffMention.request || `@${handle}`);
@@ -1203,11 +1241,11 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const claimResult = await claimBotHandoff(storedToken, originSessionId, initialHandoff);
+      const claimResult = await claimBotHandoff(storedToken, canonicalSessionRef, initialHandoff);
       if (claimResult === false) {
         handoffDedupeRef.current.release(handle);
         setAttachmentNotice('This handoff was already claimed by another Mission Control client.');
-        return;
+        continue;
       }
       rememberActiveBotTarget({
         handle,
@@ -1216,19 +1254,19 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         provider: candidate?.provider,
       });
       setHandoffs((current) => [...current, initialHandoff]);
-      void persistBotHandoff(storedToken, originSessionId, initialHandoff, sessionKey);
+      void persistBotHandoff(storedToken, canonicalSessionRef, initialHandoff, sessionKey);
       setDraft('');
       const runHandoff = async (): Promise<void> => {
         let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
         try {
           client = await openHandoffClient({ accessToken: storedToken || undefined });
           const canonical = await client.resolveCanonical(handle);
-          upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, originSessionId);
+          upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, canonicalSessionRef);
           // A dashboard-local Bot Chat may still be live with a stale MCP snapshot.
           // Close only that runtime; the canonical transcript/profile remains intact.
           const staleRuntimeId = await client.resume(handle, canonical.registryId);
           await client.closeSession(staleRuntimeId);
-          upsertHandoffState(handoffId, { status: 'running' }, originSessionId);
+          upsertHandoffState(handoffId, { status: 'running' }, canonicalSessionRef);
           const delivery = await client.deliver(handle, formatHandoffPrompt(envelope));
           if (!delivery.deferred) {
             handoffDedupeRef.current.release(handle);
@@ -1249,7 +1287,9 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
               },
             };
             appendChatMessage(attributedReply, 'assistant_message');
-            upsertHandoffState(handoffId, { status: 'completed', reply: delivery.reply }, originSessionId);
+            handoffObserversRef.current.delete(handoffId);
+            upsertHandoffState(handoffId, { status: 'completed', reply: delivery.reply }, canonicalSessionRef);
+            void deliverBotReply(originSessionId, delivery.reply, handle, handoffMention.request);
             return;
           }
 
@@ -1281,10 +1321,12 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                 provider: candidate?.provider,
               },
             }, 'assistant_message');
-            upsertHandoffState(handoffId, { status: 'completed', reply: completedReply }, originSessionId);
+            handoffObserversRef.current.delete(handoffId);
+            upsertHandoffState(handoffId, { status: 'completed', reply: completedReply }, canonicalSessionRef);
+            void deliverBotReply(originSessionId, completedReply, handle, handoffMention.request);
             return;
           }
-          handoffObserverRef.current = createHandoffObserver(
+          const observer = createHandoffObserver(
             { eventsSince: (params) => client!.eventsSince(params.last_seen) },
             {
               sessionId: runtimeId,
@@ -1310,7 +1352,9 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                   },
                 };
                 appendChatMessage(attributedReply, 'assistant_message');
-                upsertHandoffState(handoffId, { status: 'completed', reply }, originSessionId);
+                handoffObserversRef.current.delete(handoffId);
+                upsertHandoffState(handoffId, { status: 'completed', reply }, canonicalSessionRef);
+                void deliverBotReply(originSessionId, reply, handle, handoffMention.request);
               },
               onError: (message) => {
                 handoffDedupeRef.current.release(handle);
@@ -1320,7 +1364,10 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
               },
             },
           );
-          void handoffObserverRef.current.start();
+          // Keyed by handoff id so concurrent mentions in one submit cannot clobber
+          // each other; entries are dropped once the handoff reaches a terminal state.
+          handoffObserversRef.current.set(handoffId, observer);
+          void observer.start();
         } catch (err) {
           handoffDedupeRef.current.release(handle);
           client?.close();
@@ -1336,6 +1383,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         }
       };
       void runHandoff();
+      }
       return;
     }
 

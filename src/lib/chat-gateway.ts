@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { buildBotReplyDelivery } from './bot-reply-delivery';
 import {
   applyGatewayEvent,
   attachmentRpcMethod,
@@ -1487,6 +1488,40 @@ export function useGatewayChat(
     return submitAgentPrompt(text, attachments);
   }, [executeSlashCommand, submitAgentPrompt]);
 
+  /**
+   * Deliver a Bot handoff reply into the ORIGIN session via prompt.submit so it lands in
+   * SessionDB as a durable, searchable row the origin agent sees on its next turn.
+   *
+   * `originSessionId` is captured at SEND time by the caller, never re-derived here: a
+   * settling observer can fire up to BOT_RELAY_TIMEOUT_MS (~23 min) later, and by then
+   * `ensureSession()` would resolve whatever chat the user has since opened.
+   *
+   * `display_kind: 'hidden'` is the core's own concept for "model-facing scaffolding the
+   * user never typed, so never paint it". The reply is already rendered as an attributed
+   * bot-reply card, so an ordinary user row here would double-render it on resume;
+   * `normalizeTranscript` drops hidden rows (chat-protocol.ts).
+   */
+  const deliverBotReply = useCallback(async (
+    originSessionId: string,
+    replyText: string,
+    botHandle: string,
+    requestText: string,
+  ): Promise<boolean> => {
+    const payload = buildBotReplyDelivery({ originSessionId, replyText, botHandle, requestText });
+    if (!payload) return false;
+    try {
+      setRunning(true);
+      await request('prompt.submit', payload as unknown as Record<string, unknown>);
+      void refreshModel(payload.session_id);
+      return true;
+    } catch {
+      // A failed delivery must not break the MC UI — the bot-reply card is
+      // already visible and the durable handoff state already records the reply.
+      setRunning(false);
+      return false;
+    }
+  }, [refreshModel, request]);
+
   const completeSlash = useCallback(async (text: string): Promise<ChatSlashCompletionResponse> => {
     const response = await request<ChatSlashCompletionResponse>('complete.slash', { text });
     const token = text.trim().slice(1).split(/\s+/)[0]?.toLowerCase() ?? '';
@@ -1628,6 +1663,7 @@ export function useGatewayChat(
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    deliverBotReply,
     appendChatMessage,
     titleSession,
     appendSystemMessage,
