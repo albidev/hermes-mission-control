@@ -83,6 +83,9 @@ import { createHandoffObserverRegistry } from '../lib/bot-reply-delivery';
 import { canonicalChatCommand } from '../lib/bot-chat-policy';
 import { classifyHandoffFailure } from '../lib/bot-handoff-reasons';
 import { BotHandoffMessage } from './chat/BotHandoffMessage';
+import type { BotHandoffTraceState } from './chat/BotHandoffMessage';
+import { summarizeHandoffTrace } from '../lib/handoff-trace';
+import { loadMissionControlAgentTrace } from '../lib/hermes-api';
 import { claimBotHandoff, loadPersistedBotHandoffs, persistBotHandoff, type PersistedBotHandoff } from '../lib/bot-handoff-persistence';
 import { compareChatTimelineEntries } from '../lib/chat-timeline';
 import { useGroupRoom } from '../lib/use-group-room';
@@ -347,6 +350,11 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   const [botRoster, setBotRoster] = useState<BotMentionCandidate[]>([]);
   const [activeBotTarget, setActiveBotTarget] = useState<BotMentionCandidate | null>(null);
   const [handoffs, setHandoffs] = useState<PersistedBotHandoff[]>([]);
+  // Trace of each handoff's own bot turn, fetched ON DEMAND on first expand: a full Bot Chat
+  // turn can carry dozens of tool calls, so paying for it on every rendered card is waste.
+  const [handoffTraces, setHandoffTraces] = useState<Record<string, BotHandoffTraceState>>({});
+  const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
+  const traceRequestsRef = useRef(new Set<string>());
   const handoffDedupeRef = useRef(createHandoffDedupe());
   // One observer per in-flight handoff: a multi-mention submit fans out several, and a
   // single shared ref would let the last writer orphan every earlier one (its socket is
@@ -871,6 +879,9 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
             reply={item.entry.handoff.reply}
             error={item.entry.handoff.error}
             reason={item.entry.handoff.reason}
+            trace={handoffTraces[item.entry.handoff.id] ?? null}
+            traceExpanded={Boolean(expandedTraces[item.entry.handoff.id])}
+            onToggleTrace={() => toggleHandoffTrace(item.entry.handoff)}
             onRetry={item.entry.handoff.status === 'failed' && (item.entry.handoff.retryable !== false) ? async () => {
               const handoff = item.entry.handoff;
               const handle = handoff.handle;
@@ -1105,6 +1116,64 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       addFiles(files);
     }
   };
+
+  /**
+   * Load the bot's own turn trace for one handoff, on first expand.
+   *
+   * `profile` MUST be the bot's handle: the live turn is recorded in the BOT profile's
+   * SessionDB, not in the origin's — reading the wrong store returns an empty trace (the
+   * same profile-scoping trap as session resume). `handoffId` scopes it to this handoff's
+   * turn instead of the whole (shared, long-lived) Bot Chat.
+   */
+  const loadHandoffTrace = useCallback(async (handoff: PersistedBotHandoff) => {
+    if (traceRequestsRef.current.has(handoff.id)) return;
+    traceRequestsRef.current.add(handoff.id);
+    setHandoffTraces((current) => ({
+      ...current,
+      [handoff.id]: { status: 'loading', rows: [], toolCount: 0, reasoningCount: 0, headline: '' },
+    }));
+    try {
+      const snapshot = await loadMissionControlAgentTrace(
+        handoff.targetSessionId ?? undefined,
+        storedToken || undefined,
+        300,
+        true,
+        handoff.handle,
+        handoff.id,
+      );
+      const summary = summarizeHandoffTrace(snapshot.events);
+      setHandoffTraces((current) => ({
+        ...current,
+        [handoff.id]: {
+          status: summary.rows.length > 0 ? 'ready' : 'unavailable',
+          rows: summary.rows,
+          toolCount: summary.toolCount,
+          reasoningCount: summary.reasoningCount,
+          headline: summary.headline,
+          error: summary.rows.length > 0 ? undefined : (snapshot.warnings ?? [])[0],
+        },
+      }));
+    } catch (err) {
+      traceRequestsRef.current.delete(handoff.id);
+      setHandoffTraces((current) => ({
+        ...current,
+        [handoff.id]: {
+          status: 'unavailable',
+          rows: [],
+          toolCount: 0,
+          reasoningCount: 0,
+          headline: '',
+          error: err instanceof Error ? err.message : 'Trace unavailable.',
+        },
+      }));
+    }
+  }, [storedToken]);
+
+  const toggleHandoffTrace = useCallback((handoff: PersistedBotHandoff) => {
+    const willExpand = !expandedTraces[handoff.id];
+    setExpandedTraces((current) => ({ ...current, [handoff.id]: willExpand }));
+    if (willExpand && !handoffTraces[handoff.id]) void loadHandoffTrace(handoff);
+  }, [expandedTraces, handoffTraces, loadHandoffTrace]);
 
   const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>, originSessionId = sessionKey ?? sessionId ?? '') => {
     setHandoffs((current) => {
