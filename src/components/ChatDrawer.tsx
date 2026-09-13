@@ -412,6 +412,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    deliverBotReply,
     appendChatMessage,
     titleSession,
     ensureSession,
@@ -895,6 +896,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                     handoffDedupeRef.current.release(handle);
                     client.close();
                     upsertHandoffState(handoff.id, { status: 'completed', reply: delivery.reply });
+                    void deliverBotReply(delivery.reply, handle, handoff.request);
                     return;
                   }
                   const runtimeId = await client.resume(handle, canonical.registryId);
@@ -908,6 +910,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                     handoffDedupeRef.current.release(handle);
                     client.close();
                     upsertHandoffState(handoff.id, { status: 'completed', reply: completedReply });
+                    void deliverBotReply(completedReply, handle, handoff.request);
                     return;
                   }
                   handoffObserverRef.current = createHandoffObserver(
@@ -921,6 +924,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                         handoffDedupeRef.current.release(handle);
                         client?.close();
                         upsertHandoffState(handoff.id, { status: 'completed', reply });
+                        void deliverBotReply(reply, handle, handoff.request);
                       },
                       onError: (message) => {
                         handoffDedupeRef.current.release(handle);
@@ -1082,11 +1086,14 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     }
   };
 
-  const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>, originSessionId = sessionId ?? '') => {
+  const upsertHandoffState = useCallback((id: string, patch: Partial<PersistedBotHandoff>, originSessionId = sessionKey ?? sessionId ?? '') => {
     setHandoffs((current) => {
       const existing = current.find((item) => item.id === id);
       if (!existing) return current;
       const updated: PersistedBotHandoff = { ...existing, ...patch, updatedAt: Date.now() };
+      // Carry the CANONICAL session key, never the transient runtime id.
+      // Runtime ids change on each resume and may not match any SessionDB row;
+      // the canonical key is what Sessions and cross-device deep links use.
       void persistBotHandoff(storedToken, originSessionId, updated, sessionKey);
       return current.map((item) => item.id === id ? updated : item);
     });
@@ -1167,6 +1174,11 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       if (originSessionId !== sessionId) {
         originSessionId = await ensureSession(originSessionId);
       }
+      // Prefer the canonical session key for handoff persistence: runtime ids
+      // change on each resume and may not match any SessionDB row, making
+      // post-hoc lookups impossible. sessionKey is updated synchronously by
+      // ensureSession via sessionKeyRef.current.
+      const canonicalSessionRef = sessionKey ?? originSessionId;
       const handle = handoffMention.mention.slice(1);
       const candidate = botRoster.find((item) => item.handle === handle) ?? (activeBotTarget?.handle === handle ? activeBotTarget : undefined);
       // Dedupe: a second submit for the same Bot while one is in flight is
@@ -1203,7 +1215,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const claimResult = await claimBotHandoff(storedToken, originSessionId, initialHandoff);
+      const claimResult = await claimBotHandoff(storedToken, canonicalSessionRef, initialHandoff);
       if (claimResult === false) {
         handoffDedupeRef.current.release(handle);
         setAttachmentNotice('This handoff was already claimed by another Mission Control client.');
@@ -1216,19 +1228,19 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         provider: candidate?.provider,
       });
       setHandoffs((current) => [...current, initialHandoff]);
-      void persistBotHandoff(storedToken, originSessionId, initialHandoff, sessionKey);
+      void persistBotHandoff(storedToken, canonicalSessionRef, initialHandoff, sessionKey);
       setDraft('');
       const runHandoff = async (): Promise<void> => {
         let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
         try {
           client = await openHandoffClient({ accessToken: storedToken || undefined });
           const canonical = await client.resolveCanonical(handle);
-          upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, originSessionId);
+          upsertHandoffState(handoffId, { targetSessionId: canonical.openedId }, canonicalSessionRef);
           // A dashboard-local Bot Chat may still be live with a stale MCP snapshot.
           // Close only that runtime; the canonical transcript/profile remains intact.
           const staleRuntimeId = await client.resume(handle, canonical.registryId);
           await client.closeSession(staleRuntimeId);
-          upsertHandoffState(handoffId, { status: 'running' }, originSessionId);
+          upsertHandoffState(handoffId, { status: 'running' }, canonicalSessionRef);
           const delivery = await client.deliver(handle, formatHandoffPrompt(envelope));
           if (!delivery.deferred) {
             handoffDedupeRef.current.release(handle);
@@ -1249,7 +1261,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
               },
             };
             appendChatMessage(attributedReply, 'assistant_message');
-            upsertHandoffState(handoffId, { status: 'completed', reply: delivery.reply }, originSessionId);
+            upsertHandoffState(handoffId, { status: 'completed', reply: delivery.reply }, canonicalSessionRef);
+            void deliverBotReply(delivery.reply, handle, handoffMention.request);
             return;
           }
 
@@ -1281,7 +1294,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                 provider: candidate?.provider,
               },
             }, 'assistant_message');
-            upsertHandoffState(handoffId, { status: 'completed', reply: completedReply }, originSessionId);
+            upsertHandoffState(handoffId, { status: 'completed', reply: completedReply }, canonicalSessionRef);
+            void deliverBotReply(completedReply, handle, handoffMention.request);
             return;
           }
           handoffObserverRef.current = createHandoffObserver(
@@ -1310,7 +1324,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                   },
                 };
                 appendChatMessage(attributedReply, 'assistant_message');
-                upsertHandoffState(handoffId, { status: 'completed', reply }, originSessionId);
+                upsertHandoffState(handoffId, { status: 'completed', reply }, canonicalSessionRef);
+                void deliverBotReply(reply, handle, handoffMention.request);
               },
               onError: (message) => {
                 handoffDedupeRef.current.release(handle);

@@ -1487,6 +1487,39 @@ export function useGatewayChat(
     return submitAgentPrompt(text, attachments);
   }, [executeSlashCommand, submitAgentPrompt]);
 
+  /**
+   * Deliver a Bot handoff reply into the origin session via prompt.submit so
+   * it lands in SessionDB as a durable, searchable row. Unlike submitPrompt,
+   * this does NOT create an optimistic user bubble — the UI already renders
+   * the reply as a bot-reply card. The origin agent processes the text and
+   * produces its own response, which is the "attributed turn" the default
+   * profile's agent sees on resume.
+   */
+  const deliverBotReply = useCallback(async (replyText: string, botHandle: string, requestText: string): Promise<boolean> => {
+    const trimmed = replyText.trim();
+    if (!trimmed) return false;
+    try {
+      let activeSessionId = await ensureSession();
+      if (!activeSessionId) return false;
+      const promptText = [
+        `[BOT HANDOFF RESULT — @${botHandle}]`,
+        `Request: ${requestText.trim()}`,
+        '',
+        'Reply:',
+        trimmed,
+      ].join('\n');
+      setRunning(true);
+      await request('prompt.submit', { session_id: activeSessionId, text: promptText });
+      void refreshModel(activeSessionId);
+      return true;
+    } catch {
+      // A failed delivery must not break the MC UI — the bot-reply card is
+      // already visible and the durable handoff state already records the reply.
+      setRunning(false);
+      return false;
+    }
+  }, [ensureSession, refreshModel, request]);
+
   const completeSlash = useCallback(async (text: string): Promise<ChatSlashCompletionResponse> => {
     const response = await request<ChatSlashCompletionResponse>('complete.slash', { text });
     const token = text.trim().slice(1).split(/\s+/)[0]?.toLowerCase() ?? '';
@@ -1628,6 +1661,7 @@ export function useGatewayChat(
     completeSlash,
     clearCommandPrefill,
     submitPrompt,
+    deliverBotReply,
     appendChatMessage,
     titleSession,
     appendSystemMessage,
