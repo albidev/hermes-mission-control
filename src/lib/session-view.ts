@@ -95,7 +95,10 @@ export function getSessionActionAvailability(session: SessionLike): {
   return {
     resumeChat: origin.resumable,
     trace: traceAvailable,
-    inspect: traceAvailable,
+    // Searching a session's content does not require a live trace: a session whose
+    // stream is unavailable is exactly the one you search instead. Coupling inspect
+    // to traceAvailable removed the only way into those sessions.
+    inspect: true,
   };
 }
 

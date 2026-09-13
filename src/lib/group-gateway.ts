@@ -76,6 +76,13 @@ export function normalizeGroupRoom(value: unknown): GroupRoom {
 
 function normalizeEventTime(value: unknown): number | null {
   if (typeof value !== 'number' && typeof value !== 'string') return null;
+  // ISO-8601 is a legitimate wire form (and what the hosted rooms emit for
+  // human-authored events); Number() cannot parse it, so accept it via Date.parse
+  // rather than silently degrading the timestamp to null.
+  if (typeof value === 'string' && !/^\d+(\.\d+)?$/.test(value.trim())) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
   const numeric = typeof value === 'string' ? Number(value) : value;
   if (!Number.isFinite(numeric) || numeric <= 0) return null;
   // Hosted rooms emit unix seconds (~1.7e9); canonical chat rows use ms (~1.7e12).

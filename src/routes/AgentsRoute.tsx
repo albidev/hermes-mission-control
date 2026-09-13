@@ -884,10 +884,12 @@ export function AgentsRoute() {
                   {t('agents.fullChain')}
                 </h3>
               </div>
-              <button type="button" aria-pressed={liveMode} className={`pill pill-button shrink-0 whitespace-nowrap !min-h-9 !min-w-0 px-2.5 text-xs ${liveMode ? 'status-online' : 'pill-subtle'}`} onClick={() => setLiveMode((v) => !v)}>
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${liveMode ? 'bg-positive animate-pulse' : 'bg-text-subtle'}`} />
-                {liveMode ? t('agents.live') : t('agents.post')}
-              </button>
+              <div role="group" aria-label={t('agents.stream')} className="shrink-0">
+                <button type="button" aria-pressed={liveMode} className={`pill pill-button shrink-0 whitespace-nowrap !min-h-9 !min-w-0 px-2.5 text-xs ${liveMode ? 'status-online' : 'pill-subtle'}`} onClick={() => setLiveMode((v) => !v)}>
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${liveMode ? 'bg-positive animate-pulse' : 'bg-text-subtle'}`} />
+                  {liveMode ? t('agents.live') : t('agents.post')}
+                </button>
+              </div>
             </div>
 
             <div className="flex min-w-0 max-w-full flex-col gap-2 rounded-lg border border-border-subtle bg-surface/50 p-2">

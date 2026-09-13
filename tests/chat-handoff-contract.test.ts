@@ -63,7 +63,8 @@ assert.equal(
 // An explicit claim carries the known revision. If another client won first,
 // the stale candidate must adopt that canonical pointer instead of overwriting.
 const newerPointer: ServerLastChat = { ...desktopPointer, sessionId: 'desktop-session-2', revision: 5 };
-const staleClaim = buildLastChatClaimPayload('stale-iphone', 'stale-key', null, desktopPointer.revision);
+// buildLastChatClaimPayload(sessionId, sessionKey, sessionTitle, modelIdentity, expectedRevision, profile?)
+const staleClaim = buildLastChatClaimPayload('stale-iphone', 'stale-key', null, null, desktopPointer.revision);
 assert.equal(staleClaim.expectedRevision, 4);
 assert.equal(shouldAdoptServerPointer({ sessionId: 'stale-iphone', revision: 4 }, newerPointer), true);
 assert.equal(canClaimLastChatPointer('submit'), true);
