@@ -101,6 +101,8 @@
   "bots.handoff.traceLoading": "Carico l'attività del bot…",
   "bots.handoff.traceUnavailable": "Nessuna attività registrata per questo handoff.",
   "bots.handoff.traceReasoning": "Ragionamento",
+  "bots.handoff.traceInput": "Input",
+  "bots.handoff.traceOutput": "Output",
   "nav.aria": "Navigazione Mission Control",
   "nav.routesAria": "Percorsi Mission Control",
   "nav.expandSidebar": "Espandi navigazione",

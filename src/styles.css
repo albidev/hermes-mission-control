@@ -5906,6 +5906,21 @@ button {
   flex: 1 1 auto;
 }
 
+.bot-handoff-trace-io {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-left: 0.4rem;
+  border-left: 2px solid var(--color-border-subtle);
+}
+
+.bot-handoff-trace-io > .chat-tool-section-label {
+  color: var(--color-text-subtle);
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .room-tool-inline {
   display: flex;
   flex-direction: column;

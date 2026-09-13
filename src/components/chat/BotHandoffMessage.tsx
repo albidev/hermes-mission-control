@@ -93,13 +93,23 @@ export function BotHandoffMessage({ handle, displayName, model, provider, reques
                 <pre>{row.text}</pre>
               </div>
             ) : (
-              <div key={row.id} className="chat-tool-section chat-tool-payload">
+              <div key={row.id} className="chat-tool-section bot-handoff-trace-tool">
                 <span className="chat-tool-section-label">
                   <span>{row.toolName}</span>
                   <span className="chat-tool-section-meta">{row.durationSeconds !== null ? `${row.durationSeconds}s` : row.status}</span>
                 </span>
-                {row.input ? <pre>{row.input}</pre> : null}
-                {row.output ? <pre>{row.output}</pre> : null}
+                {row.input ? (
+                  <div className="chat-tool-payload bot-handoff-trace-io">
+                    <span className="chat-tool-section-label"><span>{t('bots.handoff.traceInput')}</span></span>
+                    <pre>{row.input}</pre>
+                  </div>
+                ) : null}
+                {row.output ? (
+                  <div className="chat-tool-payload bot-handoff-trace-io">
+                    <span className="chat-tool-section-label"><span>{t('bots.handoff.traceOutput')}</span></span>
+                    <pre>{row.output}</pre>
+                  </div>
+                ) : null}
               </div>
             ))}
           </ToolRunSummary>
