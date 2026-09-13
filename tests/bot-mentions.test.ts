@@ -3,6 +3,7 @@ import { strict as assert } from 'node:assert';
 import {
   findMentionAtCaret,
   extractMentionRequest,
+  extractMentionRequests,
   type BotMentionCandidate,
 } from '../src/lib/bot-mentions.ts';
 
@@ -78,5 +79,16 @@ describe('extractMentionRequest', () => {
   it('matches handle case-insensitively and returns canonical casing', () => {
     const parsed = extractMentionRequest('@Example Bot fai x', ROSTER);
     assert.strictEqual(parsed?.mention, '@example-bot');
+  });
+});
+
+describe('extractMentionRequests', () => {
+  it('resolves each mention with only its own trailing text', () => {
+    const parsed = extractMentionRequests('@example-bot e @bdhidentity cosa ne pensate?', ROSTER);
+    assert.deepStrictEqual(parsed, [
+      { mention: '@example-bot', request: 'e' },
+      { mention: '@bdhidentity', request: 'cosa ne pensate?' },
+    ]);
+    assert.ok(parsed.every((item) => !item.request.includes('@')));
   });
 });

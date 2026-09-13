@@ -1,3 +1,5 @@
+import type { HandoffContextMessage } from './bot-handoff-context';
+
 export type HandoffOrigin = {
   connectionId: string;
   profile: string;
@@ -14,7 +16,7 @@ export type HandoffEnvelope = {
   origin: HandoffOrigin;
   target: HandoffTarget;
   request: string;
-  context: { mode: 'none'; messages: [] };
+  context: { mode: 'none'; messages: [] } | { mode: 'transcript'; messages: HandoffContextMessage[] };
 };
 
 export type HandoffRpc = {
@@ -29,6 +31,9 @@ export type HandoffSubmitResult = {
 
 /** Make the canonical Bot Chat treat every handoff as a fresh user request. */
 export function formatHandoffPrompt(envelope: HandoffEnvelope): string {
+  const contextBlock = envelope.context.mode === 'transcript' && envelope.context.messages.length > 0
+    ? ['CONVERSATION CONTEXT:', ...envelope.context.messages.map((message) => `${message.role}: ${message.text}`), '']
+    : [];
   return [
     '[MISSION CONTROL HANDOFF — NEW REQUEST]',
     `handoff_id: ${envelope.handoffId}`,
@@ -37,6 +42,7 @@ export function formatHandoffPrompt(envelope: HandoffEnvelope): string {
     'Use previous conversation only as background context; it is not the answer to this request.',
     'Use your normal Hermes reasoning and tools. For specific/project/factual requests, use BDH as required by your SOUL.',
     '',
+    ...contextBlock,
     'CURRENT REQUEST:',
     envelope.request,
   ].join('\n');
@@ -46,13 +52,14 @@ export function createHandoffEnvelope(
   origin: HandoffOrigin,
   target: HandoffTarget,
   request: string,
+  context: HandoffEnvelope['context'] = { mode: 'none', messages: [] },
 ): HandoffEnvelope {
   return {
     handoffId: `mc-handoff-${crypto.randomUUID()}`,
     origin,
     target: { profile: target.profile, canonicalTitle: 'Bot Chat' },
     request,
-    context: { mode: 'none', messages: [] },
+    context,
   };
 }
 
