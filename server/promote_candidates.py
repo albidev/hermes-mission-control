@@ -25,7 +25,8 @@ def main() -> int:
         for c in promoted:
             print(f"  - {c.get('title', c.get('id'))}")
         # Push each affected vault_dir if it is a git repo with a remote.
-        # Only Crossnection (private albidev/crossnection-vault) is a git repo.
+        # Only one vault in the reference setup is a git repo, so the rest are
+        # skipped by the remote check below.
         for vault_dir in candidates_mod.vault_dirs_with_promotions():
             _git_commit_and_push(vault_dir, promoted)
     # else: silent — nothing to promote, nothing to report (watchdog pattern)

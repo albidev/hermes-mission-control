@@ -95,33 +95,33 @@ class RoomToolStoreTests(unittest.TestCase):
         self.root = tempfile.TemporaryDirectory()
         self.state = Path(self.root.name) / "state.db"
         self.profiles = {
-            "crossnection": Path(self.root.name) / "profiles" / "crossnection" / "state.db",
-            "crossnection-triage": Path(self.root.name) / "profiles" / "crossnection-triage" / "state.db",
+            "example-bot": Path(self.root.name) / "profiles" / "example-bot" / "state.db",
+            "example-bot-ops": Path(self.root.name) / "profiles" / "example-bot-ops" / "state.db",
         }
-        self.profiles["crossnection"].parent.mkdir(parents=True)
-        self.profiles["crossnection-triage"].parent.mkdir(parents=True)
+        self.profiles["example-bot"].parent.mkdir(parents=True)
+        self.profiles["example-bot-ops"].parent.mkdir(parents=True)
         members = [
-            {"member_id": "m0", "profile": "crossnection", "handle": "crossnection"},
-            {"member_id": "m1", "profile": "crossnection-triage", "handle": "crossnection-triage"},
+            {"member_id": "m0", "profile": "example-bot", "handle": "example-bot"},
+            {"member_id": "m1", "profile": "example-bot-ops", "handle": "example-bot-ops"},
         ]
         _write_db(
             self.state,
             [("room-1", "Triage IN-202", members), ("room-2", "Empty", [{"member_id": "m2", "profile": "empty", "handle": "empty"}])],
             {},
         )
-        _write_profile_db(self.profiles["crossnection"], "sess-crossnection", "Group: room-1", [
+        _write_profile_db(self.profiles["example-bot"], "sess-example-bot", "Group: room-1", [
             # one call row (assistant) + one tool row
             ("assistant", None, None,
-             json.dumps([{"function": {"name": "skill_view", "arguments": "{\"name\":\"jira-crossnection\"}"}}]),
+             json.dumps([{"function": {"name": "skill_view", "arguments": "{\"name\":\"jira-example\"}"}}]),
              100.0),
-            ("tool", "skill_view", "{\"success\": true, \"name\": \"jira-crossnection\"}", None, 101.0),
+            ("tool", "skill_view", "{\"success\": true, \"name\": \"jira-example\"}", None, 101.0),
             # TUI wrapper 'tool_call' must be translated to the real name
             ("assistant", None, None,
              json.dumps([{"function": {"name": "tool_call", "arguments": "{\"name\":\"mcp__atlassian__getJiraIssue\",\"arguments\":{}}"}}]),
              200.0),
             ("tool", "mcp__atlassian__getJiraIssue", "<untrusted result>", None, 201.0),
         ])
-        _write_profile_db(self.profiles["crossnection-triage"], "sess-triage", "Group: room-1", [
+        _write_profile_db(self.profiles["example-bot-ops"], "sess-triage", "Group: room-1", [
             ("tool", "bdh_query", "{\"error\": \"BDH down\"}", None, 150.0),
         ])
 
@@ -147,10 +147,10 @@ class RoomToolStoreTests(unittest.TestCase):
         self.assertNotIn("tool_call", names)
         self.assertIn("bdh_query", names)
         skill = next(t for t in triage["tools"] if t["toolName"] == "skill_view")
-        self.assertEqual(skill["toolInput"], "{\"name\":\"jira-crossnection\"}")
+        self.assertEqual(skill["toolInput"], "{\"name\":\"jira-example\"}")
         self.assertIn("success", skill["output"])
         self.assertGreaterEqual(skill.get("durationS", 0), 0.1)
-        self.assertEqual(skill["memberHandle"], "crossnection")
+        self.assertEqual(skill["memberHandle"], "example-bot")
         empty = rooms["Empty"]
         self.assertEqual(empty["tools"], [])
 
@@ -193,7 +193,7 @@ class RoomToolStoreTests(unittest.TestCase):
         with patch.object(room_tool_store, "room_store_path", return_value=self.state), \
              patch.object(room_tool_store, "profile_store_path", side_effect=self._profile_path):
             traces = room_tool_store._member_tool_rows(
-                {"profile": "crossnection", "handle": "crossnection", "display_name": "crossnection"}, "room-1"
+                {"profile": "example-bot", "handle": "example-bot", "display_name": "example-bot"}, "room-1"
             )
 
         self.assertEqual(len(traces), 2)

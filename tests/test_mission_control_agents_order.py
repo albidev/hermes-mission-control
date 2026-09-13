@@ -30,7 +30,7 @@ class MissionControlSessionOrderTests(unittest.TestCase):
                 return [], [{
                     "_row_id": 77,
                     "role": "assistant",
-                    "content": "Crossconnection reply",
+                    "content": "Example Bot reply",
                     "timestamp": 1789047549.0,
                 }]
 
@@ -40,19 +40,19 @@ class MissionControlSessionOrderTests(unittest.TestCase):
 
         with patch.object(mission_control_agents, "_try_get_session_db", side_effect=open_db):
             payload = mission_control_agents.load_chat_transcript(
-                "bot-session", "bot-session-key", profile="crossnection"
+                "bot-session", "bot-session-key", profile="example-bot"
             )
 
-        self.assertEqual(calls, ["crossnection"])
+        self.assertEqual(calls, ["example-bot"])
         self.assertEqual(payload["sessionId"], "bot-session-key")
         self.assertEqual(payload["count"], 1)
-        self.assertEqual(payload["messages"][0]["content"], "Crossconnection reply")
+        self.assertEqual(payload["messages"][0]["content"], "Example Bot reply")
 
     def test_runtime_presence_overlays_canonical_session_key_in_its_profile(self):
         canonical = {
             "sessionId": "stored-bot-session",
             "sessionKey": "stored-bot-session",
-            "profile": "crossnection",
+            "profile": "example-bot",
             "status": "idle",
             "endedAt": 1,
             "lastActiveAt": 1,
@@ -62,13 +62,13 @@ class MissionControlSessionOrderTests(unittest.TestCase):
             "runtimeSessionId": "runtime-alias",
             "resumedFrom": "stored-bot-session",
             "sessionKey": "stored-bot-session",
-            "profile": "crossnection",
+            "profile": "example-bot",
             "updatedAt": 2,
             "source": "mission-control",
         }
         with patch.object(mission_control_agents, "active_runtime_presences", return_value=[presence]):
             items = [dict(canonical)]
-            mission_control_agents._apply_runtime_presence(items, profile="crossnection")
+            mission_control_agents._apply_runtime_presence(items, profile="example-bot")
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0]["messageCount"], 42)
             self.assertEqual(items[0]["runtimeSessionId"], "runtime-alias")
@@ -100,10 +100,10 @@ class MissionControlSessionOrderTests(unittest.TestCase):
             patch.object(mission_control_agents, "_read_gateway_sessions_index", return_value={}),
         ):
             payload = mission_control_agents.load_agent_trace_snapshot(
-                session_id="bot-session", profile="crossnection", limit=20, compact=True
+                session_id="bot-session", profile="example-bot", limit=20, compact=True
             )
 
-        self.assertEqual(calls, ["crossnection"])
+        self.assertEqual(calls, ["example-bot"])
         self.assertTrue(payload["available"])
         self.assertEqual(payload["traceMode"], "native")
         self.assertGreater(len(payload["events"]), 0)
@@ -273,12 +273,12 @@ class MissionControlSessionOrderTests(unittest.TestCase):
                     "last_active": "2026-08-28T10:00:00+00:00",
                 },
                 300,
-                bot_profiles=["crossnection"],
+                bot_profiles=["example-bot"],
             )
 
         self.assertEqual(item["category"], "conversation")
         self.assertEqual(item["originLabel"], "Desktop")
-        self.assertEqual(item["botProfiles"], ["crossnection"])
+        self.assertEqual(item["botProfiles"], ["example-bot"])
         self.assertTrue(item["isResumable"])
 
     def test_session_item_exposes_canonical_origin_metadata(self):

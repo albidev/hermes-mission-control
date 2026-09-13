@@ -95,4 +95,4 @@ The "last room I had open" is shared across devices like the last chat:
 
 Dedicated suite in `tests/`: `bot-chat-routing.test.ts`, `bot-chat-policy.test.ts`, `bot-handoff*.test.ts`, `bot-lineage.test.ts`, `bot-mentions.test.ts`, `bot-create.test.ts`, `bot-gateway.test.ts`, `group-gateway.test.ts`, `group-room*.test.ts`, `chat-ui-contract.test.ts`, plus server-side stores (`server/tests/test_chat_handoff_store.py`, `test_chat_title_store.py`, `test_last_chat_store.py`, `test_last_room_store.py`, `test_room_tool_store.py`).
 
-> Implemented in PR #51 (merged 2026-09-12, merge commit `bac8ad7`). Feature history (original bot handoff proposal) lives in the vault: `projects/hermes-mission-control/sections/bot-crossconnection.md` — this doc is the living reference.
+> Implemented in PR #51 (merged 2026-09-12, merge commit `bac8ad7`). Feature history (original bot handoff proposal) lives in the vault; this doc is the living reference.

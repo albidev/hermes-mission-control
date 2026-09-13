@@ -24,7 +24,7 @@ class ChatHandoffStoreTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_upsert_is_durable_and_deduplicated_by_handoff_id(self) -> None:
-        queued = {"id": "handoff-1", "handle": "crossnection", "status": "queued", "request": "Pentair?", "updatedAt": 1}
+        queued = {"id": "handoff-1", "handle": "example-bot", "status": "queued", "request": "Example Corp?", "updatedAt": 1}
         completed = {**queued, "status": "completed", "reply": "A synthesized answer.", "updatedAt": 2}
         chat_handoff_store.upsert_handoff("origin-session", queued)
         chat_handoff_store.upsert_handoff("origin-session", completed)

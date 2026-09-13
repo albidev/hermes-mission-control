@@ -7,8 +7,8 @@ import {
 } from '../src/lib/bot-chat-policy.ts';
 
 test('canonical identity is profile plus Bot Chat title', () => {
-  assert.deepEqual(canonicalChatIdentity(' CrossConnection '), {
-    profile: 'CrossConnection',
+  assert.deepEqual(canonicalChatIdentity(' ExampleBot '), {
+    profile: 'ExampleBot',
     title: 'Bot Chat',
   });
 });

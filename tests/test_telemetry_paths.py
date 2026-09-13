@@ -167,9 +167,9 @@ class TelemetryPathResolutionTests(unittest.TestCase):
             "vaults:\n"
             "  core:\n"
             "    label: Core\n"
-            "  crossnection:\n"
-            "    label: Crossconnection\n"
-            "    candidates_dir: /tmp/crossnection-candidates\n",
+            "  example-bot:\n"
+            "    label: Example Bot\n"
+            "    candidates_dir: /tmp/example-bot-candidates\n",
             encoding="utf-8",
         )
         (self._hermes_home / "vault-routing.yaml").write_text(
@@ -182,8 +182,8 @@ class TelemetryPathResolutionTests(unittest.TestCase):
             "    writable: true\n"
             "    routes:\n"
             "      review_inbox: memory/inbox\n"
-            "  crossnection:\n"
-            "    name: Crossconnection\n"
+            "  example-bot:\n"
+            "    name: Example Bot\n"
             "    writable: true\n"
             "    routes:\n"
             "      bdh_candidate: memory/learned\n"
@@ -196,7 +196,7 @@ class TelemetryPathResolutionTests(unittest.TestCase):
             vaults = candidates_module.list_vaults()
         self.assertEqual(
             [vault["id"] for vault in vaults],
-            ["core", "episodic", "crossnection", "morning-signal"],
+            ["core", "episodic", "example-bot", "morning-signal"],
         )
         by_id = {vault["id"]: vault for vault in vaults}
         self.assertEqual(by_id["core"]["mode"], "candidates")
@@ -204,11 +204,11 @@ class TelemetryPathResolutionTests(unittest.TestCase):
         self.assertEqual(by_id["episodic"]["mode"], "review_only")
         self.assertTrue(by_id["episodic"]["review_enabled"])
         self.assertFalse(by_id["episodic"]["candidate_enabled"])
-        self.assertEqual(by_id["crossnection"]["mode"], "candidates")
+        self.assertEqual(by_id["example-bot"]["mode"], "candidates")
         self.assertEqual(by_id["morning-signal"]["mode"], "read_only")
         self.assertTrue(by_id["morning-signal"]["read_only"])
         self.assertTrue(candidates_module.can_curate("core"))
-        self.assertTrue(candidates_module.can_curate("crossnection"))
+        self.assertTrue(candidates_module.can_curate("example-bot"))
         self.assertFalse(candidates_module.can_curate("episodic"))
         self.assertFalse(candidates_module.can_curate("morning-signal"))
         self.assertEqual(candidates_module.list_candidates(vault="episodic"), [])

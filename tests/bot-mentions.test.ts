@@ -7,7 +7,7 @@ import {
 } from '../src/lib/bot-mentions.ts';
 
 const ROSTER: BotMentionCandidate[] = [
-  { handle: 'crossnection', displayName: 'Crossnection', description: 'Technical orchestrator' },
+  { handle: 'example-bot', displayName: 'Example Bot', description: 'Technical orchestrator' },
   { handle: 'bdhidentity', displayName: 'BDH Identity', description: 'Vault semantics' },
   { handle: 'bdhverifier', displayName: 'BDH Verifier', description: 'Verification' },
 ];
@@ -19,13 +19,13 @@ describe('findMentionAtCaret', () => {
     assert.strictEqual(match.start, 4);
     assert.strictEqual(match.end, 8);
     assert.strictEqual(match.query, 'cro');
-    assert.deepStrictEqual(match.matches.map((c) => c.handle), ['crossnection']);
+    assert.deepStrictEqual(match.matches.map((c) => c.handle), ['example-bot']);
   });
 
   it('matches case-insensitively', () => {
     const match = findMentionAtCaret('@CROSS', 6, ROSTER);
     assert.ok(match);
-    assert.deepStrictEqual(match.matches.map((c) => c.handle), ['crossnection']);
+    assert.deepStrictEqual(match.matches.map((c) => c.handle), ['example-bot']);
   });
 
   it('returns null for email-like token without boundary', () => {
@@ -44,23 +44,23 @@ describe('findMentionAtCaret', () => {
     const match = findMentionAtCaret('@', 1, ROSTER);
     assert.ok(match);
     assert.strictEqual(match.query, '');
-    assert.deepStrictEqual(match.matches.map((c) => c.handle), ['crossnection', 'bdhidentity', 'bdhverifier']);
+    assert.deepStrictEqual(match.matches.map((c) => c.handle), ['example-bot', 'bdhidentity', 'bdhverifier']);
   });
 
   it('returns null when caret is not at the mention token', () => {
-    assert.strictEqual(findMentionAtCaret('@crossnection poi', 17, ROSTER), null);
+    assert.strictEqual(findMentionAtCaret('@example-bot poi', 17, ROSTER), null);
   });
 });
 
 describe('extractMentionRequest', () => {
   it('extracts mention and trailing request', () => {
-    const parsed = extractMentionRequest('@crossnection analizza questo trace', ROSTER);
-    assert.deepStrictEqual(parsed, { mention: '@crossnection', request: 'analizza questo trace' });
+    const parsed = extractMentionRequest('@example-bot analizza questo trace', ROSTER);
+    assert.deepStrictEqual(parsed, { mention: '@example-bot', request: 'analizza questo trace' });
   });
 
   it('extracts mention in the middle of the input', () => {
-    const parsed = extractMentionRequest('fai questo @crossnection poi dimmi', ROSTER);
-    assert.deepStrictEqual(parsed, { mention: '@crossnection', request: 'poi dimmi' });
+    const parsed = extractMentionRequest('fai questo @example-bot poi dimmi', ROSTER);
+    assert.deepStrictEqual(parsed, { mention: '@example-bot', request: 'poi dimmi' });
   });
 
   it('returns null for email-like text', () => {
@@ -72,11 +72,11 @@ describe('extractMentionRequest', () => {
   });
 
   it('returns null when roster is empty', () => {
-    assert.strictEqual(extractMentionRequest('@crossnection fai x', []), null);
+    assert.strictEqual(extractMentionRequest('@example-bot fai x', []), null);
   });
 
   it('matches handle case-insensitively and returns canonical casing', () => {
-    const parsed = extractMentionRequest('@CrossNection fai x', ROSTER);
-    assert.strictEqual(parsed?.mention, '@crossnection');
+    const parsed = extractMentionRequest('@Example Bot fai x', ROSTER);
+    assert.strictEqual(parsed?.mention, '@example-bot');
   });
 });

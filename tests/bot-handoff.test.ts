@@ -19,12 +19,12 @@ function makeRpc(record: { submits: Array<{ session_id: string; text: string }> 
 
 describe('createHandoffEnvelope', () => {
   it('builds a scoped envelope with unique handoffId', () => {
-    const a = createHandoffEnvelope(ORIGIN, { profile: 'crossnection' }, 'analizza questo trace');
-    const b = createHandoffEnvelope(ORIGIN, { profile: 'crossnection' }, 'analizza questo trace');
+    const a = createHandoffEnvelope(ORIGIN, { profile: 'example-bot' }, 'analizza questo trace');
+    const b = createHandoffEnvelope(ORIGIN, { profile: 'example-bot' }, 'analizza questo trace');
     assert.match(a.handoffId, /^mc-handoff-/);
     assert.notStrictEqual(a.handoffId, b.handoffId);
     assert.deepStrictEqual(a.origin, ORIGIN);
-    assert.deepStrictEqual(a.target, { profile: 'crossnection', canonicalTitle: 'Bot Chat' });
+    assert.deepStrictEqual(a.target, { profile: 'example-bot', canonicalTitle: 'Bot Chat' });
     assert.strictEqual(a.request, 'analizza questo trace');
     assert.deepStrictEqual(a.context, { mode: 'none', messages: [] });
   });
@@ -51,11 +51,11 @@ describe('submitHandoff', () => {
   it('resolves canonical target before submit and sends request text', async () => {
     const record = { submits: [] as Array<{ session_id: string; text: string }> };
     const rpc = makeRpc(record);
-    const envelope = createHandoffEnvelope(ORIGIN, { profile: 'crossnection' }, 'analizza questo trace');
+    const envelope = createHandoffEnvelope(ORIGIN, { profile: 'example-bot' }, 'analizza questo trace');
     const result = await submitHandoff(rpc, envelope);
-    assert.strictEqual(result.openedId, 'run-crossnection');
+    assert.strictEqual(result.openedId, 'run-example-bot');
     assert.strictEqual(record.submits.length, 1);
-    assert.strictEqual(record.submits[0].session_id, 'run-crossnection');
+    assert.strictEqual(record.submits[0].session_id, 'run-example-bot');
     assert.match(record.submits[0].text, /\[MISSION CONTROL HANDOFF — NEW REQUEST\]/);
     assert.match(record.submits[0].text, /Answer the CURRENT REQUEST directly/);
     assert.match(record.submits[0].text, /CURRENT REQUEST:\nanalizza questo trace/);
@@ -65,7 +65,7 @@ describe('submitHandoff', () => {
     const record = { submits: [] as Array<{ session_id: string; text: string }> };
     const rpc = makeRpc(record);
     const dedupe = createHandoffDedupe();
-    const envelope = createHandoffEnvelope(ORIGIN, { profile: 'crossnection' }, 'fai x');
+    const envelope = createHandoffEnvelope(ORIGIN, { profile: 'example-bot' }, 'fai x');
     const first = await submitHandoff(rpc, envelope, dedupe);
     assert.strictEqual(first.submitted, true);
     const second = await submitHandoff(rpc, envelope, dedupe);
@@ -80,7 +80,7 @@ describe('submitHandoff', () => {
       submit: async () => { throw new Error('gateway down'); },
     };
     const dedupe = createHandoffDedupe();
-    const envelope = createHandoffEnvelope(ORIGIN, { profile: 'crossnection' }, 'fai x');
+    const envelope = createHandoffEnvelope(ORIGIN, { profile: 'example-bot' }, 'fai x');
     await assert.rejects(() => submitHandoff(rpc, envelope, dedupe), /gateway down/);
     assert.strictEqual(dedupe.tryClaim(envelope.handoffId), true);
   });
