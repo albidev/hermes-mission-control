@@ -34,7 +34,7 @@ assert.deepEqual(buildLastChatClaimPayload('sid', 'key', null, null), {
   sessionKey: 'key',
   modelIdentity: null,
 });
-assert.equal(buildLastChatClaimPayload('sid', 'key', null, 8).expectedRevision, 8);
+assert.equal(buildLastChatClaimPayload('sid', 'key', null, null, 8).expectedRevision, 8);
 assert.equal(shouldAdoptServerPointer(local, server), true);
 assert.equal(shouldAdoptServerPointer({ ...local, sessionId: server.sessionId, revision: 8 }, server), false);
 assert.equal(serverPointerMatchesRequestedSession('canonical-server', server), true);
