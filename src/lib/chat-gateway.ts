@@ -55,7 +55,8 @@ import {
 } from './chat-interactions';
 import { recordReloadDiagnostic } from './reload-diagnostics';
 import { publishChatRuntimePresence } from './chat-runtime-presence';
-import { addChatProfile } from './chat-session-params';
+import { addChatProfile, nextSessionProfile, resolveSessionOwner } from './chat-session-params';
+import { loadMissionControlSessionPreview } from './hermes-api';
 
 // Backward-compatible re-export for ChatDrawer consumers during the gateway split.
 export { interactionTitle };
@@ -124,6 +125,30 @@ async function loadCanonicalTranscript(
     messages: normalizeTranscript(payload.messages),
     sessionTitle: payload.sessionTitle ?? null,
   };
+}
+
+/**
+ * Resolve the owning profile of a session from the sessions index.
+ *
+ * Session ids live in exactly one profile's state.db. A deep link carries the
+ * profile in `?botProfile=`, but a resume reached from a persisted pointer, a
+ * cross-device link, or a stale URL has no profile in hand — without one the
+ * transcript lookup hits the default store, misses, and the drawer shows an
+ * empty conversation. The index already knows the owner, so ask it.
+ *
+ * Returns null when the session is not profile-scoped (the default profile) or
+ * cannot be resolved; the caller then simply leaves the current value alone.
+ */
+async function resolveSessionProfile(accessToken: string, sessionId: string | null): Promise<string | null> {
+  const reference = sessionId?.trim();
+  if (!reference || !accessToken) return null;
+  try {
+    const item = await loadMissionControlSessionPreview(accessToken, reference);
+    return resolveSessionOwner(item);
+  } catch {
+    // Best effort: a miss leaves the existing profile untouched.
+    return null;
+  }
 }
 
 function applyLiveGatewayEvent(messages: ChatMessage[], event: GatewayEvent): ChatMessage[] {
@@ -238,7 +263,12 @@ export function useGatewayChat(
 
   useEffect(() => {
     const requested = initialSessionId?.trim() || null;
-    if (requested) sessionProfileRef.current = botProfile?.trim() || null;
+    // A resume of an existing session must not discard a profile we already
+    // know: the session id lives in one profile's state.db, and dropping the
+    // profile sends the resume (and every later transcript fetch) to the
+    // default store, where it misses and the drawer falls back to an empty
+    // preview — the "I open a chat and it empties" symptom.
+    sessionProfileRef.current = nextSessionProfile(sessionProfileRef.current, botProfile, Boolean(requested));
     requestedSessionIdRef.current = requested;
     previewModeRef.current = Boolean(requested);
     setPreviewMode(Boolean(requested));
@@ -709,6 +739,13 @@ export function useGatewayChat(
     const existingKey = sessionKeyRef.current || explicitSessionId || requestedSessionIdRef.current || sessionIdRef.current;
     const isExplicitResume = Boolean(explicitSessionId);
     if (existingKey) {
+      // A resume without a known profile resolves the owner first: the id lives
+      // in exactly one profile's store, and resuming against the wrong one
+      // 4007s (or comes back empty) for a session the index can see.
+      if (!sessionProfileRef.current) {
+        const owner = await resolveSessionProfile(storedToken, existingKey);
+        if (owner) sessionProfileRef.current = owner;
+      }
       try {
         const resumed = await request<unknown>('session.resume', addChatProfile({
           session_id: existingKey,
@@ -762,7 +799,7 @@ export function useGatewayChat(
     sessionKeyRef.current = createdSessionKey;
     setRunning(false);
     return createdSessionId;
-  }, [adoptModel, hydrateSessionSnapshot, initialSessionId, request]);
+  }, [adoptModel, hydrateSessionSnapshot, initialSessionId, request, storedToken]);
 
   const clearPendingPrompt = useCallback(() => {
     pendingPromptRef.current = null;
