@@ -48,6 +48,81 @@ class MissionControlSessionOrderTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["messages"][0]["content"], "Example Bot reply")
 
+    def test_tool_rows_expose_the_result_separately_from_the_arguments(self):
+        """A tool row's `content` is the RESULT. The client reads `content` as the input
+        fallback and the result from `result_text`, so emitting the result as `content`
+        rendered the output under the label "Input" and left "Output" empty."""
+
+        class FakeDb:
+            def resolve_resume_session_id(self, session_id):
+                return session_id
+
+            def get_resume_conversations(self, session_id):
+                return [], [
+                    {
+                        "_row_id": 1,
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call_a",
+                            "function": {"name": "skill_view", "arguments": '{"name":"graphify"}'},
+                        }],
+                    },
+                    {
+                        "_row_id": 2,
+                        "role": "tool",
+                        "tool_call_id": "call_a",
+                        "tool_name": "skill_view",
+                        "content": '{"success":true,"description":"long result"}',
+                    },
+                ]
+
+        with patch.object(mission_control_agents, "_try_get_session_db", return_value=FakeDb()):
+            payload = mission_control_agents.load_chat_transcript("s", "s")
+
+        tool_row = next(m for m in payload["messages"] if m["role"] == "tool")
+        self.assertEqual(tool_row["result_text"], '{"success":true,"description":"long result"}')
+        self.assertEqual(tool_row["content"], '{"name":"graphify"}')
+
+    def test_tool_rows_without_a_matching_call_still_carry_their_result(self):
+        class FakeDb:
+            def resolve_resume_session_id(self, session_id):
+                return session_id
+
+            def get_resume_conversations(self, session_id):
+                return [], [{
+                    "_row_id": 5,
+                    "role": "tool",
+                    "tool_call_id": "call_missing",
+                    "tool_name": "terminal",
+                    "content": '{"output":"done"}',
+                }]
+
+        with patch.object(mission_control_agents, "_try_get_session_db", return_value=FakeDb()):
+            payload = mission_control_agents.load_chat_transcript("s", "s")
+
+        tool_row = next(m for m in payload["messages"] if m["role"] == "tool")
+        self.assertEqual(tool_row["result_text"], '{"output":"done"}', "the result must survive a missing call")
+        self.assertEqual(tool_row["content"], "", "no arguments are known, but never the result")
+
+    def test_non_tool_rows_keep_content_untouched(self):
+        class FakeDb:
+            def resolve_resume_session_id(self, session_id):
+                return session_id
+
+            def get_resume_conversations(self, session_id):
+                return [], [
+                    {"_row_id": 1, "role": "user", "content": "hello"},
+                    {"_row_id": 2, "role": "assistant", "content": "the reply"},
+                ]
+
+        with patch.object(mission_control_agents, "_try_get_session_db", return_value=FakeDb()):
+            payload = mission_control_agents.load_chat_transcript("s", "s")
+
+        self.assertEqual(payload["messages"][0]["content"], "hello")
+        self.assertEqual(payload["messages"][1]["content"], "the reply")
+        self.assertNotIn("result_text", payload["messages"][0])
+
     def test_runtime_presence_overlays_canonical_session_key_in_its_profile(self):
         canonical = {
             "sessionId": "stored-bot-session",
