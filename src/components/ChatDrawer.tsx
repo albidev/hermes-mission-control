@@ -77,7 +77,8 @@ import { addChatProfile } from '../lib/chat-session-params';
 import { createHandoffObserver } from '../lib/bot-handoff-observer';
 import { findHandoffCompletion } from '../lib/bot-handoff-recovery';
 import { openHandoffClient } from '../lib/bot-handoff-client';
-import { extractMentionRequest } from '../lib/bot-mentions';
+import { extractMentionRequests } from '../lib/bot-mentions';
+import { serializeHandoffContext } from '../lib/bot-handoff-context';
 import { canonicalChatCommand } from '../lib/bot-chat-policy';
 import { classifyHandoffFailure } from '../lib/bot-handoff-reasons';
 import { BotHandoffMessage } from './chat/BotHandoffMessage';
@@ -880,6 +881,10 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                 { connectionId: 'local', profile: 'default', sessionId: sessionId ?? '' },
                 { profile: handle, canonicalTitle: 'Bot Chat' },
                 handoff.request,
+                (() => {
+                  const contextMessages = serializeHandoffContext(timelinedMessages);
+                  return contextMessages.length > 0 ? { mode: 'transcript', messages: contextMessages } : { mode: 'none', messages: [] };
+                })(),
               );
               const runRetry = async (): Promise<void> => {
                 let client: Awaited<ReturnType<typeof openHandoffClient>> | null = null;
@@ -1149,19 +1154,21 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     // Bot handoff: a mention to a roster-marked Bot routes the request into the
     // target canonical Bot Chat. The origin transcript stays untouched; the
     // attributed reply is rendered as a dedicated handoff card.
-    const mention = extractMentionRequest(text, botRoster);
+    const mentions = extractMentionRequests(text, botRoster);
     const trimmedText = text.trim();
-    const followUp = !mention
+    const followUp = mentions.length === 0
       && activeBotTarget
       && pendingAttachments.length === 0
       && Boolean(trimmedText)
       && !trimmedText.startsWith('/')
       && !trimmedText.startsWith('@');
-    const handoffMention = mention ?? (followUp ? {
+    const handoffMentions = mentions.length > 0 ? mentions : (followUp ? [{
       mention: `@${activeBotTarget.handle}`,
       request: trimmedText,
-    } : null);
-    if (handoffMention) {
+    }] : []);
+    if (handoffMentions.length > 0) {
+      const contextMessages = serializeHandoffContext(timelinedMessages);
+      for (const handoffMention of handoffMentions) {
       let originSessionId = await ensureSession();
       originSessionId = await claimLastChatPointer('submit', originSessionId);
       if (originSessionId !== sessionId) {
@@ -1174,12 +1181,13 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       // when the handoff settles so an explicit Retry can re-run it.
       if (!handoffDedupeRef.current.tryClaim(handle)) {
         setAttachmentNotice('A request to this Bot is already in flight.');
-        return;
+        continue;
       }
       const envelope = createHandoffEnvelope(
         { connectionId: 'local', profile: 'default', sessionId: originSessionId },
         { profile: handle, canonicalTitle: 'Bot Chat' },
         handoffMention.request,
+        contextMessages.length > 0 ? { mode: 'transcript', messages: contextMessages } : { mode: 'none', messages: [] },
       );
       const handoffId = envelope.handoffId;
       await titleSession(originSessionId, handoffMention.request || `@${handle}`);
@@ -1207,7 +1215,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       if (claimResult === false) {
         handoffDedupeRef.current.release(handle);
         setAttachmentNotice('This handoff was already claimed by another Mission Control client.');
-        return;
+        continue;
       }
       rememberActiveBotTarget({
         handle,
@@ -1336,6 +1344,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         }
       };
       void runHandoff();
+      }
       return;
     }
 

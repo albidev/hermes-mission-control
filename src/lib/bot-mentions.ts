@@ -13,6 +13,8 @@ export type MentionMatch = {
   matches: BotMentionCandidate[];
 };
 
+export type MentionRequest = { mention: string; request: string };
+
 const HANDLE_PATTERN = /@([a-z0-9][a-z0-9_-]*)/i;
 
 function isBoundaryBefore(text: string, index: number): boolean {
@@ -58,17 +60,23 @@ export function findMentionAtCaret(
 export function extractMentionRequest(
   text: string,
   roster: BotMentionCandidate[],
-): { mention: string; request: string } | null {
-  if (!roster.length) return null;
-  const match = HANDLE_PATTERN.exec(text);
-  if (!match) return null;
-  const start = match.index;
-  const end = start + match[0].length;
-  if (!isBoundaryBefore(text, start)) return null;
-  if (end < text.length && /[a-z0-9_-]/i.test(text[end])) return null;
-  const query = normalizeHandle(match[1]);
-  const candidate = roster.find((c) => normalizeHandle(c.handle) === query);
-  if (!candidate) return null;
-  const request = text.slice(end).trim();
-  return { mention: `@${candidate.handle}`, request };
+): MentionRequest | null {
+  return extractMentionRequests(text, roster)[0] ?? null;
+}
+
+/** Resolve every roster mention and assign only the text before the next mention. */
+export function extractMentionRequests(text: string, roster: BotMentionCandidate[]): MentionRequest[] {
+  if (!roster.length) return [];
+  const matches = [...text.matchAll(new RegExp(HANDLE_PATTERN.source, 'gi'))]
+    .filter((match) => isBoundaryBefore(text, match.index ?? -1))
+    .map((match) => ({
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+      candidate: roster.find((item) => normalizeHandle(item.handle) === normalizeHandle(match[1])),
+    }))
+    .filter((match): match is typeof match & { candidate: BotMentionCandidate } => Boolean(match.candidate));
+  return matches.map((match, index) => ({
+    mention: `@${match.candidate.handle}`,
+    request: text.slice(match.end, matches[index + 1]?.start ?? text.length).trim(),
+  }));
 }
