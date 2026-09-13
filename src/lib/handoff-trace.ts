@@ -60,17 +60,36 @@ function firstLine(event: MissionControlAgentTraceEvent): string {
  * collapsed rail summarises what the bot produced — leading with the request would label
  * every handoff with the same text the card already shows above it.
  *
- * Pairing: a `tool_call_completed` closes the most recent open `tool_call_started` with the
- * same tool name — the same association rule the server uses when it emits the pairs, applied
- * client-side so an unpaired call still renders (server order is not guaranteed across turns).
+ * Pairing: `tool_call_completed` links to its `tool_call_started` through `parentEventId`,
+ * which the server always emits. Pairing by tool NAME looks equivalent but is not: a
+ * `tool_call_started` frequently carries the generic name `tool_call` while its completion
+ * carries the real one (`mcp__sentry_…`), so name matching silently leaves every one of
+ * those calls as two half-rows — an input with no output, and an orphan output. The name is
+ * only a fallback for events that arrive without a parent link.
  */
 export function summarizeHandoffTrace(events: MissionControlAgentTraceEvent[] | null | undefined): HandoffTraceSummary {
   if (!Array.isArray(events) || events.length === 0) return EMPTY;
 
   const rows: HandoffTraceRow[] = [];
-  const openCalls = new Map<string, number>();
+  /** started event id -> index of its row, so a completion can close it exactly. */
+  const openByEventId = new Map<string, number>();
+  /** Tool name -> indexes of unclosed rows, for events with no usable parent link. */
+  const openByName = new Map<string, number[]>();
   let answer = '';
   let request = '';
+
+  const closeRow = (index: number, event: MissionControlAgentTraceEvent, body: string) => {
+    const row = rows[index];
+    if (row?.kind !== 'tool') return;
+    row.output = body;
+    row.status = text(event.status) || 'complete';
+    // The completion carries the REAL tool name; a started event often only says
+    // `tool_call`. Keep the specific one so the rail names the actual tool.
+    const resolved = toolNameOf(event);
+    if (resolved && resolved !== 'tool_call') row.toolName = resolved;
+    const elapsed = (event.timestamp ?? 0) - row.timestamp;
+    row.durationSeconds = elapsed > 0 ? Math.round(elapsed * 100) / 100 : null;
+  };
 
   for (const event of events) {
     if (!event || typeof event !== 'object') continue;
@@ -87,7 +106,7 @@ export function summarizeHandoffTrace(events: MissionControlAgentTraceEvent[] | 
     if (type === 'tool_call_started') {
       const toolName = toolNameOf(event);
       if (!toolName) continue;
-      const row: HandoffTraceRow = {
+      rows.push({
         kind: 'tool',
         id: text(event.id) || `t-${rows.length}`,
         toolName,
@@ -96,32 +115,39 @@ export function summarizeHandoffTrace(events: MissionControlAgentTraceEvent[] | 
         status: text(event.status) || 'running',
         timestamp: event.timestamp ?? 0,
         durationSeconds: null,
-      };
-      rows.push(row);
-      openCalls.set(`${toolName}#${row.id}`, rows.length - 1);
+      });
+      const index = rows.length - 1;
+      const eventId = text(event.id);
+      if (eventId) openByEventId.set(eventId, index);
+      const bucket = openByName.get(toolName);
+      if (bucket) bucket.push(index);
+      else openByName.set(toolName, [index]);
       continue;
     }
 
     if (type === 'tool_call_completed') {
       const toolName = toolNameOf(event);
       const body = text(event.response) || detailOf(event);
-      // Close the newest still-open call with this name; otherwise render it standalone.
-      let targetIndex = -1;
-      for (const [key, index] of [...openCalls.entries()].reverse()) {
-        if (key.startsWith(`${toolName}#`)) {
-          targetIndex = index;
-          openCalls.delete(key);
-          break;
+      const parentId = text(event.parentEventId);
+
+      // Preferred: the explicit parent link.
+      let targetIndex = parentId ? openByEventId.get(parentId) ?? -1 : -1;
+      if (targetIndex >= 0) openByEventId.delete(parentId);
+      // Fallback: the newest still-open call with this name.
+      if (targetIndex < 0 && toolName) {
+        const bucket = openByName.get(toolName);
+        while (bucket && bucket.length > 0) {
+          const candidate = bucket.pop() as number;
+          if (rows[candidate]?.kind === 'tool' && !(rows[candidate] as { output: string }).output) {
+            targetIndex = candidate;
+            break;
+          }
         }
       }
       if (targetIndex >= 0) {
-        const row = rows[targetIndex];
-        if (row?.kind === 'tool') {
-          row.output = body;
-          row.status = text(event.status) || 'complete';
-          const elapsed = (event.timestamp ?? 0) - row.timestamp;
-          row.durationSeconds = elapsed > 0 ? Math.round(elapsed * 100) / 100 : null;
-        }
+        const closedId = text((rows[targetIndex] as { id?: string }).id);
+        closeRow(targetIndex, event, body);
+        if (closedId) openByEventId.delete(closedId);
         continue;
       }
       if (!toolName) continue;
@@ -129,7 +155,7 @@ export function summarizeHandoffTrace(events: MissionControlAgentTraceEvent[] | 
         kind: 'tool',
         id: text(event.id) || `t-${rows.length}`,
         toolName,
-        input: '',
+        input: text(event.request) || '',
         output: body,
         status: text(event.status) || 'complete',
         timestamp: event.timestamp ?? 0,
