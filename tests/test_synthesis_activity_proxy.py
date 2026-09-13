@@ -43,12 +43,12 @@ class SynthesisActivityProxyTests(unittest.TestCase):
             return FakeResponse({"vault_id": "core", "activities": [], "count": 0})
 
         with unittest.mock.patch("synthesis_activity_proxy.urllib.request.urlopen", fake_urlopen):
-            result = load_synthesis_activity("crossnection")
+            result = load_synthesis_activity("example-vault")
 
         self.assertEqual(result["vault_id"], "core")
         self.assertEqual(
             seen,
-            [("http://127.0.0.1:8643/api/synthesis-activity?vault_id=crossnection", "GET", 8)],
+            [("http://127.0.0.1:8643/api/synthesis-activity?vault_id=example-vault", "GET", 8)],
         )
 
     def test_revert_refreshes_graph_after_success(self):

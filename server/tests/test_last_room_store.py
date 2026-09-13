@@ -250,7 +250,7 @@ class LastRoomHttpBoundaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             room_vault_store._STATE_FILE = Path(tmp) / "room_vaults.json"
             try:
-                room_vault_store.set_room_vault("mc-triage", "crossnection")
+                room_vault_store.set_room_vault("mc-triage", "example-bot")
                 status, payload = self._request("DELETE", "/api/local/room/vault?room_id=mc-triage")
 
                 self.assertEqual(status, 200)

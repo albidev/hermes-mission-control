@@ -22,7 +22,7 @@ describe('createHandoffObserver', () => {
     ]);
     const seen: string[] = [];
     const observer = createHandoffObserver(rpc, {
-      sessionId: 'run-crossnection',
+      sessionId: 'run-example-bot',
       intervalMs: 1,
       onEvent: (event) => { seen.push(event.type); },
       onComplete: (text) => { seen.push(`complete:${text}`); },
@@ -45,7 +45,7 @@ describe('createHandoffObserver', () => {
       },
     };
     const observer = createHandoffObserver(rpc, {
-      sessionId: 'run-crossnection',
+      sessionId: 'run-example-bot',
       initialLastSeen: 10,
       onEvent: () => {},
       onComplete: () => {},
@@ -61,7 +61,7 @@ describe('createHandoffObserver', () => {
     ]);
     const seen: string[] = [];
     const observer = createHandoffObserver(rpc, {
-      sessionId: 'run-crossnection',
+      sessionId: 'run-example-bot',
       intervalMs: 1,
       onEvent: () => {},
       onComplete: () => { seen.push('complete'); },
@@ -79,7 +79,7 @@ describe('createHandoffObserver', () => {
       eventsSince: async () => { calls += 1; return { events: [], truncated: false, epoch: 'e1' }; },
     };
     const observer = createHandoffObserver(rpc, {
-      sessionId: 'run-crossnection',
+      sessionId: 'run-example-bot',
       intervalMs: 1,
       onEvent: () => {},
       onComplete: () => {},

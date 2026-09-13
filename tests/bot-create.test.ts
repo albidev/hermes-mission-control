@@ -12,10 +12,10 @@ test('selected starting profile is preserved in the create request input', () =>
     provider: '',
     noSkills: false,
     botRoster: true,
-    cloneFrom: 'crossnection',
+    cloneFrom: 'example-bot',
   });
 
-  assert.equal(input.cloneFrom, 'crossnection');
+  assert.equal(input.cloneFrom, 'example-bot');
   assert.equal(input.name, 'researcher');
 });
 

@@ -18,7 +18,7 @@ function assertEqual<T>(actual: T, expected: T, label: string) {
 const toolTrace = {
   kind: 'tool' as const,
   toolName: 'skill_view',
-  toolInput: '{"name": "jira-crossnection"}',
+  toolInput: '{"name": "jira-example"}',
   output: '{"success": true}',
   status: 'complete' as const,
   durationS: 1.2,
