@@ -114,9 +114,13 @@ proxies `/api/ws` to the dashboard API):
 
 ### BDH candidate curation (optional, opt-in)
 
+Curate is activated by plugin presence, not by an environment variable: install
+it at `~/.hermes/mc-plugins/curate/` (see `scripts/setup-plugins.sh`). There is
+no `MC_ENABLE_BDH_CURATOR` flag — a per-plugin feature flag inside the host
+would make the host know about that plugin.
+
 | Variable | Default | Purpose |
 |---|---|---|
-| `MC_ENABLE_BDH_CURATOR` | *(unset → off)* | `1`/`true`/`yes` enables the Curate page and `/api/local/candidates*` endpoints. |
 | `VB_CANDIDATES` | `~/.hermes/vault-brain/candidates` | Candidate payloads directory. |
 | `VB_VAULT` | `~/Documents/Hermes` | Vault root the curator reads/writes. |
 | `VB_QUARANTINE_DAYS` | `1` | Days a promoted candidate waits in quarantine before promotion. |
