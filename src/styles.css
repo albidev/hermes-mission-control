@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Tailwind 4 skips gitignored symlinked plugin sources unless explicitly included. */
+@source "./plugins/curate";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
