@@ -348,6 +348,17 @@ assertEqual(interimMessages.at(-1)?.role, 'tool');
 assertEqual(interimMessages.at(-1)?.text, 'A concise rationale.');
 assertEqual(interimMessages.at(-1)?.status, 'complete');
 
+let replayedInterim = applyGatewayEvent([
+  { id: 'assistant-interim-1', role: 'assistant', kind: 'assistant', text: 'Mentre attendo, controllo direttamente lo stato e registro le lezioni apprese in skill.', status: 'streaming', createdAt: 2205 },
+], { type: 'message.start' }, 2206);
+replayedInterim = applyGatewayEvent(replayedInterim, {
+  type: 'message.interim',
+  payload: { text: 'Mentre attendo, controllo direttamente lo stato e registro le lezioni apprese in skill.' },
+}, 2207);
+assertEqual(replayedInterim.length, 1);
+assertEqual(replayedInterim[0].text, 'Mentre attendo, controllo direttamente lo stato e registro le lezioni apprese in skill.');
+assertEqual(replayedInterim[0].status, 'streaming');
+
 // Late-arriving reasoning: when the gateway flushes reasoning AFTER the final
 // reply (reasoning rides the turn-completion payload), the bubble must be
 // inserted BEFORE the completed assistant message, not appended below it.
@@ -383,6 +394,25 @@ toolMessages = applyGatewayEvent(toolMessages, {
 assertEqual(toolMessages[0].output, '/Users/albi');
 assertEqual(toolMessages[0].durationS, 0.42);
 assertEqual(toolMessages[0].status, 'complete');
+
+let clarifyMessages = applyGatewayEvent([], {
+  type: 'tool.start',
+  payload: { tool_id: 'clarify-1', name: 'clarify', args_text: '{"questions":[{"question":"Pick one"}]}' },
+}, 2203);
+clarifyMessages = applyGatewayEvent(clarifyMessages, {
+  type: 'tool.complete',
+  // Legacy live bridges used `content` for the tool result. It must still reach
+  // the chat Output block, especially for clarify's user_response payload.
+  payload: {
+    tool_id: 'clarify-1',
+    name: 'clarify',
+    content: '{"responses":[{"question":"Pick one","user_response":"A"}]}',
+  },
+}, 2204);
+assertEqual(clarifyMessages[0].toolName, 'clarify');
+assertEqual(clarifyMessages[0].toolInput, '{"questions":[{"question":"Pick one"}]}');
+assertEqual(clarifyMessages[0].output, '{"responses":[{"question":"Pick one","user_response":"A"}]}');
+assertEqual(clarifyMessages[0].status, 'complete');
 
 const aliasToolMessages = applyGatewayEvent([], {
   type: 'tool.started',

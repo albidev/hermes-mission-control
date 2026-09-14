@@ -735,6 +735,38 @@ export function eventText(event: GatewayEvent): string {
   return text || rendered || delta || content || output || finalResponse;
 }
 
+function collapseDuplicateAssistantInterim(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length < 2) return messages;
+  const previous = messages[messages.length - 2];
+  const current = messages[messages.length - 1];
+  if (
+    previous.kind !== 'assistant'
+    || current.kind !== 'assistant'
+    || !previous.text.trim()
+    || previous.text !== current.text
+  ) return messages;
+  const isInterimId = (id: string) => id.startsWith('assistant-interim-');
+  const isAssistantStreamId = (id: string) => id.startsWith('assistant-');
+  if (!((isInterimId(previous.id) && isAssistantStreamId(current.id))
+    || (isAssistantStreamId(previous.id) && isInterimId(current.id)))) return messages;
+
+  // A reconnect/replay can settle the first interim bubble and then replay the
+  // same text into a new streaming bubble. Keep one message, preserving the
+  // durable timestamp and the live status instead of showing the same prose twice.
+  const merged = {
+    ...previous,
+    ...current,
+    id: previous.id,
+    createdAt: previous.createdAt ?? current.createdAt,
+    status: previous.status === 'streaming' || current.status === 'streaming' ? 'streaming' as const : current.status,
+  };
+  return [...messages.slice(0, -2), merged];
+}
+
+function applyLiveAssistantInterim(messages: ChatMessage[]): ChatMessage[] {
+  return collapseDuplicateAssistantInterim(messages);
+}
+
 export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, now = Date.now()): ChatMessage[] {
   const payload = event.payload ?? {};
   const eventToolId = stringValue(payload.tool_id) || stringValue(payload.tool_call_id);
@@ -782,11 +814,11 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     if (last?.kind === 'assistant' && last.status === 'streaming') {
       if (!last.text.trim()) {
         next[next.length - 1] = { ...last, text };
-        return next;
+        return applyLiveAssistantInterim(next);
       }
       next[next.length - 1] = { ...last, status: 'complete' };
     }
-    return [...next, { id: `assistant-interim-${now}`, role: 'assistant', kind: 'assistant', text, status: 'streaming', createdAt: now }];
+    return applyLiveAssistantInterim([...next, { id: `assistant-interim-${now}`, role: 'assistant', kind: 'assistant', text, status: 'streaming', createdAt: now }]);
   }
 
   const insertReasoning = (next: ChatMessage[], entry: ChatMessage): ChatMessage[] => {
@@ -863,7 +895,12 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
   }
 
   if (isToolComplete) {
+    // `result` is the current gateway field. Keep the older `output`/`content`
+    // aliases as fallbacks: a clarify result can otherwise complete successfully
+    // while the chat card has no visible output at all.
     const output = stringValue(payload.result_text)
+      || stringValue(payload.output)
+      || stringValue(payload.content)
       || stringValue(payload.summary)
       || stringValue(payload.inline_diff)
       || structuredText(payload.result);
