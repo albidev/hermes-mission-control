@@ -52,5 +52,19 @@
   },
   "engines": {
     "node": ">=22.6"
+  },
+  "pnpm": {
+    "overrides": {
+      "@tiptap/core": "^3.30.5",
+      "@tiptap/pm": "^3.30.5",
+      "@tiptap/react": "^3.30.5",
+      "@tiptap/starter-kit": "^3.30.5",
+      "@tiptap/extension-code": "^3.30.5",
+      "@tiptap/extension-list": "^3.30.5",
+      "@tiptap/extension-highlight": "^3.30.5",
+      "browserslist": "^4.28.7",
+      "baseline-browser-mapping": "^2.11.0",
+      "shell-quote": "^1.9.0"
+    }
   }
 }
