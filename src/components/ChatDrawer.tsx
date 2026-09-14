@@ -89,8 +89,7 @@ import { loadMissionControlAgentTrace } from '../lib/hermes-api';
 import { claimBotHandoff, loadPersistedBotHandoffs, persistBotHandoff, type PersistedBotHandoff } from '../lib/bot-handoff-persistence';
 import { compareChatTimelineEntries } from '../lib/chat-timeline';
 import { useGroupRoom } from '../lib/use-group-room';
-import { GroupGatewayClient } from '../lib/group-gateway';
-import type { GroupRoom } from '../lib/group-gateway';
+import { createGroupGatewayClient, type GroupRoom } from '../lib/group-gateway';
 import { CreateRoomForm, GroupRoomView } from './chat/GroupRoomView';
 import { persistRoomVault } from '../lib/hermes-api';
 
@@ -1963,7 +1962,8 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 
 function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: ChatDrawerProps) {
   const { t } = useI18n();
-  const state = useGroupRoom({ enabled: open, initialRoomId: roomId ?? null, accessToken: storedToken?.trim() || undefined });
+  const client = useMemo(() => createGroupGatewayClient(storedToken?.trim() || undefined), [storedToken]);
+  const state = useGroupRoom({ client, enabled: open, initialRoomId: roomId ?? null, accessToken: storedToken?.trim() || undefined });
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
   const [creating, setCreating] = useState(false);
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
@@ -2052,7 +2052,6 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
   }, [onRoomChange, state.selectRoom]);
 
   const createRoomFromDrawer = useCallback(async (name: string, handles: string[], vaultId?: string) => {
-    const client = new GroupGatewayClient();
     const roster = handles.map((handle, index) => ({
       id: `member-${handle}-${index}`,
       profile: handle === 'default' ? 'default' : handle,
@@ -2066,7 +2065,7 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange }: C
     setCreating(false);
     await state.refresh();
     await state.selectRoom(room.id);
-  }, [botCandidates, mentionRoster, state, storedToken]);
+  }, [botCandidates, client, mentionRoster, state, storedToken]);
 
   return (
     <>

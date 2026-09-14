@@ -801,9 +801,9 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
     const last = next.at(-1);
     if (last?.kind === 'assistant' && last.status === 'streaming') {
       next[next.length - 1] = { ...last, text: `${last.text}${delta}` };
-      return next;
+      return collapseDuplicateAssistantInterim(next);
     }
-    return [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: delta, status: 'streaming', createdAt: now }];
+    return collapseDuplicateAssistantInterim([...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: delta, status: 'streaming', createdAt: now }]);
   }
 
   if (event.type === 'message.interim') {

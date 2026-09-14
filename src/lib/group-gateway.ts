@@ -45,7 +45,7 @@ export type GroupLogWire = { events?: unknown[]; cursor?: unknown; latest_seq?: 
 export type GroupCapabilitiesWire = { protocol_version?: unknown; driver?: unknown; methods?: unknown[]; max_log_limit?: unknown; authority_gateway_id?: unknown };
 export type GroupStateWire = { room?: GroupRoomWire; driver_status?: unknown };
 type WireRecord = Record<string, unknown>;
-export type GroupRpc = <T = unknown>(method: string, params: Record<string, unknown>) => Promise<T>;
+export type GroupRpc = <T = unknown>(method: string, params: Record<string, unknown>, accessToken?: string) => Promise<T>;
 
 function record(value: unknown): WireRecord { return value && typeof value === 'object' && !Array.isArray(value) ? value as WireRecord : {}; }
 function stringValue(value: unknown, fallback = ''): string { return typeof value === 'string' ? value : fallback; }
@@ -128,15 +128,24 @@ export { BotRpcError as GroupRpcError };
 export type GroupCreateInput = { roomId: string; name: string; roster: GroupMember[] };
 export type GroupListOptions = { limit?: number; offset?: number; cursor?: string | number; includeDisbanded?: boolean };
 
-async function defaultGroupRpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
+async function defaultGroupRpc<T>(
+  method: string,
+  params: Record<string, unknown>,
+  accessToken?: string,
+  rpc: GroupRpc = requestBotRpc,
+): Promise<T> {
   try {
-    return await requestBotRpc<T>(method, params);
+    return await rpc<T>(method, params, accessToken);
   } catch (error) {
     if (error instanceof Error && /connect|connection closed|timed out/i.test(error.message)) {
       throw new GroupServiceUnavailableError(error.message);
     }
     throw error;
   }
+}
+
+export function createGroupGatewayClient(accessToken?: string, rpc: GroupRpc = requestBotRpc): GroupGatewayClient {
+  return new GroupGatewayClient((method, params) => defaultGroupRpc(method, params, accessToken, rpc));
 }
 
 export class GroupGatewayClient {
@@ -186,7 +195,13 @@ export class GroupGatewayClient {
   }
 
   async log(roomId: string, options: { sinceSeq?: number; cursor?: string | number; limit?: number; includeDisbanded?: boolean } = {}): Promise<GroupLogPage> {
-    return normalizeGroupLog(await this.rpc('groups.log', { room_id: roomId, ...(options.sinceSeq === undefined ? {} : { since_seq: options.sinceSeq }), ...(options.cursor === undefined ? {} : { cursor: options.cursor }), ...(options.limit === undefined ? {} : { limit: options.limit }), ...(options.includeDisbanded ? { include_disbanded: true } : {}) }));
+    // The gateway's groups.log handler exposes monotonic pagination as
+    // `since_seq`; `cursor` is the client-side name used by the generic room
+    // log contract. Forward the cursor under the server's actual field or the
+    // default page (100 events) is returned forever and catch-up never reaches
+    // the tail.
+    const sinceSeq = options.cursor === undefined ? options.sinceSeq : options.cursor;
+    return normalizeGroupLog(await this.rpc('groups.log', { room_id: roomId, ...(sinceSeq === undefined ? {} : { since_seq: sinceSeq }), ...(options.limit === undefined ? {} : { limit: options.limit }), ...(options.includeDisbanded ? { include_disbanded: true } : {}) }));
   }
 
   async disband(roomId: string, eventId?: string): Promise<unknown> {

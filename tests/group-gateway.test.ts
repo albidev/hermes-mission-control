@@ -1,6 +1,7 @@
 import {
   GroupGatewayClient,
   GroupServiceUnavailableError,
+  createGroupGatewayClient,
   normalizeGroupEvent,
   normalizeGroupLog,
   normalizeGroupRoom,
@@ -59,6 +60,7 @@ const client = new GroupGatewayClient(async (method, params) => {
 });
 await client.capabilities();
 await client.list({ limit: 2, offset: 4, cursor: 'cursor-1' });
+await client.log('room-1', { cursor: 100 });
 await client.create({ roomId: 'room-1', name: 'Ops', roster: [
   { memberId: 'member-a', profile: 'default', handle: 'albi', targetProfile: 'default' },
   { memberId: 'member-b', profile: 'reviewer', handle: 'reviewer', targetProfile: 'reviewer', targetInstallId: 'install-b' },
@@ -67,9 +69,10 @@ await client.send('room-1', 'event-1', { text: 'hello', threadId: 'thread-1' });
 await client.rename('room-1', 'rename-1', 'Renamed');
 await client.disband('room-1');
 assertEqual(calls.map((call) => call.method), [
-  'groups.capabilities', 'groups.list', 'groups.create', 'groups.send', 'groups.rename', 'groups.disband',
+  'groups.capabilities', 'groups.list', 'groups.log', 'groups.create', 'groups.send', 'groups.rename', 'groups.disband',
 ]);
-assertEqual(calls[3].params, { room_id: 'room-1', event_id: 'event-1', payload: { text: 'hello', thread_id: 'thread-1' } });
+assertEqual(calls[2].params, { room_id: 'room-1', since_seq: 100 });
+assertEqual(calls[4].params, { room_id: 'room-1', event_id: 'event-1', payload: { text: 'hello', thread_id: 'thread-1' } });
 assertEqual(Object.prototype.hasOwnProperty.call(calls[3].params, 'actor'), false);
 
 const unavailable = new GroupGatewayClient(async () => { throw new GroupServiceUnavailableError(); });
@@ -79,3 +82,13 @@ try {
 } catch (error) {
   assertEqual(error instanceof GroupServiceUnavailableError, true);
 }
+
+const scopedTokens: Array<string | undefined> = [];
+const authenticated = createGroupGatewayClient('room-token', async <T = unknown>(method: string, _params: Record<string, unknown>, accessToken?: string) => {
+  scopedTokens.push(accessToken);
+  if (method === 'groups.capabilities') return { protocol_version: 2, driver: true, methods: ['groups.send'] } as T;
+  return { event: { event_id: 'event-2', seq: 2, kind: 'message.user', actor: { kind: 'user', id: 'desktop' }, payload: { text: 'hello' } } } as T;
+});
+await authenticated.capabilities();
+await authenticated.send('room-1', 'event-2', { text: 'hello' });
+assertEqual(scopedTokens, ['room-token', 'room-token']);

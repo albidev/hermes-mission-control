@@ -359,6 +359,17 @@ assertEqual(replayedInterim.length, 1);
 assertEqual(replayedInterim[0].text, 'Mentre attendo, controllo direttamente lo stato e registro le lezioni apprese in skill.');
 assertEqual(replayedInterim[0].status, 'streaming');
 
+let deltaAfterInterim = applyGatewayEvent([
+  { id: 'assistant-interim-2', role: 'assistant', kind: 'assistant', text: 'Mentre attendo, controllo direttamente lo stato e registro le lezioni apprese in skill.', status: 'streaming', createdAt: 2208 },
+], { type: 'message.start' }, 2209);
+deltaAfterInterim = applyGatewayEvent(deltaAfterInterim, {
+  type: 'message.delta',
+  payload: { text: 'Mentre attendo, controllo direttamente lo stato e registro le lezioni apprese in skill.' },
+}, 2210);
+assertEqual(deltaAfterInterim.length, 1);
+assertEqual(deltaAfterInterim[0].text, 'Mentre attendo, controllo direttamente lo stato e registro le lezioni apprese in skill.');
+assertEqual(deltaAfterInterim[0].status, 'streaming');
+
 // Late-arriving reasoning: when the gateway flushes reasoning AFTER the final
 // reply (reasoning rides the turn-completion payload), the bubble must be
 // inserted BEFORE the completed assistant message, not appended below it.
