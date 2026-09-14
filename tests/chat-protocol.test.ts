@@ -370,6 +370,35 @@ assertEqual(deltaAfterInterim.length, 1);
 assertEqual(deltaAfterInterim[0].text, 'Mentre attendo, controllo direttamente lo stato e registro le lezioni apprese in skill.');
 assertEqual(deltaAfterInterim[0].status, 'streaming');
 
+let duplicateReasoning = applyGatewayEvent([], { type: 'message.start' }, 2211);
+duplicateReasoning = applyGatewayEvent(duplicateReasoning, {
+  type: 'message.delta',
+  payload: { text: 'Messaggio ricevuto. Il bridge funziona. 😄' },
+}, 2212);
+duplicateReasoning = applyGatewayEvent(duplicateReasoning, {
+  type: 'reasoning.available',
+  payload: { text: 'Messaggio ricevuto. Il bridge funziona. 😄' },
+}, 2213);
+assertEqual(duplicateReasoning.length, 1);
+assertEqual(duplicateReasoning[0].kind, 'assistant');
+assertEqual(duplicateReasoning[0].text, 'Messaggio ricevuto. Il bridge funziona. 😄');
+assertEqual(duplicateReasoning[0].status, 'streaming');
+
+let suffixInterim = applyGatewayEvent([], { type: 'message.start' }, 2214);
+suffixInterim = applyGatewayEvent(suffixInterim, {
+  type: 'message.delta',
+  payload: { text: 'Prima verifica.\n\nEntrambi i draft sono confermati su disco.' },
+}, 2215);
+suffixInterim = applyGatewayEvent(suffixInterim, {
+  type: 'message.interim',
+  payload: { text: 'Entrambi i draft sono confermati su disco.' },
+}, 2216);
+assertEqual(suffixInterim.length, 2);
+assertEqual(suffixInterim[0].text, 'Prima verifica.');
+assertEqual(suffixInterim[0].status, 'complete');
+assertEqual(suffixInterim[1].text, 'Entrambi i draft sono confermati su disco.');
+assertEqual(suffixInterim[1].status, 'streaming');
+
 // Late-arriving reasoning: when the gateway flushes reasoning AFTER the final
 // reply (reasoning rides the turn-completion payload), the bubble must be
 // inserted BEFORE the completed assistant message, not appended below it.

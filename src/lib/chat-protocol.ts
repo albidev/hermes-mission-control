@@ -816,7 +816,15 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
         next[next.length - 1] = { ...last, text };
         return applyLiveAssistantInterim(next);
       }
-      next[next.length - 1] = { ...last, status: 'complete' };
+      const currentText = last.text.trimEnd();
+      const interimText = text.trim();
+      if (currentText === interimText) return next;
+      if (currentText.endsWith(interimText)) {
+        const prefix = currentText.slice(0, currentText.length - interimText.length).trimEnd();
+        if (prefix) next[next.length - 1] = { ...last, text: prefix, status: 'complete' };
+      } else {
+        next[next.length - 1] = { ...last, status: 'complete' };
+      }
     }
     return applyLiveAssistantInterim([...next, { id: `assistant-interim-${now}`, role: 'assistant', kind: 'assistant', text, status: 'streaming', createdAt: now }]);
   }
@@ -856,6 +864,15 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
       || textFromContent(payload.reasoning_details);
     if (!text.trim()) return messages;
     const next = [...messages];
+    const latest = next.at(-1);
+    // Some gateway turns publish the final prose once as reasoning.available
+    // and again as message.complete. It is not reasoning; suppress the second
+    // visual bubble when it is the exact latest assistant response.
+    if (
+      latest?.kind === 'assistant'
+      && latest.text.trim() === text.trim()
+      && (latest.status === 'streaming' || latest.status === 'complete')
+    ) return next;
     const index = lastIndexOf((message) => message.kind === 'reasoning' && message.status === 'streaming');
     if (index >= 0) {
       const current = next[index];

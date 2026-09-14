@@ -1577,6 +1577,20 @@ export function useGatewayChat(
   const respondInteraction = useCallback(async (answer: string, choice?: string, resolveAll = false) => {
     const pending = interactionRef.current;
     if (!pending) return false;
+    if (pending.kind === 'clarify' && !pending.requestId) {
+      setError('Clarify request is missing its request id.');
+      return false;
+    }
+    const dismissOptimistically = pending.kind === 'clarify';
+    if (dismissOptimistically) {
+      // Do not keep the card mounted while clarify.respond waits for the gateway
+      // acknowledgement. A slow/late ack used to make the card look sticky and
+      // allowed a second click to race the first response.
+      pendingClarifyContentRef.current = null;
+      interactionRef.current = null;
+      setInteraction(null);
+      setStatusText('Connected');
+    }
     try {
       if (pending.kind === 'approval') {
         await request('approval.respond', {
