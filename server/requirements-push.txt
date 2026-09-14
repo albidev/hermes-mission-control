@@ -11,4 +11,4 @@
 # environment (see .env.example). Without them push stays disabled even with
 # these packages installed.
 
-pywebpush>=1.14.0
+pywebpush>=2.5.0
