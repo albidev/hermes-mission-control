@@ -26,10 +26,9 @@ export function nextSessionProfile(
   explicitProfile: string | null | undefined,
   hasRequestedSession: boolean,
 ): string | null {
-  if (!hasRequestedSession) return current?.trim() || null;
   const explicit = explicitProfile?.trim();
   if (explicit) return explicit;
-  return current?.trim() || null;
+  return hasRequestedSession ? current?.trim() || null : null;
 }
 
 /**
