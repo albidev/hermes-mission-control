@@ -399,6 +399,36 @@ assertEqual(suffixInterim[0].status, 'complete');
 assertEqual(suffixInterim[1].text, 'Entrambi i draft sono confermati su disco.');
 assertEqual(suffixInterim[1].status, 'streaming');
 
+// Backend message identities must keep assistant segments distinct while making
+// an already-streamed interim event a boundary, not a second bubble.
+let identifiedSegments = applyGatewayEvent([], {
+  type: 'message.start',
+  payload: { turn_id: 'turn-1', message_id: 'turn-1:assistant:0' },
+}, 2220);
+identifiedSegments = applyGatewayEvent(identifiedSegments, {
+  type: 'message.delta',
+  payload: { text: 'Prima parte', turn_id: 'turn-1', message_id: 'turn-1:assistant:0' },
+}, 2221);
+identifiedSegments = applyGatewayEvent(identifiedSegments, {
+  type: 'message.interim',
+  payload: { text: 'Prima parte', already_streamed: true, turn_id: 'turn-1', message_id: 'turn-1:assistant:0' },
+}, 2222);
+identifiedSegments = applyGatewayEvent(identifiedSegments, {
+  type: 'message.delta',
+  payload: { text: 'Risposta finale', turn_id: 'turn-1', message_id: 'turn-1:assistant:1' },
+}, 2223);
+identifiedSegments = applyGatewayEvent(identifiedSegments, {
+  type: 'message.complete',
+  payload: { text: 'Risposta finale', turn_id: 'turn-1', message_id: 'turn-1:assistant:1' },
+}, 2224);
+assertEqual(identifiedSegments.length, 2);
+assertEqual(identifiedSegments[0].id, 'turn-1:assistant:0');
+assertEqual(identifiedSegments[0].text, 'Prima parte');
+assertEqual(identifiedSegments[0].status, 'complete');
+assertEqual(identifiedSegments[1].id, 'turn-1:assistant:1');
+assertEqual(identifiedSegments[1].text, 'Risposta finale');
+assertEqual(identifiedSegments[1].status, 'complete');
+
 // Late-arriving reasoning: when the gateway flushes reasoning AFTER the final
 // reply (reasoning rides the turn-completion payload), the bubble must be
 // inserted BEFORE the completed assistant message, not appended below it.

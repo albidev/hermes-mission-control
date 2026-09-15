@@ -735,6 +735,21 @@ export function eventText(event: GatewayEvent): string {
   return text || rendered || delta || content || output || finalResponse;
 }
 
+function eventMessageId(event: GatewayEvent): string | null {
+  const payload = event.payload;
+  if (!payload) return null;
+  const value = stringValue(payload.message_id) || stringValue(payload.messageId);
+  return value.trim() || null;
+}
+
+function eventAlreadyStreamed(event: GatewayEvent): boolean {
+  return event.payload?.already_streamed === true;
+}
+
+function isLocalAssistantId(id: string): boolean {
+  return id.startsWith('assistant-');
+}
+
 function collapseDuplicateAssistantInterim(messages: ChatMessage[]): ChatMessage[] {
   if (messages.length < 2) return messages;
   const previous = messages[messages.length - 2];
@@ -746,7 +761,7 @@ function collapseDuplicateAssistantInterim(messages: ChatMessage[]): ChatMessage
     || previous.text !== current.text
   ) return messages;
   const isInterimId = (id: string) => id.startsWith('assistant-interim-');
-  const isAssistantStreamId = (id: string) => id.startsWith('assistant-');
+  const isAssistantStreamId = (id: string) => id.startsWith('assistant-') && !isInterimId(id);
   if (!((isInterimId(previous.id) && isAssistantStreamId(current.id))
     || (isAssistantStreamId(previous.id) && isInterimId(current.id)))) return messages;
 
@@ -785,48 +800,107 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
   };
 
   if (isMessageStart) {
+    const messageId = eventMessageId(event);
+    const activeIndex = lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
+    if (activeIndex >= 0) {
+      const active = messages[activeIndex];
+      // The gateway may emit an untagged compatibility start immediately
+      // before the tagged start. Reuse that provisional bubble instead of
+      // creating a second one.
+      if (messageId && (active.id === messageId || isLocalAssistantId(active.id))) {
+        if (active.id === messageId) return messages;
+        const renamed = [...messages];
+        renamed[activeIndex] = { ...active, id: messageId };
+        return renamed;
+      }
+      if (!messageId && !active.text.trim()) return messages;
+    }
     const next = messages
       .filter((message) => !(message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()))
       .map((message) => message.kind === 'assistant' && message.status === 'streaming'
         ? { ...message, status: message.text.trim() ? 'complete' as const : 'interrupted' as const }
         : message);
-    if (next.at(-1)?.kind === 'assistant' && next.at(-1)?.status === 'streaming') return next;
-    return [...next, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: '', status: 'streaming', createdAt: now }];
+    return [...next, { id: messageId ?? `assistant-${now}`, role: 'assistant', kind: 'assistant', text: '', status: 'streaming', createdAt: now }];
   }
 
   if (isMessageDelta) {
     const delta = eventText(event);
     if (!delta) return messages;
+    const messageId = eventMessageId(event);
     const next = [...messages];
-    const last = next.at(-1);
-    if (last?.kind === 'assistant' && last.status === 'streaming') {
-      next[next.length - 1] = { ...last, text: `${last.text}${delta}` };
+    let index = messageId
+      ? lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming' && message.id === messageId)
+      : lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
+    if (index < 0 && messageId) {
+      const provisional = lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming' && isLocalAssistantId(message.id));
+      if (provisional >= 0) index = provisional;
+    }
+    if (index >= 0) {
+      const last = next[index];
+      if (!messageId && (last.text === delta || last.text.endsWith(delta))) return next;
+      next[index] = { ...last, ...(messageId ? { id: messageId } : {}), text: `${last.text}${delta}` };
       return collapseDuplicateAssistantInterim(next);
     }
-    return collapseDuplicateAssistantInterim([...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: delta, status: 'streaming', createdAt: now }]);
+    return collapseDuplicateAssistantInterim([...messages, { id: messageId ?? `assistant-${now}`, role: 'assistant', kind: 'assistant', text: delta, status: 'streaming', createdAt: now }]);
   }
 
   if (event.type === 'message.interim') {
     const text = eventText(event);
     if (!text) return messages;
+    const messageId = eventMessageId(event);
+    const alreadyStreamed = eventAlreadyStreamed(event);
     const next = [...messages];
-    const last = next.at(-1);
-    if (last?.kind === 'assistant' && last.status === 'streaming') {
-      if (!last.text.trim()) {
-        next[next.length - 1] = { ...last, text };
-        return applyLiveAssistantInterim(next);
-      }
-      const currentText = last.text.trimEnd();
-      const interimText = text.trim();
-      if (currentText === interimText) return next;
-      if (currentText.endsWith(interimText)) {
-        const prefix = currentText.slice(0, currentText.length - interimText.length).trimEnd();
-        if (prefix) next[next.length - 1] = { ...last, text: prefix, status: 'complete' };
-      } else {
-        next[next.length - 1] = { ...last, status: 'complete' };
+    let index = messageId
+      ? lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming' && message.id === messageId)
+      : lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
+    if (index < 0 && messageId) {
+      const provisional = lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming' && isLocalAssistantId(message.id));
+      if (provisional >= 0) index = provisional;
+    }
+    if (alreadyStreamed) {
+      // This event is a segment boundary. Its text has already arrived via
+      // message.delta, so close that bubble without painting the prose again.
+      if (index < 0) return messages;
+      const current = next[index];
+      next[index] = {
+        ...current,
+        ...(messageId ? { id: messageId } : {}),
+        text: current.text || text,
+        status: 'complete',
+      };
+      return next;
+    }
+    if (index >= 0 && !messageId && !next[index].text.trim()) {
+      next[index] = { ...next[index], text };
+      return applyLiveAssistantInterim(next);
+    }
+    if (messageId) {
+      const existing = lastIndexOf((message) => message.kind === 'assistant' && message.id === messageId);
+      if (existing >= 0) {
+        const current = next[existing];
+        if (current.status === 'streaming' && !current.text.trim()) {
+          next[existing] = { ...current, text };
+        }
+        return next;
       }
     }
-    return applyLiveAssistantInterim([...next, { id: `assistant-interim-${now}`, role: 'assistant', kind: 'assistant', text, status: 'streaming', createdAt: now }]);
+    if (index >= 0) {
+      const current = next[index];
+      if (!messageId) {
+        const currentText = current.text.trimEnd();
+        const interimText = text.trim();
+        if (currentText === interimText) return next;
+        if (currentText.endsWith(interimText)) {
+          const prefix = currentText.slice(0, currentText.length - interimText.length).trimEnd();
+          if (prefix) next[index] = { ...current, text: prefix, status: 'complete' };
+        } else {
+          next[index] = { ...current, status: 'complete' };
+        }
+      } else {
+        next[index] = { ...current, status: 'complete' };
+      }
+    }
+    return applyLiveAssistantInterim([...next, { id: messageId ?? `assistant-interim-${now}`, role: 'assistant', kind: 'assistant', text, status: 'streaming', createdAt: now }]);
   }
 
   const insertReasoning = (next: ChatMessage[], entry: ChatMessage): ChatMessage[] => {
@@ -942,13 +1016,23 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
 
   if (isMessageComplete) {
     const finalText = eventText(event);
+    const messageId = eventMessageId(event);
     const next = [...messages];
-    const index = lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
+    const index = messageId
+      ? lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming' && message.id === messageId)
+      : lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
     if (index >= 0) {
-      next[index] = { ...next[index], text: finalText || next[index].text, status: 'complete' };
+      next[index] = { ...next[index], ...(messageId ? { id: messageId } : {}), text: finalText || next[index].text, status: 'complete' };
       return next.filter((message, candidateIndex) => !(candidateIndex !== index && message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()));
     }
-    if (finalText) return [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: finalText, status: 'complete', createdAt: now }];
+    if (messageId) {
+      const existing = lastIndexOf((message) => message.kind === 'assistant' && message.id === messageId);
+      if (existing >= 0) {
+        next[existing] = { ...next[existing], text: finalText || next[existing].text, status: 'complete' };
+        return next;
+      }
+    }
+    if (finalText) return [...messages, { id: messageId ?? `assistant-${now}`, role: 'assistant', kind: 'assistant', text: finalText, status: 'complete', createdAt: now }];
     return messages;
   }
 
