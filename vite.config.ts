@@ -32,6 +32,9 @@ export default defineConfig(({ mode }) => {
   const hostReactDom = require.resolve('react-dom', { paths: [process.cwd()] });
   const hostRouter = require.resolve('react-router-dom', { paths: [process.cwd()] });
   const hostIcons = require.resolve('lucide-react', { paths: [process.cwd()] });
+  const hostReactMarkdown = require.resolve('react-markdown', { paths: [process.cwd()] });
+  const hostRemarkBreaks = require.resolve('remark-breaks', { paths: [process.cwd()] });
+  const hostRemarkGfm = require.resolve('remark-gfm', { paths: [process.cwd()] });
 
   return {
     resolve: {
@@ -40,7 +43,10 @@ export default defineConfig(({ mode }) => {
         { find: /^react$/, replacement: hostReact },
         { find: /^react-dom$/, replacement: hostReactDom },
         { find: /^react-router-dom$/, replacement: hostRouter },
-        { find: /^lucide-react$/, replacement: hostIcons }
+        { find: /^lucide-react$/, replacement: hostIcons },
+        { find: /^react-markdown$/, replacement: hostReactMarkdown },
+        { find: /^remark-breaks$/, replacement: hostRemarkBreaks },
+        { find: /^remark-gfm$/, replacement: hostRemarkGfm }
       ],
     },
     plugins: [react()],
