@@ -56,7 +56,7 @@ import {
 } from './chat-interactions';
 import { recordReloadDiagnostic } from './reload-diagnostics';
 import { publishChatRuntimePresence } from './chat-runtime-presence';
-import { addChatProfile, nextSessionProfile, resolveSessionOwner } from './chat-session-params';
+import { addChatProfile, profileAfterReset, nextSessionProfile, resolveSessionOwner } from './chat-session-params';
 import { loadMissionControlSessionPreview } from './hermes-api';
 
 // Backward-compatible re-export for ChatDrawer consumers during the gateway split.
@@ -1674,7 +1674,13 @@ export function useGatewayChat(
     setInteraction(null);
     setActivity(null);
     clearPendingPrompt();
-    persistChat(null, null, null, null, [], pointerRevision);
+    // A reset is a NEW chat, so the profile of the chat being left must not
+    // survive it. Keeping it here is how a chat created after a client room
+    // landed in that bot's store: `ensureSession()` below reaches
+    // `session.create`, and the ref still described the previous context.
+    // Only an explicitly requested profile may scope the new chat.
+    sessionProfileRef.current = profileAfterReset(sessionProfileRef.current, botProfile);
+    persistChat(null, null, null, null, [], pointerRevision, sessionProfileRef.current);
     try {
       let activeSessionId = await ensureSession();
       if (activeSessionId) {
@@ -1684,7 +1690,7 @@ export function useGatewayChat(
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create a new chat.');
     }
-  }, [claimLastChatPointer, clearPendingPrompt, ensureSession, pointerRevision, request]);
+  }, [botProfile, claimLastChatPointer, clearPendingPrompt, ensureSession, pointerRevision, request]);
 
   return {
     messages,
