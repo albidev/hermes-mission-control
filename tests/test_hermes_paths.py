@@ -1,7 +1,17 @@
-"""Tests for server/hermes_paths.py — profile-aware Hermes home resolution.
+"""Tests for server/hermes_paths.py — service-identity Hermes home resolution.
 
-Covers the precedence order documented in the module (issue #12):
-HERMES_HOME profile-shaped → sticky active_profile → HERMES_HOME → default.
+Covers the precedence order documented in the module:
+HERMES_HOME (explicit, profile-shaped or not) → platform default.
+
+The invariant under test: Mission Control is a SERVICE whose home is fixed at
+the default root. Profiles enter only as an EXPLICIT scope (a profile-shaped
+HERMES_HOME); the sticky ``active_profile`` file — the interactive CLI's "where
+I am working now" marker — must never move a serving process's state DB, cron
+store, vault-brain candidates or credentials.
+
+The core makes the same distinction for the same reason
+(``hermes_cli/main.py::_under_gateway_supervisor``).
+
 All tests run against an isolated temp root so they never touch the real
 ~/.hermes (no HERMES_HOME mutation leaks either — it is restored after each
 test).
@@ -73,20 +83,64 @@ class HermesPathsResolutionTests(unittest.TestCase):
         self.assertEqual(hermes_paths.get_hermes_home(), profile_home)
         self.assertEqual(hermes_paths.get_active_profile(), "coder")
 
-    def test_active_profile_redirects_home(self):
+    def test_sticky_active_profile_does_not_move_the_service_home(self):
+        """REGRESSION: the sticky profile must not redirect a serving process.
+
+        Before this invariant, a non-default ``active_profile`` made MC resolve
+        ``<root>/profiles/<name>`` for EVERYTHING: state DB, sessions, cron,
+        vault-brain candidates, auth.json. A single ``hermes profile use`` in a
+        terminal would therefore have silently moved the whole service — and the
+        rooms subsystem (which anchors to the root) would have been reading a
+        different DB from the rest of MC.
+        """
         root = self._tmp / "root"
         root.mkdir(parents=True, exist_ok=True)
         os.environ["HERMES_HOME"] = str(root)
         self._write_active_profile("coder")
-        expected = root / "profiles" / "coder"
-        self.assertEqual(hermes_paths.get_hermes_home(), expected)
-        self.assertEqual(hermes_paths.get_active_profile(), "coder")
 
-    def test_active_profile_default_keeps_home(self):
+        self.assertEqual(
+            hermes_paths.get_hermes_home(),
+            root,
+            "the service home must stay the root, not follow the sticky profile",
+        )
+        self.assertEqual(hermes_paths.get_active_profile(), "default")
+        self.assertEqual(hermes_paths.hermes_state_db(), root / "state.db")
+        self.assertEqual(
+            hermes_paths.hermes_vault_brain_dir(), root / "vault-brain"
+        )
+
+        # The marker is still readable for diagnostics — it just has no
+        # authority over path resolution.
+        self.assertEqual(hermes_paths.read_sticky_active_profile(), "coder")
+
+    def test_sticky_profile_does_not_override_an_env_home(self):
+        """The sticky file must not beat an explicit HERMES_HOME either."""
+        custom = self._tmp / "custom-home"
+        custom.mkdir(parents=True, exist_ok=True)
+        os.environ["HERMES_HOME"] = str(custom)
+        self._write_active_profile("coder")
+        self.assertEqual(hermes_paths.get_hermes_home(), custom)
+
+    def test_sticky_profile_absent_is_default(self):
         root = self._tmp / "root"
         root.mkdir(parents=True, exist_ok=True)
         os.environ["HERMES_HOME"] = str(root)
-        self._write_active_profile("default")
+        self.assertEqual(hermes_paths.read_sticky_active_profile(), "default")
+        self.assertEqual(hermes_paths.get_hermes_home(), root)
+
+    def test_blank_and_corrupt_sticky_files_are_default(self):
+        root = self._tmp / "root"
+        root.mkdir(parents=True, exist_ok=True)
+        os.environ["HERMES_HOME"] = str(root)
+
+        (root / "active_profile").write_text("   \n", encoding="utf-8")
+        self.assertEqual(hermes_paths.read_sticky_active_profile(), "default")
+        self.assertEqual(hermes_paths.get_hermes_home(), root)
+
+        # Unreadable as text: must degrade to default, never raise, and never
+        # change the resolved home.
+        (root / "active_profile").write_bytes(b"\xff\xfe\x00bad")
+        self.assertEqual(hermes_paths.read_sticky_active_profile(), "default")
         self.assertEqual(hermes_paths.get_hermes_home(), root)
 
     def test_hermes_root_in_profile_mode(self):
@@ -118,12 +172,12 @@ class HermesPathsResolutionTests(unittest.TestCase):
             hermes_paths.hermes_vault_brain_dir(), root / "vault-brain"
         )
 
-    def test_state_convenience_paths_follow_profile(self):
+    def test_state_paths_follow_an_explicit_profile_scope(self):
+        """Explicit scoping still works: it is requested, not inherited."""
         root = self._tmp / "root"
-        root.mkdir(parents=True, exist_ok=True)
-        os.environ["HERMES_HOME"] = str(root)
-        self._write_active_profile("coder")
         profile_home = root / "profiles" / "coder"
+        profile_home.mkdir(parents=True, exist_ok=True)
+        os.environ["HERMES_HOME"] = str(profile_home)
         self.assertEqual(hermes_paths.hermes_state_db(), profile_home / "state.db")
         self.assertEqual(
             hermes_paths.hermes_sessions_dir(), profile_home / "sessions"
