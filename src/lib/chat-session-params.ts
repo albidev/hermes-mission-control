@@ -7,6 +7,28 @@ export function addChatProfile(
 }
 
 /**
+ * The profile a NEW chat starts from, after the chat being left is forgotten.
+ *
+ * A reset is a new chat, so the profile of the previous context must not
+ * survive it: `sessionProfileRef` is hook-level state that outlives a session
+ * change, and the creation path (`ensureSession` -> `session.create`) reads it
+ * directly. Leaving the carried value in place is how a chat created after a
+ * client room landed in that bot's store — a different HERMES_HOME, a different
+ * state.db, a different agent, and memory written into the wrong profile.
+ *
+ * This exists as its own entry point so the reset path and the `useEffect`
+ * path cannot drift apart again: both resolve through `nextSessionProfile`, and
+ * neither can be fixed while the other is forgotten. Only an explicitly
+ * requested profile may scope a new chat.
+ */
+export function profileAfterReset(
+  current: string | null | undefined,
+  explicitProfile: string | null | undefined,
+): string | null {
+  return nextSessionProfile(current, explicitProfile, false);
+}
+
+/**
  * Decide the profile to use when a session resume is requested.
  *
  * A session id lives in exactly one profile's state.db, so the owning profile
