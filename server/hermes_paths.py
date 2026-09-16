@@ -5,23 +5,33 @@ logs, skills, config, cache, vault-brain candidates, core checkout) must
 resolve paths through this module — never through hardcoded ``~/.hermes``
 (issue #12).
 
-The resolution mirrors the running Hermes installation:
+Mission Control is a SERVICE with a single identity: the default Hermes home.
+Profiles are NOT ambient state here — they enter only as an explicit scope
+(a selected bot, a room roster, an explicitly requested profile), never from a
+user-level preference file. The sticky ``active_profile`` is the interactive
+CLI's "where I am working now" marker; honouring it here would silently move a
+whole serving process (its state DB, cron store, vault-brain candidates,
+credentials) to whatever profile the user last selected in a terminal.
 
-* ``hermes_constants.get_hermes_home()`` — ``HERMES_HOME`` env var, falling
-  back to the platform default (``~/.hermes``).
-* ``hermes_cli.profiles.get_active_profile_name()`` — a non-default sticky
-  profile (``<root>/active_profile``) redirects the home to
-  ``<root>/profiles/<name>``, exactly like the CLI entry point
-  (``hermes_cli/main.py``) does before any module import.
+The core makes exactly this distinction for the same reason
+(``hermes_cli/main.py``, ``_under_gateway_supervisor``): a supervised child must
+not follow a sticky profile, because switching it "would silently redirect the
+default gateway into that profile — adopting its credentials and double-polling
+a Telegram" bot.
 
-Order of precedence (same as the core launcher):
+Order of precedence:
 
 1. ``HERMES_HOME`` set and already profile-shaped (parent dir is
-   ``profiles``) → used verbatim.
-2. Sticky active profile (``<root>/active_profile`` contains a name other
-   than ``default``) → ``<root>/profiles/<name>``.
-3. ``HERMES_HOME`` set (non profile-shaped) → used verbatim.
-4. Platform default (``~/.hermes`` on POSIX).
+   ``profiles``) → used verbatim. This is how a profile is requested
+   EXPLICITLY for this process.
+2. ``HERMES_HOME`` set (non profile-shaped) → used verbatim (docker/custom
+   deployments).
+3. Platform default (``~/.hermes`` on POSIX) — the service identity.
+
+Profiles remain fully discoverable for explicit scoping, and that discovery
+never depends on the sticky file: ``mission_control_agents`` enumerates profile
+homes, ``cron_bridge`` walks ``profiles/``, and the room/session readers take the
+profile as an argument.
 
 ``HERMES_PROFILE`` is deliberately NOT consulted for path resolution: the
 Hermes core does not use it to relocate the home at boot (it is only read
@@ -83,8 +93,15 @@ def hermes_root() -> Path:
         return env
 
 
-def _read_active_profile() -> str:
-    """Read the sticky active profile name (``default`` when absent/empty)."""
+def read_sticky_active_profile() -> str:
+    """Read the sticky active profile name (``default`` when absent/empty).
+
+    This is the interactive CLI's marker, NOT a home-resolution input: Mission
+    Control is a service with a fixed identity, so the home never follows it.
+    Kept as a read-only introspection helper (surfacing "you last selected X in
+    a terminal" is useful in diagnostics) so that no caller is tempted to
+    re-implement the read and then trust it.
+    """
     path = hermes_root() / _ACTIVE_PROFILE_FILENAME
     try:
         name = path.read_text(encoding="utf-8").strip()
@@ -94,16 +111,14 @@ def _read_active_profile() -> str:
 
 
 def get_hermes_home() -> Path:
-    """Return the profile-aware Hermes home used by the running installation.
+    """Return the Hermes home this SERVICE identity reads.
 
-    See the module docstring for the precedence order.
+    Deliberately does NOT consult the sticky ``active_profile``: see the module
+    docstring. A profile is a scope requested explicitly (a profile-shaped
+    ``HERMES_HOME``); it is never ambient state inherited from whoever ran
+    ``hermes profile use`` in a terminal.
     """
     env = _env_home()
-    if env is not None and is_profile_path(env):
-        return env
-    active = _read_active_profile()
-    if active != _DEFAULT_PROFILE:
-        return hermes_root() / _PROFILES_DIR_NAME / active
     if env is not None:
         return env
     return _platform_default_home()
