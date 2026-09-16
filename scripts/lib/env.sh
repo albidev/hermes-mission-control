@@ -44,32 +44,24 @@ mc_env_file() {
 # Resolve the profile-aware Hermes home (mirrors server/hermes_paths.py and
 # the Hermes core launcher, issue #12).
 #
-# Precedence:
+# Mission Control is a SERVICE with a single identity: the default Hermes home.
+# Profiles are not ambient state here — they enter only as an explicit scope (a
+# selected bot, a room roster, an explicitly requested profile). The sticky
+# active_profile is the interactive CLI's "where I am working now" marker;
+# honouring it would silently move a serving process (state DB, cron store,
+# vault-brain candidates, credentials) to whatever profile the user last
+# selected in a terminal. The core draws the same line for the same reason
+# (hermes_cli/main.py, _under_gateway_supervisor).
+#
+# Precedence (must match server/hermes_paths.get_hermes_home):
 #   1. $HERMES_HOME already profile-shaped (<root>/profiles/<name>) -> verbatim
-#   2. Sticky active profile (<root>/active_profile != default) -> <root>/profiles/<name>
-#   3. $HERMES_HOME set (non profile-shaped) -> verbatim
-#   4. Platform default -> ~/.hermes
+#   2. $HERMES_HOME set (non profile-shaped) -> verbatim
+#   3. Platform default -> ~/.hermes
 #
 # The function always prints a path and never fails; callers that need the
 # directory to exist should check it themselves.
 resolve_hermes_home() {
-  local env_home="${HERMES_HOME:-}"
-  if [[ -n "$env_home" ]]; then
-    if [[ "$(basename "$(dirname "$env_home")")" == "profiles" ]]; then
-      printf '%s' "$env_home"
-      return
-    fi
-  fi
-  local root="${HERMES_HOME:-$HOME/.hermes}"
-  local active=""
-  if [[ -f "$root/active_profile" ]]; then
-    active="$(tr -d '[:space:]' < "$root/active_profile" 2>/dev/null || true)"
-  fi
-  if [[ -n "$active" && "$active" != "default" ]]; then
-    printf '%s' "$root/profiles/$active"
-    return
-  fi
-  printf '%s' "$root"
+  printf '%s' "${HERMES_HOME:-$HOME/.hermes}"
 }
 
 # Load environment variables from the env file (if any), exporting them.
