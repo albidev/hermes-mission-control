@@ -16,6 +16,9 @@ import {
 import {
   configureBotMcpTools,
   configureBotProfile,
+  botProfileConfigureFailure,
+  botProfileModelPairError,
+  botProfileModelResetError,
   createBotProfile,
   deleteBotProfile,
   loadBotMcpTools,
@@ -835,15 +838,16 @@ export function BotsRoute() {
   }, [storedToken]);
 
   useEffect(() => {
-    if (!detailOpen || modelOptions.length > 0) return;
+    if (!detailOpen) return;
     let cancelled = false;
+    setModelOptions([]);
     loadBotModelOptions(storedToken || undefined).then((options) => {
       if (!cancelled) setModelOptions(options);
     }).catch(() => {
       if (!cancelled) setModelOptions([]);
     });
     return () => { cancelled = true; };
-  }, [detailOpen, modelOptions.length, storedToken]);
+  }, [detailOpen, storedToken]);
 
   useEffect(() => {
     if (detailOpen && mode === 'edit' && selectedName) void refreshDetails(selectedName);
@@ -866,6 +870,29 @@ export function BotsRoute() {
     void loadCreateToolsets();
   };
 
+  const configureProfile = async (input: Parameters<typeof configureBotProfile>[0]): Promise<boolean> => {
+    if (botProfileModelPairError(input.model ?? '', input.provider ?? '')) {
+      throw new Error(t('bots.providerModelPairRequired'));
+    }
+    if (details && botProfileModelResetError(
+      details.model.default,
+      details.model.provider,
+      input.model ?? '',
+      input.provider ?? '',
+    )) {
+      throw new Error(t('bots.modelResetUnsupported'));
+    }
+    let result = await configureBotProfile(input, storedToken || undefined);
+    if (result.confirm_required) {
+      const warning = result.confirm_message?.trim() || t('bots.confirmModelChange');
+      if (!window.confirm(warning)) return false;
+      result = await configureBotProfile(input, storedToken || undefined, { confirmExpensiveModel: true });
+    }
+    const failure = botProfileConfigureFailure(result);
+    if (failure) throw new Error(failure);
+    return true;
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setBusy(true);
@@ -877,7 +904,7 @@ export function BotsRoute() {
           ...createInput,
           shareAuth: true,
         }, storedToken || undefined);
-        await configureBotProfile({
+        const configured = await configureProfile({
           name: draft.name,
           description: draft.description,
           soul: draft.soul,
@@ -886,12 +913,13 @@ export function BotsRoute() {
           enabledToolsets: draft.enabledToolsets,
           enabledMcpServers: draft.enabledMcpServers,
           botRoster: draft.botRoster,
-        }, storedToken || undefined);
+        });
+        if (!configured) return;
         setMode('edit');
         setSelectedName(draft.name);
         await refreshRoster(draft.name);
       } else {
-        await configureBotProfile({
+        const configured = await configureProfile({
           name: draft.name,
           description: draft.description,
           soul: draft.soul,
@@ -901,7 +929,8 @@ export function BotsRoute() {
           enabledMcpServers: details ? draft.enabledMcpServers : undefined,
           disabledSkills: details ? draft.disabledSkills : undefined,
           botRoster: draft.botRoster,
-        }, storedToken || undefined);
+        });
+        if (!configured) return;
         if (details) {
           const changes = mcpToolChanges(details, draft);
           if (changes.enable.length > 0 || changes.disable.length > 0) {

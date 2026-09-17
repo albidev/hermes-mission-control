@@ -89,8 +89,46 @@ export type ConfigureBotProfileInput = {
   botRoster: boolean;
 };
 
+export type ConfigureBotProfileResult = {
+  ok: boolean;
+  applied: Record<string, boolean>;
+  confirm_required?: boolean;
+  confirm_message?: string;
+};
+
+export type ConfigureBotProfileOptions = {
+  confirmExpensiveModel?: boolean;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function botProfileConfigureFailure(result: Pick<ConfigureBotProfileResult, 'ok' | 'applied'>): string | null {
+  const failedSections = Object.entries(result.applied)
+    .filter(([, applied]) => applied === false)
+    .map(([section]) => section);
+  if (failedSections.length > 0) {
+    return `Gateway did not apply Bot profile sections: ${failedSections.join(', ')}.`;
+  }
+  return result.ok ? null : 'Gateway did not apply the Bot profile configuration.';
+}
+
+export function botProfileModelPairError(model: string, provider: string): string | null {
+  const hasModel = model.trim().length > 0;
+  const hasProvider = provider.trim().length > 0;
+  return hasModel === hasProvider ? null : 'Provider and model must be selected together.';
+}
+
+export function botProfileModelResetError(
+  currentModel: string,
+  currentProvider: string,
+  nextModel: string,
+  nextProvider: string,
+): string | null {
+  const hadPin = currentModel.trim().length > 0 || currentProvider.trim().length > 0;
+  const clearsPin = nextModel.trim().length === 0 && nextProvider.trim().length === 0;
+  return hadPin && clearsPin ? 'Clearing an existing model pin is not supported here.' : null;
 }
 
 export class BotRpcError extends Error {
@@ -216,8 +254,12 @@ export async function loadBotProfiles(accessToken?: string): Promise<BotProfiles
   return normalizeProfiles(await requestBotRpc<unknown>('profiles.list', { include_sessions: true }, accessToken));
 }
 
-export async function loadBotModelOptions(accessToken?: string): Promise<BotModelProviderOption[]> {
+export async function loadBotModelOptions(
+  accessToken?: string,
+  profile?: string,
+): Promise<BotModelProviderOption[]> {
   const value = await requestBotRpc<unknown>('model.options', {
+    ...(profile ? { profile } : {}),
     explicit_only: false,
     include_unconfigured: false,
     refresh: false,
@@ -396,8 +438,12 @@ export async function createBotProfile(input: CreateBotProfileInput, accessToken
   }, accessToken);
 }
 
-export async function configureBotProfile(input: ConfigureBotProfileInput, accessToken?: string): Promise<void> {
-  await requestBotRpc('profiles.configure', {
+export async function configureBotProfile(
+  input: ConfigureBotProfileInput,
+  accessToken?: string,
+  options: ConfigureBotProfileOptions = {},
+): Promise<ConfigureBotProfileResult> {
+  const value = await requestBotRpc<unknown>('profiles.configure', {
     name: input.name,
     description: input.description,
     soul: input.soul,
@@ -407,7 +453,21 @@ export async function configureBotProfile(input: ConfigureBotProfileInput, acces
     ...(input.enabledMcpServers ? { enabled_mcp_servers: input.enabledMcpServers } : {}),
     ...(input.disabledSkills ? { disabled_skills: input.disabledSkills } : {}),
     ui_meta: { mission_control: { bot: input.botRoster } },
+    ...(options.confirmExpensiveModel ? { confirm_expensive_model: true } : {}),
   }, accessToken);
+  if (!isRecord(value)) throw new Error('Gateway returned an invalid Bot profile configuration result.');
+  const applied = isRecord(value.applied)
+    ? Object.entries(value.applied).reduce<Record<string, boolean>>((result, [key, appliedValue]) => {
+      if (typeof appliedValue === 'boolean') result[key] = appliedValue;
+      return result;
+    }, {})
+    : {};
+  return {
+    ok: value.ok === true,
+    applied,
+    ...(value.confirm_required === true ? { confirm_required: true } : {}),
+    ...(typeof value.confirm_message === 'string' ? { confirm_message: value.confirm_message } : {}),
+  };
 }
 
 export { deleteBotProfile } from './bot-delete';
