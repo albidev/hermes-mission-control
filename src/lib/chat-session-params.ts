@@ -1,9 +1,20 @@
+export function clearNewChatParams(search: string): string {
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  for (const key of ['chatSession', 'botProfile', 'chatMode', 'roomId']) params.delete(key);
+  return params.toString();
+}
+
 export function addChatProfile(
   params: Record<string, unknown>,
   profile?: string | null,
 ): Record<string, unknown> {
   const normalizedProfile = profile?.trim();
   return normalizedProfile ? { ...params, profile: normalizedProfile } : params;
+}
+
+/** A New Chat always starts in the default profile store. */
+export function profileForNewChat(): null {
+  return null;
 }
 
 /**

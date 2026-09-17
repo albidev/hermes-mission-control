@@ -27,7 +27,6 @@ import {
   normalizeTranscript,
   parseGatewayFrame,
   pendingPromptWasPersisted,
-  shouldCloseBackendSessionForNewChat,
   type ChatActivity,
   type ChatAttachmentSummary,
   type ChatAttachmentUpload,
@@ -56,7 +55,7 @@ import {
 } from './chat-interactions';
 import { recordReloadDiagnostic } from './reload-diagnostics';
 import { publishChatRuntimePresence } from './chat-runtime-presence';
-import { addChatProfile, profileAfterReset, nextSessionProfile, resolveSessionOwner } from './chat-session-params';
+import { addChatProfile, profileForNewChat, nextSessionProfile, resolveSessionOwner } from './chat-session-params';
 import { loadMissionControlSessionPreview } from './hermes-api';
 
 // Backward-compatible re-export for ChatDrawer consumers during the gateway split.
@@ -263,6 +262,7 @@ export function useGatewayChat(
   } : null);
   const pointerBootstrapPromiseRef = useRef<Promise<void> | null>(null);
   const pointerBootstrapGuardRef = useRef(createChatBootstrapGuard());
+  const sessionLifecycleGenerationRef = useRef(0);
 
   useEffect(() => {
     setMessages((current) => {
@@ -528,10 +528,17 @@ export function useGatewayChat(
     activeSessionId: string | null = null,
     activeSessionKey: string | null = null,
   ) => {
+    const lifecycleGeneration = sessionLifecycleGenerationRef.current;
     const rawTranscript = extractTranscript(resumed);
     const resolvedSessionId = activeSessionId ?? extractSessionId(resumed);
     const resolvedSessionKey = activeSessionKey ?? extractSessionKey(resumed) ?? resolvedSessionId;
     const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey, sessionProfileRef.current);
+    if (
+      lifecycleGeneration !== sessionLifecycleGenerationRef.current
+      || (resolvedSessionId && sessionIdRef.current !== resolvedSessionId)
+    ) {
+      return { transcript: [], inflight: null };
+    }
     const transcript = canonicalTranscript?.messages ?? [];
     if (canonicalTranscript?.sessionTitle) setSessionTitle(canonicalTranscript.sessionTitle);
     const inflight = extractInflightAssistant(resumed);
@@ -763,9 +770,14 @@ export function useGatewayChat(
     }
   }, [request]);
 
-  const ensureSession = useCallback(async (preferredSessionId?: string | null) => {
-    const explicitSessionId = preferredSessionId?.trim() || initialSessionId?.trim() || null;
-    const existingKey = sessionKeyRef.current || explicitSessionId || requestedSessionIdRef.current || sessionIdRef.current;
+  const ensureSession = useCallback(async (
+    preferredSessionId?: string | null,
+    options?: { fresh?: boolean },
+  ) => {
+    const lifecycleGeneration = sessionLifecycleGenerationRef.current;
+    const forceFresh = options?.fresh === true;
+    const explicitSessionId = forceFresh ? null : (preferredSessionId?.trim() || initialSessionId?.trim() || null);
+    const existingKey = forceFresh ? null : (sessionKeyRef.current || explicitSessionId || requestedSessionIdRef.current || sessionIdRef.current);
     const isExplicitResume = Boolean(explicitSessionId);
     if (existingKey) {
       // The gateway's `session.resume` resolves an id or a title — never a
@@ -774,7 +786,14 @@ export function useGatewayChat(
       // Sending the key 4007s with "session not found" and the drawer then falls
       // back to an empty chat. The sessions index resolves the key to the owning
       // id, so translate before the RPC; a miss leaves the reference alone.
-      const resumableId = await resolveResumableSessionId(storedToken, existingKey);
+      let resumableId: string | null;
+      try {
+        resumableId = await resolveResumableSessionId(storedToken, existingKey);
+      } catch (err) {
+        if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
+        throw err;
+      }
+      if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
       if (resumableId) {
         sessionIdRef.current = resumableId;
         requestedSessionIdRef.current = resumableId;
@@ -783,7 +802,14 @@ export function useGatewayChat(
       // in exactly one profile's store, and resuming against the wrong one
       // 4007s (or comes back empty) for a session the index can see.
       if (!sessionProfileRef.current) {
-        const owner = await resolveSessionProfile(storedToken, resumableId ?? existingKey);
+        let owner: string | null;
+        try {
+          owner = await resolveSessionProfile(storedToken, resumableId ?? existingKey);
+        } catch (err) {
+          if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
+          throw err;
+        }
+        if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
         if (owner) sessionProfileRef.current = owner;
       }
       try {
@@ -793,6 +819,7 @@ export function useGatewayChat(
           eager_build: true,
           source: 'mission-control',
         }, sessionProfileRef.current));
+        if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
         adoptModel(resumed);
         const resolvedSessionId = extractSessionId(resumed) ?? sessionIdRef.current ?? existingKey;
         const resolvedSessionKey = extractSessionKey(resumed) ?? existingKey;
@@ -806,9 +833,11 @@ export function useGatewayChat(
           sessionKey: resolvedSessionKey,
         });
         const { inflight } = await hydrateSessionSnapshot(resumed, resolvedSessionId, resolvedSessionKey);
+        if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
         setRunning(Boolean(inflight) || extractSessionRunning(resumed));
         return resolvedSessionId;
       } catch (err) {
+        if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
         recordReloadDiagnostic('chat-session-resume-fallback', {
           reason: 'requested-session-unavailable',
           requested: resumableId ?? existingKey,
@@ -828,6 +857,7 @@ export function useGatewayChat(
     }
 
     const created = await request<unknown>('session.create', addChatProfile({ cols: 80, source: 'mission-control' }, sessionProfileRef.current));
+    if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
     setResumedRuntime(null);
     adoptModel(created);
     const createdSessionId = extractSessionId(created);
@@ -1646,19 +1676,12 @@ export function useGatewayChat(
   }, [request]);
 
   const reset = useCallback(async () => {
-    const previousSessionId = sessionIdRef.current;
-    const recoveredSessionId = requestedSessionIdRef.current;
-    if (
-      shouldCloseBackendSessionForNewChat()
-      && previousSessionId
-      && previousSessionId !== recoveredSessionId
-    ) {
-      try {
-        await request('session.close', { session_id: previousSessionId });
-      } catch {
-        // A completed session may already have been finalized by the gateway.
-      }
-    }
+    // Invalidate every in-flight resume/create/hydration before changing state.
+    // A late canonical transcript must never repopulate the new chat.
+    sessionLifecycleGenerationRef.current += 1;
+    pointerBootstrapGuardRef.current.invalidate();
+    pointerBootstrapPromiseRef.current = null;
+
     setMessages([]);
     setTodoPlan(null);
     transcriptReadyRef.current = false;
@@ -1674,15 +1697,13 @@ export function useGatewayChat(
     setInteraction(null);
     setActivity(null);
     clearPendingPrompt();
-    // A reset is a NEW chat, so the profile of the chat being left must not
-    // survive it. Keeping it here is how a chat created after a client room
-    // landed in that bot's store: `ensureSession()` below reaches
-    // `session.create`, and the ref still described the previous context.
-    // Only an explicitly requested profile may scope the new chat.
-    sessionProfileRef.current = profileAfterReset(sessionProfileRef.current, botProfile);
+    // New Chat always uses the default profile store. A bot profile is an
+    // explicit context for the chat being left, not an instruction for the
+    // next chat.
+    sessionProfileRef.current = profileForNewChat();
     persistChat(null, null, null, null, [], pointerRevision, sessionProfileRef.current);
     try {
-      let activeSessionId = await ensureSession();
+      let activeSessionId = await ensureSession(undefined, { fresh: true });
       if (activeSessionId) {
         const canonicalSessionId = await claimLastChatPointer('create', activeSessionId);
         if (canonicalSessionId !== activeSessionId) activeSessionId = await ensureSession();
@@ -1690,7 +1711,7 @@ export function useGatewayChat(
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create a new chat.');
     }
-  }, [botProfile, claimLastChatPointer, clearPendingPrompt, ensureSession, pointerRevision, request]);
+  }, [claimLastChatPointer, clearPendingPrompt, ensureSession, pointerRevision, request]);
 
   return {
     messages,

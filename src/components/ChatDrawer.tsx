@@ -102,6 +102,7 @@ type ChatDrawerProps = {
   botProfile?: string | null;
   onClose: () => void;
   onStartTaskChat?: () => void;
+  onNewChat?: () => void;
   onOpenRooms?: () => void;
   onRoomChange?: (roomId: string | null, roomName?: string | null) => void;
 };
@@ -328,7 +329,7 @@ function AutoHideModeTabs({ active, onSelect, containerRef, chatLed = 'none', ro
   );
 }
 
-const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat, onOpenRooms }: CanonicalChatDrawerProps) {
+const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat, onNewChat, onOpenRooms }: CanonicalChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -1550,6 +1551,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     clearActiveBotTarget();
     try {
       await reset();
+      onNewChat?.();
       if (chatMode === 'canonical') onStartTaskChat?.();
     } finally {
       setNewChatLoading(false);

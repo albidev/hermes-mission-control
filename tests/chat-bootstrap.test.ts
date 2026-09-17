@@ -29,10 +29,11 @@ assert.equal(canClaimLastChatPointer('bootstrap'), false);
 assert.equal(canClaimLastChatPointer('create'), true);
 assert.equal(canClaimLastChatPointer('resume'), true);
 assert.equal(canClaimLastChatPointer('submit'), true);
-assert.deepEqual(buildLastChatClaimPayload('sid', 'key', null, null), {
+assert.deepEqual(buildLastChatClaimPayload('sid', 'key', null, null, null, null), {
   sessionId: 'sid',
   sessionKey: 'key',
   modelIdentity: null,
+  profile: null,
 });
 assert.equal(buildLastChatClaimPayload('sid', 'key', null, null, 8).expectedRevision, 8);
 assert.equal(shouldAdoptServerPointer(local, server), true);

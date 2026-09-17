@@ -96,7 +96,12 @@ def set_last_chat(
             }
 
         for key in _ALLOWED_KEYS:
-            if key in payload and payload[key] is not None:
+            if key == "profile" and key in payload:
+                # ``profile: null`` is an explicit reset to the default store.
+                # Other nullable pointer fields retain their historical
+                # partial-update semantics so ordinary claims cannot erase them.
+                data[key] = payload[key]
+            elif key in payload and payload[key] is not None:
                 data[key] = payload[key]
         next_revision = current_revision + 1
         previous_updated_at = data.get("updatedAt")

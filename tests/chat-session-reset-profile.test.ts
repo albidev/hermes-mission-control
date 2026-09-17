@@ -27,6 +27,7 @@
  * chat being CREATED.
  */
 import { strict as assert } from 'node:assert';
+import * as chatSessionParams from '../src/lib/chat-session-params.ts';
 import {
   addChatProfile,
   nextSessionProfile,
@@ -96,12 +97,15 @@ function pressNewChat(input: {
    */
   sessionOpen?: boolean;
 }): Record<string, unknown> {
-  const { carriedProfile, botProfile = null } = input;
+  const { carriedProfile } = input;
+  // The drawer still receives the previous botProfile prop; New Chat must not
+  // treat that stale prop as an explicit target.
+  void input.botProfile;
 
-  // reset(): session bookkeeping cleared, profile resolved, pointer persisted.
+  // reset(): session bookkeeping cleared, profile explicitly reset to default.
   const requestedSessionIdRef = null;
   const sessionKeyRef = null;
-  const sessionProfileRef = profileAfterReset(carriedProfile, botProfile);
+  const sessionProfileRef = chatSessionParams.profileForNewChat();
 
   // ensureSession(): existingKey is null, so the RESUME branch is skipped and
   // creation proceeds with whatever the ref now holds.
@@ -134,16 +138,23 @@ assert.equal(
   'reset() must persist an unscoped pointer, or the next mount re-adopts the leak',
 );
 
-// an explicitly targeted new chat still scopes
+// New Chat ignores the previous bot target, even when the parent prop has not
+// been removed yet; the parent URL cleanup happens in the same action.
 const targetedNewChat = pressNewChat({ carriedProfile: 'client-bot', botProfile: 'other-bot' });
 assert.equal(
-  targetedNewChat.profile,
-  'other-bot',
-  'pressing "new chat" after selecting a bot opens it scoped to that bot',
+  'profile' in targetedNewChat,
+  false,
+  'pressing New Chat must return to the default profile, not the previous bot',
 );
 
 // a fresh install: nothing carried, nothing scoped
 const freshNewChat = pressNewChat({ carriedProfile: null });
 assert.equal('profile' in freshNewChat, false, 'a first new chat is unscoped');
+
+assert.equal(
+  chatSessionParams.clearNewChatParams('view=chat&chatSession=old&botProfile=client-bot&chatMode=canonical&roomId=room-1'),
+  'view=chat',
+  'New Chat must clear all chat context from the URL while preserving unrelated params',
+);
 
 console.log('chat-session-reset-profile: ok');

@@ -23,6 +23,7 @@ import { ChatDrawer } from './ChatDrawer';
 import { useChatPresence } from '../lib/chat-presence';
 import { useLastRoutePersistence } from '../lib/last-route';
 import { readLocalLastRoom, writeLocalLastRoom, claimLastRoomPointer, fetchServerLastRoom } from '../lib/room-persistence';
+import { clearNewChatParams } from '../lib/chat-session-params';
 import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 import { Button } from './ui/Button';
 import { PluginRegistry } from '../core/plugins/registry';
@@ -118,6 +119,11 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
   }, [location.pathname, location.search, navigate]);
 
+  const startNewChat = useCallback(() => {
+    const search = clearNewChatParams(location.search);
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
   const changeRoom = useCallback((roomId: string | null, roomName?: string | null) => {
     const params = new URLSearchParams(location.search);
     if (roomId) {
@@ -180,6 +186,8 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
   const startTaskChat = useCallback(() => {
     const params = new URLSearchParams(location.search);
     params.delete('chatSession');
+    params.delete('botProfile');
+    params.delete('roomId');
     params.set('chatMode', 'task');
     const search = params.toString();
     navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
@@ -467,6 +475,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             botProfile={chatBotProfile}
             onClose={closeChat}
             onStartTaskChat={startTaskChat}
+            onNewChat={startNewChat}
             onOpenRooms={openRoomsMode}
             onRoomChange={changeRoom}
           />

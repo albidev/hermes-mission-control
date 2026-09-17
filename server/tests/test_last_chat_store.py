@@ -70,6 +70,17 @@ class LastChatStoreProtocolTest(unittest.TestCase):
         self.assertEqual(stale["lastChat"], current["lastChat"])
         self.assertEqual(last_chat_store.get_last_chat(), current["lastChat"])
 
+    def test_explicit_null_profile_clears_previous_bot_scope(self) -> None:
+        first = last_chat_store.set_last_chat({"sessionId": "old", "profile": "client-bot"})
+        second = last_chat_store.set_last_chat(
+            {"sessionId": "new", "profile": None},
+            expected_revision=first["lastChat"]["revision"],
+        )
+
+        self.assertTrue(second["accepted"])
+        self.assertIsNone(second["lastChat"]["profile"])
+        self.assertIsNone(last_chat_store.get_last_chat()["profile"])
+
     def test_client_wall_clock_does_not_control_server_ordering(self) -> None:
         first = last_chat_store.set_last_chat({"sessionId": "desktop-1", "updatedAt": 10**15})
         second = last_chat_store.set_last_chat(

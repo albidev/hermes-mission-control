@@ -37,6 +37,9 @@ assertIncludes(component, "id: `bot-request-${handoffId}`", 'first Bot mention i
 assertIncludes(component, 'const previewMessages = (preview.recentMessages ?? []).filter', 'resume preview filters the duplicate Bot reply');
 assertIncludes(component, 'previewMessages.map((msg, index)', 'resume preview renders the filtered transcript');
 assertIncludes(chatGateway, 'if (since !== undefined && typeof ready.latest_seq === \'number\')', 'fresh relay subscribers replay existing MC messages');
+assertIncludes(chatGateway, 'sessionLifecycleGenerationRef', 'resume hydration is scoped to the current chat lifecycle');
+assertIncludes(chatGateway, 'fresh: true', 'New Chat forces a fresh session instead of reusing the resume target');
+assertExcludes(chatGateway, "'session.close'", 'New Chat never closes the previous gateway session');
 // The dedupe set moved from a bare `new Set(` to a `useMemo(...)` when the timeline
 // became memoized; assert the BEHAVIOUR (a set of `bot-request-<id>` keys consulted
 // before rendering a user row) instead of the expression that builds it.

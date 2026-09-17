@@ -90,7 +90,7 @@ export function buildLastChatClaimPayload(
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { sessionId, sessionKey, modelIdentity };
   if (sessionTitle?.trim()) body.sessionTitle = sessionTitle.trim();
-  if (profile?.trim()) body.profile = profile.trim();
+  if (profile !== undefined) body.profile = profile?.trim() || null;
   if (typeof expectedRevision === 'number' && Number.isInteger(expectedRevision) && expectedRevision > 0) {
     body.expectedRevision = expectedRevision;
   }
