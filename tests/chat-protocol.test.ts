@@ -11,6 +11,7 @@ import {
   extractSessionRunning,
   extractSessionModel,
   eventActivity,
+  interactionFromServerRequest,
   isResponseFor,
   isSystemNotification,
   nextReconnectDelay,
@@ -25,6 +26,7 @@ import {
   type ChatMessage,
 } from '../src/lib/chat-protocol.ts';
 import { deriveTodoPlan, normalizeTodoPlanSnapshot } from '../src/lib/todo-plan.ts';
+import { buildClarifyAnswers, isBatchClarifyRequest } from '../src/lib/chat-interactions.ts';
 import { formatChatMessageTime } from '../src/lib/chat-time.ts';
 
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit } from '../src/lib/chat-outbox.ts';
@@ -140,6 +142,65 @@ assertDeepEqual(extractInteractionRequest({
   payload: { request_id: 'req-terminal', prompt: 'Paste the output' },
 });
 assertEqual(extractInteractionRequest({ type: 'message.delta', payload: {} }), null);
+
+// ── Server→client requests (core >= Sep 2026, commit ebe8cda8ea) ─────────────────────────
+// The gateway no longer emits `approval.request` events; it sends JSON-RPC requests
+// {id: "srq-…", method, params} answered with a response frame carrying the same id.
+const approvalRequestFrame = parseGatewayFrame(JSON.stringify({
+  jsonrpc: '2.0',
+  id: 'srq-abc123def456',
+  method: 'approval',
+  params: { session_id: 'sid', request_id: 'req-9', command: 'git push', description: 'Push changes', choices: ['once', 'session', 'always', 'deny'] },
+}));
+assertDeepEqual({
+  kind: approvalRequestFrame.kind,
+  id: approvalRequestFrame.kind === 'server_request' ? approvalRequestFrame.id : null,
+  method: approvalRequestFrame.kind === 'server_request' ? approvalRequestFrame.method : null,
+}, {
+  kind: 'server_request',
+  id: 'srq-abc123def456',
+  method: 'approval',
+});
+assertDeepEqual(interactionFromServerRequest(approvalRequestFrame.kind === 'server_request'
+  ? approvalRequestFrame
+  : { id: '', method: '', params: {} }), {
+  kind: 'approval',
+  sessionId: 'sid',
+  requestId: 'srq-abc123def456',
+  payload: { session_id: 'sid', request_id: 'req-9', command: 'git push', description: 'Push changes', choices: ['once', 'session', 'always', 'deny'] },
+});
+
+const clarifyRequestFrame = parseGatewayFrame(JSON.stringify({
+  jsonrpc: '2.0',
+  id: 'srq-abc123def457',
+  method: 'clarify',
+  params: { session_id: 'sid', question: 'Proceed?', choices: ['yes', 'no'] },
+}));
+assertEqual(clarifyRequestFrame.kind, 'server_request');
+assertDeepEqual(interactionFromServerRequest(clarifyRequestFrame.kind === 'server_request'
+  ? clarifyRequestFrame
+  : { id: '', method: '', params: {} }), {
+  kind: 'clarify',
+  sessionId: 'sid',
+  requestId: 'srq-abc123def457',
+  payload: { session_id: 'sid', question: 'Proceed?', choices: ['yes', 'no'] },
+});
+
+// Unknown methods (tour, preview.*, vault.*) and client-shaped ids are NOT interaction cards.
+assertEqual(parseGatewayFrame(JSON.stringify({ jsonrpc: '2.0', id: 'srq-abc123def458', method: 'tour', params: {} })).kind, 'server_request');
+assertEqual(interactionFromServerRequest({ id: 'srq-abc123def458', method: 'tour', params: {} }), null);
+assertEqual(parseGatewayFrame(JSON.stringify({ jsonrpc: '2.0', id: 42, method: 'approval', params: {} })).kind, 'unknown');
+
+// request.cancel withdraws the matching card.
+assertDeepEqual(extractInteractionRequest({ type: 'request.cancel', session_id: 'sid', payload: { id: 'srq-x', method: 'approval', reason: 'timeout' } }), null);
+
+// Batch clarify helpers: `questions` with qids → answers keyed by qid, locked answers preserved.
+assertEqual(isBatchClarifyRequest({ question: 'Single?' }), false);
+assertEqual(isBatchClarifyRequest({ questions: [{ qid: 'q1', question: 'A?' }, { qid: 'q2', question: 'B?' }] }), true);
+assertDeepEqual(buildClarifyAnswers(
+  { questions: [{ qid: 'q1', question: 'A?' }, { qid: 'q2', question: 'B?' }], answers: { q1: 'locked' } },
+  'beta',
+), { q1: 'locked', q2: 'beta' });
 assertDeepEqual(extractTranscript({ messages: [{ role: 'user', text: 'hi' }, null] }), [{ role: 'user', text: 'hi' }]);
 
 assertEqual(isSystemNotification('[IMPORTANT: Background process proc_123 matched watch pattern "ready in"].'), true);

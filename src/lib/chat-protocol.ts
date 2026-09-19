@@ -150,6 +150,7 @@ export type JsonRpcResponse = {
 export type ParsedGatewayFrame =
   | { kind: 'event'; event: GatewayEvent }
   | { kind: 'response'; response: JsonRpcResponse }
+  | { kind: 'server_request'; id: string; method: string; params: Record<string, unknown> }
   | { kind: 'unknown'; value: unknown }
   | { kind: 'malformed'; error: string };
 
@@ -277,6 +278,19 @@ export function parseGatewayFrame(raw: unknown): ParsedGatewayFrame {
 
     if ('id' in value && ('result' in value || 'error' in value)) {
       return { kind: 'response', response: value as JsonRpcResponse };
+    }
+
+    // Server→client request (core >= Sep 2026): {id: "srq-…", method, params} the renderer
+    // answers with a response frame carrying the same id. Client request ids are integers,
+    // server request ids are always strings, so string-id + method = request.
+    if (typeof value.id === 'string' && value.id.startsWith('srq-')
+      && typeof value.method === 'string' && value.method !== 'event') {
+      return {
+        kind: 'server_request',
+        id: value.id,
+        method: value.method,
+        params: isRecord(value.params) ? value.params : {},
+      };
     }
 
     return { kind: 'unknown', value };
@@ -624,6 +638,31 @@ export function attachmentRpcMethod(kind: AttachmentKind): 'image.attach_bytes' 
   return 'file.attach';
 }
 
+const SERVER_REQUEST_METHOD_KIND: Record<string, GatewayInteractionKind> = {
+  approval: 'approval',
+  clarify: 'clarify',
+  secret: 'secret',
+  sudo: 'sudo',
+  'terminal.read': 'terminal_read',
+};
+
+/** Extract an interaction card from one JSON-RPC server→client request (method !== 'event'). */
+export function interactionFromServerRequest(frame: {
+  id: string;
+  method: string;
+  params: Record<string, unknown>;
+}): GatewayInteractionRequest | null {
+  const kind = SERVER_REQUEST_METHOD_KIND[frame.method];
+  if (!kind) return null;
+  return {
+    kind,
+    sessionId: typeof frame.params.session_id === 'string' ? frame.params.session_id : null,
+    requestId: frame.id,
+    payload: frame.params,
+  };
+}
+
+/** Extract an interaction card from the legacy `*.request` gateway events (pre-Sep-2026 cores). */
 export function extractInteractionRequest(event: GatewayEvent): GatewayInteractionRequest | null {
   const kindByEvent: Record<string, GatewayInteractionKind> = {
     'approval.request': 'approval',

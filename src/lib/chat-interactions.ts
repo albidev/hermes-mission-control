@@ -86,6 +86,42 @@ export function mergeClarifyInteractionContent(
   };
 }
 
+/**
+ * Batch clarify detection on a server-request payload: `questions` (with `qid`s) is the
+ * wire shape `tui_gateway/server.py::_clarify_block` sends. A response with neither
+ * `answer` nor `answers` is a cancel-all, so single questions answer with `answer`.
+ */
+export function isBatchClarifyRequest(payload: Record<string, unknown>): boolean {
+  return Array.isArray(payload.questions)
+    && (payload.questions as unknown[]).some((q) => typeof (q as Record<string, unknown>)?.qid === 'string'
+      && String((q as Record<string, unknown>).qid).trim().length > 0);
+}
+
+/**
+ * Build the batch `answers` result: the locked answers from the reconnect replay
+ * (`params.answers`) merged with the answer the user just submitted. A single answer
+ * applies to the first unanswered question (the drawer answers one question at a time).
+ */
+export function buildClarifyAnswers(payload: Record<string, unknown>, answer: string): Record<string, string> {
+  const answers: Record<string, string> = {};
+  const locked = payload.answers;
+  if (locked && typeof locked === 'object' && !Array.isArray(locked)) {
+    for (const [qid, value] of Object.entries(locked as Record<string, unknown>)) {
+      if (typeof value === 'string' && qid.trim()) answers[qid] = value;
+    }
+  }
+  const questions = Array.isArray(payload.questions) ? (payload.questions as unknown[]) : [];
+  const target = questions.find((q) => {
+    const qid = typeof (q as Record<string, unknown>)?.qid === 'string' ? String((q as Record<string, unknown>).qid).trim() : '';
+    return qid && !(qid in answers);
+  });
+  const targetQid = typeof (target as Record<string, unknown> | undefined)?.qid === 'string'
+    ? String((target as Record<string, unknown>).qid).trim()
+    : '';
+  if (targetQid && answer.trim()) answers[targetQid] = answer;
+  return answers;
+}
+
 export function interactionTitle(interaction: GatewayInteractionRequest): string {
   if (interaction.kind === 'approval') return 'Hermes needs permission';
   if (interaction.kind === 'clarify') return 'Hermes needs your answer';

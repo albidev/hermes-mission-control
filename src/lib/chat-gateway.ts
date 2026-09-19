@@ -18,6 +18,7 @@ import {
   extractSessionKey,
   extractSessionModel,
   extractSessionRunning,
+  interactionFromServerRequest,
   extractTranscript,
   getRpcErrorMessage,
   isResponseFor,
@@ -47,8 +48,10 @@ import { applySyncedAssistantMessage, applySyncedChatMessage, applySyncedUserMes
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { commandOutput, executeReasoningSlashCommand, resultText } from './chat-commands';
 import {
+  buildClarifyAnswers,
   extractClarifyToolContent,
   interactionTitle,
+  isBatchClarifyRequest,
   mergeClarifyInteractionContent,
   normalizeClarifyInteraction,
   type ClarifyInteractionContent,
@@ -238,6 +241,10 @@ export function useGatewayChat(
   const sessionIdRef = useRef(sessionId);
   const sessionKeyRef = useRef(sessionKey);
   const interactionRef = useRef(interaction);
+  // Open server→client requests (srq-…): the store lets the response path answer the
+  // exact frame the gateway asked with (idempotent, one send) instead of the removed
+  // `*.respond` RPCs, and lets `open_requests` replays reuse the same entry.
+  const openServerRequestsRef = useRef(new Map<string, { method: string; responded: boolean }>());
   const pendingClarifyContentRef = useRef<ClarifyInteractionContent | null>(null);
   const intentionalCloseRef = useRef(false);
   const requestedSessionIdRef = useRef<string | null>(initialSessionId ?? null);
@@ -565,6 +572,31 @@ export function useGatewayChat(
     const resumedTodoPlan = normalizeTodoPlanSnapshot(isRecord(resumed) ? resumed.todo_state : undefined);
     if (resumedTodoPlan) setTodoPlan(resumedTodoPlan);
     else if (transcript.length > 0) setTodoPlan(deriveTodoPlan(transcript));
+    // Re-deliver still-open server→client requests (`session.resume` / `session.events.since`
+    // carry them in `open_requests`) so an unanswered question survives a dropped socket.
+    // The shared channel normally does this before the caller sees the result; MC's direct
+    // `request()` path does not, so hydrate is the owner. Same-id entries reuse the store.
+    if (isRecord(resumed) && Array.isArray(resumed.open_requests)) {
+      for (const entry of resumed.open_requests as unknown[]) {
+        if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.method !== 'string') continue;
+        const existing = openServerRequestsRef.current.get(entry.id);
+        if (existing?.responded) continue; // answered by this client; the cancel may still be in flight
+        const params = isRecord(entry.params) ? entry.params : {};
+        openServerRequestsRef.current.set(entry.id, { method: entry.method, responded: false });
+        const incoming = interactionFromServerRequest({ id: entry.id, method: entry.method, params });
+        if (!incoming) continue;
+        if (sessionIdRef.current && incoming.sessionId && incoming.sessionId !== sessionIdRef.current) continue;
+        const enrichedInteraction = incoming.kind === 'clarify'
+          ? {
+            ...incoming,
+            payload: mergeClarifyInteractionContent(incoming.payload, pendingClarifyContentRef.current),
+          }
+          : incoming;
+        interactionRef.current = enrichedInteraction;
+        setInteraction(enrichedInteraction);
+        setStatusText('Waiting for your input');
+      }
+    }
     return { transcript, inflight };
   }, [storedToken]);
 
@@ -1071,6 +1103,22 @@ export function useGatewayChat(
           }
           return;
         }
+        if (parsed.kind === 'server_request') {
+          openServerRequestsRef.current.set(parsed.id, { method: parsed.method, responded: false });
+          const incoming = interactionFromServerRequest(parsed);
+          if (incoming) {
+            const enrichedInteraction = incoming.kind === 'clarify'
+              ? {
+                ...incoming,
+                payload: mergeClarifyInteractionContent(incoming.payload, pendingClarifyContentRef.current),
+              }
+              : incoming;
+            interactionRef.current = enrichedInteraction;
+            setInteraction(enrichedInteraction);
+            setStatusText('Waiting for your input');
+          }
+          return;
+        }
         if (parsed.kind !== 'event') return;
 
         if (parsed.event.type === 'gateway.ready') {
@@ -1141,6 +1189,18 @@ export function useGatewayChat(
           interactionRef.current = enrichedInteraction;
           setInteraction(enrichedInteraction);
           setStatusText('Waiting for your input');
+        }
+        if (parsed.event.type === 'request.cancel') {
+          // The backend withdrew a server→client request (timeout / interrupt / resolution on
+          // another surface): forget it and clear the matching card only.
+          const cancelledId = typeof parsed.event.payload?.id === 'string' ? parsed.event.payload.id : null;
+          if (cancelledId) openServerRequestsRef.current.delete(cancelledId);
+          const requestId = typeof parsed.event.payload?.request_id === 'string' ? parsed.event.payload.request_id : null;
+          if ((cancelledId && (!interactionRef.current || interactionRef.current.requestId === cancelledId))
+            || (!cancelledId && (!requestId || requestId === interactionRef.current?.requestId))) {
+            pendingClarifyContentRef.current = null;
+            setInteraction(null);
+          }
         }
         if (parsed.event.type.endsWith('.expire')) {
           const requestId = typeof parsed.event.payload?.request_id === 'string' ? parsed.event.payload.request_id : null;
@@ -1607,10 +1667,59 @@ export function useGatewayChat(
   const respondInteraction = useCallback(async (answer: string, choice?: string, resolveAll = false) => {
     const pending = interactionRef.current;
     if (!pending) return false;
-    if (pending.kind === 'clarify' && !pending.requestId) {
-      setError('Clarify request is missing its request id.');
-      return false;
-    }
+    const openRequest = pending.requestId ? openServerRequestsRef.current.get(pending.requestId) : undefined;
+    const respondFrame = (result: Record<string, unknown>): boolean => {
+      // Answer the server→client request with a response frame carrying the SAME id —
+      // the `*.respond` RPCs were removed from the core in Sep 2026. Idempotent: the
+      // first send wins, a re-delivered `open_requests` replay never double-answers.
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        setError('Chat gateway is not connected.');
+        return false;
+      }
+      if (pending.requestId) {
+        const entry = openServerRequestsRef.current.get(pending.requestId);
+        if (entry) {
+          if (entry.responded) return true;
+          entry.responded = true;
+        }
+        try {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: pending.requestId, result }));
+        } catch {
+          // The generation is gone; the backend withdraws the request itself (timeout / replay).
+        }
+      }
+      return true;
+    };
+    const legacyRpc = pending.kind === 'clarify' && !pending.requestId
+      ? null
+      : async () => {
+        // Legacy cores (< Sep 2026): keep the `*.respond` RPC path for old gateways.
+        if (pending.kind === 'approval') {
+          await request('approval.respond', {
+            choice: choice || answer || 'deny',
+            all: resolveAll || choice === 'always',
+            session_id: sessionIdRef.current ?? undefined,
+          });
+        } else if (pending.kind === 'clarify') {
+          if (!pending.requestId) throw new Error('Clarify request is missing its request id.');
+          const questionId = normalizeClarifyInteraction(pending.payload).questionId;
+          await request('clarify.respond', {
+            request_id: pending.requestId,
+            answer,
+            ...(questionId ? { question_id: questionId } : {}),
+          });
+        } else if (pending.kind === 'sudo') {
+          if (!pending.requestId) throw new Error('Sudo request is missing its request id.');
+          await request('sudo.respond', { request_id: pending.requestId, password: answer });
+        } else if (pending.kind === 'terminal_read') {
+          if (!pending.requestId) throw new Error('Terminal read request is missing its request id.');
+          await request('terminal.read.respond', { request_id: pending.requestId, text: answer });
+        } else {
+          if (!pending.requestId) throw new Error('Secret request is missing its request id.');
+          await request('secret.respond', { request_id: pending.requestId, value: answer });
+        }
+      };
     const dismissOptimistically = pending.kind === 'clarify';
     if (dismissOptimistically) {
       // Do not keep the card mounted while clarify.respond waits for the gateway
@@ -1622,29 +1731,18 @@ export function useGatewayChat(
       setStatusText('Connected');
     }
     try {
-      if (pending.kind === 'approval') {
-        await request('approval.respond', {
-          choice: choice || answer || 'deny',
-          all: resolveAll || choice === 'always',
-          session_id: sessionIdRef.current ?? undefined,
-        });
-      } else if (pending.kind === 'clarify') {
-        if (!pending.requestId) throw new Error('Clarify request is missing its request id.');
-        const questionId = normalizeClarifyInteraction(pending.payload).questionId;
-        await request('clarify.respond', {
-          request_id: pending.requestId,
-          answer,
-          ...(questionId ? { question_id: questionId } : {}),
-        });
-      } else if (pending.kind === 'sudo') {
-        if (!pending.requestId) throw new Error('Sudo request is missing its request id.');
-        await request('sudo.respond', { request_id: pending.requestId, password: answer });
-      } else if (pending.kind === 'terminal_read') {
-        if (!pending.requestId) throw new Error('Terminal read request is missing its request id.');
-        await request('terminal.read.respond', { request_id: pending.requestId, text: answer });
+      if (openRequest || (pending.requestId?.startsWith('srq-') ?? false)) {
+        const result = pending.kind === 'approval'
+          ? { choice: choice || answer || 'deny', ...(resolveAll || choice === 'always' ? { all: true } : {}) }
+          : pending.kind === 'clarify'
+            ? (isBatchClarifyRequest(pending.payload) ? { answers: buildClarifyAnswers(pending.payload, answer) } : { answer })
+            : { value: answer };
+        if (!respondFrame(result)) return false;
+      } else if (legacyRpc) {
+        await legacyRpc();
       } else {
-        if (!pending.requestId) throw new Error('Secret request is missing its request id.');
-        await request('secret.respond', { request_id: pending.requestId, value: answer });
+        setError('Clarify request is missing its request id.');
+        return false;
       }
       pendingClarifyContentRef.current = null;
       setInteraction(null);
@@ -1694,6 +1792,7 @@ export function useGatewayChat(
     setCommandPrefill(null);
     sessionIdRef.current = null;
     sessionKeyRef.current = null;
+    openServerRequestsRef.current.clear();
     setInteraction(null);
     setActivity(null);
     clearPendingPrompt();
