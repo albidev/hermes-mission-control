@@ -104,6 +104,17 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: () => '/',
         },
+        // Dashboard authentication remains server-authoritative. Mission Control
+        // only keeps the login page and OAuth/password callbacks same-origin so
+        // the server can mint an identity-bearing WebSocket ticket afterwards.
+        '/login': {
+          target: DASHBOARD_TARGET,
+          changeOrigin: true,
+        },
+        '/auth': {
+          target: DASHBOARD_TARGET,
+          changeOrigin: true,
+        },
         '/api': {
           target: DASHBOARD_TARGET,
           changeOrigin: true,

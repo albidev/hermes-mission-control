@@ -42,8 +42,10 @@ The chat connects to the gateway's WebSocket endpoint, not to the telemetry side
 
 The chat reaches the gateway at `/api/ws`. It authenticates one of two ways (`chat-transport.ts`):
 
-1. **Loopback session token** — fetched from `/api/gateway-root`, used when running locally.
-2. **WS ticket** — POST `/api/auth/ws-ticket` with the access token, returns a one-time `ticket` used as a query param.
+1. **Loopback session token** — fetched from `/api/gateway-root`, used for a local single-owner installation. This token grants access but does not identify an individual user; local Honcho therefore requires one explicitly configured stable operator peer.
+2. **WS ticket** — POST `/api/auth/ws-ticket` with the dashboard session/access token, returns a one-time `ticket` used as a query param. The server-authenticated `{provider, user_id}` carried by that ticket becomes the Hermes/Honcho runtime identity; no chat RPC accepts a client-selected user identity.
+
+Vite proxies `/login` and `/auth/*` as well as `/api/auth/*` to the configured dashboard backend, so a gated Mission Control deployment keeps the login flow and cookies same-origin. See [Honcho memory in Mission Control](honcho.md) for identity and profile behavior.
 
 Reconnection uses exponential backoff (`MAX_RECONNECTS = 6`, `RPC_TIMEOUT_MS = 120000`).
 

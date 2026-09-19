@@ -129,7 +129,7 @@ class LinuxDeploymentContractTests(unittest.TestCase):
         self.assertIn("MISSION_CONTROL_DASHBOARD_PORT", vite)
         self.assertIn("HERMES_DASHBOARD_URL", vite)
         self.assertIn("const DASHBOARD_TARGET", vite)
-        self.assertEqual(vite.count("target: DASHBOARD_TARGET"), 2)
+        self.assertEqual(vite.count("target: DASHBOARD_TARGET"), 4)
         self.assertIn("MISSION_CONTROL_DASHBOARD_HOST", env_template)
         self.assertIn("MISSION_CONTROL_DASHBOARD_PORT", env_template)
         self.assertIn("HERMES_DASHBOARD_URL", env_template)

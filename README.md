@@ -48,7 +48,7 @@ Mission Control is a local-first operator dashboard for Hermes. It combines a Re
 - **Expanded Chat + tldraw Agent Mode**: session-bound whiteboard, authenticated bridge, screenshot-to-chat, agent actions, Mermaid import, board lints, exports, and mobile-safe persistence
 - Responsive layout: side rail on desktop, drawer and bottom sheets on mobile
 
-For Chat details, see [docs/chat.md](docs/chat.md); for Bot Mode, see [docs/bot-mode.md](docs/bot-mode.md); for Group Rooms, see [docs/rooms.md](docs/rooms.md). For localization, see [docs/i18n.md](docs/i18n.md). For telemetry and provider usage, see [docs/telemetry.md](docs/telemetry.md).
+For Chat details, see [docs/chat.md](docs/chat.md); for Bot Mode, see [docs/bot-mode.md](docs/bot-mode.md); for Group Rooms, see [docs/rooms.md](docs/rooms.md). For localization, see [docs/i18n.md](docs/i18n.md). For telemetry and provider usage, see [docs/telemetry.md](docs/telemetry.md). For Honcho identity, profile isolation, and authenticated access, see [docs/honcho.md](docs/honcho.md).
 
 ## tldraw Agent Mode
 

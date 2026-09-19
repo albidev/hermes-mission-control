@@ -12,9 +12,12 @@ async function probe() {
     configFile,
     process.cwd(),
   );
-  const target = result.config.server.proxy['/api'].target;
+  const proxy = result.config.server.proxy;
+  const target = proxy['/api'].target;
   const expected = process.env.EXPECTED_DASHBOARD_TARGET;
   assert.equal(target, expected);
+  assert.equal(proxy['/login'].target, expected, 'dashboard login must stay same-origin through MC');
+  assert.equal(proxy['/auth'].target, expected, 'dashboard auth callbacks must stay same-origin through MC');
 }
 
 if (process.env.VITE_CONFIG_CASE) {
