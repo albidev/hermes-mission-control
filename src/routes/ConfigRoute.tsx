@@ -9,6 +9,7 @@ import { PageHeader } from '../components/PageHeader';
 import { useMissionControl } from '../lib/mission-control-store';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
+import { HonchoSettingsPanel } from '../components/HonchoSettingsPanel';
 
 type PathSegment = string | number;
 type PendingEdit = { path: PathSegment[]; value: unknown };
@@ -590,6 +591,8 @@ export function ConfigRoute() {
           />
         </div>
       </Card>
+
+      <HonchoSettingsPanel />
 
       <div className="config-editor-mode-bar sticky top-0 z-20 -mx-1 px-2 py-2 sm:-mx-0 sm:px-3">
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
