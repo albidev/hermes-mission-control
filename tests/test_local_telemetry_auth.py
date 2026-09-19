@@ -73,10 +73,13 @@ class LocalTelemetryAuthTests(unittest.TestCase):
             else:
                 os.environ[key] = value
 
-    def _request(self, path: str, token: Optional[str] = None, method: str = "GET"):
-        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method=method)
+    def _request(self, path: str, token: Optional[str] = None, method: str = "GET", payload: Optional[dict] = None):
+        body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=body, method=method)
         if token:
             request.add_header("Authorization", f"Bearer {token}")
+        if body is not None:
+            request.add_header("Content-Type", "application/json")
         return urllib.request.urlopen(request, timeout=5)
 
     def test_health_endpoint_stays_open_without_auth(self):
@@ -120,6 +123,7 @@ class LocalTelemetryAuthTests(unittest.TestCase):
         for method, path in (
             ("PUT", "/api/local/config"),
             ("POST", "/api/local/gateway/restart"),
+            ("POST", "/api/local/memory/honcho/local-identity"),
             ("DELETE", "/api/local/push/subscriptions"),
         ):
             with self.subTest(method=method), self.assertRaises(urllib.error.HTTPError) as exc:
@@ -127,6 +131,62 @@ class LocalTelemetryAuthTests(unittest.TestCase):
             self.assertEqual(exc.exception.code, 403)
             payload = json.loads(exc.exception.read().decode("utf-8"))
             self.assertEqual(payload["error"], "read_only_mode")
+
+    def test_honcho_status_requires_auth_and_never_exposes_api_key(self):
+        with tempfile.TemporaryDirectory(prefix="mc-honcho-api-") as temp_home:
+            root = Path(temp_home) / ".hermes"
+            root.mkdir()
+            (root / "honcho.json").write_text(json.dumps({
+                "baseUrl": "http://127.0.0.1:8000",
+                "apiKey": "do-not-leak",
+                "enabled": True,
+            }), encoding="utf-8")
+            os.environ["HERMES_HOME"] = str(root)
+
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self._request("/api/local/memory/honcho")
+            self.assertEqual(exc.exception.code, 401)
+
+            with self._request("/api/local/memory/honcho", token="phase1-secret") as response:
+                self.assertEqual(response.status, 200)
+                payload = json.loads(response.read().decode("utf-8"))
+
+        self.assertTrue(payload["configured"])
+        self.assertEqual(payload["identityMode"], "unresolved")
+        self.assertNotIn("apiKey", json.dumps(payload))
+        self.assertNotIn("do-not-leak", json.dumps(payload))
+
+    def test_honcho_local_identity_endpoint_configures_all_profiles(self):
+        with tempfile.TemporaryDirectory(prefix="mc-honcho-api-") as temp_home:
+            root = Path(temp_home) / ".hermes"
+            root.mkdir()
+            profile = root / "profiles" / "researcher"
+            profile.mkdir(parents=True)
+            (profile / "profile.yaml").write_text("name: researcher\n", encoding="utf-8")
+            (root / "honcho.json").write_text(json.dumps({
+                "baseUrl": "http://127.0.0.1:8000",
+                "enabled": True,
+                "workspace": "shared",
+            }), encoding="utf-8")
+            os.environ["HERMES_HOME"] = str(root)
+
+            with self._request(
+                "/api/local/memory/honcho/local-identity",
+                token="phase1-secret",
+                method="POST",
+                payload={"peerName": "local-owner"},
+            ) as response:
+                self.assertEqual(response.status, 200)
+                payload = json.loads(response.read().decode("utf-8"))
+
+            written = json.loads((root / "honcho.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["identityMode"], "local-single-user")
+        self.assertEqual(payload["peerName"], "local-owner")
+        self.assertEqual(written["hosts"]["hermes"]["aiPeer"], "hermes")
+        self.assertEqual(written["hosts"]["hermes_researcher"]["aiPeer"], "hermes_researcher")
+        self.assertTrue(written["hosts"]["hermes_researcher"]["sessionAiPeerPrefix"])
 
     def test_mission_control_agent_endpoints_are_served_from_db_and_gateway(self):
         """Verify MC discovers sessions from gateway index + SessionDB, not sidecar files."""

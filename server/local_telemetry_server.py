@@ -79,6 +79,7 @@ from room_vault_store import clear_room_vault, get_room_vault, list_room_vaults,
 from room_tool_store import build_room_tools_snapshot, read_room_tools
 from chat_runtime_presence import active_runtime_presences, update_runtime_presence
 from chat_sync_relay import chat_sync_relay, core_event_dedupe_key, system_message_dedupe_key, user_message_dedupe_key
+from honcho_bridge import HonchoBridgeError, configure_local_identity, load_honcho_status
 import kanban_bridge as kanban_bridge_mod
 from kanban_bridge import KanbanError as KanbanBridgeError
 import cron_bridge as cron_bridge_mod
@@ -2400,6 +2401,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, _read_config_snapshot())
             return
+        if parsed.path == '/api/local/memory/honcho':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            try:
+                self._json(200, load_honcho_status())
+            except HonchoBridgeError as exc:
+                self._json(exc.status_code, {'error': exc.error, 'detail': exc.message})
+            return
         if parsed.path == '/api/local/tools':
             if not _is_authorized(self):
                 self._unauthorized()
@@ -2747,6 +2757,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"success": True})
             return
         if self._reject_mutation_in_read_only_mode():
+            return
+        if parsed.path == '/api/local/memory/honcho/local-identity':
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            try:
+                result = configure_local_identity(str(payload.get('peerName') or ''))
+            except HonchoBridgeError as exc:
+                self._json(exc.status_code, {'error': exc.error, 'detail': exc.message})
+                return
+            self._json(200, result)
             return
         if parsed.path == '/api/local/chat/presence':
             if not _is_authorized(self):
