@@ -16,6 +16,7 @@ This module is standalone so it can later be extracted into a sidecar/plugin.
 from __future__ import annotations
 
 import os
+import json
 import sys
 import re
 import shutil
@@ -322,6 +323,75 @@ def _append_source_wikilinks(body: str) -> str:
     return body.rstrip() + "\n\n## Sources\n" + "\n".join(links) + "\n"
 
 
+def _merge_check(dest: Path, body: str) -> Dict[str, Any]:
+    """Pre-write collision check for promote_ready().
+
+    Returns {action: write|skip|needs_review, existing_excerpt, similarity}.
+    Mechanical slug match first; a Jev complementary/conflicting judgment is
+    applied only when both bodies are substantive (>= MIN_MERGE_CHARS).
+    Degradation: on any error, action=needs_review (never overwrite blind).
+    """
+    MIN_MERGE_CHARS = 120
+    if not dest.exists():
+        return {"action": "write", "similarity": None}
+    existing = dest.read_text(encoding="utf-8")
+    if existing.strip() == body.strip():
+        return {"action": "skip", "similarity": 1.0}
+    # both bodies too thin to merge automatically -> human review
+    if len(existing.strip()) < 200 or len(body.strip()) < 200:
+        return {"action": "needs_review", "similarity": None,
+                "existing_excerpt": existing.strip()[:300]}
+
+    # Jev judgment: identical / complementary / conflicting
+    try:
+        sys.path.insert(0, os.path.expanduser(
+            "~/Projects/bdh-graph-harness/benchmarks"))
+        from jev_benchmark import CloudTypeSafeProvider  # type: ignore
+        provider = CloudTypeSafeProvider()
+        state = (
+            "Obsidian vault note merge check. A candidate note is about to be "
+            f"promoted to '{dest.name}' which already exists.\n"
+            f"EXISTING note body:\n{existing[:1200]}\n\n"
+            f"NEW candidate body:\n{body[:1200]}\n"
+        )
+        questions = {
+            "mrg": {
+                "type": "choice",
+                "instructions": (
+                    "Decide how the new candidate relates to the existing note."
+                ),
+                "criteria": {
+                    "identical": (
+                        "the new body adds nothing the existing note lacks; "
+                        "safe to skip promotion"
+                    ),
+                    "complementary": (
+                        "the two bodies each contain distinct information; "
+                        "a merge (union of content) is appropriate"
+                    ),
+                    "conflicting": (
+                        "the two contradict each other or the merge would "
+                        "be misleading; a human must decide"
+                    ),
+                },
+            }
+        }
+        resp = provider.evaluate(state, questions)
+        answer = (resp.get("answers") or {}).get("mrg") or {}
+        choice = answer.get("choice")
+        conf = float(answer.get("confidence") or 0.0)
+        if choice == "identical" and conf >= 0.8:
+            return {"action": "skip", "similarity": conf}
+        if choice == "complementary" and conf >= 0.8:
+            return {"action": "merge", "similarity": conf}
+        return {"action": "needs_review", "similarity": conf,
+                "jev_choice": choice}
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        print(f"[merge_check] Jev unavailable: {exc}", file=sys.stderr)
+        return {"action": "needs_review", "similarity": None,
+                "error": str(exc)}
+
+
 def promote_ready() -> List[Dict[str, Any]]:
     """Promote candidates whose quarantine has elapsed (status approved +
     quarantine_until <= now) to their vault's wiki/concepts. Scans every
@@ -374,7 +444,33 @@ def promote_ready() -> List[Dict[str, Any]]:
                 # edges from this new concept to the nodes that generated it.
                 # Without [[...]] links the promoted note is an isolated node.
                 body = _append_source_wikilinks(body)
-                # ensure frontmatter has type/tags/confidence from the concept block
+                # Pre-write merge check (parity with bdh-nightly-consolidation
+                # curate/candidates.py 535c185): never overwrite blind.
+                # Repairs the Synaptic Pruning Rule slug-collision data loss.
+                check = _merge_check(dest, body)
+                if check["action"] == "needs_review":
+                    c["status"] = "needs_review"
+                    c["merge_check"] = json.dumps(check)[:200]
+                    _write_candidate(p, c, body)
+                    continue
+                if check["action"] == "skip":
+                    c["status"] = "promoted"
+                    c["promoted_at"] = now.isoformat()
+                    c["promote_note"] = "promoted-duplicate: existing note kept"
+                    _write_candidate(p, c, body)
+                    promoted.append(c)
+                    continue
+                if check["action"] == "merge":
+                    existing = dest.read_text(encoding="utf-8")
+                    merged = _merge_bodies(existing, body, c)
+                    dest.write_text(merged, encoding="utf-8")
+                    c["status"] = "promoted"
+                    c["promoted_at"] = now.isoformat()
+                    c["promote_note"] = "merged into existing note"
+                    _write_candidate(p, c, body)
+                    promoted.append(c)
+                    continue
+                # action == write
                 dest.write_text(body + "\n", encoding="utf-8")
                 # mark promoted
                 c["status"] = "promoted"
