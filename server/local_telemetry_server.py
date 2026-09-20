@@ -3220,6 +3220,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
+        if parsed.path.startswith('/api/local/cron/jobs/') and parsed.path.rstrip('/').endswith('/run'):
+            if not _is_authorized(self):
+                self._unauthorized()
+                return
+            job_id = urllib.parse.unquote(parsed.path[len('/api/local/cron/jobs/'):-len('/run')].strip('/'))
+            try:
+                self._json(200, {'success': True, 'job': cron_bridge_mod.run_job(job_id)})
+            except Exception as exc:
+                status = getattr(exc, 'status_code', 500)
+                self._json(status, {'error': 'cron_error', 'detail': str(exc)[:240]})
+            return
         if parsed.path.startswith('/api/local/cron/jobs/'):
             if not _is_authorized(self):
                 self._unauthorized()
