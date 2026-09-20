@@ -23,6 +23,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronUp,
   Circle,
   Cpu,
   FileText,
@@ -368,6 +369,11 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
   const [expandedToolRuns, setExpandedToolRuns] = useState<Set<string>>(new Set());
+  // Long-chat windowing: render only the LAST N timeline entries; older history
+  // loads in chunks on demand ("load earlier"). Full messages stay in state for
+  // todo derivation, handoff context, and search — only the render is windowed.
+  const CHAT_WINDOW_CHUNK = 120;
+  const [chatWindowCount, setChatWindowCount] = useState(CHAT_WINDOW_CHUNK);
   const toggleToolRun = useCallback((runId: string) => {
     setExpandedToolRuns((current) => {
       const next = new Set(current);
@@ -408,6 +414,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     error,
     submitting,
     running,
+    hydrating,
     interaction,
     previewMode,
     modelIdentity,
@@ -564,6 +571,13 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       window.clearTimeout(timeout);
     };
   }, [botProfile, initialSessionId, previewMode, storedToken]);
+
+  // Reset the render window whenever the drawer targets a different session
+  // (New chat, Resume deep-link, profile switch): a fresh transcript must
+  // start from the newest window, not carry the old session's expansion.
+  useEffect(() => {
+    setChatWindowCount(CHAT_WINDOW_CHUNK);
+  }, [sessionId, sessionKey]);
 
   useEffect(() => {
     return () => {
@@ -800,6 +814,16 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     }
 
     if (messages.length === 0 && handoffs.length === 0) {
+      // A resumed long chat is hydrating its canonical transcript — show a
+      // loader instead of the empty state so the drawer never flashes "empty".
+      if (hydrating) {
+        return (
+          <section className="chat-hydrating">
+            <Loader2 size={20} className="chat-spin" />
+            <p>Loading conversation…</p>
+          </section>
+        );
+      }
       return (
         <section className="chat-empty">
           <MessageSquare size={22} />
@@ -809,14 +833,23 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       );
     }
 
-    const timeline = timelinedMessages;
+    // Window the render: only the newest `chatWindowCount` timeline entries
+    // mount as React cards. Older entries stay in state and load in chunks
+    // via the "load earlier" control — the live tail (streaming bubble, run)
+    // is always at the end of the window, so streaming is never clipped.
+    const windowSize = Math.min(chatWindowCount, timelinedMessages.length);
+    const windowedTimeline = windowSize < timelinedMessages.length
+      ? timelinedMessages.slice(timelinedMessages.length - windowSize)
+      : timelinedMessages;
+    const hiddenEarlierCount = timelinedMessages.length - windowedTimeline.length;
+    const timeline = windowedTimeline;
 
     // Collapse a turn's tool/reasoning activity into a single run summary.
     // The run absorbs EVERY non-turn message (tool, reasoning, event,
     // system) plus EMPTY assistant rows (the live stream emits invisible
     // assistant placeholders that must not close the group). Only a user
     // message or an assistant row WITH visible text closes the run.
-    const grouped = timeline.reduce<Array<{ id: string; kind: 'run'; messages: ChatMessage[] } | { kind: 'other'; entry: (typeof timelinedMessages)[number] }>>((acc, entry) => {
+    const grouped = timeline.reduce<Array<{ id: string; kind: 'run'; messages: ChatMessage[] } | { kind: 'other'; entry: (typeof timeline)[number] }>>((acc, entry) => {
       const isTurnBoundary = entry.kind === 'message' && (
         entry.message.kind === 'user' ||
         (entry.message.kind === 'assistant' && (entry.message.text?.trim().length ?? 0) > 0)
@@ -834,16 +867,71 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       return acc;
     }, []);
 
+    // The trace of a turn belongs ABOVE the turn's streaming response, not
+    // below it: tool/reasoning activity arriving after the assistant bubble
+    // started otherwise appends underneath it and pushes the response out of
+    // view. Pull every run that follows its turn's assistant-with-text message
+    // up to sit directly before that message. Chronology across turns is
+    // untouched — only within-turn ordering changes.
+    const lastGroupedItem = grouped.at(-1);
+    const liveRunId = running && lastGroupedItem?.kind === 'run' ? lastGroupedItem.id : null;
+    type GroupedItem = (typeof grouped)[number];
+    const ordered: GroupedItem[] = [];
+    let pendingTrailing: GroupedItem[] = [];
+    let lastTurnAssistantIndex = -1;
+    for (const item of grouped) {
+      if (item.kind === 'run') {
+        if (lastTurnAssistantIndex >= 0) pendingTrailing.push(item);
+        else ordered.push(item);
+        continue;
+      }
+      const message = item.entry.message;
+      const isAssistantWithText = message.kind === 'assistant' && (message.text?.trim().length ?? 0) > 0;
+      if (pendingTrailing.length && lastTurnAssistantIndex >= 0) {
+        ordered.splice(lastTurnAssistantIndex, 0, ...pendingTrailing);
+        pendingTrailing = [];
+      }
+      if (isAssistantWithText) lastTurnAssistantIndex = ordered.length;
+      else lastTurnAssistantIndex = -1; // user message or handoff closes the turn
+      ordered.push(item);
+    }
+    if (pendingTrailing.length && lastTurnAssistantIndex >= 0) {
+      ordered.splice(lastTurnAssistantIndex, 0, ...pendingTrailing);
+    }
+    const displayGroups = ordered;
+
     return (
       <>
-        {grouped.map((item, index) => {
+        {hiddenEarlierCount > 0 ? (
+          <button
+            type="button"
+            className="chat-load-earlier"
+            onClick={() => {
+              // Keep the viewport anchored while older cards mount above:
+              // record the distance from the bottom, then restore it after
+              // the new cards push the content down.
+              const el = scrollRef.current;
+              const anchorBottom = el ? el.scrollHeight - el.scrollTop : 0;
+              setChatWindowCount((current) => current + CHAT_WINDOW_CHUNK);
+              window.requestAnimationFrame(() => {
+                const target = scrollRef.current;
+                if (!target) return;
+                target.scrollTop = target.scrollHeight - anchorBottom;
+              });
+            }}
+          >
+            <ChevronUp size={14} aria-hidden />
+            Load earlier messages ({hiddenEarlierCount} hidden)
+          </button>
+        ) : null}
+        {displayGroups.map((item, index) => {
           if (item.kind === 'run') {
-            // While a turn is streaming, the trailing run is the live one:
-            // render its tool traces inline (the canonical chat look).
-            // The reduce only ever leaves the LAST run open-ended — an
-            // assistant row with visible text closes the run — so the live
-            // run is exactly `running && index === last`.
-            const isLiveRun = running && index === grouped.length - 1;
+            // While a turn is streaming, the run of the active turn is the
+            // live one: render its tool traces inline (the canonical chat
+            // look). After the reorder the live run is NOT the last group
+            // (the streaming assistant bubble now renders after it), so the
+            // `index === last` heuristic no longer holds — identify it by id.
+            const isLiveRun = liveRunId !== null && item.id === liveRunId;
             if (isLiveRun) {
               // Still streaming this turn: render the tool traces inline,
               // exactly like the canonical chat did before the summary.
@@ -998,6 +1086,28 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     // Never queue smooth animations while messages are changing. One scroll per
     // animation frame keeps Safari/iOS responsive during token streaming.
     scrollToBottom('auto');
+    // With `content-visibility: auto` newly mounted cards outside the viewport
+    // report only their intrinsic placeholder height (72px) until they paint,
+    // so a single scrollTo lands short on a long chat. Pin the tail across a
+    // few frames until scrollHeight stabilizes — mobile Safari needs ~3 frames
+    // for real heights, so a single rAF retry still bounced.
+    let cancelled = false;
+    let lastHeight = -1;
+    const settle = () => {
+      if (cancelled) return;
+      const el = scrollRef.current;
+      const height = el?.scrollHeight ?? -1;
+      scrollToBottom('auto');
+      if (height !== lastHeight) {
+        lastHeight = height;
+        window.requestAnimationFrame(settle);
+      }
+    };
+    const settleFrame = window.requestAnimationFrame(settle);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(settleFrame);
+    };
   }, [messages, interaction, open, scrollToBottom]);
 
   useEffect(() => {

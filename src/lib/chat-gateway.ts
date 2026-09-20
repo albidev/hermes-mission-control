@@ -121,12 +121,13 @@ async function loadCanonicalTranscript(
   sessionId: string | null,
   sessionKey: string | null,
   profile?: string | null,
-): Promise<{ messages: ChatMessage[]; sessionTitle: string | null } | null> {
+): Promise<{ messages: ChatMessage[]; sessionTitle: string | null; count: number } | null> {
   const payload = await fetchChatTranscript(accessToken, sessionId, sessionKey, profile);
   if (!payload?.complete) return null;
   return {
     messages: normalizeTranscript(payload.messages),
     sessionTitle: payload.sessionTitle ?? null,
+    count: payload.count,
   };
 }
 
@@ -197,6 +198,9 @@ export function useGatewayChat(
 ) {
   const initial = useMemo(readPersistedChat, []);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Fingerprint of the last applied canonical transcript (session + count):
+  // lets the 2s reconcile tick skip the full re-normalize on long chats.
+  const canonicalFingerprintRef = useRef<string | null>(null);
   const [todoPlan, setTodoPlan] = useState<TodoPlan | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(initial.sessionId);
   const [sessionKey, setSessionKey] = useState<string | null>(initial.sessionKey);
@@ -229,6 +233,9 @@ export function useGatewayChat(
   const pendingPromptRef = useRef<PendingPrompt | null>(readPendingChatSubmit());
   const durableTranscriptRef = useRef<ReturnType<typeof extractTranscript>>([]);
   const transcriptReadyRef = useRef(false);
+  // True while a resumed session's canonical transcript fetch is in flight and
+  // the transcript is not ready yet — the drawer shows a hydration loader.
+  const [hydrating, setHydrating] = useState(false);
   const replayInFlightRef = useRef(false);
   const connectionAttemptGateRef = useRef(new ConnectionAttemptGate());
   const connectionGenerationRef = useRef(0);
@@ -317,6 +324,7 @@ export function useGatewayChat(
     setMessages([]);
     setTodoPlan(null);
     transcriptReadyRef.current = false;
+    canonicalFingerprintRef.current = null;
     setModelIdentity(null);
     setModelPickerOpen(false);
     setModelPickerRefresh(false);
@@ -539,11 +547,14 @@ export function useGatewayChat(
     const rawTranscript = extractTranscript(resumed);
     const resolvedSessionId = activeSessionId ?? extractSessionId(resumed);
     const resolvedSessionKey = activeSessionKey ?? extractSessionKey(resumed) ?? resolvedSessionId;
+    // Hydration loader window: from here until the canonical transcript lands.
+    if (!transcriptReadyRef.current) setHydrating(true);
     const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey, sessionProfileRef.current);
     if (
       lifecycleGeneration !== sessionLifecycleGenerationRef.current
       || (resolvedSessionId && sessionIdRef.current !== resolvedSessionId)
     ) {
+      setHydrating(false);
       return { transcript: [], inflight: null };
     }
     const transcript = canonicalTranscript?.messages ?? [];
@@ -563,7 +574,18 @@ export function useGatewayChat(
 
     durableTranscriptRef.current = rawTranscript;
     transcriptReadyRef.current = canonicalTranscript !== null;
+    setHydrating(false);
+    // Periodic reconcile guard: the 2s snapshot tick refetches the FULL
+    // canonical transcript. On a long chat (1600+ rows / 3MB) re-running
+    // normalizeTranscript + replaceWithCanonicalChatMessages every tick
+    // burns CPU even when nothing changed. Skip the merge when the payload
+    // is byte-identical to the previous one for this session.
     if (canonicalTranscript !== null) {
+      const fingerprint = `${resolvedSessionId}:${canonicalTranscript.count}:${canonicalTranscript.messages.length}`;
+      if (canonicalFingerprintRef.current === fingerprint) {
+        return { transcript, inflight };
+      }
+      canonicalFingerprintRef.current = fingerprint;
       setMessages((current) => {
         const next = replaceWithCanonicalChatMessages(current, transcript);
         return inflightMessage ? [...next, inflightMessage] : next;
@@ -812,6 +834,12 @@ export function useGatewayChat(
     const existingKey = forceFresh ? null : (sessionKeyRef.current || explicitSessionId || requestedSessionIdRef.current || sessionIdRef.current);
     const isExplicitResume = Boolean(explicitSessionId);
     if (existingKey) {
+      // Resume path: the transcript is not ready until hydrate completes, so
+      // the drawer must show the hydration loader from the very start — the
+      // resolve+resume RPCs can take seconds on long sessions, and without
+      // this the user stares at the misleading empty state.
+      setHydrating(true);
+      transcriptReadyRef.current = false;
       // The gateway's `session.resume` resolves an id or a title — never a
       // canonical session key (`agent:<profile>:<platform>:<type>:<chat_id>`),
       // which is what a platform chat (Discord DM, Telegram) stores as its key.
@@ -883,6 +911,7 @@ export function useGatewayChat(
         previewModeRef.current = false;
         setPreviewMode(false);
         setError(null);
+        setHydrating(false);
         // Transport failures still fall through to the fresh-session attempt;
         // if that fails, the actual creation error is surfaced to the user.
       }
@@ -890,6 +919,7 @@ export function useGatewayChat(
 
     const created = await request<unknown>('session.create', addChatProfile({ cols: 80, source: 'mission-control' }, sessionProfileRef.current));
     if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
+    setHydrating(false);
     setResumedRuntime(null);
     adoptModel(created);
     const createdSessionId = extractSessionId(created);
@@ -1783,6 +1813,7 @@ export function useGatewayChat(
     setMessages([]);
     setTodoPlan(null);
     transcriptReadyRef.current = false;
+    canonicalFingerprintRef.current = null;
     setSessionId(null);
     setSessionKey(null);
     requestedSessionIdRef.current = null;
@@ -1822,6 +1853,7 @@ export function useGatewayChat(
     error,
     submitting,
     running,
+    hydrating,
     activity,
     interaction,
     previewMode,
