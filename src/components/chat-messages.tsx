@@ -39,7 +39,17 @@ export function ChatMarkdown({
 }) {
   return (
     <div className={`chat-markdown${streaming ? ' is-streaming' : ''}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{text || placeholder}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        components={{
+          // Wrap GFM tables in a dedicated scroll container: only genuinely
+          // wide tables scroll horizontally (inside their own block, without
+          // dragging the whole transcript); narrow tables fit the drawer.
+          table: ({ children }) => <div className="chat-table-scroll"><table>{children}</table></div>,
+        }}
+      >
+        {text || placeholder}
+      </ReactMarkdown>
     </div>
   );
 }

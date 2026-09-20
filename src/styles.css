@@ -3041,13 +3041,21 @@ body.modal-open .route-page-scroll {
 }
 
 .chat-message-body table {
-  display: block;
-  max-width: 100%;
-  margin: 0 0 0.65rem;
-  overflow-x: auto;
   border-collapse: collapse;
+}
+
+/* Same table contract as .chat-markdown (single source of truth below):
+   cells wrap, only genuinely wide tables overflow inside their wrapper. */
+.chat-message-body .chat-table-scroll {
+  margin: 0 0 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.chat-message-body .chat-table-scroll table {
+  margin: 0;
+  min-width: 100%;
   font-size: 0.78rem;
-  white-space: nowrap;
 }
 
 .chat-message-body th,
@@ -3055,12 +3063,38 @@ body.modal-open .route-page-scroll {
   padding: 0.4rem 0.55rem;
   border: 1px solid var(--color-border);
   text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .chat-message-body th {
   color: var(--color-text);
   background: var(--color-surface-sunken);
   font-weight: 750;
+  white-space: nowrap;
+}
+
+/* Mobile: tighter cells and smaller type keep 3-4 column tables usable
+   inside the drawer width without scrolling. */
+@media (pointer: coarse), (max-width: 640px) {
+  .chat-markdown table,
+  .chat-message-body table {
+    font-size: 0.72rem;
+  }
+
+  .chat-markdown th,
+  .chat-markdown td,
+  .chat-message-body th,
+  .chat-message-body td {
+    padding: 0.28rem 0.38rem;
+  }
+
+  /* Very narrow viewports: a table taller than the visible transcript area
+     scrolls vertically on its own, so the header row stays reachable. */
+  .chat-table-scroll {
+    max-height: 60vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 .chat-message-body img {
@@ -3438,10 +3472,26 @@ body.modal-open .route-page-scroll {
 }
 
 .chat-markdown table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
   border-collapse: collapse;
+}
+
+/* Tables in chat: wrap cells instead of forcing horizontal scroll. Only a
+   genuinely wide table overflows — and it scrolls inside its own block
+   (chat-table-scroll), never the transcript itself. */
+.chat-table-scroll {
+  max-width: 100%;
+  margin: 0 0 0.65rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.chat-table-scroll table {
+  margin: 0;
+  min-width: 100%;
+  font-size: 0.78rem;
 }
 
 .chat-markdown th,
@@ -3449,12 +3499,22 @@ body.modal-open .route-page-scroll {
   border: 1px solid var(--color-border);
   padding: 0.35rem 0.5rem;
   text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .chat-markdown th {
   color: var(--color-text);
   background: var(--color-surface-sunken);
   font-weight: 750;
+  white-space: nowrap;
+}
+
+/* Overflow hint: a right-edge fade tells the user there is more content
+   beyond the viewport without them having to try scrolling. */
+.chat-table-scroll {
+  background:
+    linear-gradient(to right, transparent calc(100% - 12px), color-mix(in srgb, var(--color-surface-sunken) 70%, transparent)) no-repeat;
+  background-attachment: local;
 }
 
 .chat-markdown.is-streaming {
