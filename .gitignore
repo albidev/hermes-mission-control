@@ -26,3 +26,4 @@ server/last_room.json
 # Working plans are personal scratch: they name real bots, profiles and vaults.
 # They live in ~/.hermes/plans/ and are never part of the product.
 .hermes/plans/
+tsconfig.tsbuildinfo
