@@ -53,6 +53,7 @@ def _routing_file() -> Path:
 
 DEFAULT_CANDIDATES_DIR = _default_candidates_dir()
 DEFAULT_QUARANTINE_DAYS = float(os.environ.get("VB_QUARANTINE_DAYS", "1"))
+MIN_MERGE_CHARS = 120
 
 
 def _load_vaults() -> Dict[str, Dict[str, Any]]:
@@ -323,6 +324,37 @@ def _append_source_wikilinks(body: str) -> str:
     return body.rstrip() + "\n\n## Sources\n" + "\n".join(links) + "\n"
 
 
+def _jev_benchmark_dir() -> Path:
+    """Resolve the Jev provider without assuming a developer's checkout path."""
+    candidates: List[Path] = []
+    explicit_dir = os.environ.get("JEV_BENCHMARK_DIR", "").strip()
+    if explicit_dir:
+        candidates.append(Path(os.path.expanduser(explicit_dir)))
+    harness_root = os.environ.get("BDH_GRAPH_HARNESS_DIR", "").strip()
+    if harness_root:
+        candidates.append(Path(os.path.expanduser(harness_root)) / "benchmarks")
+    # Temporary vendor: keep MC runnable while the provider is later extracted
+    # into a proper shared runtime package.
+    candidates.append(SERVER_DIR)
+    # Backward-compatible local default; deployments should configure one of the
+    # variables above instead of relying on this machine-specific path.
+    candidates.append(Path(os.path.expanduser(
+        "~/Projects/bdh-graph-harness/benchmarks")))
+    seen = set()
+    for directory in candidates:
+        directory = directory.resolve()
+        if directory in seen:
+            continue
+        seen.add(directory)
+        if (directory / "jev_benchmark.py").is_file():
+            return directory
+    searched = ", ".join(str(path) for path in candidates)
+    raise ImportError(
+        "jev_benchmark.py not found; set JEV_BENCHMARK_DIR or "
+        f"BDH_GRAPH_HARNESS_DIR (searched: {searched})"
+    )
+
+
 def _merge_check(dest: Path, body: str) -> Dict[str, Any]:
     """Pre-write collision check for promote_ready().
 
@@ -331,21 +363,19 @@ def _merge_check(dest: Path, body: str) -> Dict[str, Any]:
     applied only when both bodies are substantive (>= MIN_MERGE_CHARS).
     Degradation: on any error, action=needs_review (never overwrite blind).
     """
-    MIN_MERGE_CHARS = 120
     if not dest.exists():
         return {"action": "write", "similarity": None}
     existing = dest.read_text(encoding="utf-8")
     if existing.strip() == body.strip():
         return {"action": "skip", "similarity": 1.0}
     # both bodies too thin to merge automatically -> human review
-    if len(existing.strip()) < 200 or len(body.strip()) < 200:
+    if len(existing.strip()) < MIN_MERGE_CHARS or len(body.strip()) < MIN_MERGE_CHARS:
         return {"action": "needs_review", "similarity": None,
                 "existing_excerpt": existing.strip()[:300]}
 
     # Jev judgment: identical / complementary / conflicting
     try:
-        sys.path.insert(0, os.path.expanduser(
-            "~/Projects/bdh-graph-harness/benchmarks"))
+        sys.path.insert(0, str(_jev_benchmark_dir()))
         from jev_benchmark import CloudTypeSafeProvider  # type: ignore
         provider = CloudTypeSafeProvider()
         state = (
@@ -390,6 +420,57 @@ def _merge_check(dest: Path, body: str) -> Dict[str, Any]:
         print(f"[merge_check] Jev unavailable: {exc}", file=sys.stderr)
         return {"action": "needs_review", "similarity": None,
                 "error": str(exc)}
+
+
+def _merge_bodies(existing: str, incoming: str, cand: Dict[str, Any]) -> str:
+    """Union-merge an incoming candidate into an existing note.
+
+    Existing content remains primary; tags and sources are unioned and a
+    provenance section records the incoming candidate. Conflicting notes never
+    reach this function because _merge_check returns needs_review instead.
+    """
+    def _field(text: str, key: str) -> List[str]:
+        match = re.search(rf"^{key}:\s*\[([^\]]*)\]", text, re.MULTILINE)
+        if not match:
+            return []
+        return [item.strip().strip('"') for item in match.group(1).split(",") if item.strip()]
+
+    ex_tags = _field(existing, "tags")
+    ex_sources = _field(existing, "sources")
+    in_tags = _field(incoming, "tags")
+    in_sources = _field(incoming, "sources")
+    merged_tags = sorted(set(ex_tags) | set(in_tags))
+    merged_sources = sorted(set(ex_sources) | set(in_sources))
+
+    def _union_line(text: str, key: str, values: List[str]) -> str:
+        pattern = re.compile(rf"^{key}:.*$", re.MULTILINE)
+        joined = ", ".join(values)
+        if pattern.search(text):
+            return pattern.sub(f"{key}: [{joined}]", text, count=1)
+        return text
+
+    out = _union_line(existing, "tags", merged_tags)
+    out = _union_line(out, "sources", merged_sources)
+    out = re.sub(
+        r"^updated:.*$",
+        f"updated: {datetime.now(timezone.utc).date().isoformat()}",
+        out,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+    incoming_description = re.search(
+        r"^description:\s*>\s*$\n\s*([^\n]+)", incoming, re.MULTILINE
+    )
+    same_prefix = incoming[:400].strip() == existing[:400].strip()
+    if incoming_description and not same_prefix:
+        out += (
+            f"\n\n## Merged variant ({datetime.now(timezone.utc).date().isoformat()})\n\n"
+            f"{incoming_description.group(1).strip()}\n"
+            f"\nmerged_from candidate: {cand.get('id', '?')} "
+            f"(promote_ready merge-check, conf {cand.get('jev_confidence', 'n/a')})"
+        )
+    return out
 
 
 def promote_ready() -> List[Dict[str, Any]]:
