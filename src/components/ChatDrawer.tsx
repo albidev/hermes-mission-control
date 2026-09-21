@@ -885,6 +885,13 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         else ordered.push(item);
         continue;
       }
+      // Handoff entries carry `.handoff`, not `.message` — skip them: they
+      // are neither assistant-with-text nor turn activity to reorder.
+      if (item.entry.kind !== 'message') {
+        lastTurnAssistantIndex = -1; // handoff closes the turn
+        ordered.push(item);
+        continue;
+      }
       const message = item.entry.message;
       const isAssistantWithText = message.kind === 'assistant' && (message.text?.trim().length ?? 0) > 0;
       if (pendingTrailing.length && lastTurnAssistantIndex >= 0) {
@@ -1009,7 +1016,10 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
                   const staleRuntimeId = await client.resume(handle, canonical.registryId);
                   await client.closeSession(staleRuntimeId);
                   upsertHandoffState(handoff.id, { status: 'running' });
-                  const delivery = await client.deliver(handle, formatHandoffPrompt(envelope));
+                  // Re-inline the refs staged by the original attempt — the
+                  // files already live on the bot session, no re-upload needed.
+                  const retryPrompt = [formatHandoffPrompt(envelope), ...(handoff.attachmentRefs ?? [])].filter(Boolean).join('\n\n');
+                  const delivery = await client.deliver(handle, retryPrompt);
                   if (!delivery.deferred) {
                     handoffDedupeRef.current.release(handle);
                     client.close();
@@ -1368,6 +1378,23 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       request: trimmedText,
     }] : []);
     if (handoffMentions.length > 0) {
+      // Attachments ride along with a bot @mention: stage them on the BOT's
+      // canonical session once the handoff resumes, and inline the gateway's
+      // ref texts into the handoff prompt. Multiple mentions share ONE
+      // attachment set — it is uploaded once per handoff target.
+      const handoffUploads: ChatAttachmentUpload[] = [];
+      for (const attachment of pendingAttachments) {
+        const dataUrl = await readFileAsDataUrl(attachment.file);
+        handoffUploads.push({
+          id: attachment.id,
+          kind: attachment.kind,
+          name: attachment.name,
+          size: attachment.size,
+          mimeType: attachment.mimeType,
+          dataUrl,
+        });
+      }
+      const handoffAttachmentSummaries = handoffUploads.map(({ dataUrl: _dataUrl, ...summary }) => summary);
       const contextMessages = serializeHandoffContext(timelinedMessages);
       // Resolve the origin ONCE for the whole submit, before fanning out: every mention in
       // this submit shares one origin, and the reply-delivery path must not re-derive it
@@ -1406,6 +1433,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         kind: 'user',
         source: 'live',
         text: `${handoffMention.mention} ${handoffMention.request}`.trim(),
+        attachments: handoffAttachmentSummaries,
         status: 'complete',
         createdAt: Date.now(),
       }, 'user_message');
@@ -1416,6 +1444,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         model: candidate?.model,
         provider: candidate?.provider,
         request: handoffMention.request,
+        attachments: handoffAttachmentSummaries.length > 0 ? handoffAttachmentSummaries : undefined,
         status: 'queued',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -1445,8 +1474,33 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
           // Close only that runtime; the canonical transcript/profile remains intact.
           const staleRuntimeId = await client.resume(handle, canonical.registryId);
           await client.closeSession(staleRuntimeId);
+          // `session.close` invalidates the runtime id stored by the client.
+          // Re-resume before attaching: attachment RPCs target the live runtime,
+          // not the canonical registry id and never the closed stale runtime.
+          if (handoffUploads.length > 0) {
+            await client.resume(handle, canonical.registryId);
+          }
           upsertHandoffState(handoffId, { status: 'running' }, canonicalSessionRef);
-          const delivery = await client.deliver(handle, formatHandoffPrompt(envelope));
+          // Stage attachments on the BOT's session and inline their ref texts
+          // into the prompt — the gateway materializes client-only files itself
+          // (file.attach accepts data_url for the remote-client case).
+          const attachmentRefs: string[] = [];
+          for (const upload of handoffUploads) {
+            if (upload.kind === 'image') {
+              attachmentRefs.push(await client.attach('image', { content_base64: upload.dataUrl, filename: upload.name }));
+            } else if (upload.kind === 'pdf') {
+              attachmentRefs.push(await client.attach('pdf', { content_base64: upload.dataUrl, filename: upload.name }));
+            } else {
+              attachmentRefs.push(await client.attach('file', { data_url: upload.dataUrl, name: upload.name, path: upload.name }));
+            }
+          }
+          // Persist the staged refs so a retry can re-inline them without the
+          // original File objects (which are gone once the composer clears).
+          if (attachmentRefs.length > 0) {
+            upsertHandoffState(handoffId, { attachments: handoffAttachmentSummaries, attachmentRefs }, canonicalSessionRef);
+          }
+          const handoffPrompt = [formatHandoffPrompt(envelope), ...attachmentRefs].filter(Boolean).join('\n\n');
+          const delivery = await client.deliver(handle, handoffPrompt);
           if (!delivery.deferred) {
             handoffDedupeRef.current.release(handle);
             client.close();
@@ -1562,6 +1616,13 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
         }
       };
       void runHandoff();
+      }
+      // Attachments rode along with the @mention — clear the composer either way.
+      if (handoffUploads.length > 0) {
+        for (const attachment of pendingAttachments) {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        }
+        setPendingAttachments([]);
       }
       return;
     }

@@ -1,5 +1,6 @@
 import type { BotHandoffStatus } from '../components/chat/BotHandoffMessage';
 import type { BotHandoffFailureReason } from './bot-handoff-reasons';
+import type { ChatAttachmentSummary } from './chat-protocol';
 
 export type PersistedBotHandoff = {
   id: string;
@@ -9,6 +10,10 @@ export type PersistedBotHandoff = {
   model?: string;
   provider?: string;
   request: string;
+  /** Attachment summaries shown on the request bubble; re-attached on retry. */
+  attachments?: ChatAttachmentSummary[];
+  /** Gateway ref texts (@file:… / [User attached …]) staged on the bot session; a retry re-inlines them without re-uploading. */
+  attachmentRefs?: string[];
   status: BotHandoffStatus;
   reason?: BotHandoffFailureReason;
   retryable?: boolean;

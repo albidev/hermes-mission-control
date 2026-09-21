@@ -1,4 +1,5 @@
 import {
+  attachmentRpcMethod,
   createRpcRequest,
   getRpcErrorMessage,
   isResponseFor,
@@ -7,6 +8,7 @@ import {
 import { getWebSocketUrl, mintWsCredential, RPC_TIMEOUT_MS } from './chat-transport';
 import { createBotChatResolver, type BotChatResult } from './bot-chat-routing';
 import { classifyHandoffFailure, type BotHandoffFailureReason } from './bot-handoff-reasons';
+import { resultText } from './chat-commands';
 
 export class BotHandoffRpcError extends Error {
   reason?: BotHandoffFailureReason;
@@ -30,6 +32,13 @@ export type HandoffClient = {
   deliver(profile: string, text: string): Promise<{ reply: string; deferred: boolean }>;
   resume(profile: string, sessionId: string): Promise<string>;
   closeSession(sessionId: string): Promise<void>;
+  /**
+   * Stage an attachment on the RESUMED bot session (image/pdf/file). Must be
+   * called after `resume` — it targets the runtime session id. Returns the
+   * gateway's ref text (e.g. `@file:...` or `[User attached image: ...]`) to
+   * inline into the handoff prompt.
+   */
+  attach(kind: 'image' | 'pdf' | 'file', params: Record<string, unknown>): Promise<string>;
   submit(text: string): Promise<void>;
   eventsSince(lastSeen: number): Promise<{ events?: Array<{ type: string; seq?: number; payload?: Record<string, unknown> }>; truncated?: boolean; epoch?: string | null; latest_seq?: number }>;
   close(): void;
@@ -132,6 +141,12 @@ export async function openHandoffClient(options: HandoffClientOptions = {}): Pro
     },
     async closeSession(sessionId: string): Promise<void> {
       await rpc('session.close', { session_id: sessionId });
+    },
+    async attach(kind: 'image' | 'pdf' | 'file', params: Record<string, unknown>): Promise<string> {
+      if (!runtimeId) throw new Error('Resume the canonical session before attaching files.');
+      const method = attachmentRpcMethod(kind);
+      const result = await rpc<unknown>(method, { session_id: runtimeId, ...params });
+      return resultText(result);
     },
     async submit(text: string): Promise<void> {
       if (!runtimeId) throw new Error('Resume the canonical session before submitting.');
