@@ -434,7 +434,25 @@ def promote_ready() -> List[Dict[str, Any]]:
             except ValueError:
                 continue
             if qdt <= now:
-                # move to this vault's wiki/concepts
+                # move to this vault's wiki/concepts — unless it's a cron-brief
+                # report artifact, which is a dated delivery log, not a concept:
+                # it goes to projects/<prefix>/reports/<run-id>.md (Plan B,
+                # Albi 2026-09-21: "per me sono importanti come report").
+                is_report = (c.get("type") or "") == "cron-brief" or str(c.get("id") or p.stem).startswith("cron-brief-")
+                if is_report:
+                    profile = c.get("profile") or "crossnection-delivery"
+                    prefix = str(profile).split("-")[0] or "crossnection"
+                    reports_dir = vault / "projects" / prefix / "reports"
+                    reports_dir.mkdir(parents=True, exist_ok=True)
+                    dest = reports_dir / f"{p.stem}.md"
+                    body = c.get("body", "")
+                    dest.write_text(body + "\n", encoding="utf-8")
+                    c["status"] = "promoted"
+                    c["promoted_at"] = now.isoformat()
+                    c["promote_note"] = "archived to projects reports (delivery log)"
+                    _write_candidate(p, c, body)
+                    promoted.append(c)
+                    continue
                 concepts_dir = vault / "wiki" / "concepts"
                 concepts_dir.mkdir(parents=True, exist_ok=True)
                 slug = re.sub(r"[^a-z0-9]+", "-", (c.get("title") or "concept").lower()).strip("-")
