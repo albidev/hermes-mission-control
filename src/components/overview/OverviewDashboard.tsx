@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { Activity, ArrowRight, Clock3, List, MessageSquare, Rocket } from 'lucide-react';
 import { useMissionControl } from '../../lib/mission-control-store';
 import { getPluginRegistry } from '../../core/plugin-registry';
-import type { MCPluginAttentionContributor } from '../../core/plugins/types';
+import type { MCPluginAttentionContributor, MCPluginOverviewContributor } from '../../core/plugins/types';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { AgentStatusBar } from './AgentStatusBar';
@@ -106,6 +106,7 @@ function sortUpcomingCronJobs(jobs: MissionControlCronJob[]): MissionControlCron
 export function OverviewDashboard() {
   const { t, locale } = useI18n();
   const attentionContributors: MCPluginAttentionContributor[] = getPluginRegistry().getAttentionContributors();
+  const overviewContributors: MCPluginOverviewContributor[] = getPluginRegistry().getOverviewContributors();
   const {
     snapshot,
     loading,
@@ -210,6 +211,15 @@ export function OverviewDashboard() {
         </SectionCard>
       ),
     },
+    ...overviewContributors.map((contributor): DashboardWidget => {
+      const Component = contributor.component;
+      return {
+        id: `plugin:${contributor.id}`,
+        label: contributor.label,
+        className: contributor.className,
+        content: <Component />,
+      };
+    }),
     {
       id: 'quick-actions',
       label: 'Quick actions',

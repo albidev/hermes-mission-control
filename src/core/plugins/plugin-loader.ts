@@ -6,9 +6,10 @@ import type { InternalPlugin } from './registry';
 const routeModules = import.meta.glob('../../plugins/*/route.ts', { eager: true });
 const manifestModules = import.meta.glob('../../plugins/*/manifest.ts', { eager: true });
 const attentionModules = import.meta.glob('../../plugins/*/attention.tsx', { eager: true });
+const overviewModules = import.meta.glob('../../plugins/*/overview.tsx', { eager: true });
 
 function pluginIdFromPath(path: string): string | null {
-  const match = path.match(/\/plugins\/([^/]+)\/(?:route|manifest|attention)\.(?:ts|tsx)$/);
+  const match = path.match(/\/plugins\/([^/]+)\/(?:route|manifest|attention|overview)\.(?:ts|tsx)$/);
   return match?.[1] ?? null;
 }
 
@@ -31,7 +32,11 @@ export function loadPlugins(): InternalPlugin[] {
     const attention = attentionPath
       ? moduleExport(attentionModules[attentionPath] as Record<string, unknown>, id, 'Attention') as React.ComponentType<any> | undefined
       : undefined;
-    loaded.set(id, { manifest, component, attention, loadRoute: async () => ({ default: component }) });
+    const overviewPath = Object.keys(overviewModules).find((path) => pluginIdFromPath(path) === id);
+    const overview = overviewPath
+      ? moduleExport(overviewModules[overviewPath] as Record<string, unknown>, id, 'Overview') as React.ComponentType<any> | undefined
+      : undefined;
+    loaded.set(id, { manifest, component, attention, overview, loadRoute: async () => ({ default: component }) });
   }
   return [...loaded.values()].filter((plugin) => plugin.manifest.enabled !== false);
 }

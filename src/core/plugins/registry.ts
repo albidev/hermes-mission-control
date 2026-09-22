@@ -1,5 +1,12 @@
 import React from 'react';
-import type { MCPluginAttentionContributor, MCPluginManifest, MCPluginNavItem, MCPluginRoute, MCPluginEndpoint } from './types';
+import type {
+  MCPluginAttentionContributor,
+  MCPluginManifest,
+  MCPluginNavItem,
+  MCPluginRoute,
+  MCPluginEndpoint,
+  MCPluginOverviewContributor,
+} from './types';
 
 
 export interface InternalPlugin {
@@ -7,6 +14,7 @@ export interface InternalPlugin {
   loadRoute: () => Promise<{ default: React.ComponentType<any> }>;
   component?: React.ComponentType<any>;
   attention?: React.ComponentType<any>;
+  overview?: React.ComponentType<any>;
 }
 
 function isNavItem(item: MCPluginNavItem | null | undefined): item is MCPluginNavItem {
@@ -79,6 +87,24 @@ export class PluginRegistry {
       if (plugin.manifest.surfaces?.attention?.enabled === false) continue;
       const component = (plugin as InternalPlugin & { attention?: React.ComponentType<any> }).attention;
       if (component) contributors.push({ id: plugin.manifest.id, order: plugin.manifest.surfaces?.attention?.order ?? 50, component });
+    }
+    return contributors.sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
+  }
+
+  getOverviewContributors(): MCPluginOverviewContributor[] {
+    const contributors: MCPluginOverviewContributor[] = [];
+    for (const plugin of this.plugins) {
+      const surface = plugin.manifest.surfaces?.overview;
+      if (surface?.enabled === false) continue;
+      const component = plugin.overview;
+      if (!component) continue;
+      contributors.push({
+        id: plugin.manifest.id,
+        label: plugin.manifest.name,
+        order: surface?.order ?? 50,
+        className: surface?.className,
+        component,
+      });
     }
     return contributors.sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
   }
