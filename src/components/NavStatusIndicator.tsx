@@ -39,9 +39,16 @@ export function NavStatusIndicator({ indicator }: { indicator: MCPluginNavIndica
       }
     };
     void refresh();
+    const onStatusChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ endpoint?: string }>).detail;
+      if (detail?.endpoint && detail.endpoint !== indicator.endpoint) return;
+      void refresh();
+    };
+    window.addEventListener('mc:plugin-status-changed', onStatusChanged);
     const timer = window.setInterval(() => void refresh(), pollMs);
     return () => {
       cancelled = true;
+      window.removeEventListener('mc:plugin-status-changed', onStatusChanged);
       window.clearInterval(timer);
     };
   }, [indicator.endpoint, indicator.pollMs, storedToken]);

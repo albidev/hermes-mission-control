@@ -122,7 +122,7 @@ The backend manifest is the runtime contract between the plugin and MC:
 
 Endpoint paths are relative to `/api/local`. For example, `"/example/items"` is served at `/api/local/example/items`. The endpoint `handler` must exactly match an exported function in `endpoints.py`.
 
-A navigation indicator is deliberately agnostic: the host only understands `active` (whether to show the dot), `count` (optional), `tone` (`neutral`, `info`, `success`, or `warning`/`error`), and an accessible `label`. It polls the declared endpoint with the normal Mission Control bearer token and hides the optional dot if the plugin is unavailable.
+A navigation indicator is deliberately agnostic: the host only understands `active` (whether to show the dot), `count` (optional), `tone` (`neutral`, `info`, `success`, or `warning`/`error`), and an accessible `label`. It polls the declared endpoint with the normal Mission Control bearer token and hides the optional dot if the plugin is unavailable. A plugin can request an immediate refresh after a successful mutation by dispatching `window.dispatchEvent(new CustomEvent('mc:plugin-status-changed', { detail: { endpoint: '/example/status' } }))`; omitting `detail.endpoint` refreshes every indicator.
 
 External plugins take precedence over an internal plugin with the same ID. Internal plugins are supported for host-owned integrations, but new feature work should use a separate repository.
 
