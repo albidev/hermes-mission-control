@@ -490,6 +490,49 @@ assertEqual(identifiedSegments[1].id, 'turn-1:assistant:1');
 assertEqual(identifiedSegments[1].text, 'Risposta finale');
 assertEqual(identifiedSegments[1].status, 'complete');
 
+// Some gateway transports emit both message.complete and run.completed for the
+// same turn. The latter must settle the turn, not append the final answer again.
+let duplicateFinalAfterRun = applyGatewayEvent([], { type: 'message.start' }, 2225);
+duplicateFinalAfterRun = applyGatewayEvent(duplicateFinalAfterRun, {
+  type: 'message.delta',
+  payload: { text: 'Una sola risposta finale.' },
+}, 2226);
+duplicateFinalAfterRun = applyGatewayEvent(duplicateFinalAfterRun, {
+  type: 'message.complete',
+  payload: { text: 'Una sola risposta finale.' },
+}, 2227);
+duplicateFinalAfterRun = applyGatewayEvent(duplicateFinalAfterRun, {
+  type: 'run.completed',
+  payload: { messages: [{ role: 'assistant', content: 'Una sola risposta finale.' }] },
+}, 2228);
+assertEqual(duplicateFinalAfterRun.length, 1);
+assertEqual(duplicateFinalAfterRun[0].text, 'Una sola risposta finale.');
+assertEqual(duplicateFinalAfterRun[0].status, 'complete');
+
+// The run-level payload carries the same backend message id. Prefer that stable
+// identity even when its authoritative transcript text is normalized slightly.
+let identifiedFinalAfterRun = applyGatewayEvent([], {
+  type: 'message.start',
+  payload: { message_id: 'turn-2:assistant:0' },
+}, 2229);
+identifiedFinalAfterRun = applyGatewayEvent(identifiedFinalAfterRun, {
+  type: 'message.delta',
+  payload: { message_id: 'turn-2:assistant:0', delta: 'Prima versione' },
+}, 2230);
+identifiedFinalAfterRun = applyGatewayEvent(identifiedFinalAfterRun, {
+  type: 'assistant.completed',
+  payload: { message_id: 'turn-2:assistant:0', content: 'Prima versione' },
+}, 2231);
+identifiedFinalAfterRun = applyGatewayEvent(identifiedFinalAfterRun, {
+  type: 'run.completed',
+  payload: {
+    message_id: 'turn-2:assistant:0',
+    messages: [{ role: 'assistant', content: 'Prima versione\n' }],
+  },
+}, 2232);
+assertEqual(identifiedFinalAfterRun.length, 1);
+assertEqual(identifiedFinalAfterRun[0].text, 'Prima versione\n');
+
 // Late-arriving reasoning: when the gateway flushes reasoning AFTER the final
 // reply (reasoning rides the turn-completion payload), the bubble must be
 // inserted BEFORE the completed assistant message, not appended below it.

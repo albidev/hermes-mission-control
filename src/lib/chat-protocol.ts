@@ -1087,7 +1087,28 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
       next[index] = { ...next[index], text: authoritativeText || next[index].text, status: 'complete' };
       return next.filter((message, candidateIndex) => !(candidateIndex !== index && message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()));
     }
-    return authoritativeText ? [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: authoritativeText, status: 'complete', createdAt: now }] : messages;
+    if (authoritativeText) {
+      // Some transports emit message.complete and then run.completed for the
+      // same turn. If message.complete already settled the final bubble, the
+      // run-level completion is only a lifecycle signal, not another message.
+      const completedMessageId = eventMessageId(event);
+      if (completedMessageId) {
+        const existingIndex = lastIndexOf((message) => message.kind === 'assistant' && message.id === completedMessageId);
+        if (existingIndex >= 0) {
+          next[existingIndex] = { ...next[existingIndex], text: authoritativeText, status: 'complete' };
+          return next;
+        }
+      }
+      const latestAssistantIndex = lastIndexOf((message) => message.kind === 'assistant');
+      if (latestAssistantIndex >= 0) {
+        const latestAssistant = next[latestAssistantIndex];
+        if (latestAssistant.status === 'complete' && latestAssistant.text.trim() === authoritativeText.trim()) {
+          return next;
+        }
+      }
+      return [...messages, { id: `assistant-${now}`, role: 'assistant', kind: 'assistant', text: authoritativeText, status: 'complete', createdAt: now }];
+    }
+    return messages;
   }
 
   if (event.type === 'error') {
