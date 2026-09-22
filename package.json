@@ -51,7 +51,7 @@
     "@tailwindcss/postcss": "4.3.3"
   },
   "engines": {
-    "node": ">=22.6"
+    "node": ">=22.12"
   },
   "pnpm": {
     "overrides": {
