@@ -10,7 +10,7 @@ MC provides only the plugin host contract:
 
 - backend discovery and endpoint dispatch in `server/plugins/loader.py`;
 - frontend discovery through a generic `import.meta.glob` in `src/core/plugins/plugin-loader.ts`;
-- route and navigation registration through `PluginRegistry`;
+- route, navigation, and Overview widget registration through `PluginRegistry`;
 - the `/api/local/plugins` discovery endpoint;
 - `scripts/setup-plugins.sh`, which creates local UI symlinks for installed plugins;
 - authentication, the `/api/local` transport, shared UI primitives, and the telemetry lifecycle.
@@ -62,6 +62,8 @@ mc-example-plugin/
 ├── ui/                    # optional: frontend integration
 │   ├── route.ts           # exports <id>Plugin or default component
 │   ├── manifest.ts        # exports <id>Manifest or default manifest
+│   ├── overview.tsx       # optional compact widget for the Overview dashboard
+│   ├── attention.tsx      # optional contributor for Attention Needed
 │   ├── types.ts           # plugin-local types
 │   └── ...
 ├── tests/                 # plugin-owned tests
@@ -109,6 +111,8 @@ The backend manifest is the runtime contract between the plugin and MC:
 | `routePath` | no | Frontend route, for example `/example`. |
 | `navItem` | no | Sidebar entry. Omit for a hidden/backend-only plugin. |
 | `endpoints` | no | HTTP endpoint declarations. |
+| `surfaces.overview` | no | Enables a compact plugin widget in the Overview dashboard grid. |
+| `surfaces.attention` | no | Enables a contributor inside the global Attention Needed card. |
 
 Endpoint paths are relative to `/api/local`. For example, `"/example/items"` is served at `/api/local/example/items`. The endpoint `handler` must exactly match an exported function in `endpoints.py`.
 

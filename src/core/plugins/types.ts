@@ -41,6 +41,12 @@ export interface MCPluginSurfaces {
     enabled?: boolean;
     order?: number;
   };
+  /** Compact widget injected into the Overview dashboard grid. */
+  overview?: {
+    enabled?: boolean;
+    order?: number;
+    className?: string;
+  };
 }
 
 export interface MCPluginAttentionProps {
@@ -52,6 +58,19 @@ export interface MCPluginAttentionContributor {
   id: string;
   order?: number;
   component: React.ComponentType<MCPluginAttentionProps>;
+}
+
+export interface MCPluginOverviewProps {
+  /** Plugin may report its current actionable item count to the host. */
+  onActiveChange?: (count: number) => void;
+}
+
+export interface MCPluginOverviewContributor {
+  id: string;
+  label: string;
+  order?: number;
+  className?: string;
+  component: React.ComponentType<MCPluginOverviewProps>;
 }
 
 export interface MCPluginNavItem {
