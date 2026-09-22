@@ -88,7 +88,12 @@ The backend manifest is the runtime contract between the plugin and MC:
     "to": "/example",
     "label": "Example",
     "icon": "Puzzle",
-    "order": 70
+    "order": 70,
+    "indicator": {
+      "endpoint": "/example/status",
+      "pollMs": 30000,
+      "tones": ["neutral", "info", "success", "warning", "error"]
+    }
   },
   "endpoints": [
     {
@@ -110,11 +115,14 @@ The backend manifest is the runtime contract between the plugin and MC:
 | `enabled` | no | Defaults to enabled when omitted. |
 | `routePath` | no | Frontend route, for example `/example`. |
 | `navItem` | no | Sidebar entry. Omit for a hidden/backend-only plugin. |
+| `navItem.indicator` | no | Generic host-rendered status dot. The plugin owns a small authenticated GET endpoint returning `{active, count?, tone?, label?}`; MC renders it without knowing the plugin's domain semantics. |
 | `endpoints` | no | HTTP endpoint declarations. |
 | `surfaces.overview` | no | Enables a compact plugin widget in the Overview dashboard grid. |
 | `surfaces.attention` | no | Enables a contributor inside the global Attention Needed card. |
 
 Endpoint paths are relative to `/api/local`. For example, `"/example/items"` is served at `/api/local/example/items`. The endpoint `handler` must exactly match an exported function in `endpoints.py`.
+
+A navigation indicator is deliberately agnostic: the host only understands `active` (whether to show the dot), `count` (optional), `tone` (`neutral`, `info`, `success`, or `warning`/`error`), and an accessible `label`. It polls the declared endpoint with the normal Mission Control bearer token and hides the optional dot if the plugin is unavailable.
 
 External plugins take precedence over an internal plugin with the same ID. Internal plugins are supported for host-owned integrations, but new feature work should use a separate repository.
 

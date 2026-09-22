@@ -27,6 +27,7 @@ import { clearNewChatParams } from '../lib/chat-session-params';
 import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
 import { Button } from './ui/Button';
 import { PluginRegistry } from '../core/plugins/registry';
+import { NavStatusIndicator } from './NavStatusIndicator';
 import type { MCPluginNavItem } from '../core/plugins/types';
 import { resolveIcon } from '../lib/icons';
 
@@ -309,6 +310,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
                     <Icon size={16} strokeWidth={2} />
                   </span>
                   <span className="side-nav-label">{label}</span>
+                  {item.indicator ? <NavStatusIndicator indicator={item.indicator} /> : null}
                 </NavLink>
               );
             })}
@@ -331,6 +333,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
                         <Icon size={16} strokeWidth={2} />
                       </span>
                       <span className="side-nav-label">{label}</span>
+                      {item.indicator ? <NavStatusIndicator indicator={item.indicator} /> : null}
                     </NavLink>
                   );
                 })}

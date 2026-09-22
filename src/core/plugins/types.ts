@@ -73,11 +73,22 @@ export interface MCPluginOverviewContributor {
   component: React.ComponentType<MCPluginOverviewProps>;
 }
 
+export interface MCPluginNavIndicator {
+  /** GET endpoint relative to the local Mission Control API base. */
+  endpoint: string;
+  /** Polling interval in milliseconds. The host clamps this to a safe minimum. */
+  pollMs?: number;
+  /** Agnostic status tones understood by the host renderer. */
+  tones: Array<'neutral' | 'info' | 'success' | 'warning' | 'error'>;
+}
+
 export interface MCPluginNavItem {
   /** Route path (e.g. '/curate') */
   to: string;
   /** Nav label (i18n key or plain text) */
   label: string;
+  /** Optional plugin-owned status indicator rendered by the host. */
+  indicator?: MCPluginNavIndicator;
   /** Lucide icon name (as string, resolved at runtime) */
   icon: string;
   /** Optional condition to show nav item (evaluated at runtime) */
