@@ -89,9 +89,9 @@ function installFakeStore() {
 //    instead of retrying forever when the store keeps conflicting.
 {
   const store = installFakeStore();
-  await claimLastRoomPointer('mc-A', 'Triage IN-202', 'secret-token', null);
+  await claimLastRoomPointer('mc-A', 'Example room', 'secret-token', null);
   assertEqual(store.calls[0].authorization, 'Bearer secret-token', 'token is forwarded');
-  assertEqual(store.calls[0].body.roomName, 'Triage IN-202', 'room name is forwarded');
+  assertEqual(store.calls[0].body.roomName, 'Example room', 'room name is forwarded');
 
   let alwaysConflict = 0;
   globalThis.fetch = (async () => {

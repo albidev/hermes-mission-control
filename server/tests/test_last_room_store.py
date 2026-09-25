@@ -34,13 +34,13 @@ class LastRoomStoreProtocolTest(unittest.TestCase):
 
     def test_first_claim_creates_server_revision_and_metadata(self) -> None:
         result = last_room_store.set_last_room(
-            {"roomId": "mc-triage", "roomName": "Triage IN-202", "updatedAt": 1},
+            {"roomId": "mc-triage", "roomName": "Example room", "updatedAt": 1},
         )
 
         self.assertTrue(result["accepted"])
         pointer = result["lastRoom"]
         self.assertEqual(pointer["roomId"], "mc-triage")
-        self.assertEqual(pointer["roomName"], "Triage IN-202")
+        self.assertEqual(pointer["roomName"], "Example room")
         self.assertEqual(pointer["revision"], 1)
         self.assertGreater(pointer["updatedAt"], 1)
 
@@ -111,14 +111,14 @@ class LastRoomStoreProtocolTest(unittest.TestCase):
         self.assertEqual(retried["lastRoom"]["roomId"], "mc-delivery")
 
     def test_room_name_survives_and_is_optional(self) -> None:
-        last_room_store.set_last_room({"roomId": "mc-triage", "roomName": "Triage IN-202"})
+        last_room_store.set_last_room({"roomId": "mc-triage", "roomName": "Example room"})
         renamed = last_room_store.set_last_room(
             {"roomId": "mc-triage"},
             expected_revision=1,
         )
 
         self.assertTrue(renamed["accepted"])
-        self.assertEqual(renamed["lastRoom"]["roomName"], "Triage IN-202")
+        self.assertEqual(renamed["lastRoom"]["roomName"], "Example room")
 
     def test_get_returns_none_when_never_set(self) -> None:
         self.assertIsNone(last_room_store.get_last_room())

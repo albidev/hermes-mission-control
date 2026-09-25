@@ -95,6 +95,64 @@ class CandidateMergeTests(unittest.TestCase):
             self.assertIn("Incoming distinct description line.", merged)
             self.assertIn("merged_from candidate: candidate-1", merged)
 
+    def test_report_without_valid_owner_requires_review_instead_of_guessing_a_project(self):
+        for profile in (None, "../outside", ""):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory(prefix="mc-report-routing-") as raw:
+                root = Path(raw)
+                candidates_dir = root / "candidates"
+                candidates_dir.mkdir()
+                vault_dir = root / "vault"
+                quarantine_until = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+                candidate = candidates_dir / "cron-brief-run.md"
+                profile_line = f"profile: {profile}\n" if profile is not None else ""
+                candidate.write_text(
+                    "---\n"
+                    "id: cron-brief-run\n"
+                    "type: cron-brief\n"
+                    "status: approved\n"
+                    f"quarantine_until: {quarantine_until}\n"
+                    f"{profile_line}"
+                    "---\n\nExample report.\n",
+                    encoding="utf-8",
+                )
+                with patch.object(candidates_module, "_candidates_dir", return_value=candidates_dir), \
+                     patch.object(candidates_module, "_load_vaults", return_value={}), \
+                     patch.object(candidates_module, "hermes_vault_dir", return_value=vault_dir):
+                    promoted = candidates_module.promote_ready()
+                self.assertEqual(promoted, [])
+                self.assertFalse((vault_dir / "projects").exists())
+                reviewed = candidates_module._read_candidate(candidate)
+                self.assertEqual(reviewed["status"], "needs_review")
+                self.assertIn("profile", reviewed["routing_error"])
+
+    def test_report_uses_explicit_profile_for_project_directory(self):
+        with tempfile.TemporaryDirectory(prefix="mc-report-routing-") as raw:
+            root = Path(raw)
+            candidates_dir = root / "candidates"
+            candidates_dir.mkdir()
+            vault_dir = root / "vault"
+            quarantine_until = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+            candidate = candidates_dir / "cron-brief-run.md"
+            candidate.write_text(
+                "---\n"
+                "id: cron-brief-run\n"
+                "type: cron-brief\n"
+                "profile: example-delivery\n"
+                "routing_error: missing or invalid profile for report routing\n"
+                "status: approved\n"
+                f"quarantine_until: {quarantine_until}\n"
+                "---\n\nExample report.\n",
+                encoding="utf-8",
+            )
+            with patch.object(candidates_module, "_candidates_dir", return_value=candidates_dir), \
+                 patch.object(candidates_module, "_load_vaults", return_value={}), \
+                 patch.object(candidates_module, "hermes_vault_dir", return_value=vault_dir):
+                promoted = candidates_module.promote_ready()
+            self.assertEqual(len(promoted), 1)
+            self.assertEqual(promoted[0]["status"], "promoted")
+            self.assertNotIn("routing_error", candidates_module._read_candidate(candidate))
+            self.assertEqual((vault_dir / "projects" / "example" / "reports" / candidate.name).read_text(), "Example report.\n")
+
     def test_jev_provider_is_available_from_mc_server_checkout(self):
         server_dir = Path(candidates_module.__file__).resolve().parent
         with patch.dict(

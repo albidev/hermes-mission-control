@@ -22,10 +22,10 @@ class ChatTitleStoreTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_title_is_read_by_runtime_id_and_session_key(self) -> None:
-        saved = chat_title_store.set_chat_title("runtime-1", "session-key-1", "Spiegami Inspector")
-        self.assertEqual(saved["title"], "Spiegami Inspector")
-        self.assertEqual(chat_title_store.get_chat_title("runtime-1"), "Spiegami Inspector")
-        self.assertEqual(chat_title_store.get_chat_title("session-key-1"), "Spiegami Inspector")
+        saved = chat_title_store.set_chat_title("runtime-1", "session-key-1", "Spiegami il sistema")
+        self.assertEqual(saved["title"], "Spiegami il sistema")
+        self.assertEqual(chat_title_store.get_chat_title("runtime-1"), "Spiegami il sistema")
+        self.assertEqual(chat_title_store.get_chat_title("session-key-1"), "Spiegami il sistema")
 
     def test_title_is_trimmed_and_capped(self) -> None:
         chat_title_store.set_chat_title("runtime-1", "", "  A title  ")
