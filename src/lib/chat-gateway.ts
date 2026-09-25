@@ -8,6 +8,7 @@ import {
 import { buildBotReplyDelivery } from './bot-reply-delivery';
 import {
   applyGatewayEvent,
+  advertiseServerRequests,
   attachmentRpcMethod,
   createRpcRequest,
   ConnectionAttemptGate,
@@ -27,6 +28,7 @@ import {
   refreshModelAfterCommandDispatch,
   normalizeTranscript,
   parseGatewayFrame,
+  rejectUnsupportedServerRequest,
   pendingPromptWasPersisted,
   type ChatActivity,
   type ChatAttachmentSummary,
@@ -1137,6 +1139,7 @@ export function useGatewayChat(
           return;
         }
         if (parsed.kind === 'server_request') {
+          if (rejectUnsupportedServerRequest(ws, parsed)) return;
           openServerRequestsRef.current.set(parsed.id, { method: parsed.method, responded: false });
           const incoming = interactionFromServerRequest(parsed);
           if (incoming) {
@@ -1296,6 +1299,9 @@ export function useGatewayChat(
       });
 
       ws.addEventListener('open', () => {
+        // Ordered before session.resume / prompt.submit: the gateway otherwise treats
+        // MC as an old client and withdraws approval and clarify without rendering them.
+        advertiseServerRequests(ws, `mc-${++requestSeqRef.current}`);
         reconnectAttemptsRef.current = 0;
         setStatusText('Waiting for gateway');
         void readyPromise.then(() => {

@@ -3,6 +3,8 @@ import {
   attachmentRpcMethod,
   classifyAttachment,
   createRpcRequest,
+  advertiseServerRequests,
+  rejectUnsupportedServerRequest,
   extractInteractionRequest,
   extractSessionId,
   extractSessionKey,
@@ -31,6 +33,28 @@ import { formatChatMessageTime } from '../src/lib/chat-time.ts';
 
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit } from '../src/lib/chat-outbox.ts';
 import { replaceWithCanonicalChatMessages } from '../src/lib/chat-sync.ts';
+
+const capabilityFrames: string[] = [];
+const capabilitySocket = { send: (frame: string) => capabilityFrames.push(frame) };
+advertiseServerRequests(capabilitySocket, 'mc-1');
+advertiseServerRequests(capabilitySocket, 'mc-2');
+if (JSON.stringify(capabilityFrames.map((frame) => JSON.parse(frame))) !== JSON.stringify([
+  { jsonrpc: '2.0', id: 'mc-1', method: 'client.capabilities', params: { server_requests: true } },
+  { jsonrpc: '2.0', id: 'mc-2', method: 'client.capabilities', params: { server_requests: true } },
+])) throw new Error('Each connected socket must advertise support for approval and clarify before submitting a turn.');
+
+const unsupportedFrames: string[] = [];
+const unsupportedSocket = { send: (frame: string) => unsupportedFrames.push(frame) };
+if (rejectUnsupportedServerRequest(unsupportedSocket, { id: 'srq-unknown', method: 'vault.confirm', params: {} }) !== true) {
+  throw new Error('An unsupported server request must be rejected instead of stalling its timeout.');
+}
+if (rejectUnsupportedServerRequest(unsupportedSocket, { id: 'srq-approval', method: 'approval', params: {} }) !== false
+  || rejectUnsupportedServerRequest(unsupportedSocket, { id: 'srq-clarify', method: 'clarify', params: {} }) !== false) {
+  throw new Error('Approval and clarify must remain answerable.');
+}
+if (JSON.stringify(unsupportedFrames.map((frame) => JSON.parse(frame))) !== JSON.stringify([
+  { jsonrpc: '2.0', id: 'srq-unknown', error: { code: -32601, message: 'Method not found: vault.confirm' } },
+])) throw new Error('Unsupported methods must receive a JSON-RPC method-not-found response.');
 
 function assertEqual<T>(actual: T, expected: T) {
   if (actual !== expected) {

@@ -303,6 +303,11 @@ export function createRpcRequest(id: string, method: string, params: Record<stri
   return { jsonrpc: '2.0', id, method, params };
 }
 
+/** Advertise the interaction response path on every WebSocket connection, before any session RPC. */
+export function advertiseServerRequests(socket: Pick<WebSocket, 'send'>, id: string): void {
+  socket.send(JSON.stringify(createRpcRequest(id, 'client.capabilities', { server_requests: true })));
+}
+
 /**
  * Mission Control's New action must preserve the durable backend session.
  *
@@ -645,6 +650,20 @@ const SERVER_REQUEST_METHOD_KIND: Record<string, GatewayInteractionKind> = {
   sudo: 'sudo',
   'terminal.read': 'terminal_read',
 };
+
+/** An advertised client must answer unknown requests too, or the agent waits until timeout. */
+export function rejectUnsupportedServerRequest(
+  socket: Pick<WebSocket, 'send'>,
+  frame: { id: string; method: string; params: Record<string, unknown> },
+): boolean {
+  if (SERVER_REQUEST_METHOD_KIND[frame.method]) return false;
+  socket.send(JSON.stringify({
+    jsonrpc: '2.0',
+    id: frame.id,
+    error: { code: -32601, message: `Method not found: ${frame.method}` },
+  }));
+  return true;
+}
 
 /** Extract an interaction card from one JSON-RPC server→client request (method !== 'event'). */
 export function interactionFromServerRequest(frame: {
