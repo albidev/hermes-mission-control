@@ -35,6 +35,15 @@ export default defineConfig(({ mode }) => {
   const hostReactMarkdown = require.resolve('react-markdown', { paths: [process.cwd()] });
   const hostRemarkBreaks = require.resolve('remark-breaks', { paths: [process.cwd()] });
   const hostRemarkGfm = require.resolve('remark-gfm', { paths: [process.cwd()] });
+  // External plugin CSS entries (e.g. `@import 'tailwindcss/theme'`) live
+  // outside the repo tree via the src/plugins symlink. PostCSS/Vite's CSS
+  // resolver walks up from the symlink's real path and never finds the
+  // host's node_modules, so bare `tailwindcss/*` subpath imports 404 with
+  // ENOENT. Alias the subpaths explicitly so any plugin following this
+  // pattern resolves against the host's own tailwindcss install.
+  const hostTailwindTheme = require.resolve('tailwindcss/theme.css', { paths: [process.cwd()] });
+  const hostTailwindUtilities = require.resolve('tailwindcss/utilities.css', { paths: [process.cwd()] });
+  const hostTailwindPreflight = require.resolve('tailwindcss/preflight.css', { paths: [process.cwd()] });
 
   return {
     resolve: {
@@ -46,7 +55,10 @@ export default defineConfig(({ mode }) => {
         { find: /^lucide-react$/, replacement: hostIcons },
         { find: /^react-markdown$/, replacement: hostReactMarkdown },
         { find: /^remark-breaks$/, replacement: hostRemarkBreaks },
-        { find: /^remark-gfm$/, replacement: hostRemarkGfm }
+        { find: /^remark-gfm$/, replacement: hostRemarkGfm },
+        { find: /^tailwindcss\/theme$/, replacement: hostTailwindTheme },
+        { find: /^tailwindcss\/utilities$/, replacement: hostTailwindUtilities },
+        { find: /^tailwindcss\/preflight$/, replacement: hostTailwindPreflight }
       ],
     },
     plugins: [react()],

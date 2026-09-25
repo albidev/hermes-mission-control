@@ -42,18 +42,37 @@ if [ -d "$MC_PLUGINS_DIR" ]; then
         fi
         
         link_path="$SRC_PLUGINS_DIR/$plugin_id"
-        
+
         if [ -L "$link_path" ]; then
             existing=$(readlink "$link_path")
             if [ "$existing" = "$ui_dir" ] || [ "$existing" = "$ui_dir/" ]; then
                 echo "  ${plugin_id}: already linked"
-                continue
             fi
         fi
-        
-        echo "  Linking ${plugin_id} -> ${ui_dir}"
-        ln -sfn "$ui_dir" "$link_path"
-        created=$((created + 1))
+
+        if [ ! -L "$link_path" ] || [ "$(readlink "$link_path")" != "$ui_dir" -a "$(readlink "$link_path")" != "$ui_dir/" ]; then
+            echo "  Linking ${plugin_id} -> ${ui_dir}"
+            ln -sfn "$ui_dir" "$link_path"
+            created=$((created + 1))
+        fi
+
+        # External plugin sources live outside the repo tree at their real
+        # path (~/.hermes/mc-plugins/<id>/), not through the src/plugins/
+        # symlink target. Vite's transform pipeline (and PostCSS's CSS
+        # resolver) walk up from that REAL path looking for node_modules, so
+        # a plugin's own bare imports (CodeMirror, tailwind subpaths, etc.)
+        # 404 unless the host's node_modules is reachable from there. A
+        # node_modules symlink at the plugin root covers every file under
+        # ui/ via Node's normal upward walk, without requiring per-package
+        # aliases in vite.config.ts for every dependency the plugin ships.
+        plugin_node_modules="${plugin_dir}node_modules"
+        host_node_modules="${SRC_PLUGINS_ROOT}/../node_modules"
+        if [ -L "$plugin_node_modules" ] || [ ! -e "$plugin_node_modules" ]; then
+            ln -sfn "$host_node_modules" "$plugin_node_modules"
+            echo "  ${plugin_id}: linked node_modules -> host"
+        else
+            echo "  ${plugin_id}: node_modules exists and is not a symlink, skipping"
+        fi
     done
 fi
 
