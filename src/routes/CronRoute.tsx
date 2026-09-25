@@ -246,8 +246,10 @@ function CronFormModal({
             <input className="mc-input" value={form.name} onChange={(event) => update('name', event.target.value)} placeholder={t('cron.form.namePlaceholder')} />
           </Field>
           <Field label={t('cron.form.profile')} hint={t('cron.form.profileHint')}>
-            <select className="mc-input" value={form.profile} onChange={(event) => update('profile', event.target.value)}>
+            <select className="mc-input" value={form.profile} disabled={Boolean(job)} onChange={(event) => update('profile', event.target.value)}>
               <option value="default">default</option>
+              {job && job.profile !== 'default' && !botProfiles.some((profile) => profile.name === job.profile)
+                ? <option value={job.profile}>{job.profile}</option> : null}
               {botProfiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.display_name || profile.name}</option>)}
             </select>
           </Field>

@@ -1105,6 +1105,7 @@ function normalizeCronJob(input: Partial<MissionControlCronJob> | undefined): Mi
   return {
     id: input?.id ?? 'scheduled-job',
     label: input?.label ?? input?.id ?? 'Scheduled job',
+    profile: input?.profile ?? 'default',
     enabled: input?.enabled ?? true,
     state: input?.state ?? 'scheduled',
     scheduleDisplay: input?.scheduleDisplay ?? 'unspecified',
