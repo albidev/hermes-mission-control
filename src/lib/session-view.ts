@@ -8,10 +8,13 @@ export type SessionViewFilters = {
   category: SessionCategory | 'all';
   origin: string;
   model: string;
+  profile?: string;
 };
 
 type SessionLike = {
   sessionId?: string | null;
+  profile?: string | null;
+  botProfiles?: string[];
   title?: string | null;
   preview?: string | null;
   source?: string | null;
@@ -122,5 +125,6 @@ export function matchesSessionFilters(session: SessionLike, filters: SessionView
   if (filters.category !== 'all' && origin.category !== filters.category) return false;
   if (filters.origin && normalizedOrigin(session) !== filters.origin.toLowerCase()) return false;
   if (filters.model && session.model !== filters.model) return false;
+  if (filters.profile && (session.profile?.trim() || 'default') !== filters.profile) return false;
   return true;
 }

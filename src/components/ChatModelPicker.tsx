@@ -2,6 +2,7 @@ import { useI18n } from '../lib/i18n';
 import { Check, ChevronRight, Cpu, Loader2, RefreshCw, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ChatModelProviderOption, ChatModelSwitchResult } from '../lib/chat-protocol';
+import { isCoarsePointer } from '../lib/device';
 
 type GatewayRequest = <T,>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
@@ -185,7 +186,7 @@ export function ChatModelPicker({
 
           <label className="chat-model-search">
             <Search size={15} aria-hidden />
-            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={t('modelPicker.filterModels')} aria-label={t('modelPicker.filterModels')} autoFocus />
+            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={t('modelPicker.filterModels')} aria-label={t('modelPicker.filterModels')} autoFocus={!isCoarsePointer()} />
           </label>
 
           {pendingConfirmation ? (

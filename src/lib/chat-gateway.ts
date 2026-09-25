@@ -58,7 +58,7 @@ import {
 } from './chat-interactions';
 import { recordReloadDiagnostic } from './reload-diagnostics';
 import { publishChatRuntimePresence } from './chat-runtime-presence';
-import { addChatProfile, profileForNewChat, nextSessionProfile, resolveSessionOwner } from './chat-session-params';
+import { addChatProfile, profileForNewChat, nextSessionProfile, resolveSessionOwner, shouldPreviewChatSession } from './chat-session-params';
 import { loadMissionControlSessionPreview } from './hermes-api';
 
 // Backward-compatible re-export for ChatDrawer consumers during the gateway split.
@@ -195,6 +195,7 @@ export function useGatewayChat(
   open: boolean,
   initialSessionId?: string | null,
   botProfile?: string | null,
+  freshSessionId?: string | null,
 ) {
   const initial = useMemo(readPersistedChat, []);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -225,7 +226,7 @@ export function useGatewayChat(
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerRefresh, setModelPickerRefresh] = useState(false);
   const [commandPrefill, setCommandPrefill] = useState<string | null>(null);
-  const [previewMode, setPreviewMode] = useState<boolean>(Boolean(initialSessionId?.trim()));
+  const [previewMode, setPreviewMode] = useState<boolean>(() => shouldPreviewChatSession(initialSessionId, freshSessionId));
   const [resumedRuntime, setResumedRuntime] = useState<ResumedRuntimePresence | null>(null);
   const [pointerRevision, setPointerRevision] = useState<number | null>(initial.revision);
   const wsRef = useRef<WebSocket | null>(null);
@@ -256,7 +257,7 @@ export function useGatewayChat(
   const intentionalCloseRef = useRef(false);
   const requestedSessionIdRef = useRef<string | null>(initialSessionId ?? null);
   const sessionProfileRef = useRef<string | null>(botProfile?.trim() || initial.profile || null);
-  const previewModeRef = useRef<boolean>(Boolean(initialSessionId?.trim()));
+  const previewModeRef = useRef<boolean>(shouldPreviewChatSession(initialSessionId, freshSessionId));
   const connectRef = useRef<() => Promise<void>>(async () => {});
   const readyResolveRef = useRef<(() => void) | null>(null);
   const eventWatermarksRef = useRef(new Map<string, number>());
@@ -312,9 +313,10 @@ export function useGatewayChat(
     // default store, where it misses and the drawer falls back to an empty
     // preview — the "I open a chat and it empties" symptom.
     sessionProfileRef.current = nextSessionProfile(sessionProfileRef.current, botProfile, Boolean(requested));
+    const preview = shouldPreviewChatSession(requested, freshSessionId);
     requestedSessionIdRef.current = requested;
-    previewModeRef.current = Boolean(requested);
-    setPreviewMode(Boolean(requested));
+    previewModeRef.current = preview;
+    setPreviewMode(preview);
     setResumedRuntime(null);
     if (!requested) return;
     setSessionId(requested);
@@ -322,6 +324,7 @@ export function useGatewayChat(
     setSessionKey(requested);
     sessionKeyRef.current = requested;
     setMessages([]);
+    setSessionTitle(null);
     setTodoPlan(null);
     transcriptReadyRef.current = false;
     canonicalFingerprintRef.current = null;
@@ -330,7 +333,7 @@ export function useGatewayChat(
     setModelPickerRefresh(false);
     setInteraction(null);
     setActivity(null);
-  }, [botProfile, initialSessionId]);
+  }, [botProfile, initialSessionId, freshSessionId]);
 
   useEffect(() => {
     if (!transcriptReadyRef.current) return;
@@ -990,14 +993,14 @@ export function useGatewayChat(
   }, [clearPendingPrompt, refreshModel, request, storedToken]);
 
   useEffect(() => {
-    if (!open || !initialSessionId || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    if (!open || !initialSessionId || freshSessionId === initialSessionId || wsRef.current?.readyState !== WebSocket.OPEN) return;
     // In preview mode the drawer opens showing the session preview; resume is
     // explicit via the "Resume session" button, not automatic.
     if (previewModeRef.current) return;
     void ensureSession().catch((err: unknown) => {
       setError(err instanceof Error ? err.message : 'Failed to recover the selected session.');
     });
-  }, [ensureSession, initialSessionId, open]);
+  }, [ensureSession, initialSessionId, freshSessionId, open]);
 
   const resumeSession = useCallback(async (): Promise<string | null> => {
     previewModeRef.current = false;

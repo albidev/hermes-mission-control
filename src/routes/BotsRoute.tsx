@@ -1,6 +1,7 @@
 import { useI18n } from '../lib/i18n';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { ChevronDown, CircleAlert, Download, Loader2, Plus, RefreshCw, Save, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, CircleAlert, Download, Loader2, Plus, RefreshCw, Save, Search, SquarePen, Trash2 } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/Modal';
@@ -27,11 +28,13 @@ import {
   installBotSkill,
   loadBotModelOptions,
   openBotCanonicalChat,
+  openBotTaskChat,
   type BotModelProviderOption,
   type BotProfileDetails,
   type BotProfileSummary,
 } from '../lib/bot-gateway';
 import { buildBotCreateInput } from '../lib/bot-create';
+import { buildBotChatHref } from '../lib/bot-chat-navigation';
 
 const EMPTY_SOUL = `You are a specialist Hermes Bot.
 
@@ -126,12 +129,16 @@ function BotRoster({
   selectedName,
   loading,
   onSelect,
+  onNewChat,
+  creatingChat,
   emptyMessage,
 }: {
   profiles: BotProfileSummary[];
   selectedName: string | null;
   loading: boolean;
   onSelect: (name: string) => void;
+  onNewChat: (name: string) => void;
+  creatingChat: string | null;
   emptyMessage?: string;
 }) {
   const { t } = useI18n();
@@ -153,29 +160,43 @@ function BotRoster({
         ) : profiles.map((profile) => {
           const selected = profile.name === selectedName;
           return (
-            <button
-              key={profile.name}
-              type="button"
-              onClick={() => onSelect(profile.name)}
-              className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${selected ? 'bg-accent/10' : 'hover:bg-surface-sunken/40'}`}
-            >
-              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-semibold ${selected ? 'bg-accent text-white' : 'bg-surface-sunken text-text-muted'}`}>
-                {profileInitials(profile.display_name || profile.name)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-text">{profile.display_name || profile.name}</span>
-                  {profile.is_default ? <Badge variant="default">default</Badge> : null}
+            <div key={profile.name} className={`flex min-w-0 items-center gap-2 px-2 py-1.5 ${selected ? 'bg-accent/10' : ''}`}>
+              <button
+                type="button"
+                onClick={() => onSelect(profile.name)}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-sunken/40"
+              >
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-semibold ${selected ? 'bg-accent text-white' : 'bg-surface-sunken text-text-muted'}`}>
+                  {profileInitials(profile.display_name || profile.name)}
                 </span>
-                <span className="mt-1 block truncate text-xs text-text-muted">
-                  {profile.description || t('bots.noRole')}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-text">{profile.display_name || profile.name}</span>
+                    {profile.is_default ? <Badge variant="default">default</Badge> : null}
+                  </span>
+                  <span className="mt-1 block truncate text-xs text-text-muted">
+                    {profile.description || t('bots.noRole')}
+                  </span>
+                  <span className="mt-1 block truncate text-[11px] text-text-subtle">
+                    {profile.provider || t('bots.inheritProvider')} · {profile.model || t('bots.inheritModel')} · {profile.canonical_session ? t('bots.chatReady') : t('bots.chatNotCreated')}
+                  </span>
                 </span>
-                <span className="mt-1 block truncate text-[11px] text-text-subtle">
-                  {profile.provider || t('bots.inheritProvider')} · {profile.model || t('bots.inheritModel')} · {profile.canonical_session ? t('bots.chatReady') : t('bots.chatNotCreated')}
-                </span>
-              </span>
-              <span className={`h-2 w-2 shrink-0 rounded-full ${profile.canonical_session ? 'bg-positive' : 'bg-text-subtle/40'}`} aria-hidden />
-            </button>
+                <span className={`h-2 w-2 shrink-0 rounded-full ${profile.canonical_session ? 'bg-positive' : 'bg-text-subtle/40'}`} aria-hidden />
+              </button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="shrink-0"
+                icon={<SquarePen size={14} />}
+                loading={creatingChat === profile.name}
+                disabled={creatingChat !== null}
+                onClick={() => onNewChat(profile.name)}
+                aria-label={`${t('bots.newChat')} · ${profile.display_name || profile.name}`}
+              >
+                {t('bots.newChat')}
+              </Button>
+            </div>
           );
         })}
       </div>
@@ -762,6 +783,8 @@ function ProfileEditor({
 
 export function BotsRoute() {
   const { t } = useI18n();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { storedToken } = useMissionControl();
   const [profiles, setProfiles] = useState<BotProfileSummary[]>([]);
   const [modelOptions, setModelOptions] = useState<BotModelProviderOption[]>([]);
@@ -776,6 +799,8 @@ export function BotsRoute() {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [creatingChat, setCreatingChat] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refreshRoster = useCallback(async (preferredName?: string | null) => {
@@ -801,6 +826,21 @@ export function BotsRoute() {
   }, [storedToken]);
 
   useEffect(() => { void refreshRoster(); }, [refreshRoster]);
+
+  const startBotChat = useCallback(async (profile: string) => {
+    if (creatingChat) return;
+    setCreatingChat(profile);
+    setChatError(null);
+    try {
+      const chat = await openBotTaskChat(profile, storedToken || undefined);
+      const href = buildBotChatHref(location.pathname, location.search, chat.openedId, { mode: 'task', profile: chat.profile });
+      navigate(href, { state: { freshBotChatId: chat.openedId } });
+    } catch (cause) {
+      setChatError(cause instanceof Error ? cause.message : t('bots.newChatFailed'));
+    } finally {
+      setCreatingChat(null);
+    }
+  }, [creatingChat, location.pathname, location.search, navigate, storedToken, t]);
 
   const refreshDetails = useCallback(async (name: string) => {
     setDetailLoading(true);
@@ -997,8 +1037,11 @@ export function BotsRoute() {
           selectedName={selectedName}
           loading={loading}
           onSelect={(name) => { setMode('edit'); setDetailOpen(true); setSelectedName(name); setError(null); }}
+          onNewChat={(name) => { void startBotChat(name); }}
+          creatingChat={creatingChat}
           emptyMessage={t('bots.noMarkedBots')}
         />
+        {chatError ? <p className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning" role="alert">{chatError}</p> : null}
 
       {detailOpen ? (
         mode === 'edit' && detailLoading ? (

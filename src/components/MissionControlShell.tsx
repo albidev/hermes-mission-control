@@ -101,6 +101,8 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     ? chatSearchParams.get('chatMode') as 'canonical' | 'task' | 'room'
     : 'general';
   const chatBotProfile = chatSearchParams.get('botProfile');
+  const freshBotChatId = chatMode === 'task' && chatBotProfile && location.state && typeof location.state === 'object' && 'freshBotChatId' in location.state
+    && location.state.freshBotChatId === chatRecoverySessionId ? chatRecoverySessionId : null;
   const chatRoomId = chatSearchParams.get('roomId');
   const serverLastRoomRef = useRef<{ roomId: string; revision: number } | null>(null);
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
@@ -173,13 +175,12 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
         if (!server || !server.roomId) return;
         serverLastRoomRef.current = { roomId: server.roomId, revision: server.revision };
         if (server.roomId === local) return;
-        // Another device changed the shared pointer: adopt it.
-        const params2 = new URLSearchParams(location.search);
-        params2.set('chatMode', 'room');
+        // An async response must not navigate back to Rooms after the user left.
+        if (new URLSearchParams(window.location.search).get('chatMode') !== 'room') return;
+        const params2 = new URLSearchParams(window.location.search);
         params2.set('roomId', server.roomId);
-        params2.delete('chatSession');
         writeLocalLastRoom(server.roomId);
-        navigate(`${location.pathname}${params2.toString() ? `?${params2}` : ''}`, { replace: true });
+        navigate(`${window.location.pathname}?${params2}`, { replace: true });
       }).catch(() => {/* offline: local mirror stays */});
     }
   }, [location.pathname, location.search, navigate, storedToken]);
@@ -473,6 +474,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             open={chatOpen}
             storedToken={storedToken}
             initialSessionId={chatRecoverySessionId}
+            freshSessionId={freshBotChatId}
             chatMode={chatMode}
             roomId={chatRoomId}
             botProfile={chatBotProfile}

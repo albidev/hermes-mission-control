@@ -71,6 +71,7 @@ import {
 } from '../lib/hermes-api';
 import { deriveTodoPlan, type TodoPlan } from '../lib/todo-plan';
 import { loadBotProfiles } from '../lib/bot-gateway';
+import { isCoarsePointer } from '../lib/device';
 import type { BotMentionCandidate } from '../lib/bot-mentions';
 import type { ChatMentionPopoverHandle } from './ChatMentionPopover';
 import { createHandoffEnvelope, createHandoffDedupe, formatHandoffPrompt } from '../lib/bot-handoff';
@@ -98,6 +99,7 @@ type ChatDrawerProps = {
   open: boolean;
   storedToken: string;
   initialSessionId?: string | null;
+  freshSessionId?: string | null;
   chatMode?: 'general' | 'canonical' | 'task' | 'room';
   roomId?: string | null;
   botProfile?: string | null;
@@ -330,7 +332,7 @@ function AutoHideModeTabs({ active, onSelect, containerRef, chatLed = 'none', ro
   );
 }
 
-const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat, onNewChat, onOpenRooms }: CanonicalChatDrawerProps) {
+const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, freshSessionId, chatMode = 'general', botProfile, onClose, onStartTaskChat, onNewChat, onOpenRooms }: CanonicalChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -340,6 +342,15 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
   const [newChatLoading, setNewChatLoading] = useState(false);
   const [newChatConfirmOpen, setNewChatConfirmOpen] = useState(false);
+  useEffect(() => {
+    if (!freshSessionId || freshSessionId !== initialSessionId) return;
+    setDraft('');
+    setPendingAttachments((current) => {
+      for (const attachment of current) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      return [];
+    });
+    setAttachmentNotice(null);
+  }, [freshSessionId, initialSessionId]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
@@ -441,7 +452,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     respondInteraction,
     interrupt,
     reset,
-  } = useGatewayChat(storedToken, open, initialSessionId, botProfile);
+  } = useGatewayChat(storedToken, open, initialSessionId, botProfile, freshSessionId);
   const chatHelpAttention = useTabAttention({ needsAction: Boolean(interaction) || Boolean(error), atBottom: nearBottom, contentCount: messages.length });
   // The chat drawer has no room transcript in scope, so the Rooms tab shows no
   // background signal here. It must not pretend to: a dot driven by hardcoded
@@ -598,7 +609,7 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   }, [clearCommandPrefill, commandPrefill]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || isCoarsePointer()) return;
     const raf = window.requestAnimationFrame(() => textareaRef.current?.focus());
     return () => window.cancelAnimationFrame(raf);
   }, [open]);

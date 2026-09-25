@@ -1,3 +1,8 @@
+export function shouldPreviewChatSession(initialSessionId?: string | null, freshSessionId?: string | null): boolean {
+  const requested = initialSessionId?.trim();
+  return Boolean(requested && requested !== freshSessionId?.trim());
+}
+
 export function clearNewChatParams(search: string): string {
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
   for (const key of ['chatSession', 'botProfile', 'chatMode', 'roomId']) params.delete(key);
