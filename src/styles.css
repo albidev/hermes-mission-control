@@ -551,6 +551,9 @@ body.modal-open .route-page-scroll {
   align-items: center;
   gap: 0.75rem;
 }
+.mobile-route-scroll-top {
+  display: none;
+}
 
 .workspace-meta {
   display: flex;
@@ -2623,6 +2626,26 @@ body.modal-open .route-page-scroll {
   .workspace-title-wrap {
     width: auto;
     min-width: 0;
+  }
+
+  .mobile-route-scroll-top {
+    display: inline-flex;
+    position: fixed;
+    z-index: 35;
+    right: max(1rem, env(safe-area-inset-right));
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 999px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  }
+
+  .mobile-route-scroll-top.is-config {
+    bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 3.5rem);
+  }
+
+  .logs-scroll-top {
+    display: none;
   }
 
   .workspace-meta {
@@ -5445,6 +5468,9 @@ body.modal-open .route-page-scroll {
 /* Global button geometry — visual variants stay local, dimensions do not. */
 button:not(.mobile-nav-backdrop):not(.chat-backdrop) {
   border-radius: var(--control-radius) !important;
+}
+button.mobile-route-scroll-top.mc-icon-only {
+  border-radius: 999px !important;
 }
 
 .pill-button {

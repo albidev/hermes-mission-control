@@ -1,6 +1,7 @@
 import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
+  ArrowUp,
   DollarSign,
   LayoutDashboard,
   LockKeyhole,
@@ -25,6 +26,7 @@ import { useLastRoutePersistence } from '../lib/last-route';
 import { readLocalLastRoom, writeLocalLastRoom, claimLastRoomPointer, fetchServerLastRoom } from '../lib/room-persistence';
 import { clearNewChatParams } from '../lib/chat-session-params';
 import { recordReloadDiagnostic } from '../lib/reload-diagnostics';
+import { getRouteScroller, handleRouteScrollShortcut, scrollRouteToTop } from '../lib/route-scroll-shortcuts';
 import { Button } from './ui/Button';
 import { PluginRegistry } from '../core/plugins/registry';
 import { NavStatusIndicator } from './NavStatusIndicator';
@@ -88,6 +90,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
 
   const [sideOpen, setSideOpen] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
+  const [showMobileScrollTop, setShowMobileScrollTop] = useState(false);
   const [chatOpen, setChatOpenState] = useState<boolean>(() => {
     try { return sessionStorage.getItem('mission-control-chat-open') === '1'; } catch { return false; }
   });
@@ -203,6 +206,21 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
   }, [location.pathname]);
 
   useEffect(() => {
+    // Scroll doesn't bubble; capture it from the route's nested scroll owner.
+    setShowMobileScrollTop(false);
+    const sync = () => {
+      const scroller = getRouteScroller(document.querySelector('.route-stage'));
+      setShowMobileScrollTop(Boolean(scroller && scroller.scrollTop > 240));
+    };
+    const frame = requestAnimationFrame(sync);
+    window.addEventListener('scroll', sync, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', sync, true);
+    };
+  }, [location.pathname]);
+
+  useEffect(() => {
     const handleNotificationClick = (event: Event) => {
       const url = (event as CustomEvent<{ url?: string }>).detail?.url;
       if (typeof url !== 'string') return;
@@ -212,6 +230,18 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
     window.addEventListener('mission-control:notification-click', handleNotificationClick);
     return () => window.removeEventListener('mission-control:notification-click', handleNotificationClick);
   }, [navigate]);
+
+  useEffect(() => {
+    const onRouteScrollKey = (event: KeyboardEvent) => {
+      // ChatDrawer stays mounted with aria-modal="true" even while visually hidden.
+      const modalOpen = Array.from(document.querySelectorAll('[aria-modal="true"]'))
+        .some((modal) => getComputedStyle(modal).visibility === 'visible');
+      const blocked = chatOpen || sideOpen || authRequired || modalOpen;
+      handleRouteScrollShortcut(event, document.querySelector('.route-stage'), blocked);
+    };
+    window.addEventListener('keydown', onRouteScrollKey);
+    return () => window.removeEventListener('keydown', onRouteScrollKey);
+  }, [chatOpen, sideOpen, authRequired]);
 
   useEffect(() => {
     if (!sideOpen) return;
@@ -414,6 +444,20 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
               <Outlet />
             </Suspense>
           </section>
+
+          {showMobileScrollTop && !chatOpen && !sideOpen && !authRequired ? (
+            <Button
+              variant="primary"
+              size="md"
+              icon={<ArrowUp size={18} />}
+              iconOnly
+              className={`mobile-route-scroll-top ${location.pathname === '/config' ? 'is-config' : ''}`}
+              type="button"
+              aria-label={t('logs.scrollToTop')}
+              title={t('logs.scrollToTop')}
+              onClick={() => scrollRouteToTop(document.querySelector('.route-stage'))}
+            />
+          ) : null}
 
           {authRequired ? (
             <div className="auth-overlay" role="presentation">

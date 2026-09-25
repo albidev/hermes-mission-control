@@ -66,4 +66,14 @@ assert.match(logs, /Loader2 className="h-4 w-4 animate-spin"/, 'Logs initial loa
 assert.match(styles, /\.logs-refresh-select\s*\{[\s\S]*?height:\s*44px[\s\S]*?min-height:\s*44px/, 'Logs refresh select must be explicitly 44px tall');
 assert.match(styles, /\.logs-scroll-top\s*\{[\s\S]*?position:\s*fixed/, 'Logs scroll-to-top control must float above the route content');
 
+const shell = readFileSync(new URL('src/components/MissionControlShell.tsx', root), 'utf8');
+assert.match(shell, /mobile-route-scroll-top/, 'Mobile shell must expose a scroll-to-top control');
+assert.match(shell, /scrollRouteToTop\(document\.querySelector\('\.route-stage'\)\)/, 'Mobile scroll control must scroll the route owner, not the window');
+assert.match(styles, /\.mobile-route-scroll-top\s*\{[^}]*display:\s*none/, 'Mobile control must not clutter desktop');
+assert.match(styles, /@media \(max-width: 980px\)[\s\S]*?\.mobile-route-scroll-top\s*\{[^}]*display:\s*inline-flex[^}]*position:\s*fixed/, 'Mobile control must float above the page rather than occupy the header');
+assert.match(styles, /\.mobile-route-scroll-top\.is-config\s*\{[^}]*bottom:\s*calc\(max\(1rem, env\(safe-area-inset-bottom\)\) \+ 3\.5rem\)/, 'Config FAB must float over the action-bar edge without covering its buttons');
+assert.match(styles, /button\.mobile-route-scroll-top\.mc-icon-only\s*\{[^}]*border-radius:\s*999px\s*!important/, 'Global button geometry must not flatten the round FAB');
+assert.ok(shell.indexOf('className={`mobile-route-scroll-top') > shell.indexOf('</header>'), 'FAB belongs outside the header');
+assert.match(styles, /@media \(max-width: 980px\)[\s\S]*?\.logs-scroll-top\s*\{[^}]*display:\s*none/, 'Logs must not show two scroll-to-top controls on mobile');
+
 console.log('mobile route layout contract tests passed');
