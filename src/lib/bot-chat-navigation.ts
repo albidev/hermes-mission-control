@@ -14,6 +14,7 @@ export function buildBotChatHref(
   else params.delete('chatMode');
   if (options.profile?.trim()) params.set('botProfile', options.profile.trim());
   else params.delete('botProfile');
+  if (options.mode) params.delete('roomId');
   const qs = params.toString();
   return cleanPath + (qs ? '?' + qs : '');
 }

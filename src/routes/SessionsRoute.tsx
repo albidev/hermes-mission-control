@@ -22,6 +22,7 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/Modal';
 import { formatRelativeTime, formatTimestamp } from '../lib/format';
 import { useMissionControl } from '../lib/mission-control-store';
+import { loadBotProfiles, type BotProfileSummary } from '../lib/bot-gateway';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 import { PageHeader } from '../components/PageHeader';
@@ -53,10 +54,11 @@ type SessionViewPatch = Partial<{
   status: SessionViewFilters['status'];
   origin: string;
   model: string;
+  sessionProfile: string;
   sortKey: SortKey;
 }>;
 
-const SESSION_VIEW_QUERY_KEYS = ['tab', 'query', 'status', 'origin', 'model', 'sort'] as const;
+const SESSION_VIEW_QUERY_KEYS = ['tab', 'query', 'status', 'origin', 'model', 'sessionProfile', 'sort'] as const;
 const SESSION_TABS: SessionTab[] = ['all', 'live', 'conversation', 'automation', 'system'];
 const SESSION_SORT_KEYS: SortKey[] = ['activity', 'started', 'messages', 'tokens', 'cost'];
 
@@ -326,12 +328,29 @@ export function SessionsRoute() {
   const [filteredTotal, setFilteredTotal] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [botOptions, setBotOptions] = useState<BotProfileSummary[]>([]);
+  const [botOptionsError, setBotOptionsError] = useState(false);
+  const [rosterRevision, setRosterRevision] = useState(0);
+  const requestGeneration = useRef(0);
+  const loadedCountRef = useRef(0);
+  const loadingMoreRef = useRef(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<SessionCategory>>(new Set(['automation', 'system', 'unknown']));
   const [selectedSession, setSelectedSession] = useState<MissionControlAgentSessionItem | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tab = parseSessionTab(searchParams.get('tab'));
+  const sessionProfile = searchParams.get('sessionProfile')?.trim() ?? '';
   const filters = useMemo(() => readSessionFilters(searchParams), [searchParams]);
   const sortKey = parseSessionSortKey(searchParams.get('sort'));
+  useEffect(() => {
+    let cancelled = false;
+    setBotOptionsError(false);
+    void loadBotProfiles(storedToken ?? undefined).then((result) => {
+      if (!cancelled) setBotOptions(result.profiles.filter((profile) => profile.is_bot === true && profile.name !== 'default').sort((a, b) => (a.display_name || a.name).localeCompare(b.display_name || b.name)));
+    }).catch(() => {
+      if (!cancelled) setBotOptionsError(true);
+    });
+    return () => { cancelled = true; };
+  }, [storedToken, rosterRevision]);
   const updateView = useCallback((patch: SessionViewPatch) => {
     const next = new URLSearchParams(searchParams);
     const setOrDelete = (key: typeof SESSION_VIEW_QUERY_KEYS[number], value: string | undefined, defaultValue = '') => {
@@ -343,26 +362,37 @@ export function SessionsRoute() {
     if ('status' in patch) setOrDelete('status', patch.status);
     if ('origin' in patch) setOrDelete('origin', patch.origin);
     if ('model' in patch) setOrDelete('model', patch.model);
+    if ('sessionProfile' in patch) setOrDelete('sessionProfile', patch.sessionProfile);
     if ('sortKey' in patch) setOrDelete('sort', patch.sortKey, 'activity');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
-  const activeFilterCount = [filters.query, filters.status !== 'all' ? filters.status : '', filters.origin, filters.model].filter(Boolean).length;
+  const activeFilterCount = [filters.query, filters.status !== 'all' ? filters.status : '', filters.origin, filters.model, sessionProfile].filter(Boolean).length;
 
   const effectiveFilters = useMemo(() => ({
     ...filters,
+    profile: sessionProfile,
     status: tab === 'live' ? 'live' as const : filters.status,
     category: tab === 'all' || tab === 'live' ? filters.category : tab,
-  }), [filters, tab]);
+  }), [filters, sessionProfile, tab]);
 
   const loadSessions = useCallback(async (silent = false) => {
+    if (silent && loadingMoreRef.current) return;
+    const generation = silent ? requestGeneration.current : ++requestGeneration.current;
     if (!silent) {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+      loadedCountRef.current = 0;
       setLoading(true);
       setLoadError(null);
+      setAgentSessions(null);
+      setLoadedItems([]);
       setFilteredTotal(0);
       setHasMore(false);
     }
     try {
-      const data = await withTimeout(loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, 0, { ...filters, tab }), SESSION_LOAD_TIMEOUT_MS);
+      const data = await withTimeout(loadMissionControlAgentSessions(storedToken ?? undefined, silent ? Math.max(PAGE_SIZE, loadedCountRef.current) : PAGE_SIZE, 0, { ...filters, tab }, sessionProfile || undefined), SESSION_LOAD_TIMEOUT_MS);
+      if (generation !== requestGeneration.current) return;
+      loadedCountRef.current = data.items?.length ?? 0;
       setAgentSessions(data);
       setLoadedItems(data.items ?? []);
       setFilteredTotal(data.pagination.total);
@@ -370,6 +400,7 @@ export function SessionsRoute() {
       setLoadError(null);
       setLastSyncedAt(Date.now());
     } catch (error) {
+      if (generation !== requestGeneration.current) return;
       const message = error instanceof Error ? error.message : 'Unable to load sessions.';
       setLoadError(message);
       if (!silent) {
@@ -379,9 +410,9 @@ export function SessionsRoute() {
         setHasMore(false);
       }
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && generation === requestGeneration.current) setLoading(false);
     }
-  }, [effectiveFilters, storedToken]);
+  }, [filters, sessionProfile, storedToken, tab]);
 
   const { state: pullState } = usePullToReload({ containerRef, onReload: async () => { await loadSessions(); } });
 
@@ -394,19 +425,26 @@ export function SessionsRoute() {
   }, [loadSessions]);
 
   const loadMore = async () => {
-    if (loadingMore) return;
+    if (loadingMoreRef.current || loading) return;
+    const generation = ++requestGeneration.current;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const next = await withTimeout(loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, loadedItems.length, { ...filters, tab }), SESSION_LOAD_TIMEOUT_MS);
+      const next = await withTimeout(loadMissionControlAgentSessions(storedToken ?? undefined, PAGE_SIZE, loadedItems.length, { ...filters, tab }, sessionProfile || undefined), SESSION_LOAD_TIMEOUT_MS);
+      if (generation !== requestGeneration.current) return;
       const nextItems = next.items ?? [];
+      loadedCountRef.current = loadedItems.length + nextItems.length;
       setLoadedItems((current) => [...current, ...nextItems]);
       setFilteredTotal(next.pagination.total);
       setHasMore(next.pagination.hasMore);
       setLoadError(null);
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : 'Unable to load more sessions.');
+      if (generation === requestGeneration.current) setLoadError(error instanceof Error ? error.message : 'Unable to load more sessions.');
     } finally {
-      setLoadingMore(false);
+      if (generation === requestGeneration.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -502,16 +540,27 @@ export function SessionsRoute() {
                 </button>
               ))}
             </div>
-            <div className="mt-3 md:flex md:items-center md:gap-2">
+            <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center">
               <label className="relative block min-w-0 md:flex-1">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
                 <input value={filters.query} onChange={(event) => updateView({ query: event.target.value })} placeholder={t('sessions.searchPlaceholder')} aria-label={t('sessions.searchPlaceholder')} className="w-full min-w-0 rounded-md bg-surface h-9 py-0 pl-9 pr-3 text-sm text-text outline-none placeholder:text-text-subtle focus:ring-1 focus:ring-accent/40" />
               </label>
-              <div className="mt-2 flex items-center justify-between md:hidden">
-                <span className="text-[11px] text-text-subtle">{activeFilterCount ? t('sessions.activeFilters', { count: activeFilterCount, suffix: locale === 'it' ? (activeFilterCount > 1 ? 'i' : 'o') : activeFilterCount > 1 ? 's' : '' }) : t('sessions.noFilters')}</span>
-                <Button type="button" size="sm" variant="ghost" icon={<SlidersHorizontal size={14} />} className="!min-w-0 !border-0 !bg-transparent !px-2 text-xs text-text-muted hover:!bg-surface-sunken hover:!text-text" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? t('sessions.hideFilters') : t('sessions.filters')}</Button>
-              </div>
-              <div className={`${filtersOpen ? 'grid' : 'hidden'} mt-2 grid-cols-2 gap-2 md:mt-0 md:flex md:min-w-0 md:flex-1 md:gap-2`}>
+              <label className="flex min-w-0 items-center gap-2 md:w-64">
+                <span className="shrink-0 text-xs font-medium text-text-muted">{t('sessions.filterByBot')}</span>
+                <select value={sessionProfile} onChange={(event) => updateView({ sessionProfile: event.target.value })} className="min-w-0 w-full rounded-md bg-surface h-9 px-3 py-0 text-xs text-text outline-none focus:ring-1 focus:ring-accent/40" aria-label={t('sessions.filterByBot')}>
+                  <option value="">{t('sessions.allSessions')}</option>
+                  <option value="default">{t('sessions.defaultProfile')}</option>
+                  {botOptions.map((profile) => <option key={profile.name} value={profile.name}>{profile.display_name || profile.name}</option>)}
+                  {sessionProfile && sessionProfile !== 'default' && !botOptions.some((profile) => profile.name === sessionProfile) ? <option value={sessionProfile}>{sessionProfile}</option> : null}
+                </select>
+              </label>
+            </div>
+            {botOptionsError ? <div className="mt-1 text-xs text-warning" role="status">{t('sessions.botListFailed')} <button type="button" className="underline" onClick={() => setRosterRevision((revision) => revision + 1)}>{t('sessions.retry')}</button></div> : null}
+            <div className="mt-2 flex items-center justify-between md:hidden">
+              <span className="text-[11px] text-text-subtle">{activeFilterCount ? t('sessions.activeFilters', { count: activeFilterCount, suffix: locale === 'it' ? (activeFilterCount > 1 ? 'i' : 'o') : activeFilterCount > 1 ? 's' : '' }) : t('sessions.noFilters')}</span>
+              <Button type="button" size="sm" variant="ghost" icon={<SlidersHorizontal size={14} />} className="!min-w-0 !border-0 !bg-transparent !px-2 text-xs text-text-muted hover:!bg-surface-sunken hover:!text-text" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? t('sessions.hideFilters') : t('sessions.filters')}</Button>
+            </div>
+            <div className={`${filtersOpen ? 'grid' : 'hidden'} mt-2 grid-cols-2 gap-2 md:flex md:min-w-0 md:gap-2`}>
                 <select value={filters.status} onChange={(event) => updateView({ status: event.target.value as SessionViewFilters['status'] })} className="min-w-0 w-full rounded-md bg-surface h-9 px-3 py-0 text-xs text-text-muted outline-none focus:ring-1 focus:ring-accent/40 md:flex-1" aria-label={t('sessions.allStatuses')}>
                   <option value="all">{t('sessions.allStatuses')}</option><option value="live">{t('sessions.liveStatus')}</option><option value="idle">{t('sessions.idleStatus')}</option><option value="ended">{t('sessions.endedStatus')}</option>
                 </select>
@@ -525,7 +574,6 @@ export function SessionsRoute() {
                   <option value="activity">{t('sessions.lastActivitySort')}</option><option value="started">{t('sessions.startedSort')}</option><option value="messages">{t('sessions.messagesSort')}</option><option value="tokens">{t('sessions.tokensSort')}</option><option value="cost">{t('sessions.costSort')}</option>
                 </select>
               </div>
-            </div>
             <div className="mt-2 flex flex-col gap-1 text-[11px] text-text-subtle sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0 break-words">{loading ? t('sessions.loading') : t('sessions.shownLoadedOf', { shown: filteredSessions.length, loaded: loadedItems.length, total: filteredTotal })}</span>{tab === 'live' ? <span className="text-positive">{t('sessions.autoRefresh5')}</span> : <span>{t('sessions.autoRefresh10')}</span>}</div>
           </div>
 

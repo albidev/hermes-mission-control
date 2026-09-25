@@ -52,8 +52,8 @@ test('session loading has a bounded failure state and a centered mobile refresh 
 });
 
 test('desktop search and dropdown controls share the same height contract', () => {
-  assert.equal((source.match(/h-9/g) ?? []).length, 5);
-  assert.equal((source.match(/py-0(?:\s|")/g) ?? []).length, 5);
+  assert.equal((source.match(/h-9/g) ?? []).length, 6);
+  assert.equal((source.match(/py-0(?:\s|")/g) ?? []).length, 6);
 });
 
 test('tab changes expose loading state, reset stale totals, and expand filtered groups', () => {
@@ -85,6 +85,18 @@ test('session controls expose tab and accordion semantics and use translated cop
   assert.match(source, /aria-expanded=\{!collapsed\}/);
   assert.match(source, /t\('sessions\.loading'\)/);
   assert.doesNotMatch(source, /Loading sessions…/);
+});
+
+test('bot selector is primary, URL-scoped and server-paginated by owning profile', () => {
+  assert.match(source, /searchParams\.get\('sessionProfile'\)/);
+  assert.match(source, /setOrDelete\('sessionProfile', patch\.sessionProfile\)/);
+  assert.match(source, /loadBotProfiles\(storedToken \?\? undefined\)/);
+  assert.match(source, /profile\.is_bot === true/);
+  assert.match(source, /t\('sessions\.filterByBot'\)/);
+  assert.match(source, /value=\{sessionProfile\} onChange=\{\(event\) => updateView\(\{ sessionProfile:/);
+  assert.match(source, /\{ \.\.\.filters, tab \}, sessionProfile \|\| undefined\)/);
+  assert.match(source, /profile: sessionProfile/);
+  assert.match(source, /requestGeneration\.current/);
 });
 
 console.log('sessions UI contract tests passed');

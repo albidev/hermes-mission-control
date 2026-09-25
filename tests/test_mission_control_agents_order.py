@@ -16,6 +16,44 @@ SPEC.loader.exec_module(mission_control_agents)
 
 
 class MissionControlSessionOrderTests(unittest.TestCase):
+    def test_profile_scope_filters_before_pagination_and_ignores_handoff_participation(self):
+        rows = {
+            None: [{"sessionId": "default-handoff", "profile": None, "botProfiles": ["botmaker"],
+                    "status": "ended", "category": "conversation", "title": "botmaker handoff", "lastActiveAt": 30}],
+            "botmaker": [
+                {"sessionId": "bot-newer", "profile": "botmaker", "botProfiles": [], "status": "ended",
+                 "category": "conversation", "title": "botmaker chat", "lastActiveAt": 20},
+                {"sessionId": "bot-older", "profile": "botmaker", "botProfiles": [], "status": "idle",
+                 "category": "conversation", "title": "botmaker chat", "lastActiveAt": 10},
+            ],
+        }
+
+        def collect(**kwargs):
+            items = [item for item in rows.get(kwargs["profile"], [])
+                     if mission_control_agents._session_matches_filters(item, kwargs.get("filters"))]
+            return items[kwargs.get("offset", 0):][:kwargs["limit"]] if kwargs.get("limit") is not None else items
+
+        with patch.object(mission_control_agents, "_collect_agent_sessions", side_effect=collect), \
+             patch.object(mission_control_agents, "_available_profile_names", return_value=["botmaker"]):
+            first = mission_control_agents._load_agents_sessions_snapshot_uncached(
+                limit=1, offset=0, filters={"tab": "conversation"}, profile="botmaker")
+            second = mission_control_agents._load_agents_sessions_snapshot_uncached(
+                limit=1, offset=1, filters={"tab": "conversation"}, profile="botmaker")
+            live = mission_control_agents._load_agents_sessions_snapshot_uncached(
+                limit=1, filters={"tab": "live"}, profile="botmaker")
+            global_view = mission_control_agents._load_agents_sessions_snapshot_uncached(
+                limit=1, filters={"tab": "conversation"})
+
+        self.assertEqual([item["sessionId"] for item in first["items"]], ["bot-newer"])
+        self.assertEqual([item["sessionId"] for item in second["items"]], ["bot-older"])
+        self.assertEqual(first["pagination"]["total"], 2)
+        self.assertTrue(first["pagination"]["hasMore"])
+        self.assertFalse(second["pagination"]["hasMore"])
+        self.assertEqual(first["stats"]["totalSessions"], 2)
+        self.assertEqual(first["tabCounts"]["conversation"], 2)
+        self.assertEqual(live["pagination"]["total"], 0)
+        self.assertEqual(global_view["pagination"]["total"], 3)
+
     def test_canonical_transcript_uses_requested_profile_scope(self):
         calls = []
 

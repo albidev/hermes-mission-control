@@ -80,6 +80,14 @@ test('hides resume for automation and unavailable traces', () => {
   }), { resumeChat: true, trace: false, inspect: true });
 });
 
+test('bot filter matches the owning profile, not a handoff badge or name in the title', () => {
+  const filters: SessionViewFilters = { query: '', status: 'all', category: 'all', origin: '', model: '', profile: 'botmaker' };
+  assert.equal(matchesSessionFilters({ ...baseSession, profile: 'botmaker' }, filters), true);
+  assert.equal(matchesSessionFilters({ ...baseSession, profile: 'default', botProfiles: ['botmaker'], title: 'botmaker handoff' }, filters), false);
+  assert.equal(matchesSessionFilters({ ...baseSession, profile: null, botProfiles: ['botmaker'] }, filters), false);
+  assert.equal(matchesSessionFilters({ ...baseSession, profile: null }, { ...filters, profile: 'default' }), true);
+});
+
 test('filters by query, lifecycle, category, origin and model', () => {
   const filters: SessionViewFilters = {
     query: 'consolidation',
