@@ -800,6 +800,13 @@ function eventMessageId(event: GatewayEvent): string | null {
   return value.trim() || null;
 }
 
+function persistedFinalMessageId(event: GatewayEvent): string | null {
+  const receipt = event.payload?.persisted_turn;
+  if (!isRecord(receipt)) return null;
+  const rowId = receipt.final_assistant_row_id;
+  return typeof rowId === 'number' && Number.isSafeInteger(rowId) && rowId > 0 ? `db:${rowId}` : null;
+}
+
 function eventAlreadyStreamed(event: GatewayEvent): boolean {
   return event.payload?.already_streamed === true;
 }
@@ -1075,22 +1082,39 @@ export function applyGatewayEvent(messages: ChatMessage[], event: GatewayEvent, 
   if (isMessageComplete) {
     const finalText = eventText(event);
     const messageId = eventMessageId(event);
+    // The gateway's persisted-turn receipt is the actual SessionDB identity.
+    // Keep it on the live bubble so a later canonical snapshot can reconcile
+    // without guessing from text or timestamps (which can differ by minutes).
+    const finalId = persistedFinalMessageId(event) ?? messageId;
     const next = [...messages];
+    if (finalId?.startsWith('db:')) {
+      const canonicalIndex = lastIndexOf((message) => message.kind === 'assistant' && message.id === finalId);
+      if (canonicalIndex >= 0) {
+        // The snapshot can arrive before the completion frame. Its DB row is
+        // already visible; retire the ephemeral stream rather than relabeling
+        // it into a second bubble with the same canonical id.
+        const liveIndex = messageId && messageId !== finalId
+          ? lastIndexOf((message) => message.kind === 'assistant' && message.id === messageId)
+          : -1;
+        next[canonicalIndex] = { ...next[canonicalIndex], status: 'complete' };
+        return liveIndex >= 0 ? next.filter((_, index) => index !== liveIndex) : next;
+      }
+    }
     const index = messageId
       ? lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming' && message.id === messageId)
       : lastIndexOf((message) => message.kind === 'assistant' && message.status === 'streaming');
     if (index >= 0) {
-      next[index] = { ...next[index], ...(messageId ? { id: messageId } : {}), text: finalText || next[index].text, status: 'complete' };
+      next[index] = { ...next[index], ...(finalId ? { id: finalId } : {}), text: finalText || next[index].text, status: 'complete' };
       return next.filter((message, candidateIndex) => !(candidateIndex !== index && message.kind === 'assistant' && message.status === 'streaming' && !message.text.trim()));
     }
     if (messageId) {
       const existing = lastIndexOf((message) => message.kind === 'assistant' && message.id === messageId);
       if (existing >= 0) {
-        next[existing] = { ...next[existing], text: finalText || next[existing].text, status: 'complete' };
+        next[existing] = { ...next[existing], ...(finalId ? { id: finalId } : {}), text: finalText || next[existing].text, status: 'complete' };
         return next;
       }
     }
-    if (finalText) return [...messages, { id: messageId ?? `assistant-${now}`, role: 'assistant', kind: 'assistant', text: finalText, status: 'complete', createdAt: now }];
+    if (finalText) return [...messages, { id: finalId ?? `assistant-${now}`, role: 'assistant', kind: 'assistant', text: finalText, status: 'complete', createdAt: now }];
     return messages;
   }
 

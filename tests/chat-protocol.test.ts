@@ -514,6 +514,63 @@ assertEqual(identifiedSegments[1].id, 'turn-1:assistant:1');
 assertEqual(identifiedSegments[1].text, 'Risposta finale');
 assertEqual(identifiedSegments[1].status, 'complete');
 
+// A final answer may be streamed long before its canonical timestamp. The
+// completion receipt gives its exact SessionDB row id; reconciliation must
+// collapse it even when text+time matching's narrow window has expired.
+const delayedFinal = 'One final answer.';
+let latePersistedReply = applyGatewayEvent([], {
+  type: 'message.start', payload: { message_id: 'turn-approve:assistant:0' },
+}, 1_000_000);
+latePersistedReply = applyGatewayEvent(latePersistedReply, {
+  type: 'message.delta', payload: { message_id: 'turn-approve:assistant:0', text: delayedFinal },
+}, 1_000_100);
+latePersistedReply = applyGatewayEvent(latePersistedReply, {
+  type: 'message.complete', payload: {
+    message_id: 'turn-approve:assistant:0', text: delayedFinal,
+    persisted_turn: { complete: true, final_assistant_row_id: 8123 },
+  },
+}, 1_000_200);
+assertEqual(latePersistedReply[0].id, 'db:8123');
+const lateCanonicalReply = normalizeTranscript([{
+  canonical_id: 'db:8123', role: 'assistant', content: delayedFinal,
+  timestamp: 1_065,
+}]);
+const lateReconciled = replaceWithCanonicalChatMessages(
+  latePersistedReply.map((message) => ({ ...message, source: 'live' as const })),
+  lateCanonicalReply,
+);
+assertEqual(lateReconciled.length, 1);
+assertEqual(lateReconciled[0].id, 'db:8123');
+
+// A snapshot can land before message.complete. Closing the live stream must
+// reuse the existing canonical row, not leave two bubbles with the same DB id.
+let canonicalBeforeCompletion = applyGatewayEvent([
+  lateCanonicalReply[0],
+  { id: 'turn-approve:assistant:0', role: 'assistant', kind: 'assistant',
+    text: delayedFinal, status: 'streaming', source: 'live', createdAt: 1_000_000 },
+], {
+  type: 'message.complete', payload: {
+    message_id: 'turn-approve:assistant:0', text: delayedFinal,
+    persisted_turn: { complete: true, final_assistant_row_id: 8123 },
+  },
+}, 1_065_000);
+assertEqual(canonicalBeforeCompletion.filter((message) => message.id === 'db:8123').length, 1);
+
+// Text is not identity: a later turn may intentionally repeat the answer.
+let legitimatelyRepeated = applyGatewayEvent([
+  lateCanonicalReply[0],
+  { id: 'user-next', role: 'user', kind: 'user', text: 'Repeat it', status: 'complete', createdAt: 1_090_000 },
+  { id: 'turn-repeat:assistant:0', role: 'assistant', kind: 'assistant', text: delayedFinal,
+    status: 'streaming', source: 'live', createdAt: 1_100_000 },
+], {
+  type: 'message.complete', payload: {
+    message_id: 'turn-repeat:assistant:0', text: delayedFinal,
+    persisted_turn: { complete: true, final_assistant_row_id: 8124 },
+  },
+}, 1_100_200);
+assertEqual(legitimatelyRepeated.filter((message) => message.text === delayedFinal).length, 2);
+assertEqual(legitimatelyRepeated.at(-1)?.id, 'db:8124');
+
 // Some gateway transports emit both message.complete and run.completed for the
 // same turn. The latter must settle the turn, not append the final answer again.
 let duplicateFinalAfterRun = applyGatewayEvent([], { type: 'message.start' }, 2225);
