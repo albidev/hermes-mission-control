@@ -106,7 +106,7 @@ class RoomToolStoreTests(unittest.TestCase):
         ]
         _write_db(
             self.state,
-            [("room-1", "Triage IN-202", members), ("room-2", "Empty", [{"member_id": "m2", "profile": "empty", "handle": "empty"}])],
+            [("room-1", "Example room", members), ("room-2", "Empty", [{"member_id": "m2", "profile": "empty", "handle": "empty"}])],
             {},
         )
         _write_profile_db(self.profiles["example-bot"], "sess-example-bot", "Group: room-1", [
@@ -139,14 +139,14 @@ class RoomToolStoreTests(unittest.TestCase):
             snap = room_tool_store.build_room_tools_snapshot()
         self.assertEqual(snap["room_count"], 2)
         rooms = {r["name"]: r for r in snap["rooms"]}
-        triage = rooms["Triage IN-202"]
-        self.assertEqual(len(triage["tools"]), 3)
-        names = [t["toolName"] for t in triage["tools"]]
+        room = rooms["Example room"]
+        self.assertEqual(len(room["tools"]), 3)
+        names = [t["toolName"] for t in room["tools"]]
         self.assertIn("skill_view", names)
         self.assertIn("mcp__atlassian__getJiraIssue", names)
         self.assertNotIn("tool_call", names)
         self.assertIn("bdh_query", names)
-        skill = next(t for t in triage["tools"] if t["toolName"] == "skill_view")
+        skill = next(t for t in room["tools"] if t["toolName"] == "skill_view")
         self.assertEqual(skill["toolInput"], "{\"name\":\"jira-example\"}")
         self.assertIn("success", skill["output"])
         self.assertGreaterEqual(skill.get("durationS", 0), 0.1)

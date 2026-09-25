@@ -68,9 +68,9 @@ describe('summarizeHandoffTrace', () => {
   it('derives a single-line headline from the assistant response', () => {
     const summary = summarizeHandoffTrace([
       event({ id: 'u', type: 'user_message', detail: 'the request', timestamp: 1 }),
-      event({ id: 'r', type: 'assistant_response', detail: '\n\n  Inspector is healthy.  \nMore detail.', timestamp: 2 }),
+      event({ id: 'r', type: 'assistant_response', detail: '\n\n  Service is healthy.  \nMore detail.', timestamp: 2 }),
     ]);
-    assert.equal(summary.headline, 'Inspector is healthy.');
+    assert.equal(summary.headline, 'Service is healthy.');
   });
 
   it('ignores a tool call with no resolvable name', () => {
@@ -82,8 +82,8 @@ describe('summarizeHandoffTrace', () => {
   });
 
   it('pairs a completion whose started event carries the generic name "tool_call"', () => {
-    // The real shape from the crossnection Bot Chat: `tool_call_started` says only
-    // "tool_call" while its completion names the actual tool. Pairing by name left every
+    // Some gateway events use a generic started name (`tool_call_started` says only
+    // "tool_call") while completion names the actual tool. Pairing by name left every
     // one of these as two half-rows (input with no output, and an orphaned output).
     const summary = summarizeHandoffTrace([
       event({ id: 'evt_4', type: 'tool_call_started', toolName: 'tool_call', request: '{"query":"sentry"}', timestamp: 10 }),

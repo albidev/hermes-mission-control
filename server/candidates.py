@@ -521,13 +521,21 @@ def promote_ready() -> List[Dict[str, Any]]:
                 # Albi 2026-09-21: "per me sono importanti come report").
                 is_report = (c.get("type") or "") == "cron-brief" or str(c.get("id") or p.stem).startswith("cron-brief-")
                 if is_report:
-                    profile = c.get("profile") or "crossnection-delivery"
-                    prefix = str(profile).split("-")[0] or "crossnection"
+                    profile = str(c.get("profile") or "").strip()
+                    # A report needs an explicit, safe owner. Never choose a
+                    # project from an absent profile or a client-specific fallback.
+                    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile):
+                        c["status"] = "needs_review"
+                        c["routing_error"] = "missing or invalid profile for report routing"
+                        _write_candidate(p, c, c.get("body", ""))
+                        continue
+                    prefix = profile.split("-", 1)[0]
                     reports_dir = vault / "projects" / prefix / "reports"
                     reports_dir.mkdir(parents=True, exist_ok=True)
                     dest = reports_dir / f"{p.stem}.md"
                     body = c.get("body", "")
                     dest.write_text(body + "\n", encoding="utf-8")
+                    c.pop("routing_error", None)
                     c["status"] = "promoted"
                     c["promoted_at"] = now.isoformat()
                     c["promote_note"] = "archived to projects reports (delivery log)"
