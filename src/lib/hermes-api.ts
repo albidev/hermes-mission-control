@@ -1,4 +1,5 @@
 import { normalizeTodoPlanSnapshot, type TodoPlan } from './todo-plan';
+import { cronScheduleFields } from './cron-form';
 import { getPluginRegistry } from '../core/plugin-registry';
 
 /**
@@ -146,6 +147,7 @@ export type MissionControlCronJob = {
   scheduleDisplay: string;
   scheduleKind?: string;
   scheduleExpr?: string | null;
+  scheduleRunAt?: string | null;
   nextRunAt: string | null;
   lastRunAt: string | null;
   createdAt?: string | null;
@@ -1109,8 +1111,7 @@ function normalizeCronJob(input: Partial<MissionControlCronJob> | undefined): Mi
     enabled: input?.enabled ?? true,
     state: input?.state ?? 'scheduled',
     scheduleDisplay: input?.scheduleDisplay ?? 'unspecified',
-    scheduleKind: input?.scheduleKind,
-    scheduleExpr: input?.scheduleExpr ?? null,
+    ...cronScheduleFields(input),
     nextRunAt: input?.nextRunAt ?? null,
     lastRunAt: input?.lastRunAt ?? null,
     createdAt: input?.createdAt ?? null,
@@ -1842,6 +1843,7 @@ function normalizeOfficialCronJob(input: Record<string, unknown>): MissionContro
     scheduleDisplay,
     scheduleKind: readString(schedule.kind),
     scheduleExpr: readNullableString(schedule.expr),
+    scheduleRunAt: readNullableString(schedule.run_at),
     nextRunAt: readNullableString(input.next_run_at),
     lastRunAt: readNullableString(input.last_run_at),
     createdAt: readNullableString(input.created_at),

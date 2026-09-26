@@ -19,6 +19,8 @@
     "test:frontend": "node scripts/run-frontend-tests.mjs",
     "test:chat-profile": "node --experimental-strip-types tests/chat-session-profile.test.ts && node --experimental-strip-types tests/chat-session-profile-e2e.test.ts && node --experimental-strip-types tests/chat-session-reset-profile.test.ts",
     "test:mobile-route-layout": "node tests/mobile-route-layout-contract.test.mjs",
+    "test:cron-model-selection": "node --experimental-strip-types tests/cron-model-selection.test.ts",
+    "test:cron-schedule-input": "node --experimental-strip-types tests/cron-schedule-input.test.ts",
     "test:provider-usage-ui": "node tests/provider-usage-ui-contract.test.mjs",
     "test:system-health-ui": "node tests/system-health-ui-contract.test.mjs",
     "test:smoke": "bash scripts/smoke-test-telemetry.sh",

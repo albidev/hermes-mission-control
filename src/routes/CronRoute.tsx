@@ -18,6 +18,7 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/Modal';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 import { PageHeader } from '../components/PageHeader';
+import { Dropdown } from '../components/ui/Dropdown';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { useI18n } from '../lib/i18n';
 import { useMissionControl } from '../lib/mission-control-store';
@@ -33,7 +34,9 @@ import {
   updateMissionControlCronJob,
   type MissionControlCronJob,
 } from '../lib/hermes-api';
-import { loadBotProfiles, type BotProfileSummary } from '../lib/bot-gateway';
+import { loadBotProfiles, loadBotModelOptions, type BotProfileSummary, type BotModelProviderOption } from '../lib/bot-gateway';
+import { cronModelOptions, cronProviderOptions, isCronModelPairValid, modelSelectionPayload } from '../lib/cron-model-selection';
+import { cronScheduleInput } from '../lib/cron-form';
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—';
@@ -89,6 +92,8 @@ type CronFormState = {
   monitorScript: string;
   monitorUrl: string;
   reasoningEffort: string;
+  model: string;
+  provider: string;
 };
 
 const emptyForm: CronFormState = {
@@ -106,6 +111,8 @@ const emptyForm: CronFormState = {
   monitorScript: '',
   monitorUrl: '',
   reasoningEffort: '',
+  model: '',
+  provider: '',
 };
 
 function formFromJob(job: MissionControlCronJob): CronFormState {
@@ -116,7 +123,7 @@ function formFromJob(job: MissionControlCronJob): CronFormState {
     name: job.label,
     profile: job.profile || 'default',
     prompt: job.prompt,
-    schedule: job.scheduleExpr || job.scheduleDisplay,
+    schedule: cronScheduleInput(job.scheduleKind, job.scheduleExpr, job.scheduleRunAt, job.scheduleDisplay),
     deliver: job.deliver || 'local',
     repeat,
     script: job.script || '',
@@ -127,6 +134,8 @@ function formFromJob(job: MissionControlCronJob): CronFormState {
     monitorScript: job.monitorScript || '',
     monitorUrl: job.monitorUrl || '',
     reasoningEffort: job.reasoningEffort || '',
+    model: job.model || '',
+    provider: job.provider || '',
   };
 }
 
@@ -146,6 +155,7 @@ function toPayload(form: CronFormState): Record<string, unknown> {
     monitor_script: form.monitorScript.trim() || undefined,
     monitor_url: form.monitorUrl.trim() || undefined,
     reasoning_effort: form.reasoningEffort.trim() || undefined,
+    ...modelSelectionPayload(form.model, form.provider),
   };
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
 }
@@ -181,6 +191,9 @@ function CronFormModal({
   const { t } = useI18n();
   const [form, setForm] = useState<CronFormState>(() => job ? formFromJob(job) : emptyForm);
   const [profiles, setProfiles] = useState<BotProfileSummary[]>([]);
+  const [modelProviders, setModelProviders] = useState<BotModelProviderOption[]>([]);
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
+  const [modelOptionsError, setModelOptionsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -198,7 +211,32 @@ function CronFormModal({
     return () => { cancelled = true; };
   }, [storedToken]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setModelOptionsLoading(true);
+    setModelOptionsError(null);
+    void loadBotModelOptions(storedToken || undefined, form.profile || undefined).then((result) => {
+      if (!cancelled) setModelProviders(result);
+    }).catch((cause) => {
+      if (!cancelled) {
+        setModelProviders([]);
+        setModelOptionsError(cause instanceof Error ? cause.message : t('cron.form.modelsUnavailable'));
+      }
+    }).finally(() => {
+      if (!cancelled) setModelOptionsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [form.profile, storedToken, t]);
+
   const botProfiles = profiles.filter((profile) => profile.name !== 'default');
+  const providerOptions = useMemo(
+    () => cronProviderOptions(modelProviders, form.provider, t('cron.form.inheritProvider')),
+    [form.provider, modelProviders, t],
+  );
+  const modelSelectOptions = useMemo(
+    () => cronModelOptions(modelProviders, form.provider, form.model, t('cron.form.chooseModel')),
+    [form.model, form.provider, modelProviders, t],
+  );
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -209,6 +247,10 @@ function CronFormModal({
     }
     if (form.noAgent && !form.script.trim()) {
       setError(t('cron.form.scriptRequired'));
+      return;
+    }
+    if (!isCronModelPairValid(form.model, form.provider)) {
+      setError(t('cron.form.modelProviderRequired'));
       return;
     }
     setSaving(true);
@@ -272,6 +314,30 @@ function CronFormModal({
               <option value="">{t('cron.form.default')}</option>
               {['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map((effort) => <option key={effort} value={effort}>{effort}</option>)}
             </select>
+          </Field>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t('cron.form.provider')} hint={modelOptionsError || t('cron.form.modelHint')}>
+            <Dropdown
+              value={form.provider}
+              options={providerOptions}
+              onChange={(provider) => {
+                const availableModels = modelProviders.find((item) => item.slug === provider)?.models ?? [];
+                update('provider', provider);
+                if (form.model && !availableModels.includes(form.model)) update('model', '');
+              }}
+              ariaLabel={t('cron.form.provider')}
+              disabled={modelOptionsLoading || saving}
+            />
+          </Field>
+          <Field label={t('cron.form.model')} hint={modelOptionsLoading ? t('cron.form.modelsLoading') : undefined}>
+            <Dropdown
+              value={form.model}
+              options={modelSelectOptions}
+              onChange={(model) => update('model', model)}
+              ariaLabel={t('cron.form.model')}
+              disabled={!form.provider || modelOptionsLoading || saving}
+            />
           </Field>
         </div>
         <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-raised/30 px-3 py-2">
