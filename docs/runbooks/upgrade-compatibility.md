@@ -59,17 +59,36 @@ Use this when update/autostash leaves conflicted files:
 - `docs/contracts/mission-control-capabilities-v1.json`
 - `docs/contracts/mission-control-trace-v1.json`
 - `docs/contracts/compatibility-matrix.md`
-- `patches/hermes-core-mission-control-api_server.patch`
+- `patches/hermes-core-mission-control-api_server.patch` (historical, see note below)
 - `scripts/reapply-core-mission-control-fixes.sh`
 - `scripts/smoke-upgrade.sh`
 
+> **Note on the `.patch` file:** `patches/hermes-core-mission-control-api_server.patch`
+> targets the pre-sidecar architecture, when Mission Control routes lived directly on
+> `gateway/platforms/api_server.py` (`_build_mission_control_snapshot`,
+> `_handle_mission_control`, etc.). That code path no longer exists in current
+> `hermes-agent` and the reapply script does **not** apply this patch — it is kept
+> only as a historical reference. `check-documented-paths.sh` still requires the
+> file to exist (documented path check), so don't delete it without also updating
+> that script and this note.
+
 ## Canonical backend recovery path
-If a Hermes core update drops Mission Control routes from `gateway/platforms/api_server.py`:
+Mission Control's actual backend dependency on Hermes core today is `hermes_cli/web_server.py`
+(dashboard auth/token acceptance, `allowed_roots` for local file access, and the Knowledge
+core-docs candidate list). If a Hermes core update breaks any of those:
 1. Run `bash scripts/reapply-core-mission-control-fixes.sh` (optionally pass the
    path to the `hermes-agent` checkout as the first argument; it defaults to
    `$HOME/.hermes/hermes-agent`).
-2. The script first reapplies `patches/hermes-core-mission-control-api_server.patch` with `git apply`
-3. Then it reapplies compatibility shims in `model_tools.py` and `tools/skills_tool.py`
-4. Finally it runs syntax checks, restarts gateway, and smoke-checks Mission Control endpoints
+2. The script patches `hermes_cli/web_server.py` in place: multi-token bearer auth
+   (`MISSION_CONTROL_TOKEN` / `API_SERVER_KEY` alongside the ephemeral session token),
+   the `allowed_roots` local-file allowlist, and the Knowledge core-docs candidate paths
+   (`SOUL.md`, `USER.md`, `AGENTS.md`, `memories/MEMORY.md`). Each block is idempotent —
+   already-aligned files are left untouched.
+3. It then verifies the Vite proxy points at the dashboard backend (`127.0.0.1:9119`,
+   `/api/local` route) — this is a hard check, not a patch.
+4. Finally it runs syntax checks, restarts `ai.hermes.dashboard-api`,
+   `ai.hermes.mission-control-telemetry`, and `ai.hermes.mission-control`, and
+   smoke-checks Mission Control endpoints on both 9119 and 5174.
 
-Rule: update the canonical patch file whenever Mission Control backend compatibility changes, instead of relying on git stash recovery.
+Rule: update the reapply script's patch blocks whenever Mission Control's dependency
+on `hermes_cli/web_server.py` changes, instead of relying on git stash recovery.
