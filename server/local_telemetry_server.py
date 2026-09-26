@@ -24,7 +24,21 @@ from statistics import median
 from collections.abc import Callable
 from typing import Any, Deque, Dict, Optional
 
-import psutil
+try:
+    import psutil
+except ModuleNotFoundError:
+    # Hermes core's self-relaunch (hermes_bootstrap.py -> hermes_cli.venv_sync
+    # .prepare_launch/relaunch_command) can os.execv() an already-running
+    # sidecar into a freshly-selected PM generation the moment any request
+    # handler first imports hermes_state (e.g. /api/local/chat/transcript).
+    # That new generation's psutil install is not guaranteed to be ready at
+    # the instant of the relaunch, which otherwise hard-crashes this whole
+    # process on a single top-level `import psutil` for what are, in every
+    # call site here, host-metrics niceties (CPU/mem/disk, PID liveness) —
+    # never chat/session data. Degrade those endpoints instead of losing the
+    # entire sidecar (and with it every other /api/local/* route, including
+    # chat history) to a transient dependency race outside our control.
+    psutil = None  # type: ignore[assignment]
 
 SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
@@ -141,6 +155,8 @@ _cpu_ready = threading.Event()
 
 
 def _cpu_sampler() -> None:
+    if psutil is None:
+        return
     # Prime psutil baseline once, then keep sampling in background.
     psutil.cpu_percent(interval=None)
     while True:
@@ -160,11 +176,34 @@ def _read_smoothed_cpu_percent() -> float:
             if _cpu_samples:
                 # Median is more stable than mean for short transient spikes/drops.
                 return round(float(median(_cpu_samples)), 1)
+    if psutil is None:
+        return 0.0
     # Early fallback before first sampler tick.
     return round(float(psutil.cpu_percent(interval=None)), 1)
 
 
 def collect_system_snapshot() -> Dict[str, Any]:
+    if psutil is None:
+        # See the psutil import guard above: degrade instead of crashing the
+        # sidecar when this generation's dependency install hasn't landed yet.
+        # Keep the same shape the real payload returns so the frontend never
+        # has to special-case a missing key.
+        return {
+            "source": "local-psutil-unavailable",
+            "collectedAt": datetime.now(timezone.utc).isoformat(),
+            "health": "unknown",
+            "host": socket.gethostname() or "unknown",
+            "platform": f"{platform.system()} {platform.release()}".strip(),
+            "platformVersion": platform.version() or "",
+            "cpuCores": os.cpu_count() or 1,
+            "cpuUsagePercent": None,
+            "ramUsage": {"usedPercent": None, "usedGb": None, "availableGb": None, "totalGb": None},
+            "loadAverage": {"one": None, "five": None, "fifteen": None, "perCore": None},
+            "diskUsage": {"path": "~", "usedPercent": None, "freeGb": None, "totalGb": None},
+            "processMemoryMb": None,
+            "thermal": collect_thermal_snapshot(),
+            "summary": "Host metrics unavailable (psutil not installed in this runtime).",
+        }
     vm = psutil.virtual_memory()
     disk = psutil.disk_usage(os.path.expanduser("~"))
     load = None
@@ -1031,7 +1070,7 @@ def _collect_status_payload_uncached() -> Dict[str, Any]:
                     candidate = data.get('pid') if isinstance(data, dict) else int(raw)
                 except (json.JSONDecodeError, ValueError):
                     candidate = int(raw)
-                if candidate and psutil.pid_exists(candidate):
+                if candidate and psutil is not None and psutil.pid_exists(candidate):
                     gateway_pid = candidate
                     gateway_running = True
     except Exception:
