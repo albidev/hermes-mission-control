@@ -1,18 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cronScheduleFields, cronScheduleInput } from '../src/lib/cron-form.ts';
+import { cronScheduleInput } from '../src/lib/cron-form.ts';
 
-test('cron job normalization preserves run_at when rebuilding the list item', () => {
-  assert.deepEqual(cronScheduleFields({
-    scheduleKind: 'once',
-    scheduleExpr: null,
-    scheduleRunAt: '2026-09-27T10:30:00+02:00',
-  }), {
-    scheduleKind: 'once',
-    scheduleExpr: null,
-    scheduleRunAt: '2026-09-27T10:30:00+02:00',
-  });
-});
 test('one-shot cron editor uses the stored ISO run_at instead of human display text', () => {
   assert.equal(
     cronScheduleInput('once', null, '2026-09-27T10:30:00+02:00', 'once at 2026-09-27 10:30'),

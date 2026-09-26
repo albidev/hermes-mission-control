@@ -13,6 +13,8 @@ const normalizeCronJob = new Function(`${outputText}; return normalizeCronJob;`)
 
 const scoped = normalizeCronJob({ id: 'job-123', label: 'delivery', profile: 'crossnection-delivery' });
 assert.equal(scoped.profile, 'crossnection-delivery', 'the profile from the API must survive snapshot and detail normalization');
+const scheduled = normalizeCronJob({ id: 'one-shot', scheduleKind: 'once', scheduleExpr: null, scheduleRunAt: '2026-09-27T10:30:00+02:00' });
+assert.equal(scheduled.scheduleRunAt, '2026-09-27T10:30:00+02:00', 'the original one-shot run_at must survive snapshot normalization');
 assert.equal(normalizeCronJob({ id: 'default-job' }).profile, 'default', 'legacy jobs without profile belong to default');
 
 const route = readFileSync(new URL('../src/routes/CronRoute.tsx', import.meta.url), 'utf8');
