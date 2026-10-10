@@ -6,7 +6,7 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/PageHeader';
 import { useMissionControl } from '../lib/mission-control-store';
-import { toolsetMatches } from '../lib/tools-browser';
+import { toolsetMatches, visibleToolNames } from '../lib/tools-browser';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
@@ -56,8 +56,8 @@ export function ToolsRoute() {
 
   const toolsets = tools.availableToolsets;
   const filteredToolsets = toolsets.filter((toolset) => toolsetMatches(toolset, query));
-  const readyCount = toolsets.filter((toolset) => toolset.available).length;
-  const blockedCount = toolsets.filter((toolset) => !toolset.available).length;
+  const readyCount = toolsets.filter((toolset) => toolset.available && toolset.configured).length;
+  const needsKeysCount = toolsets.filter((toolset) => !toolset.configured).length;
 
   return (
     <div ref={containerRef} className="route-page-scroll flex h-full flex-col gap-5 overflow-y-auto sm:gap-6">
@@ -99,7 +99,7 @@ export function ToolsRoute() {
           <MetricCard
             icon={KeyRound}
             label={t('tools.needsKeys')}
-            value={String(blockedCount)}
+            value={String(needsKeysCount)}
             hint={t('tools.waitingOnEnv')}
             color="text-amber-400"
           />
@@ -137,7 +137,15 @@ export function ToolsRoute() {
         </div>
 
         <div className="space-y-1.5 p-3">
-          {filteredToolsets.length > 0 ? filteredToolsets.map((toolset) => (
+          {filteredToolsets.length > 0 ? filteredToolsets.map((toolset) => {
+            const shownTools = visibleToolNames(toolset, query);
+            const hiddenCount = toolset.resolvedTools.length - shownTools.length;
+            const status = !toolset.configured
+              ? { variant: 'warning' as const, label: t('tools.needsKey') }
+              : toolset.available
+                ? { variant: 'positive' as const, label: t('tools.available') }
+                : { variant: 'default' as const, label: t('tools.disabled') };
+            return (
             <article key={toolset.name} data-toolset={toolset.name} className="rounded-lg bg-surface-sunken/25 p-3 transition-colors hover:bg-surface-sunken/50">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -146,9 +154,7 @@ export function ToolsRoute() {
                     {toolset.description || t('tools.noDescription')}
                   </p>
                 </div>
-                <Badge variant={toolset.available ? 'positive' : 'warning'}>
-                  {toolset.available ? t('tools.available') : t('tools.needsKey')}
-                </Badge>
+                <Badge variant={status.variant}>{status.label}</Badge>
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-subtle">
@@ -157,15 +163,19 @@ export function ToolsRoute() {
                 <span>{toolset.isComposite ? t('tools.composite') : t('tools.direct')}</span>
               </div>
 
-              {toolset.resolvedTools.length > 0 ? (
+              {shownTools.length > 0 ? (
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {toolset.resolvedTools.slice(0, 8).map((tool) => (
+                  {shownTools.map((tool) => (
                     <Badge key={tool} variant="default">{tool}</Badge>
                   ))}
+                  {hiddenCount > 0 ? (
+                    <span className="self-center text-[11px] text-text-subtle">{t('tools.moreTools', { count: hiddenCount })}</span>
+                  ) : null}
                 </div>
               ) : null}
             </article>
-          )) : (
+            );
+          }) : (
             <p className="p-4 text-sm text-text-muted">{t(toolsets.length === 0 ? 'tools.notFound' : 'tools.noMatch')}</p>
           )}
         </div>

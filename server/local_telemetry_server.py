@@ -1016,67 +1016,6 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 
-def _collect_tools() -> Dict[str, Any]:
-    """Build a tools snapshot from what we can discover locally."""
-    toolsets_list: list[Dict[str, Any]] = []
-    tool_catalog: list[Dict[str, Any]] = []
-    resolved: list[str] = []
-
-    project_root = hermes_core_dir()
-    tc_path = project_root / "hermes_cli" / "tools_config.py"
-
-    try:
-        if tc_path.exists():
-            tc_text = tc_path.read_text()
-            m = re.search(r"CONFIGURABLE_TOOLSETS\s*=\s*\[", tc_text)
-            if m:
-                brace_start = tc_text.find("[", m.start())
-                brace_end = brace_start + 1
-                depth = 1
-                while brace_end < len(tc_text) and depth > 0:
-                    if tc_text[brace_end] == "[": depth += 1
-                    elif tc_text[brace_end] == "]": depth -= 1
-                    brace_end += 1
-                raw = tc_text[brace_start + 1:brace_end - 1]
-                # Parse entries with simple regex
-                entries = re.findall(r'\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"[^)]*\)', raw)
-                for name, label, desc in entries:
-                    direct = [name] if name != "skills" else ["list", "view", "manage"]
-                    toolsets_list.append({
-                        "name": name,
-                        "description": label or desc,
-                        "directTools": direct,
-                        "includes": [],
-                        "resolvedTools": direct,
-                        "toolCount": len(direct),
-                        "isComposite": False,
-                        "available": True,
-                        "requirements": [],
-                    })
-                    for d in direct:
-                        tool_catalog.append({"name": d, "toolset": name, "available": True})
-                        resolved.append(d)
-    except Exception:
-        pass
-
-    if not toolsets_list:
-        toolsets_list = [
-            {"name": "terminal", "description": "Terminal", "directTools": ["terminal"], "includes": [], "resolvedTools": ["terminal"], "toolCount": 1, "isComposite": False, "available": True, "requirements": []},
-            {"name": "file", "description": "File", "directTools": ["file"], "includes": [], "resolvedTools": ["file"], "toolCount": 1, "isComposite": False, "available": True, "requirements": []},
-        ]
-        tool_catalog = [{"name": "terminal", "toolset": "terminal", "available": True}, {"name": "file", "toolset": "file", "available": True}]
-        resolved = ["terminal", "file"]
-
-    return {
-        "available": True,
-        "count": len(toolsets_list),
-        "toolCount": len(tool_catalog),
-        "toolsets": toolsets_list,
-        "availableToolsets": toolsets_list,
-        "toolCatalog": tool_catalog,
-        "resolvedTools": list(dict.fromkeys(resolved)),
-    }
-
 def _parse_skill_yaml_frontmatter(text: str) -> Dict[str, Any]:
     """Extract YAML frontmatter between --- and --- from a SKILL.md file."""
     lines = text.splitlines()
@@ -2265,12 +2204,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, load_honcho_status())
             except HonchoBridgeError as exc:
                 self._json(exc.status_code, {'error': exc.error, 'detail': exc.message})
-            return
-        if parsed.path == '/api/local/tools':
-            if not _is_authorized(self):
-                self._unauthorized()
-                return
-            self._json(200, _collect_tools())
             return
         if parsed.path == '/api/local/skills':
             if not _is_authorized(self):

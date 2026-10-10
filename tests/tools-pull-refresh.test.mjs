@@ -19,15 +19,21 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 window.setInterval = () => 0; // store polling never fires: only the gesture may fetch
 window.clearInterval = () => {};
+window.localStorage.setItem('mission-control-token', 'fixture-token');
 
-const toolset = (name) => ({ name, description: `${name} toolset`, available: true, toolCount: 1, resolvedTools: [`${name}_tool`] });
+// Core dashboard rows (GET /api/tools/toolsets), not the retired sidecar snapshot.
+const toolset = (name) => ({ name, label: `${name} toolset`, description: `${name}_tool`, enabled: true, available: true, configured: true, tools: [`${name}_tool`] });
+const TOOLS_PATH = '/api/tools/toolsets';
 let toolsResponse;
 let toolsGate = null;
 const calls = [];
-globalThis.fetch = async (url) => {
+const toolsAuth = [];
+globalThis.fetch = async (url, init = {}) => {
   const pathname = new URL(String(url), 'http://localhost').pathname;
   calls.push(pathname);
-  if (pathname.endsWith('/tools')) {
+  if (pathname.endsWith('/tools')) throw new Error(`retired sidecar endpoint requested: ${pathname}`);
+  if (pathname === TOOLS_PATH) {
+    toolsAuth.push(init.headers?.Authorization ?? null);
     if (toolsGate) await toolsGate.promise;
     if (toolsResponse === 'auth') return new Response('{}', { status: 401 });
     if (toolsResponse === 'http') return new Response('{}', { status: 503 });
@@ -76,16 +82,17 @@ async function pull() {
     scroller().dispatchEvent(touch('touchend', 260));
   });
 }
-const toolCalls = () => calls.filter((p) => p.endsWith('/tools')).length;
-const otherCalls = () => calls.filter((p) => !p.endsWith('/tools'));
+const toolCalls = () => calls.filter((p) => p === TOOLS_PATH).length;
+const otherCalls = () => calls.filter((p) => p !== TOOLS_PATH);
 const text = () => document.getElementById('root').textContent;
 
 let root;
 let Provider;
 let ToolsRoute;
 async function mount() {
-  toolsResponse = { available: true, toolsets: [toolset('alpha')], availableToolsets: [toolset('alpha')], toolCatalog: [{ name: 'alpha_tool', toolset: 'alpha' }] };
+  toolsResponse = [toolset('alpha')];
   toolsGate = null;
+  toolsAuth.length = 0;
   root = createRoot(document.getElementById('root'));
   await flush(() => root.render(React.createElement(Provider, null, React.createElement(ToolsRoute))));
   await flush();
@@ -101,9 +108,10 @@ try {
   await test('pull fetches Tools only and shows the new data', async () => {
     await mount();
     try {
-      toolsResponse = { available: true, toolsets: [toolset('beta')], availableToolsets: [toolset('beta')], toolCatalog: [{ name: 'beta_tool', toolset: 'beta' }] };
+      toolsResponse = [toolset('beta')];
       await pull();
       assert.equal(toolCalls(), 1);
+      assert.deepEqual(toolsAuth.slice(-1), ['Bearer fixture-token'], 'dashboard API needs the Mission Control bearer');
       assert.deepEqual(otherCalls(), [], 'no Sessions/Config/Cron/Skills refresh from the gesture');
       assert.match(text(), /beta toolset/);
       assert.doesNotMatch(text(), /alpha toolset/);
@@ -135,10 +143,21 @@ try {
       assert.equal(toolCalls(), 1);
       assert.match(text(), /alpha toolset/);
       assert.match(text(), /tools\.refreshFailed/);
-      toolsResponse = { available: true, toolsets: [toolset('gamma')], availableToolsets: [toolset('gamma')], toolCatalog: [] };
+      toolsResponse = [toolset('gamma')];
       await pull();
       assert.doesNotMatch(text(), /tools\.refreshFailed/);
       assert.match(text(), /gamma toolset/);
+    } finally { await unmount(); }
+  });
+
+  await test('a payload that is not a toolset list is a failed refresh, not an empty inventory', async () => {
+    await mount();
+    try {
+      toolsResponse = { toolsets: [] };
+      await pull();
+      assert.equal(toolCalls(), 1);
+      assert.match(text(), /alpha toolset/);
+      assert.match(text(), /tools\.refreshFailed/);
     } finally { await unmount(); }
   });
 

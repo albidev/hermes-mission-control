@@ -45,7 +45,8 @@ globalThis.fetch = async url => {
     return Response.json({ success: true, available: true, items: sessionItems, stats: { totalSessions: sessionItems.length, activeAgents: sessionItems.length } });
   }
   if (pathname.endsWith('/cron/jobs')) return mode === 'offline' ? new Response('{}', { status: 503 }) : Response.json([]);
-  if (pathname.endsWith('/tools') || pathname.endsWith('/skills')) return Response.json({ available: true, items: [], toolsets: [], toolCatalog: [], resolvedTools: [], skills: [], categories: [] });
+  if (pathname === '/api/tools/toolsets') return Response.json([]);
+  if (pathname.endsWith('/skills')) return Response.json({ available: true, items: [], skills: [], categories: [] });
   if (pathname.endsWith('/system')) return Response.json({ health: 'healthy', source: 'local-psutil', host: 'fixture', platform: 'test', cpuCores: 1, summary: 'live' });
   if (pathname.endsWith('/status')) return Response.json({ gateway_running: true, active_sessions: 0 });
   if (pathname.endsWith('/model/info')) return Response.json({ model: 'fixture-model', provider: 'fixture' });

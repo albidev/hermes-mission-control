@@ -17,11 +17,10 @@ expected.
 
 | Interface | Used for | When it breaks |
 |-----------|----------|----------------|
-| Dashboard API REST (`hermes dashboard`, default `127.0.0.1:9119`): `/api/status`, `/api/sessions`, `/api/cron/jobs`, `/api/profiles/*` | Overview, sessions, cron, bot deletion | Those views fall back to sidecar data or show an error |
+| Dashboard API REST (`hermes dashboard`, default `127.0.0.1:9119`): `/api/status`, `/api/sessions`, `/api/cron/jobs`, `/api/profiles/*`, `/api/tools/toolsets` | Overview, sessions, cron, bot deletion, Tools inventory | Those views fall back to sidecar data or show an error |
 | Dashboard API WebSocket `/api/ws` JSON-RPC (`session.*`, `prompt.submit`, `session.events.since`, `profiles.*`, `tools.configure`, `groups.*`) | Chat, Bot Mode, Group Rooms | Chat and Rooms cannot connect |
 | Dashboard session token `HERMES_DASHBOARD_SESSION_TOKEN` | REST auth against `:9119` | Dashboard REST calls return `401` |
 | `hermes_cli.kanban_db` (imported lazily by `server/kanban_bridge.py`) | Kanban | Kanban endpoints return errors |
-| `tools_config.py` in the Hermes checkout | Tools inventory | Tools view is empty |
 | Hermes home layout (`state.db`, `sessions/`, `logs/`, `skills/`, `config.yaml`) | Telemetry views | Individual views degrade |
 
 ### Dashboard authentication

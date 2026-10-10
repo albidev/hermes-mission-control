@@ -95,7 +95,6 @@ The Chat picker requests `limit=25&offset=0&status=live&include_recent_messages=
 |--------|------|---------|
 | GET | `/api/local/config` | Hermes `config.yaml` (raw text plus parsed view) |
 | PUT | `/api/local/config` | Replace `config.yaml`. The YAML is validated, a `config.yaml.bak.<timestamp>` backup is written, then the file is replaced atomically |
-| GET | `/api/local/tools` | Tool inventory (see [tools.md](tools.md)) |
 | GET | `/api/local/skills` | Installed skills |
 | GET | `/api/local/skills/catalog` | Installable skills catalog |
 | GET | `/api/local/skills/files` | File tree of one skill (`skill`) |

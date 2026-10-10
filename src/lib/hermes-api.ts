@@ -2,6 +2,7 @@ import { normalizeTodoPlanSnapshot, type TodoPlan } from './todo-plan';
 import { buildSessionListQuery, type SessionListRequestOptions } from './session-list-request';
 import { isInternalContextMessage } from './chat-protocol';
 import { getPluginRegistry } from '../core/plugin-registry';
+import { toolsSnapshotFromToolsets } from './tools-snapshot';
 
 /**
  * Resolve a plugin endpoint URL from the registry.
@@ -209,15 +210,16 @@ export type MissionControlToolsetItem = {
   resolvedTools: string[];
   toolCount: number;
   isComposite: boolean;
+  /** Enabled on the toolset's configuration platform (core `enabled`). */
   available: boolean;
-  requirements: string[];
+  /** Credentials present in the profile's secret scope (core `configured`). */
+  configured: boolean;
 };
 
 export type MissionControlToolCatalogItem = {
   name: string;
   toolset: string;
   available: boolean;
-  sourcePath?: string | null;
 };
 
 export type MissionControlToolsSnapshot = {
@@ -516,7 +518,7 @@ const fallbackTools: MissionControlToolsSnapshot = {
       toolCount: 1,
       isComposite: false,
       available: true,
-      requirements: [],
+      configured: true,
     },
     {
       name: 'gateway',
@@ -527,7 +529,7 @@ const fallbackTools: MissionControlToolsSnapshot = {
       toolCount: 1,
       isComposite: false,
       available: true,
-      requirements: [],
+      configured: true,
     },
     {
       name: 'system',
@@ -538,7 +540,7 @@ const fallbackTools: MissionControlToolsSnapshot = {
       toolCount: 1,
       isComposite: false,
       available: true,
-      requirements: [],
+      configured: true,
     },
     {
       name: 'models',
@@ -549,7 +551,7 @@ const fallbackTools: MissionControlToolsSnapshot = {
       toolCount: 1,
       isComposite: false,
       available: true,
-      requirements: [],
+      configured: true,
     },
   ],
   availableToolsets: [],
@@ -1089,41 +1091,6 @@ function normalizeAlert(input: Partial<MissionControlAlert> | undefined): Missio
 function normalizeAlerts(input: Partial<MissionControlAlertsSnapshot> | undefined): MissionControlAlertsSnapshot {
   return {
     items: (input?.items ?? fallbackAlerts.items).map((item) => normalizeAlert(item)),
-  };
-}
-
-function normalizeToolset(input: Partial<MissionControlToolsetItem> | undefined): MissionControlToolsetItem {
-  return {
-    name: input?.name ?? 'toolset',
-    description: input?.description ?? '',
-    directTools: input?.directTools ?? [],
-    includes: input?.includes ?? [],
-    resolvedTools: input?.resolvedTools ?? [],
-    toolCount: Number(input?.toolCount ?? (input?.resolvedTools?.length ?? 0)),
-    isComposite: input?.isComposite ?? false,
-    available: input?.available ?? true,
-    requirements: input?.requirements ?? [],
-  };
-}
-
-function normalizeTools(input: Partial<MissionControlToolsSnapshot> | undefined): MissionControlToolsSnapshot {
-  const toolsets = (input?.toolsets ?? fallbackTools.toolsets).map((item) => normalizeToolset(item));
-  const availableToolsets = (input?.availableToolsets ?? toolsets).map((item) => normalizeToolset(item));
-  const toolCatalog = (input?.toolCatalog ?? fallbackTools.toolCatalog).map((item) => ({
-    name: item?.name ?? 'tool',
-    toolset: item?.toolset ?? 'general',
-    available: item?.available ?? true,
-    sourcePath: redactHomePath(item?.sourcePath ?? null) ?? null,
-  }));
-
-  return {
-    available: input?.available ?? fallbackTools.available,
-    count: Number(input?.count ?? toolsets.length),
-    toolCount: Number(input?.toolCount ?? toolCatalog.length),
-    toolsets,
-    availableToolsets,
-    toolCatalog,
-    resolvedTools: input?.resolvedTools ?? toolCatalog.map((item) => item.name),
   };
 }
 
@@ -2458,10 +2425,25 @@ export async function loadMissionControlAlerts(accessToken?: string): Promise<Mi
   }
 }
 
+// The core dashboard owns tool inventory semantics (toolset switch per platform,
+// credentials in the profile's secret scope); the sidecar cannot see either.
+const CORE_TOOLSETS_PATH = '/api/tools/toolsets';
+
 export async function loadMissionControlTools(accessToken?: string): Promise<MissionControlToolsSnapshot> {
-  const { payload, response } = await maybeFetchLocalJson<MissionControlToolsSnapshot>('/tools', accessToken);
-  if (payload !== null) return { ...normalizeTools(payload), dataSource: 'mission-control-tools' };
-  return { ...fallbackTools, dataSource: 'fallback', dataError: response ? `Tools endpoint returned ${response.status}.` : 'Tools endpoint unavailable.' };
+  const unavailable = (dataError: string): MissionControlToolsSnapshot => ({ ...fallbackTools, dataSource: 'fallback', dataError });
+  let response: Response;
+  try {
+    response = await fetch(CORE_TOOLSETS_PATH, { headers: buildHeaders(accessToken), credentials: 'include', cache: 'no-store' });
+  } catch {
+    return unavailable('Tools endpoint unavailable.');
+  }
+  if (response.status === 401) throw new MissionControlAuthError();
+  if (!response.ok) return unavailable(`Tools endpoint returned ${response.status}.`);
+  try {
+    return { ...toolsSnapshotFromToolsets(await response.json()), dataSource: 'mission-control-tools' };
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : 'Tools endpoint returned an invalid payload.');
+  }
 }
 
 export async function loadMissionControlSkills(accessToken?: string): Promise<MissionControlSkillsSnapshot> {

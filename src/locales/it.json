@@ -649,6 +649,8 @@
   "tools.noDescription": "Nessuna descrizione fornita.",
   "tools.available": "disponibile",
   "tools.needsKey": "richiede chiave",
+  "tools.disabled": "disattivato",
+  "tools.moreTools": "+{count} altri",
   "tools.toolCount": "{count} strumenti",
   "tools.refreshFailed": "Aggiornamento strumenti non riuscito: {detail}",
   "tools.composite": "composito",

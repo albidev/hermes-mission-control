@@ -649,6 +649,8 @@
   "tools.noDescription": "No description provided.",
   "tools.available": "available",
   "tools.needsKey": "needs key",
+  "tools.disabled": "disabled",
+  "tools.moreTools": "+{count} more",
   "tools.toolCount": "{count} tools",
   "tools.refreshFailed": "Tools refresh failed: {detail}",
   "tools.composite": "composite",

@@ -25,7 +25,7 @@ Mission Control uses [Semantic Versioning](https://semver.org/) in `package.json
 > and ships no patches for it. It does rely on a few documented Hermes
 > interfaces: the dashboard API (`hermes dashboard`, REST and the `/api/ws`
 > JSON-RPC socket), the `hermes_cli.kanban_db` module for Kanban, the core cron
-> module, `tools_config.py` for the tools inventory, and the Hermes home layout
+> module, and the Hermes home layout
 > (`state.db`, `sessions/`, `logs/`, `skills/`, `config.yaml`). See
 > [docs/runbooks/upgrade-compatibility.md](docs/runbooks/upgrade-compatibility.md)
 > for the full list and what breaks when one of them changes.
