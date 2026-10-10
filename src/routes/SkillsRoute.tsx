@@ -21,6 +21,7 @@ import {
   type MissionControlSkillFile,
 } from '../lib/hermes-api';
 import { useMissionControl } from '../lib/mission-control-store';
+import { filterInstalledSkills, type InstalledSkillStatus } from '../lib/installed-skills-filter';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
@@ -207,6 +208,12 @@ export function SkillsRoute() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [installedQuery, setInstalledQuery] = useState('');
+  const [installedStatus, setInstalledStatus] = useState<InstalledSkillStatus>('all');
+  const filteredInstalledSkills = useMemo(
+    () => filterInstalledSkills(skills.skills, installedQuery, installedStatus),
+    [skills.skills, installedQuery, installedStatus],
+  );
   const [togglingSkills, setTogglingSkills] = useState<Set<string>>(new Set());
   const [installingSkills, setInstallingSkills] = useState<Set<string>>(new Set());
   const [detailSkill, setDetailSkill] = useState<{ name: string; description: string; enabled?: boolean } | null>(null);
@@ -366,10 +373,29 @@ export function SkillsRoute() {
               <h3 className="mt-0.5 text-sm font-semibold text-text">{t('skills.everyInstalled')}</h3>
               <p className="mt-1 text-xs text-text-subtle">{t('skills.countSummary', { count: skills.skills.length, enabled, disabled })}</p>
             </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <input type="search" value={installedQuery}
+                onChange={(event) => setInstalledQuery(event.target.value)}
+                aria-label={t('skills.installedSearch')} placeholder={t('skills.installedSearch')}
+                className="mc-input min-w-0 flex-1" />
+              <select value={installedStatus} aria-label={t('skills.installedStatus')}
+                onChange={(event) => setInstalledStatus(event.target.value as InstalledSkillStatus)}
+                className="mc-input w-auto">
+                <option value="all">{t('skills.filterAll')}</option>
+                <option value="enabled">{t('skills.filterEnabled')}</option>
+                <option value="disabled">{t('skills.filterDisabled')}</option>
+              </select>
+              <Button type="button" size="sm" variant="ghost" onClick={() => {
+                setInstalledQuery(''); setInstalledStatus('all');
+              }}>{t('skills.resetFilters')}</Button>
+              <p className="w-full text-xs text-text-subtle" aria-live="polite">
+                {t('skills.visibleCount', { visible: filteredInstalledSkills.length, total: skills.skills.length })}
+              </p>
+            </div>
           </div>
 
           <div className="divide-y divide-border-subtle">
-            {skills.skills.map((skill) => (
+            {filteredInstalledSkills.map((skill) => (
               <article
                 key={skill.id}
                 className="flex cursor-pointer flex-col gap-2 px-4 py-3 transition-colors hover:bg-surface-raised/40"
@@ -408,6 +434,11 @@ export function SkillsRoute() {
                 ) : null}
                 </article>
                 ))}
+            {filteredInstalledSkills.length === 0 ? (
+              <p className="px-4 py-8 text-sm text-text-muted">
+                {t(skills.skills.length === 0 ? 'skills.installedEmpty' : 'skills.installedNoMatch')}
+              </p>
+            ) : null}
           </div>
         </Card>
       ) : (

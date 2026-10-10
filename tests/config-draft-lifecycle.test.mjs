@@ -105,6 +105,11 @@ function button(key) {
 }
 function label() { const el = document.getElementById('fixture.label'); assert.ok(el); return el; }
 function raw() { const el = document.querySelector('textarea.mobile-config-editor'); assert.ok(el); return el; }
+function expectUnloadGuard(expected) {
+  const event = new window.Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, expected, 'Unload guard follows the real editor dirty state');
+}
 async function type(el, value) {
   assert.equal(el.matches(':disabled'), false, 'Only type into interactive editors');
   const proto = el instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
@@ -140,15 +145,18 @@ try {
       React.createElement(MissionControlProvider, null, React.createElement(Observe)))));
     if (!initialFailure) assert.equal(label().value, 'disk-value');
     assert.equal(context.config.available, !initialFailure);
+    expectUnloadGuard(false);
   }
   async function unmount() {
     await flush(() => root.unmount()); root = null;
     assert.equal(intervals.size, 0);
+    expectUnloadGuard(false);
     scenarioCount++;
   }
 
   await mount();
   await type(label(), 'unsaved-form');
+  expectUnloadGuard(true);
   const before = context.config;
   await ticks(3);
   assert.equal(context.config, before);
@@ -177,6 +185,7 @@ try {
   assert.equal(parsed.fixture.label, 'external-value', 'Conflict must not overwrite external changes');
   assert.equal(button('config.save').disabled, false);
   assert.ok(document.body.textContent.includes('config save API returned 409'));
+  expectUnloadGuard(true);
   await unmount();
 
   await mount();
@@ -186,6 +195,7 @@ try {
   assert.equal(confirmCount, 1, 'Dirty Reload must ask before discarding');
   assert.equal(calls.length, readsBeforeCancel, 'Cancelled Reload must not fetch');
   assert.equal(label().value, 'reload-draft');
+  expectUnloadGuard(true);
   discardConfirmed = true;
   deferReads = true;
   await click('config.reload');
@@ -194,6 +204,7 @@ try {
   await flush(() => { deferredRead(); deferredRead = null; });
   assert.equal(label().value, 'disk-value');
   assert.equal(label().matches(':disabled'), false);
+  expectUnloadGuard(false);
   assert.equal(button('config.save').disabled, true);
   await type(label(), 'pull-draft');
   discardConfirmed = false;
@@ -225,6 +236,7 @@ try {
   assert.equal(label().value, 'saved-value');
   assert.equal(button('config.save').disabled, true);
   assert.equal(parsed.fixture.label, 'saved-value');
+  expectUnloadGuard(false);
   await flush(() => { deferredRead(); deferredRead = null; });
   assert.equal(context.config.hash, savedHash, 'Pre-save polling response must not replace the post-save revision');
   assert.equal(label().value, 'saved-value');
@@ -246,7 +258,9 @@ try {
   assert.ok(!document.body.textContent.includes('config.saved'));
   assert.equal(button('config.save').disabled, false);
   assert.equal(parsed.fixture.label, 'save-without-readback', 'The write may have succeeded even though readback failed');
+  expectUnloadGuard(true);
   await click('config.resetDraft');
+  expectUnloadGuard(false);
   assert.equal(raw().value, BASE_TEXT, 'Reset during outage must use the last accepted live base, never demo config');
   await unmount();
 
@@ -272,6 +286,7 @@ try {
       edited = mode === 'yaml' ? BASE_TEXT.replace('disk-value', 'yaml-draft') : '[broken';
     }
     await type(editor, edited);
+    expectUnloadGuard(true);
     await ticks(4);
     assert.equal(editor.value, edited, `Polling must preserve ${mode}`);
     if (mode === 'invalid-yaml') {
@@ -302,10 +317,12 @@ try {
     await click('config.reload');
     assert.equal(raw().value, edited, 'Failed explicit Reload must retain even a confirmed draft');
     assert.ok(document.body.textContent.includes('config.failedReload'));
+    expectUnloadGuard(true);
     assert.ok(!document.body.textContent.includes('config.reloaded'));
     failure = null;
     await click('config.reload');
     assert.equal(raw().value, BASE_TEXT);
+    expectUnloadGuard(false);
     assert.equal(button('config.save').disabled, true);
     await unmount();
   }

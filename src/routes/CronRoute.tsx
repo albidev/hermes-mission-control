@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clock3,
+  Copy,
   Eye,
   Pause,
   Pencil,
@@ -36,7 +37,7 @@ import {
 } from '../lib/hermes-api';
 import { loadBotProfiles, loadBotModelOptions, type BotProfileSummary, type BotModelProviderOption } from '../lib/bot-gateway';
 import { cronModelOptions, cronProviderOptions, isCronModelPairValid, modelSelectionPayload } from '../lib/cron-model-selection';
-import { cronScheduleInput } from '../lib/cron-form';
+import { cronScheduleExpired, cronScheduleInput } from '../lib/cron-form';
 import { filterCronJobs, isCronPaused, type CronStatusFilter } from '../lib/cron-status-filter';
 
 function formatDate(value: string | null | undefined): string {
@@ -177,16 +178,27 @@ function Field({
 
 function CronFormModal({
   job,
+  duplicateSource = null,
   onClose,
   onSaved,
 }: {
   job: MissionControlCronJob | null;
+  duplicateSource?: MissionControlCronJob | null;
   onClose: () => void;
   onSaved: (job: MissionControlCronJob) => void;
 }) {
   const { storedToken } = useMissionControl();
   const { t } = useI18n();
-  const [form, setForm] = useState<CronFormState>(() => job ? formFromJob(job) : emptyForm);
+  const [form, setForm] = useState<CronFormState>(() => {
+    if (job) return formFromJob(job);
+    if (!duplicateSource) return { ...emptyForm };
+    const copied = formFromJob(duplicateSource);
+    const expired = cronScheduleExpired(duplicateSource.scheduleKind, duplicateSource.scheduleRunAt);
+    return { ...copied, name: '', schedule: expired ? '' : copied.schedule };
+  });
+  const duplicateExpired = cronScheduleExpired(duplicateSource?.scheduleKind, duplicateSource?.scheduleRunAt);
+  const submitBusyRef = useRef(false);
+  const close = () => { if (!submitBusyRef.current) onClose(); };
   const [profiles, setProfiles] = useState<BotProfileSummary[]>([]);
   const [modelProviders, setModelProviders] = useState<BotModelProviderOption[]>([]);
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
@@ -237,7 +249,18 @@ function CronFormModal({
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (submitBusyRef.current) return;
     setError(null);
+    if (duplicateSource && !form.name.trim()) {
+      setError(t('cron.form.nameRequired'));
+      return;
+    }
+    const scheduleText = form.schedule.trim();
+    const absoluteTime = /^\d{4}-\d{2}-\d{2}T/.test(scheduleText) ? Date.parse(scheduleText) : NaN;
+    if (duplicateSource && Number.isFinite(absoluteTime) && absoluteTime <= Date.now()) {
+      setError(t('cron.form.futureScheduleRequired'));
+      return;
+    }
     if (!form.schedule.trim()) {
       setError(t('cron.form.scheduleRequired'));
       return;
@@ -250,6 +273,7 @@ function CronFormModal({
       setError(t('cron.form.modelProviderRequired'));
       return;
     }
+    submitBusyRef.current = true;
     setSaving(true);
     try {
       const saved = job
@@ -259,6 +283,7 @@ function CronFormModal({
     } catch (err) {
       setError(err instanceof Error ? err.message : t('cron.form.saveFailed'));
     } finally {
+      submitBusyRef.current = false;
       setSaving(false);
     }
   };
@@ -268,10 +293,10 @@ function CronFormModal({
       open
       title={job ? t('cron.form.editTitle') : t('cron.form.createTitle')}
       subtitle={job ? job.label : t('cron.form.createSubtitle')}
-      onClose={onClose}
+      onClose={close}
       footer={
         <div className="flex items-center justify-end gap-2">
-          <Button size="sm" variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button size="sm" variant="ghost" disabled={saving} onClick={close}>{t('common.cancel')}</Button>
           <Button size="sm" variant="primary" loading={saving} onClick={submit}>
             {job ? t('cron.actions.save') : t('cron.actions.create')}
           </Button>
@@ -280,6 +305,9 @@ function CronFormModal({
     >
       <form className="grid gap-4" onSubmit={submit}>
         {error ? <div className="rounded-lg border border-negative/30 bg-negative-subtle px-3 py-2 text-sm text-negative">{error}</div> : null}
+        {duplicateSource ? <p className="rounded-lg border border-warning/30 bg-warning-subtle px-3 py-2 text-sm text-text">{t('cron.form.duplicateReview')}</p> : null}
+        {duplicateExpired ? <p className="text-sm text-warning">{t('cron.form.duplicateExpired')}</p> : null}
+        <fieldset disabled={saving} className="grid min-w-0 gap-4">
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label={t('cron.form.name')}>
             <input className="mc-input" value={form.name} onChange={(event) => update('name', event.target.value)} placeholder={t('cron.form.namePlaceholder')} />
@@ -287,8 +315,8 @@ function CronFormModal({
           <Field label={t('cron.form.profile')} hint={t('cron.form.profileHint')}>
             <select className="mc-input" value={form.profile} disabled={Boolean(job)} onChange={(event) => update('profile', event.target.value)}>
               <option value="default">default</option>
-              {job && job.profile !== 'default' && !botProfiles.some((profile) => profile.name === job.profile)
-                ? <option value={job.profile}>{job.profile}</option> : null}
+              {form.profile !== 'default' && !botProfiles.some((profile) => profile.name === form.profile)
+                ? <option value={form.profile}>{form.profile}</option> : null}
               {botProfiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.display_name || profile.name}</option>)}
             </select>
           </Field>
@@ -365,6 +393,7 @@ function CronFormModal({
             <input className="mc-input" value={form.monitorUrl} onChange={(event) => update('monitorUrl', event.target.value)} placeholder="https://..." />
           </Field>
         </div>
+        </fieldset>
       </form>
     </Modal>
   );
@@ -425,6 +454,7 @@ export function CronRoute() {
   const [selectedJob, setSelectedJob] = useState<MissionControlCronJob | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [editingJob, setEditingJob] = useState<MissionControlCronJob | null | undefined>(undefined);
+  const [duplicateJob, setDuplicateJob] = useState<MissionControlCronJob | null>(null);
   const [actionJobId, setActionJobId] = useState<string | null>(null);
   const [profileFilter, setProfileFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<CronStatusFilter>('active');
@@ -498,6 +528,7 @@ export function CronRoute() {
   };
 
   const saveJob = (job: MissionControlCronJob) => {
+    setDuplicateJob(null);
     setEditingJob(undefined);
     setSelectedJob(null);
     setJobs((previous) => {
@@ -532,7 +563,7 @@ export function CronRoute() {
               iconOnly
               icon={<Plus className="h-4 w-4" />}
               className="cron-new-button"
-              onClick={() => setEditingJob(null)}
+              onClick={() => { setDuplicateJob(null); setEditingJob(null); }}
               aria-label={t('cron.actions.new')}
               title={t('cron.actions.new')}
             >
@@ -584,12 +615,15 @@ export function CronRoute() {
           return <div key={job.id} className="cron-job-row flex flex-col gap-3 px-4 py-4 xl:flex-row xl:items-center xl:gap-5">
             <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h4 className="truncate text-sm font-medium text-text">{job.label}</h4><Badge variant={statusVariant(job)}>{statusLabel(job, t)}</Badge><Badge variant="default">{job.profile || 'default'}</Badge></div><p className="mt-1 truncate font-mono text-xs text-text-muted">{job.scheduleDisplay}</p><p className="mt-1 text-xs text-text-subtle">{job.id}</p></div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-text-muted sm:grid-cols-4 xl:w-[30rem]"><div><span className="block text-text-subtle">{t('cron.list.next')}</span><span>{formatRelative(job.nextRunAt)}</span></div><div className="text-right sm:text-left"><span className="block text-text-subtle">{t('cron.list.last')}</span><span>{formatRelative(job.lastRunAt)}</span></div><div><span className="block text-text-subtle">{t('cron.list.delivery')}</span><span className="max-w-28 truncate block">{job.deliver || 'local'}</span></div><div className="text-right sm:text-left"><span className="block text-text-subtle">{t('cron.list.mode')}</span><span>{job.noAgent ? t('cron.status.script') : t('cron.status.agent')}</span></div></div>
-            <div className="flex w-fit self-end flex-wrap items-center gap-1.5 xl:self-auto xl:justify-end"><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.detail')} aria-label={t('cron.actions.detail')} onClick={() => openDetail(job)}>{detailLoading && selectedJob?.id === job.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.edit')} aria-label={t('cron.actions.edit')} onClick={() => setEditingJob(job)}><Pencil className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.run')} aria-label={t('cron.actions.run')} loading={busy} onClick={() => runAction(job, 'run')}><Play className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={paused ? t('cron.actions.resume') : t('cron.actions.pause')} aria-label={paused ? t('cron.actions.resume') : t('cron.actions.pause')} loading={busy} onClick={() => runAction(job, paused ? 'resume' : 'pause')}>{paused ? <RotateCcw className="h-4 w-4" /> : <Pause className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="danger" title={t('cron.actions.delete')} aria-label={t('cron.actions.delete')} loading={busy} onClick={() => runAction(job, 'delete')}><Trash2 className="h-4 w-4" /></Button></div>
+            <div className="flex w-fit self-end flex-wrap items-center gap-1.5 xl:self-auto xl:justify-end"><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.detail')} aria-label={t('cron.actions.detail')} onClick={() => openDetail(job)}>{detailLoading && selectedJob?.id === job.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.edit')} aria-label={t('cron.actions.edit')} onClick={() => { setDuplicateJob(null); setEditingJob(job); }}><Pencil className="h-4 w-4" /></Button><Button type="button" iconOnly size="sm" variant="ghost" title={t('cron.actions.duplicate')} aria-label={t('cron.actions.duplicate')} onClick={() => { setDuplicateJob(job); setEditingJob(null); }}><Copy className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={t('cron.actions.run')} aria-label={t('cron.actions.run')} loading={busy} onClick={() => runAction(job, 'run')}><Play className="h-4 w-4" /></Button><Button iconOnly size="sm" variant="ghost" title={paused ? t('cron.actions.resume') : t('cron.actions.pause')} aria-label={paused ? t('cron.actions.resume') : t('cron.actions.pause')} loading={busy} onClick={() => runAction(job, paused ? 'resume' : 'pause')}>{paused ? <RotateCcw className="h-4 w-4" /> : <Pause className="h-4 w-4" />}</Button><Button iconOnly size="sm" variant="danger" title={t('cron.actions.delete')} aria-label={t('cron.actions.delete')} loading={busy} onClick={() => runAction(job, 'delete')}><Trash2 className="h-4 w-4" /></Button></div>
           </div>;
         })}</div>}
       </Card>
       {selectedJob ? <CronDetailModal job={selectedJob} onClose={() => setSelectedJob(null)} /> : null}
-      {editingJob !== undefined ? <CronFormModal job={editingJob} onClose={() => setEditingJob(undefined)} onSaved={saveJob} /> : null}
+      {editingJob !== undefined ? <CronFormModal
+        key={editingJob ? `edit:${editingJob.id}` : duplicateJob ? `duplicate:${duplicateJob.id}` : 'create'}
+        job={editingJob} duplicateSource={duplicateJob}
+        onClose={() => { setDuplicateJob(null); setEditingJob(undefined); }} onSaved={saveJob} /> : null}
     </div>
   );
 }

@@ -3,8 +3,10 @@ import { useRef, useState } from 'react';
 import { Blocks, CheckCircle2, Hammer, KeyRound } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/PageHeader';
 import { useMissionControl } from '../lib/mission-control-store';
+import { toolsetMatches } from '../lib/tools-browser';
 import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 
@@ -40,6 +42,7 @@ export function ToolsRoute() {
   const { tools, refreshTools } = useMissionControl();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   // The hook keeps the spinner until this settles and ignores gestures while
   // it is pending, so one pull means exactly one Tools request.
@@ -52,6 +55,7 @@ export function ToolsRoute() {
   });
 
   const toolsets = tools.availableToolsets;
+  const filteredToolsets = toolsets.filter((toolset) => toolsetMatches(toolset, query));
   const readyCount = toolsets.filter((toolset) => toolset.available).length;
   const blockedCount = toolsets.filter((toolset) => !toolset.available).length;
 
@@ -109,6 +113,20 @@ export function ToolsRoute() {
         </div>
       </Card>
 
+      <div className="flex min-w-0 items-center gap-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          aria-label={t('tools.search')}
+          placeholder={t('tools.search')}
+          className="mc-input min-w-0 w-full"
+        />
+        <Button type="button" size="sm" variant="ghost" onClick={() => setQuery('')}>
+          {t('tools.resetSearch')}
+        </Button>
+      </div>
+
       <Card padding="none" className="!border-0">
         <div className="flex items-center justify-between gap-3 border-b border-border-subtle/60 px-4 pb-3 pt-4">
           <div className="min-w-0">
@@ -119,8 +137,8 @@ export function ToolsRoute() {
         </div>
 
         <div className="space-y-1.5 p-3">
-          {toolsets.length > 0 ? toolsets.map((toolset) => (
-            <article key={toolset.name} className="rounded-lg bg-surface-sunken/25 p-3 transition-colors hover:bg-surface-sunken/50">
+          {filteredToolsets.length > 0 ? filteredToolsets.map((toolset) => (
+            <article key={toolset.name} data-toolset={toolset.name} className="rounded-lg bg-surface-sunken/25 p-3 transition-colors hover:bg-surface-sunken/50">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-text">{toolset.name}</p>
@@ -148,7 +166,7 @@ export function ToolsRoute() {
               ) : null}
             </article>
           )) : (
-            <p className="p-4 text-sm text-text-muted">{t('tools.notFound')}</p>
+            <p className="p-4 text-sm text-text-muted">{t(toolsets.length === 0 ? 'tools.notFound' : 'tools.noMatch')}</p>
           )}
         </div>
       </Card>

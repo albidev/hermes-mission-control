@@ -152,6 +152,16 @@ export function ConfigRoute() {
 
   const dirty = useMemo(() => draft !== editorBase.content || Object.keys(pendingEdits).length > 0 || Object.keys(complexDrafts).length > 0, [draft, editorBase.content, pendingEdits, complexDrafts]);
   const changedExternally = dirty && config.available && (config.hash !== editorBase.hash || config.content !== editorBase.content || config.path !== editorBase.path);
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
   const formSections = useMemo(() => Object.entries(formState ?? {}), [formState]);
   const changedPathKeys = useMemo(() => new Set(Object.keys(pendingEdits)), [pendingEdits]);
   const searchLower = useMemo(() => searchQuery.trim().toLowerCase(), [searchQuery]);
