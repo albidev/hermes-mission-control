@@ -156,7 +156,10 @@ export function approveCard(card: RoomCard, { cloudConsent = false }: { cloudCon
   }
   const errors = contentErrors(card);
   if (errors.length) return { ok: false, errors };
-  return { ok: true, value: { ...card, status: 'approved' } };
+  const approved = { ...card, status: 'approved' as const };
+  const wire = toWire(approved);
+  if (!wire.ok) return wire;
+  return { ok: true, value: approved };
 }
 
 export function revokeCard(card: RoomCard): RoomCard {
@@ -171,6 +174,9 @@ export function toWire(card: RoomCard): CardResult<WireRoomCard> {
   if (card.status === 'revoked') {
     // A revocation tombstone carries no descriptive content.
     Object.assign(wire, cleanContent({}), { displayName: '', ownerLabel: '' });
+  }
+  if (new TextEncoder().encode(JSON.stringify(wire)).length > ROOM_CARD_LIMITS.totalBytes) {
+    return { ok: false, errors: ['card exceeds size limit'] };
   }
   return { ok: true, value: wire as unknown as WireRoomCard };
 }
@@ -210,11 +216,13 @@ export function parseRemoteCard(
 
 export type CardDecision =
   | { action: 'accept'; card: WireRoomCard }
-  | { action: 'ignore'; reason: 'stale' | 'duplicate' | 'after_revocation' }
+  | { action: 'ignore'; reason: 'stale' | 'duplicate' | 'after_revocation' | 'binding_mismatch' }
   | { action: 'revoke'; card: WireRoomCard };
 
 /** Receiver-side update rule: monotonic versions; a revocation is final for the binding. */
 export function reconcileRemoteCard(current: WireRoomCard | undefined, incoming: WireRoomCard): CardDecision {
+  if (current && (current.roomId !== incoming.roomId || current.memberId !== incoming.memberId
+      || current.installationId !== incoming.installationId)) return { action: 'ignore', reason: 'binding_mismatch' };
   if (current?.status === 'revoked') return { action: 'ignore', reason: 'after_revocation' };
   if (current && incoming.version < current.version) return { action: 'ignore', reason: 'stale' };
   if (current && incoming.version === current.version) {

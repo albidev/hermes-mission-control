@@ -332,11 +332,16 @@ class HostConnector:
             (tls or sock).close()
 
 
+class _NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # Reject BEFORE a credential can leave the fixed backend origin.
+
+
 def native_http_backend(target_base: str) -> Callable[[ForwardedRequest], UpstreamResponse]:
     host = urlsplit(target_base).hostname or ""
     if urlsplit(target_base).scheme != "http" or not ipaddress.ip_address(_resolve_literal(host)).is_loopback:
         raise ConnectorError("native target must be a fixed loopback http:// base")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoCredentialRedirect())
 
     def forward(request: ForwardedRequest) -> UpstreamResponse:
         native = urllib.request.Request(target_base + request.path, data=request.body or None,

@@ -282,7 +282,7 @@ class RoomFirewall:
         if error:
             raise UpstreamAmbiguous("native backend failed") from error[0]
         if len(result) != 1 or not isinstance(result[0], UpstreamResponse):
-            _deny("native backend returned an invalid response")
+            raise UpstreamAmbiguous("native backend returned an invalid response")
         return result[0]
 
     def forward(self, request: Request) -> UpstreamResponse:

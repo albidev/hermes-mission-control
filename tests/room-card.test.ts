@@ -153,6 +153,37 @@ describe('versioning, update and revocation', () => {
   });
 });
 
+describe('wire budget and binding regressions', () => {
+  it('refuses an owner-approved Unicode card that its receiver could not accept', () => {
+    const draft = draftCard(BINDING, {
+      displayName: 'Bot', ownerLabel: 'Owner', intro: '😀'.repeat(280), role: '😀'.repeat(80), style: '😀'.repeat(160),
+      expertise: Array.from({ length: 12 }, (_, i) => `${i}` + '😀'.repeat(47)),
+      declaredCapabilities: Array.from({ length: 12 }, (_, i) => `${i}` + '😀'.repeat(47)),
+      sharingLimits: Array.from({ length: 12 }, (_, i) => `${i}` + '😀'.repeat(119)),
+    });
+    assert.ok(draft.ok, 'oversized content can remain a local draft for editing');
+    assert.equal(approveCard(draft.value).ok, false);
+    assert.equal(toWire({ ...draft.value, status: 'approved' }).ok, false);
+  });
+
+  it('round trips every exported bounded ASCII or Unicode card', () => {
+    for (const text of ['ascii', '中文', '😀', 'a"\\n']) {
+      const card = approved({ intro: text.repeat(20), style: text.repeat(10) });
+      const exported = wire(card);
+      assert.ok(new TextEncoder().encode(JSON.stringify(exported)).length <= ROOM_CARD_LIMITS.totalBytes);
+      const parsed = parseRemoteCard(exported, BINDING);
+      assert.ok(parsed.ok);
+      assert.deepStrictEqual(parsed.value, exported);
+    }
+  });
+
+  it('never applies a foreign-binding tombstone to the current card', () => {
+    const current = wire(approved());
+    const foreign = { ...wire(revokeCard(approved())), roomId: 'another-room' };
+    assert.deepStrictEqual(reconcileRemoteCard(current, foreign), { action: 'ignore', reason: 'binding_mismatch' });
+  });
+});
+
 describe('cards carry no authority', () => {
   it('declared capabilities leave a native policy object untouched', () => {
     const policy = Object.freeze({ tools: Object.freeze(['read_file']), dispatch: false });

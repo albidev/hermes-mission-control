@@ -101,8 +101,7 @@ class RelayDaemon:
 
     def reload(self) -> int:
         routes = load_routes(self.routes_path)
-        for route in routes:
-            self.relay.load_route(route)
+        self.relay.load_routes(routes)
         log.info(json.dumps({"event": "routes_loaded", "count": len(routes)}))
         return len(routes)
 
@@ -115,7 +114,12 @@ class RelayDaemon:
         if install_signals:
             for sig in (signal.SIGTERM, signal.SIGINT):
                 loop.add_signal_handler(sig, stop.set)
-            loop.add_signal_handler(signal.SIGHUP, self.reload)
+            def reload_from_signal():
+                try:
+                    self.reload()
+                except (ValueError, RuntimeError):
+                    log.error(json.dumps({"event": "route_reload_rejected", "action": "restart_required_or_invalid_routes"}))
+            loop.add_signal_handler(signal.SIGHUP, reload_from_signal)
         async with serve(handler, self.host, self.port, ssl=self.tls, max_size=MAX_FRAME_BYTES + 1024,
                          ping_interval=20, ping_timeout=20, close_timeout=5) as server:
             bound = next(iter(server.sockets)).getsockname()

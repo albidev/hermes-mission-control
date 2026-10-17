@@ -66,6 +66,13 @@ Pass criteria (all required for F1):
 5. Relay restart mid-idle: connectors reconnect with incarnation+1, no replayed POST on B.
 6. Stop/revoke on A behaves as in H (native semantics), unaffected by the relay hop.
 
+## Route reload policy (MVP)
+SIGHUP can atomically **add** routes. Removing a route or changing its scope/endpoints/
+credential digests is explicitly rejected with `route_reload_rejected`; no partial table
+is applied and no revocation is claimed. Stop/restart the relay with the replacement
+route file to remove routes or rotate S2. This disconnects active transport sessions;
+it is separate from revoking the native S4 grant or stopping an admitted run.
+
 ## Teardown
 `systemctl disable --now rooms-relay`, remove `/etc/rooms-relay`, revoke the native grant on B,
 delete `~/.rooms-f1` on both hosts.

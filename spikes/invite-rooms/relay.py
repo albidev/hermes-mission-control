@@ -144,6 +144,22 @@ class Relay:
             raise RelayError("route credentials must cover exactly both endpoints")
         self._routes[route.link_id] = route
 
+    def load_routes(self, routes: list[Route]) -> None:
+        """Atomic append-only reload; destructive changes require a clean restart.
+
+        Existing authenticated sessions cannot be retroactively rekeyed by a
+        table assignment. Refuse removal/rotation explicitly instead of claiming
+        a removed credential was revoked while old sessions still use it.
+        """
+        staged = Relay(credential_digest=self._digest)
+        for route in routes:
+            if route.link_id in staged._routes:
+                raise RelayError("duplicate route")
+            staged.load_route(route)
+        if any(staged._routes.get(key) != route for key, route in self._routes.items()):
+            raise RelayError("route removal or credential rotation requires daemon restart")
+        self._routes = staged._routes
+
     async def connect(self, *, identity: str, link_id: str, credential: str) -> RelayConnection:
         identity = _require_text(identity, "identity")
         link_id = _require_text(link_id, "link_id")
