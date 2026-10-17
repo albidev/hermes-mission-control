@@ -1,0 +1,25 @@
+{
+  "role": "host",
+  "relay_url": "wss://relay.example.com/data",
+  "identity": "<HOST_A_INSTALL_ID>",
+  "peer_identity": "<HOST_B_INSTALL_ID>",
+  "link_id": "f1-link",
+  "room_id": "<ROOM_ID>",
+  "credential_file": "~/.rooms-f1/f1-link.<HOST_A_INSTALL_ID>.credential",
+  "scope": {
+    "room_id": "<ROOM_ID>",
+    "home_install_id": "<HOST_A_INSTALL_ID>",
+    "authority_gateway_id": "<HOST_A_INSTALL_ID>",
+    "authority_epoch": 1,
+    "member_id": "peer-b",
+    "target_install_id": "<HOST_B_INSTALL_ID>",
+    "target_profile": "default"
+  },
+  "inner_tls": {
+    "cert_file": "~/.rooms-f1/pki/leaf.pem",
+    "key_file": "~/.rooms-f1/pki/leaf.key",
+    "peer_ca_file": "~/.rooms-f1/peer/host-b-ca.pem",
+    "peer_fingerprint": "<HOST_B_LEAF_SHA256>"
+  },
+  "adapter": {"host": "127.0.0.1", "port": 0}
+}

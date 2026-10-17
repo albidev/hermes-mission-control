@@ -1,0 +1,36 @@
+{
+	# HTTP challenge disabled: port 80 is closed; ACME uses TLS-ALPN-01 on :443.
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+	}
+}
+
+{{DOMAIN}}:443 {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	@relay path /data /health
+	handle @relay {
+		reverse_proxy 127.0.0.1:8443 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+	handle {
+		respond 404
+	}
+	log {
+		output stderr
+		# never log query strings or bodies; the relay has no credentials in URLs anyway
+		format filter {
+			request>uri delete
+			request>headers delete
+		}
+	}
+}
