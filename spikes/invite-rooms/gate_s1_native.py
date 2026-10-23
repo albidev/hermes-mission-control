@@ -332,7 +332,8 @@ class NativeLab:
         assert self.report["source_start"]["branch"] == "feat/invite-rooms"
         # The lab tree must descend from the verified S1/S2/F1 checkpoint; an
         # exact-HEAD pin went stale on every later local checkpoint commit.
-        assert subprocess.run(["git", "merge-base", "--is-ancestor", "dc028f5", "HEAD"],
+        # c73398e is that checkpoint (formerly dc028f5) after the rebase onto origin/main.
+        assert subprocess.run(["git", "merge-base", "--is-ancestor", "c73398e", "HEAD"],
                               cwd=gc.REPO, capture_output=True).returncode == 0
         for port in (18790, 18791):
             assert gc.pf.check_port_available(port)["available"], "native lab port occupied"
