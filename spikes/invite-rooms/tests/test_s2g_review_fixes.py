@@ -187,7 +187,9 @@ class DrainIsBounded(unittest.IsolatedAsyncioTestCase):
         start = time.monotonic()
         with self.assertRaises(NativeRpcAmbiguous):
             await rpc('groups.capabilities', {})
-        self.assertLess(time.monotonic() - start, 0.05 + 0.03)
+        # An unbounded drain takes >= 100 * 4 ms = 400 ms; 150 ms of scheduler
+        # slack keeps the bound discriminating without failing under load.
+        self.assertLess(time.monotonic() - start, 0.05 + 0.15)
         self.assertEqual(ws.sent, [])
 
     async def test_normal_backlog_still_drains_and_request_is_sent(self):
