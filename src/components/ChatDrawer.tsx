@@ -97,6 +97,7 @@ import { createGroupGatewayClient, type GroupRoom } from '../lib/group-gateway';
 import { CreateRoomForm, GroupRoomView } from './chat/GroupRoomView';
 import { persistRoomVault } from '../lib/hermes-api';
 import { RoomInvitePanel } from './chat/RoomInvitePanel';
+import { useRoomInvitesAvailable } from '../lib/use-room-invites-available';
 
 type ChatDrawerProps = {
   open: boolean;
@@ -2037,6 +2038,7 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
   const [creating, setCreating] = useState(false);
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
   const [invitePanelOpen, setInvitePanelOpen] = useState(false);
+  const invitesAvailable = useRoomInvitesAvailable(open, storedToken);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [botCandidates, setBotCandidates] = useState<BotMentionCandidate[]>([]);
@@ -2156,7 +2158,7 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
               {state.refreshing ? <Loader2 size={16} className="chat-spin chat-header-loader" aria-label={t('rooms.refresh')} /> : null}
               <span className={`chat-led ${state.disbanded || state.serviceUnavailable ? 'is-offline' : state.pendingActions.length > 0 || state.blocked ? 'is-pending' : 'is-online'}`} title={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')} aria-label={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')}><span className="chat-led-dot" /></span>
               <button className="chat-control chat-icon-button" type="button" onClick={() => { if (state.room) { setNameDraft(state.room.name ?? ''); setEditingName(true); } }} title={t('rooms.renameRoom')} aria-label={t('rooms.renameRoom')} disabled={!state.room || state.disbanded}><Pen size={15} /></button>
-              <button className="chat-control chat-icon-button" type="button" onClick={() => setInvitePanelOpen((current) => !current)} title={t('rooms.invites.title')} aria-label={t('rooms.invites.title')}><ShieldCheck size={15} /></button>
+              {invitesAvailable ? <button className="chat-control chat-icon-button" type="button" onClick={() => setInvitePanelOpen((current) => !current)} title={t('rooms.invites.title')} aria-label={t('rooms.invites.title')}><ShieldCheck size={15} /></button> : null}
               <button className="chat-control chat-icon-button" type="button" onClick={() => setCreating((current) => !current)} title={creating ? t('rooms.close') : t('rooms.create')} aria-label={creating ? t('rooms.close') : t('rooms.create')}>{creating ? <X size={16} /> : <Plus size={16} />}</button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title={t('rooms.close')} aria-label={t('rooms.close')}><X size={18} /></button>
             </div>
@@ -2170,7 +2172,7 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
         <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} chatLed="none" roomsLed={roomAttention} storedToken={storedToken} enabled={open} onResumeSession={onResumeSession} />
         <div className="flex min-h-0 flex-1 flex-col">
           {!canUseRooms && !state.loading ? <div className="chat-error m-4" role="status">{t('rooms.driverUnavailable')}</div> : null}
-          {invitePanelOpen ? <div className="chat-transcript rooms-empty"><RoomInvitePanel lobbyId={inviteLobbyId ?? null} accessToken={storedToken} localBots={botCandidates.length > 0 ? botCandidates : mentionRoster} onClose={() => setInvitePanelOpen(false)} onRoomActivated={(nextRoomId) => { setInvitePanelOpen(false); void selectRoom(nextRoomId); onRoomChange?.(nextRoomId, null); }} /></div> : creating ? <div className="chat-transcript rooms-empty"><CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /></div> : state.room && canUseRooms ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} onNearBottomChange={(near) => { roomsNearBottomRef.current = near; setRoomsNearBottom(near); }} /> : canUseRooms ? <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div> : null}
+          {invitePanelOpen && invitesAvailable ? <div className="chat-transcript rooms-empty"><RoomInvitePanel lobbyId={inviteLobbyId ?? null} accessToken={storedToken} localBots={botCandidates.length > 0 ? botCandidates : mentionRoster} onClose={() => setInvitePanelOpen(false)} onRoomActivated={(nextRoomId) => { setInvitePanelOpen(false); void selectRoom(nextRoomId); onRoomChange?.(nextRoomId, null); }} /></div> : creating ? <div className="chat-transcript rooms-empty"><CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /></div> : state.room && canUseRooms ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} onNearBottomChange={(near) => { roomsNearBottomRef.current = near; setRoomsNearBottom(near); }} /> : canUseRooms ? <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div> : null}
           {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
         </div>
       </aside>
