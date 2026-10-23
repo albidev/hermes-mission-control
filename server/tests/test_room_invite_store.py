@@ -230,11 +230,11 @@ class InviteStoreTest(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=12) as pool:
             self.assertEqual(list(pool.map(open_store, range(12))), [False] * 12)
         with sqlite3.connect(path) as conn:
-            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchall(), [(1,)])
+            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchall(), [(2,)])
 
     def test_live_store_cannot_write_after_another_process_advances_schema(self):
         with sqlite3.connect(self.path) as conn:
-            conn.execute("UPDATE schema_version SET version=2")
+            conn.execute("UPDATE schema_version SET version=3")
         with self.assertRaisesRegex(InviteError, "^schema_too_new$"):
             self.issue()
 

@@ -35,7 +35,8 @@ class IssuedInvite:
 
 _SCHEMA = """
 CREATE TABLE schema_version(version INTEGER NOT NULL);
-INSERT INTO schema_version VALUES (1);
+INSERT INTO schema_version VALUES (2);
+CREATE TABLE owner_scope(installation_id TEXT NOT NULL, profile TEXT NOT NULL);
 CREATE TABLE lobbies(
  lobby_id TEXT PRIMARY KEY, room_id TEXT UNIQUE,
  planned_room_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
@@ -52,6 +53,7 @@ CREATE TABLE redemptions(
  invite_id TEXT PRIMARY KEY REFERENCES invitations(invite_id),
  endpoint_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
  target_install_id TEXT NOT NULL, target_profile TEXT NOT NULL,
+ catalog_digest TEXT, policy_digest TEXT,
  host_decision TEXT NOT NULL, joining_consent TEXT NOT NULL, decided_at REAL
 );
 CREATE TABLE peer_links(
@@ -133,7 +135,12 @@ class RoomInviteStore:
             versions = conn.execute("SELECT version FROM schema_version").fetchall()
             if len(versions) != 1 or type(versions[0][0]) is not int or versions[0][0] < 1:
                 raise InviteError("invalid_schema")
-            self.read_only = versions[0][0] > 1
+            if versions[0][0] == 1:
+                # Both historical and the unversioned P1 layout used version 1.
+                # Neither proves owner adoption or approval of a full policy.
+                # Do not write, infer ownership, or silently retrofit consent.
+                raise InviteError("legacy_schema_recovery_required")
+            self.read_only = versions[0][0] > 2
             if initialized:
                 conn.execute("PRAGMA journal_mode=WAL")
 
@@ -155,8 +162,10 @@ class RoomInviteStore:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 version = conn.execute("SELECT version FROM schema_version").fetchall()
-                if len(version) != 1 or version[0][0] != 1:
+                if len(version) != 1 or version[0][0] > 2:
                     raise InviteError("schema_too_new")
+                if version[0][0] != 2:
+                    raise InviteError("legacy_schema_recovery_required")
                 yield conn
                 conn.commit()
             except BaseException:
@@ -227,16 +236,28 @@ class RoomInviteStore:
         return member
 
     @staticmethod
-    def _validate_binding(binding):
-        if not isinstance(binding, dict) or set(binding) != {"endpoint_id", "fingerprint", "target_install_id", "target_profile"}:
+    def _normalize_binding(binding):
+        if not isinstance(binding, dict) or set(binding) not in ({"endpoint_id", "fingerprint", "target_install_id", "target_profile"}, {"endpoint_id", "fingerprint", "target_install_id", "target_profile", "catalog_digest", "policy_digest"}):
             raise InviteError("invalid_peer_binding")
+        binding = copy.deepcopy(binding)
+        legacy = "catalog_digest" not in binding
+        binding.setdefault("catalog_digest", None)
+        binding.setdefault("policy_digest", None)
         patterns = {"endpoint_id": r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", "fingerprint": r"[0-9a-f]{64}",
-                    "target_install_id": r"install:[0-9a-f]{32}", "target_profile": r"[a-z0-9][a-z0-9_-]{0,63}"}
-        if any(not isinstance(binding[key], str) or not re.fullmatch(pattern, binding[key]) for key, pattern in patterns.items()):
+                    "target_install_id": r"install:[0-9a-f]{32}", "target_profile": r"[a-z0-9][a-z0-9_-]{0,63}",
+                    "catalog_digest": r"[0-9a-f]{64}", "policy_digest": r"[0-9a-f]{64}"}
+        if any(not isinstance(binding[key], str) or not re.fullmatch(pattern, binding[key])
+               for key, pattern in patterns.items() if not (legacy and key in {"catalog_digest", "policy_digest"})):
             raise InviteError("invalid_peer_binding")
+        return binding
+
+    @staticmethod
+    def _validate_binding(binding):
+        """Compatibility validator for the spike's private control adapter."""
+        RoomInviteStore._normalize_binding(binding)
 
     def redeem(self, lobby_id: str, invite_id: str, secret: str, *, binding: dict) -> dict:
-        self._validate_binding(binding)
+        binding = self._normalize_binding(binding)
         if not isinstance(secret, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", secret):
             raise InviteError("invite_unavailable")
         with self._write() as conn:
@@ -254,9 +275,10 @@ class RoomInviteStore:
                  self.clock(), hashlib.sha256(secret.encode()).hexdigest()))
             if result.rowcount != 1:
                 raise InviteError("invite_unavailable")
-            conn.execute("INSERT INTO redemptions VALUES(?,?,?,?,?,'pending','pending',NULL)",
+            conn.execute("INSERT INTO redemptions VALUES(?,?,?,?,?,?,?,'pending','pending',NULL)",
                          (invite_id, binding["endpoint_id"], binding["fingerprint"],
-                          binding["target_install_id"], binding["target_profile"]))
+                          binding["target_install_id"], binding["target_profile"],
+                          binding["catalog_digest"], binding["policy_digest"]))
         return self.get_redemption(lobby_id, invite_id)
 
     def get_redemption(self, lobby_id: str, invite_id: str) -> dict:
@@ -268,6 +290,15 @@ class RoomInviteStore:
             data = dict(row)
             data["status"] = self._consent_status(data)
             return data
+
+    def list_redemptions(self, lobby_id: str) -> list[dict]:
+        """Read-only projection of all redemptions for a lobby. Safe for product views."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT i.invite_id,i.member_id,r.* FROM invitations i "
+                "JOIN redemptions r USING(invite_id) WHERE i.lobby_id=? ORDER BY i.member_id",
+                (lobby_id,)).fetchall()
+        return [dict(row) | {"status": self._consent_status(dict(row))} for row in rows]
 
     @staticmethod
     def _consent_status(row):
@@ -290,7 +321,7 @@ class RoomInviteStore:
         return self._decision(lobby_id, invite_id, binding, "joining_consent", "given" if consented else "refused")
 
     def _decision(self, lobby_id, invite_id, binding, column, value):
-        self._validate_binding(binding)
+        binding = self._normalize_binding(binding)
         with self._write() as conn:
             self._open_lobby(conn, lobby_id)
             row = conn.execute("SELECT r.* FROM invitations i JOIN redemptions r USING(invite_id) WHERE i.lobby_id=? AND i.invite_id=?", (lobby_id, invite_id)).fetchone()
@@ -348,3 +379,14 @@ class RoomInviteStore:
             if row is None:
                 raise InviteError("invite_unavailable")
             return dict(row)
+
+    def bind_owner_scope(self, installation_id: str, profile: str) -> None:
+        """Bind this explicit store path once; a restart cannot silently rebind it."""
+        if not isinstance(installation_id, str) or not isinstance(profile, str):
+            raise InviteError("invalid_owner_scope")
+        with self._write() as conn:
+            row = conn.execute("SELECT installation_id,profile FROM owner_scope").fetchone()
+            if row is None:
+                conn.execute("INSERT INTO owner_scope VALUES(?,?)", (installation_id, profile))
+            elif row["installation_id"] != installation_id or row["profile"] != profile:
+                raise InviteError("owner_scope_mismatch")

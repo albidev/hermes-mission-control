@@ -6,6 +6,8 @@ network transport. Real WebSocket/peer registration is covered by gate_p2_p4_loc
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -13,10 +15,10 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, "/Users/albi/.hermes/hermes-agent")
 from gateway import hosted_rooms, hosted_room_discussion
 from room_invite_store import InviteError, RoomInviteStore
 from room_lobby_service import NativeRpcRejected, PeerMaterial, RoomLobbyService
+from gateway.hosted_room_peer import catalog_mapping
 
 ROSTER = [
     {"member_id": "local-a", "profile": "default", "handle": "local"},
@@ -24,8 +26,13 @@ ROSTER = [
      "target": {"kind": "peer", "peer_id": "owner-b",
                 "installation_id": "install:" + "b" * 32, "profile": "default"}},
 ]
+_INSTALL_B = "install:" + "b" * 32
+_POLICY_UNSIGNED = {"version": 1, "target_profile": "default", "enabled_toolsets": ["bot_room"], "approval_mode": "manual", "max_iterations": 10}
+_POLICY = {**_POLICY_UNSIGNED, "policy_digest": hashlib.sha256(json.dumps(_POLICY_UNSIGNED, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest()}
+_CATALOG = catalog_mapping(installation_id=_INSTALL_B, protocol_versions=(2,), link_modes=("direct",), persistent_process=True, text=True, attachments=False, endpoint={"available": True, "url": "http://127.0.0.1:19001/links/unit-link", "transport_security": "loopback"}, target_profile="default", execution_policy=_POLICY)
 BINDING = {"endpoint_id": "endpoint-b", "fingerprint": "b" * 64,
-           "target_install_id": "install:" + "b" * 32, "target_profile": "default"}
+           "target_install_id": _INSTALL_B, "target_profile": "default",
+           "catalog_digest": _CATALOG["catalog_digest"], "policy_digest": _CATALOG["execution_policy"]["policy_digest"]}
 
 
 class LobbyServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -38,8 +45,7 @@ class LobbyServiceTest(unittest.IsolatedAsyncioTestCase):
         self.authority = "install:" + "a" * 32  # Unit fixture, not a discovered live gateway.
         self.lobby = self.store.create_lobby(name="Known owners", roster=copy.deepcopy(ROSTER))
         self.issued = self.store.issue_invite(self.lobby["lobby_id"], "peer-b", invitee_label="B")
-        self.catalog = {"installation_id": BINDING["target_install_id"], "catalog_digest": "d" * 64,
-                        "execution_policy": {"target_profile": "default"}}
+        self.catalog = copy.deepcopy(_CATALOG)
         self.calls = []
         self.drop_create_reply = False
         self.service = RoomLobbyService(self.store, self.rpc, self.peer_material)
@@ -90,7 +96,7 @@ class LobbyServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first["room_id"], self.lobby["planned_room_id"])
         self.assertEqual(second["room_id"], first["room_id"])
         self.assertEqual(first["members"], second["members"])
-        self.assertEqual(first["members"][1]["target"]["capability_digest"], "d" * 64)
+        self.assertEqual(first["members"][1]["target"]["capability_digest"], _CATALOG["catalog_digest"])
         self.assertEqual(self.store.get_lobby(self.lobby["lobby_id"])["state"], "created")
         with sqlite3.connect(self.native_db) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM hosted_rooms").fetchone()[0], 1)
@@ -129,7 +135,7 @@ class LobbyServiceTest(unittest.IsolatedAsyncioTestCase):
         await self.service.create_room(self.lobby["lobby_id"])
         original = copy.deepcopy(self.catalog)
         self.catalog["catalog_digest"] = "e" * 64
-        with self.assertRaisesRegex(InviteError, "^native_spec_conflict$"):
+        with self.assertRaisesRegex(InviteError, "^invalid_catalog$"):
             await self.service.create_room(self.lobby["lobby_id"])
         self.catalog = original
         self.authority = "install:" + "c" * 32

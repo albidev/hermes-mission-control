@@ -44,6 +44,32 @@ SKI/AKI) and leaves carry CA:FALSE + keyUsage + EKU + AKI, so the chain passes
 `VERIFY_X509_STRICT` (Python ≥3.13 default) on both hosts. No `OPENSSL_CONF` workaround needed.
 
 ## 3. Native invitation (Host B owner consent)
+
+### Text-only execution policy (required before issuing a grant)
+
+An old top-level `toolsets: []` does **not** disable API-server tools: without an
+explicit platform selection Hermes falls back to the API platform defaults. For a
+text-only peer, select both deployed entry points explicitly in its own config:
+
+```yaml
+platform_toolsets:
+  api_server: []
+  cli: []
+approvals:
+  mode: manual
+```
+
+Back up the private config (0600), preserve all unrelated fields and restart only
+that isolated peer service. Read the *running gateway's* invitation/capabilities
+catalog back: `execution_policy.enabled_toolsets` must be exactly `["bot_room"]`.
+The native Room text-only policy marker is not a general-purpose toolset; regular
+API/CLI tool definitions must be empty. Preserve the existing iteration limit
+(the VPS lab uses 3); tool restriction does not silently change inference budgets.
+Revoke the test grant and confirm capabilities rejects it (403). Policy digest
+changes require owner reauthorization; never reuse an invitation/catalog approved
+under the former broad policy. This is application-level tool restriction, not an
+OS sandbox or a claim that the process needs no outbound provider network access.
+
 Host B owner runs the native invitation on their own gateway (loopback API) and gives Host A the
 grant + catalog out of band. Nothing about the invitation crosses the relay before both connectors
 are configured; opening a link never creates a grant.

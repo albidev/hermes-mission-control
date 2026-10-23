@@ -49,17 +49,22 @@ def _validate_adapter(url):
 
 
 class RoomLobbyService:
-    def __init__(self, store: RoomInviteStore, rpc, peer_material):
+    def __init__(self, store: RoomInviteStore, rpc, peer_material, *, expected_authority=None):
         self.store = store
         self.rpc = rpc
         self.peer_material = peer_material
+        self.expected_authority = expected_authority
 
     async def _plan(self, lobby_id):
         lobby = self.store.seal_lobby(lobby_id)
         caps = await self.rpc("groups.capabilities", {})
+        if not isinstance(caps, dict):
+            raise InviteError("native_unavailable")
         authority = caps.get("authority_gateway_id")
         if caps.get("driver") is not True or not isinstance(authority, str) or not re.fullmatch(r"install:[0-9a-f]{32}", authority):
             raise InviteError("native_unavailable")
+        if self.expected_authority is not None and authority != self.expected_authority:
+            raise InviteError("authority_mismatch")
         members = copy.deepcopy(lobby["roster"])
         material_by_member = {}
         for member in members:
@@ -68,16 +73,48 @@ class RoomLobbyService:
                 continue
             peer = next(p for p in lobby["peers"] if p["member_id"] == member["member_id"])
             material = await self.peer_material(copy.deepcopy(peer))
-            if not isinstance(material, PeerMaterial) or material.binding != {k: peer[k] for k in ("endpoint_id", "fingerprint", "target_install_id", "target_profile")}:
+            # Generic coordinator retains the accepted four-field lab contract.
+            # NULL means unapproved product policy, never fabricated zero digests.
+            # The product wrapper cannot admit this branch (mandatory six pins).
+            full_policy = peer.get("catalog_digest") is not None or peer.get("policy_digest") is not None
+            keys = ("endpoint_id", "fingerprint", "target_install_id", "target_profile")
+            if full_policy:
+                keys += ("catalog_digest", "policy_digest")
+            expected_binding = {k: peer[k] for k in keys}
+            if not isinstance(material, PeerMaterial) or material.binding != expected_binding:
                 raise InviteError("fingerprint_mismatch")
             _validate_adapter(material.adapter_url)
             catalog = material.catalog
-            digest = catalog.get("catalog_digest")
-            if catalog.get("installation_id") != peer["target_install_id"] or catalog.get("execution_policy", {}).get("target_profile") != peer["target_profile"]:
+            if not full_policy:
+                digest = catalog.get("catalog_digest") if isinstance(catalog, dict) else None
+                if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                    raise InviteError("invalid_catalog")
+                if (catalog.get("installation_id") != peer["target_install_id"]
+                        or catalog.get("execution_policy", {}).get("target_profile") != peer["target_profile"]):
+                    raise InviteError("peer_scope_mismatch")
+                if member["target"].get("capability_digest", digest) != digest:
+                    raise InviteError("policy_changed")
+                member["target"]["capability_digest"] = digest
+                material_by_member[member["member_id"]] = material
+                continue
+            try:
+                from gateway.hosted_room_peer import GatewayRoomCatalog
+            except ImportError:
+                raise InviteError("native_contract_unavailable") from None
+            try:
+                native_catalog = GatewayRoomCatalog.from_mapping(copy.deepcopy(catalog))
+            except Exception:
+                raise InviteError("invalid_catalog") from None
+            policy = native_catalog.execution_policy
+            digest = native_catalog.catalog_digest
+            if (native_catalog.installation_id != peer["target_install_id"]
+                    or policy.target_profile != peer["target_profile"]
+                    or policy.policy_digest != peer["policy_digest"]
+                    or not native_catalog.text or native_catalog.attachments
+                    or tuple(sorted(policy.enabled_toolsets)) != ("bot_room",)
+                    or policy.approval_mode != "manual"):
                 raise InviteError("peer_scope_mismatch")
-            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-                raise InviteError("invalid_catalog")
-            if member["target"].get("capability_digest", digest) != digest:
+            if digest != peer["catalog_digest"] or member["target"].get("capability_digest", digest) != digest:
                 raise InviteError("policy_changed")
             member["target"]["capability_digest"] = digest
             material_by_member[member["member_id"]] = material

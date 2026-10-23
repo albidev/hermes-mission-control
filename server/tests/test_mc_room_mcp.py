@@ -13,6 +13,14 @@ import mc_room_mcp  # noqa: E402
 
 
 class MissionControlRoomMcpTests(unittest.TestCase):
+    def setUp(self):
+        # Pre-existing fixture defect: named worker profiles override HERMES_HOME,
+        # and an inherited allowlist overrides membership. Isolate test identity;
+        # do NOT weaken the production authorization implementation.
+        env = patch.dict("os.environ", {"HERMES_PROFILE": "", "MC_ROOM_READ_ALLOWLIST": ""})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_room_mcp_defaults_to_shared_state_database(self):
         with patch.dict("os.environ", {"MC_GROUP_ROOMS_DB_PATH": ""}):
             self.assertEqual(
