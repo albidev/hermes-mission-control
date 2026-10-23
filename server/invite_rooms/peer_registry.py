@@ -21,6 +21,7 @@ from typing import Optional
 
 from room_invite_store import InviteError
 from room_lobby_service import PeerMaterial, _validate_adapter
+from invite_rooms.peer_binding import PeerBindingError, validate_peer_binding
 
 
 def _native_catalog(value: dict):
@@ -85,6 +86,10 @@ class MaterialScope:
             _check(getattr(self, name), _TOKEN, 'material_scope')
         for name in ('fingerprint', 'catalog_digest', 'policy_digest'):
             _check(getattr(self, name), _FINGERPRINT, 'material_scope')
+        try:
+            validate_peer_binding(self.binding)
+        except PeerBindingError:
+            raise PeerRegistryError("invalid_material_scope") from None
 
     @property
     def binding(self):
@@ -231,8 +236,9 @@ class PeerRegistry:
         # Exact binding revalidation — fail closed on any mismatch.
         if not isinstance(expected_binding, dict):
             raise PeerRegistryError("invalid_binding")
-        expected_keys = {"endpoint_id", "fingerprint", "target_install_id", "target_profile", "catalog_digest", "policy_digest"}
-        if set(expected_binding) != expected_keys:
+        try:
+            expected_binding = validate_peer_binding(expected_binding)
+        except PeerBindingError:
             raise PeerRegistryError("invalid_binding")
         if (expected_binding["endpoint_id"] != entry.endpoint_id
                 or expected_binding["fingerprint"] != entry.fingerprint

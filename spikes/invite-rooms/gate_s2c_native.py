@@ -24,7 +24,8 @@ from room_invite_store import RoomInviteStore
 def flow(lab, rpc, loop):
     from lobby_material import MintJournal, TargetMint, PrivateRegistry
     with ControlLab(lab.out / 'control', host_id=lab.report['identity']['gateway_id'],
-                    target_id=lab.report['identity']['second_gateway_id']) as network:
+                target_id=lab.report['identity']['second_gateway_id'],
+                target_catalog=lab.target_catalog, require_target_catalog=True) as network:
         store = RoomInviteStore(lab.out / 'mc.sqlite')
         lobby = store.create_lobby(name='S2.C no activation', roster=network.roster)
         lid = lobby['lobby_id']
@@ -173,6 +174,7 @@ async def native(lab):
         async with ws:
             rpc = BoundedNativeRpc(ws)
             caps = await rpc('groups.capabilities', {})
+            lab.target_catalog = caps['room_link']['catalog']
             lab.check('target_rpc_actual_native_identity', caps['authority_gateway_id'] == lab.report['identity']['second_gateway_id'])
             await asyncio.to_thread(flow, lab, rpc, asyncio.get_running_loop())
             audit = native_inventory(lab)

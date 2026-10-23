@@ -284,6 +284,7 @@ class NativeLab:
         self.owned = []
         self.logs = []
         self.transports = []
+        self.networks = []
         self.keys = []
 
     def check(self, name, ok, **detail):
@@ -302,9 +303,10 @@ class NativeLab:
         self.logs.append(log)
         proc = subprocess.Popen(argv, cwd=gc.CORE, env=gc.pf.isolated_child_env(home),
                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        row = next(r for r in processes() if r["pid"] == proc.pid)
-        record = {"role": role, **row, "argv": argv, "home": str(home), "signals": []}
+        record = {"role": role, "argv": argv, "home": str(home), "signals": []}
         self.owned.append((proc, record))
+        row = next(r for r in processes() if r["pid"] == proc.pid)
+        record.update(row)
         self.report["processes"].append(record)
         self.report["commands"].append({"argv": argv, "cwd": str(gc.CORE), "home": str(home)})
         self.flush()
@@ -1089,6 +1091,8 @@ class NativeLab:
         try:
             for transport in reversed(self.transports):
                 attempt("transport_close", transport.close)
+            for network in reversed(getattr(self, "networks", [])):
+                attempt("control_network_close", network.close)
             for proc, record in reversed(self.owned):
                 attempt("process_terminate", lambda: self.terminate(proc))
                 # Record actual readback even when termination raised; None is alive/unknown.

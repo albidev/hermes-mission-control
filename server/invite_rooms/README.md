@@ -219,3 +219,26 @@ header is present, an exact `MISSION_CONTROL_ALLOWED_ORIGIN` match.
 | 413  | `payload_too_large` | —                                                                                 |
 | 503  | `unavailable`       | `activation_unavailable`, `creation_ambiguous`, `registration_ambiguous`, `native_peer_unconfirmed`, `native_contract_unavailable`, `activation_failed`, `material_channel_unavailable`, `native_unavailable`, `activation_timeout` |
 | 500  | `internal`          | — (sanitized catch-all; never a traceback or an interpolated value)              |
+
+## MVP.2b-core — joining-owner side (no HTTP, no transport promotion)
+
+Five new, single-topic modules add the JOINING owner's local operations, symmetric
+to P1's host-side `InviteRoomsService`: `invitation.py` (network-free invitation
+parsing against a pinned, constructor-supplied origin, plus the joining owner's own
+`ApprovedHostRegistry`), `consent.py` (the pure Ed25519 canonical/verify primitives
+and an owner-private `ConsentKey`), `joining_store.py` (durable, schema-versioned,
+fail-closed joining-side SQLite state — imports, confirmed scopes, consent receipts,
+mint journal), `joining.py` (`JoiningOwnerService`: preview/redeem/confirm_scope/
+consent), and `joining_material.py` (`TargetMaterialMint`: the target-side handlers
+exercised during host activation, with a durable encrypted mint journal).
+
+These preserve the accepted S2 lab contract (`lobby_owner.JoiningOwner`,
+`lobby_material.TargetMint`/`MintJournal`, `lobby_consent`'s canonical encoding) by
+reimplementing the same scope/receipt/envelope shapes rather than importing spike
+code into product code; one test drives the REAL lab control classes against this
+implementation to prove interoperability (see
+`server/tests/test_room_invite_joining.py::RealLabParityTest`). No HTTP route exists
+yet; a `ControlChannel`-shaped object (`.call(request) -> dict`) and a bounded async
+`rpc(method, params)` callable (the exact contract in `native_rpc.py`) are injected,
+so a later packet can wire either the pinned TLS transport or a headless adapter
+without touching this module's logic.

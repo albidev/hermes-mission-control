@@ -247,3 +247,47 @@ class TargetMint:
                 raise MintAmbiguous() from None
         validate_material(scope, envelope)
         return await asyncio.to_thread(self.join.control.call, {'op': 'material', 'invite_id': scope['invite_id'], 'envelope': envelope})
+
+
+# Compatibility adapter: durable journal and material validation live in the
+# product package. The remaining code in this module is lab-only glue.
+from pathlib import Path as _Path
+import sys as _sys
+_SERVER = _Path(__file__).resolve().parents[2] / 'server'
+if str(_SERVER) not in _sys.path:
+    _sys.path.insert(0, str(_SERVER))
+from invite_rooms.joining_material import (MintJournal as _ProductMintJournal,
+                                            MintAmbiguous as _ProductMintAmbiguous,
+                                            MaterialError as _ProductMaterialError,
+                                            validate_material as _product_validate_material)
+from lobby_control import ControlError as _ControlError
+
+class MintAmbiguous(_ControlError):
+    def __init__(self):
+        super().__init__('mint_ambiguous')
+
+class MintJournal(_ProductMintJournal):
+    """Lab exception-shape adapter over the product-owned journal."""
+    def load(self, scope):
+        try:
+            return super().load(scope)
+        except _ProductMaterialError:
+            raise _ControlError('material_unavailable') from None
+
+    def begin(self, scope):
+        try:
+            return super().begin(scope)
+        except _ProductMintAmbiguous:
+            raise MintAmbiguous() from None
+
+    def complete(self, scope, value):
+        try:
+            return super().complete(scope, value)
+        except _ProductMaterialError:
+            raise _ControlError('material_unavailable') from None
+
+def validate_material(scope, value):
+    try:
+        _product_validate_material(scope, value)
+    except Exception:
+        raise _ControlError('material_unavailable') from None

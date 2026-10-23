@@ -1,8 +1,7 @@
 """Canonical bounded native groups RPC on an owner-authenticated fixed WebSocket.
 
-Promoted from spikes/invite-rooms/lobby_native_rpc.py — this is the ONE
-implementation.  The spike module is now a thin compatibility shim that
-re-exports from here.  No listener, remote RPC ingress or request-selected URL.
+This is the ONE implementation. No listener, remote RPC ingress or
+request-selected URL.
 The owner supplies an already authenticated fixed local socket.  No retries; any
 protocol ambiguity poisons the adapter so a late response can never be treated as
 another result.

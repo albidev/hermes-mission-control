@@ -5,6 +5,36 @@ from lobby_consent import canonical
 from lobby_material import MintJournal
 
 
+_DIAGNOSTIC_CODES = frozenset({
+    'creation_ambiguous', 'registration_ambiguous', 'send_ambiguous',
+    'invalid_owner_scope', 'invalid_control', 'invalid_invitation',
+    'owner_required', 'control_unavailable', 'host_approval_required',
+    'consent_scope_conflict', 'mint_ambiguous', 'reconcile_awaiting_expiry',
+    'reconcile_revoke_not_verified',
+})
+_OPERATION_NAMES = frozenset({'plan', 'create', 'create:readback', 'send'})
+
+
+def _diagnostic_operation(operation):
+    if operation in _OPERATION_NAMES:
+        return operation
+    if isinstance(operation, str) and operation.startswith('register:'):
+        member = operation.removeprefix('register:')
+        if member and len(member) <= 128 and all(ch.isalnum() or ch in '._:-' for ch in member):
+            return operation
+    return 'unknown'
+
+
+def _diagnostic_error(exc):
+    # Exact-type dispatch is deliberate: subclasses can carry hostile names or
+    # stringification hooks and are never allowed into durable diagnostics.
+    if type(exc) is OperationAmbiguous:
+        code = exc.args[0] if len(exc.args) == 1 else None
+        return 'operation_ambiguous', code if code in _DIAGNOSTIC_CODES else None
+    if type(exc) is ControlError:
+        code = exc.args[0] if len(exc.args) == 1 else None
+        return 'control_error', code if code in _DIAGNOSTIC_CODES else None
+    return 'unexpected', None
 class OperationAmbiguous(ControlError):
     def __init__(self, operation):
         code = ('creation_ambiguous' if operation == 'create' else
@@ -41,6 +71,15 @@ class OperationJournal:
                 raise OperationAmbiguous(operation)
             db.commit()
 
+    def diagnostic(self, operation, exc):
+        """Write only allowlisted, stable failure metadata."""
+        exception_class, code = _diagnostic_error(exc)
+        row = {'exception_class': exception_class, 'control_error_code': code,
+               'operation': _diagnostic_operation(operation)}
+        with (self.path.parent / 'diagnostics.jsonl').open('a', encoding='utf-8') as out:
+            out.write(json.dumps(row, sort_keys=True, separators=(',', ':')) + '\n')
+            out.flush()
+
 
 class OnceActivation:
     """Only a local OwnerSurface may call this provisioned home workflow."""
@@ -50,6 +89,8 @@ class OnceActivation:
         self.journal, self.rpc = journal, rpc
         async def resolve(peer):
             fields = ('endpoint_id', 'fingerprint', 'target_install_id', 'target_profile', 'member_id')
+            if peer.get('catalog_digest') is not None or peer.get('policy_digest') is not None:
+                fields += ('catalog_digest', 'policy_digest')
             exact = {k: peer[k] for k in fields}
             exact.update(lobby_id=self.scope['lobby_id'], room_id=self.scope['room_id'])
             return await registry.resolve(exact)
@@ -64,7 +105,8 @@ class OnceActivation:
             state = await self.rpc('groups.state', {'room_id': spec['room_id']})
             self.planner._verify_room(state['room'], spec, authority)
             return state
-        except Exception:
+        except Exception as exc:
+            self.journal.diagnostic('create:readback', exc)
             raise OperationAmbiguous(operation) from None
 
     @staticmethod
@@ -79,7 +121,11 @@ class OnceActivation:
         self.validate(payload)
         from lobby_reconcile import refuse_if_quarantined
         refuse_if_quarantined(self.journal.storage, self.scope)  # typed block, never replay
-        spec, authority, materials = await self.planner._plan(self.scope['lobby_id'])
+        try:
+            spec, authority, materials = await self.planner._plan(self.scope['lobby_id'])
+        except Exception as exc:
+            self.journal.diagnostic('plan', exc)
+            raise
         if spec['room_id'] != self.scope['room_id'] or authority != self.scope['host_id'] or set(materials) != {self.scope['member_id']}:
             raise ControlError('invalid_owner_scope')
         intent = dict(self.scope, spec=spec)
@@ -89,7 +135,8 @@ class OnceActivation:
                 await self.rpc('groups.create', spec)
                 await self.readback(spec, authority, 'create')
                 self.journal.complete(intent, 'create', {'room_id': spec['room_id']})
-            except Exception:
+            except Exception as exc:
+                self.journal.diagnostic('create', exc)
                 raise OperationAmbiguous('create') from None
         else:
             await self.readback(spec, authority, 'create')
@@ -109,7 +156,8 @@ class OnceActivation:
                             or not self.route_ready(state, member_id, spec['room_id'])):
                         raise ValueError()
                     self.journal.complete(intent, operation, {'room_id': spec['room_id'], 'member_id': member_id})
-                except Exception:
+                except Exception as exc:
+                    self.journal.diagnostic(operation, exc)
                     raise OperationAmbiguous(operation) from None
             else:
                 state = await self.readback(spec, authority, operation)

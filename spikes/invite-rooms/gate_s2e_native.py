@@ -72,7 +72,9 @@ class Scenario:
         self.lab, self.root, self.name = lab, lab.out / name, name
         self.host_rpc, self.target_rpc, self.loop = host_rpc, target_rpc, loop
         self.network = ControlLab(self.root / 'control', host_id=lab.report['identity']['gateway_id'],
-            target_id=lab.report['identity']['second_gateway_id'], owner_a=lab.transport.owner_a, owner_b=lab.transport.owner_b)
+            target_id=lab.report['identity']['second_gateway_id'], target_catalog=lab.target_catalog,
+            require_target_catalog=True, owner_a=lab.transport.owner_a, owner_b=lab.transport.owner_b)
+        lab.networks.append(self.network)
         self.transport = None
         self.values = []
 
@@ -232,13 +234,21 @@ class Scenario:
 
     def __exit__(self, *args):
         from urllib.parse import urlsplit
+        failures = []
+        def attempt(code, action):
+            try:
+                return action()
+            except BaseException as exc:
+                failures.append((code, exc))
+                return None
+
         ports = {}
         for key in ('host', 'target'):
             item = getattr(self, key, None)
             if item:
-                ports[key] = urlsplit(item.base).port
+                ports[key] = attempt(key + '_port', lambda item=item: urlsplit(item.base).port)
         if hasattr(self, 'url'):
-            ports['adapter'] = urlsplit(self.url).port
+            ports['adapter'] = attempt('adapter_port', lambda: urlsplit(self.url).port)
         if self.network.daemon:
             ports['control_relay'] = self.network.daemon.bound_port
         roots = [self.root]
@@ -247,30 +257,54 @@ class Scenario:
             if self.transport.daemon:
                 ports['data_relay'] = self.transport.daemon.bound_port
             if getattr(self.transport, 'host_adapter', None):
-                ports['data_adapter'] = urlsplit(self.transport.host_adapter.url(self.name)).port
-        for root in roots:
-            for p in root.rglob('*'):
-                if p.is_file() and (p.suffix in ('.key', '.token') or p.parent.name == 'creds'):
-                    value = p.read_bytes().strip()
-                    if value:
-                        self.lab.secret_bytes.append(value)
-        for key in ('host','target','adapter'):
-            item = getattr(self, key, None)
-            if item:
-                item.__exit__(*args) if key != 'adapter' else item.close()
-        if self.transport:
-            self.transport.close()
-            self.lab.transports.remove(self.transport)
-        self.network.close()
+                ports['data_adapter'] = attempt('data_adapter_port', lambda: urlsplit(self.transport.host_adapter.url(self.name)).port)
+
+        transport_closed = False
+        try:
+            # Inventory is best-effort only.  It must never prevent teardown.
+            for root in roots:
+                try:
+                    paths = root.rglob('*')
+                    for p in paths:
+                        if p.is_file() and (p.suffix in ('.key', '.token') or p.parent.name == 'creds'):
+                            value = p.read_bytes().strip()
+                            if value:
+                                self.lab.secret_bytes.append(value)
+                except BaseException as exc:
+                    failures.append(('secret_inventory', exc))
+        finally:
+            for key in ('host', 'target', 'adapter'):
+                item = getattr(self, key, None)
+                if item:
+                    attempt(key + '_teardown', lambda item=item, key=key:
+                            item.__exit__(*args) if key != 'adapter' else item.close())
+            if self.transport:
+                before = len(failures)
+                attempt('transport_teardown', self.transport.close)
+                transport_closed = len(failures) == before
+                # Failed close remains owned by the top-level cleanup path.
+                if transport_closed and self.transport in self.lab.transports:
+                    self.lab.transports.remove(self.transport)
+            attempt('control_network_teardown', self.network.close)
+
         if self.values:
-            blobs = [p.read_bytes() for p in self.root.rglob('*.sqlite*')] + [b''.join(self.network.observed)]
-            values = [v.encode() for v in self.values + self.lab.keys] + self.lab.secret_bytes
-            self.check('secrets_absent_mc_private_db_relay', all(v not in b for v in values for b in blobs))
-            self.lab.secret_values.extend(self.values)
-        free = {name: dict(port=port, free=gs.gc.pf.check_port_available(port)['available']) for name, port in ports.items()}
-        self.check('all_scenario_ports_free', all(r['free'] for r in free.values()), ports=free)
-        self.check('control_teardown', self.network.loop.is_closed() and not self.network.thread.is_alive()
-                   and all(not c._thread.is_alive() and not c.application_threads for c in self.network.clients))
+            try:
+                blobs = [p.read_bytes() for p in self.root.rglob('*.sqlite*')] + [b''.join(self.network.observed)]
+                values = [v.encode() for v in self.values + self.lab.keys] + self.lab.secret_bytes
+                self.check('secrets_absent_mc_private_db_relay', all(v not in b for v in values for b in blobs))
+                self.lab.secret_values.extend(self.values)
+            except BaseException as exc:
+                failures.append(('secret_scan', exc))
+        try:
+            free = {name: dict(port=port, free=gs.gc.pf.check_port_available(port)['available'])
+                    for name, port in ports.items() if port is not None}
+            self.check('all_scenario_ports_free', all(r['free'] for r in free.values()), ports=free)
+            self.check('control_teardown', self.network.loop.is_closed() and not self.network.thread.is_alive()
+                       and all(not c._thread.is_alive() and not c.application_threads for c in self.network.clients))
+        except BaseException as exc:
+            failures.append(('post_teardown_check', exc))
+        if failures:
+            raise RuntimeError('scenario_teardown_failed:' + ','.join(code for code, _ in failures))
 
 
 async def native(lab):
@@ -290,6 +324,7 @@ async def native(lab):
         async with host, target:
             hr, tr = BoundedNativeRpc(host), BoundedNativeRpc(target)
             caps = await tr('groups.capabilities', {})
+            lab.target_catalog = caps['room_link']['catalog']
             lab.check('actual_native_target_identity', caps['authority_gateway_id'] == lab.report['identity']['second_gateway_id'])
             from room_lobby_service import NativeRpcRejected
             rejected = False

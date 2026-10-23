@@ -58,6 +58,20 @@ class LocalOwnerTests(unittest.TestCase):
 
 
 class RealControlTests(unittest.TestCase):
+    def test_binding_digests_are_pinned_to_target_catalog(self):
+        import tempfile
+        from lobby_control_lab import ControlLab
+        catalog = {'catalog_digest': 'a' * 64, 'execution_policy': {'policy_digest': 'b' * 64}}
+        with tempfile.TemporaryDirectory() as tmp:
+            with ControlLab(Path(tmp), host_id='host', target_id='target',
+                            target_catalog=catalog, require_target_catalog=True) as lab:
+                self.assertEqual(lab.binding['catalog_digest'], catalog['catalog_digest'])
+                self.assertEqual(lab.binding['policy_digest'], catalog['execution_policy']['policy_digest'])
+                self.assertNotEqual(lab.binding['catalog_digest'], '0' * 64)
+                self.assertNotEqual(lab.binding['policy_digest'], '0' * 64)
+        with self.assertRaisesRegex(ValueError, '^target_catalog_required$'):
+            ControlLab(Path(tmp), require_target_catalog=True)
+
     def test_remote_redemption_is_atomic_and_certificate_bound(self):
         import tempfile
         import concurrent.futures

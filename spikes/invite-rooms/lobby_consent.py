@@ -1,26 +1,22 @@
-"""Owner-private consent attestations; no enrollment/native authority.
+"""Lab adapter for the product consent contract."""
+from __future__ import annotations
 
-Public signing key is manually owner-confirmed alongside the fixed TLS route.
-It is distinct from connector TLS keys: possession of a relay session alone
-cannot manufacture a local-owner receipt. Never sent a local Bearer token.
-"""
-import base64
-import json
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from cryptography.exceptions import InvalidSignature
-from lobby_control import ControlError
+import sys
+from pathlib import Path
 
+_SERVER = Path(__file__).resolve().parents[2] / "server"
+if str(_SERVER) not in sys.path:
+    sys.path.insert(0, str(_SERVER))
 
-def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+from invite_rooms.consent import canonical  # noqa: E402
+from invite_rooms.consent import verify as _verify  # noqa: E402
+from lobby_control import ControlError  # noqa: E402
 
 
 def verify(public_key, receipt, signature, expected):
     try:
-        if not isinstance(receipt, dict) or receipt != expected:
-            raise ValueError()
-        if not isinstance(signature, str) or len(signature) != 88:
-            raise ValueError()
-        Ed25519PublicKey.from_public_bytes(public_key).verify(base64.b64decode(signature, validate=True), canonical(receipt))
-    except (ValueError, TypeError, InvalidSignature):
-        raise ControlError('invalid_consent') from None
+        _verify(public_key, receipt, signature, expected)
+    except Exception as exc:
+        if isinstance(exc, ControlError):
+            raise
+        raise ControlError("invalid_consent") from None

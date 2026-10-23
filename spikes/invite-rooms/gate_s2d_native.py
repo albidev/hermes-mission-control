@@ -28,6 +28,7 @@ def flow(lab, host_rpc, target_rpc, loop):
         return asyncio.run_coroutine_threadsafe(coro, loop).result(40)
     with ControlLab(lab.out / 'control', host_id=lab.report['identity']['gateway_id'],
                     target_id=lab.report['identity']['second_gateway_id'],
+                    target_catalog=lab.target_catalog, require_target_catalog=True,
                     owner_a=lab.transport.owner_a, owner_b=lab.transport.owner_b) as network:
         store = RoomInviteStore(lab.out / 'mc.sqlite')
         lobby = store.create_lobby(name='S2.D real native', roster=network.roster)
@@ -154,6 +155,7 @@ async def native(lab):
         async with ws, target:
             host_rpc, target_rpc = BoundedNativeRpc(ws), BoundedNativeRpc(target)
             caps = await target_rpc('groups.capabilities', {})
+            lab.target_catalog = caps['room_link']['catalog']
             lab.check('real_target_identity', caps['authority_gateway_id'] == lab.report['identity']['second_gateway_id'])
             await asyncio.to_thread(flow, lab, host_rpc, target_rpc, asyncio.get_running_loop())
 

@@ -47,5 +47,30 @@ class JournalTests(unittest.TestCase):
             self.assertEqual(journal.path.stat().st_mode & 0o777, 0o600)
 
 
+class BindingResolverTests(unittest.IsolatedAsyncioTestCase):
+    async def test_once_activation_resolver_preserves_real_product_digests(self):
+        from lobby_activation import OnceActivation
+        binding = {
+            'endpoint_id': 'target-b', 'fingerprint': 'a' * 64,
+            'target_install_id': 'install:' + 'b' * 32, 'target_profile': 'default',
+            'catalog_digest': 'c' * 64, 'policy_digest': 'd' * 64,
+        }
+        scope = dict(lobby_id='lobby-x', invite_id='invite-x', room_id='invite-room-x',
+                     member_id='peer-b', host_id='install:' + 'e' * 32, binding=binding)
+        expected = dict(binding, lobby_id=scope['lobby_id'], room_id=scope['room_id'], member_id='peer-b')
+        seen = []
+        class Registry:
+            async def resolve(self, exact):
+                seen.append(exact)
+                if exact != expected:
+                    raise ValueError('binding_digest_fields_missing')
+                return object()
+        class Store:
+            pass
+        activation = OnceActivation(Store(), scope, Registry(), None, lambda *_: None)
+        await activation.planner.peer_material(expected)
+        self.assertEqual(seen, [expected])
+
+
 if __name__ == '__main__':
     unittest.main()

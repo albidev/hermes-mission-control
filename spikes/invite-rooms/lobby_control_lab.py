@@ -7,6 +7,7 @@ and cannot establish native interoperability.
 from __future__ import annotations
 import asyncio
 import base64
+import hashlib
 import ssl
 import threading
 
@@ -18,21 +19,50 @@ from lobby_control import PinnedControl
 
 
 class ControlLab:
-    def __init__(self, root, *, host_id=None, target_id=None, owner_a=None, owner_b=None):
+    def __init__(self, root, *, host_id=None, target_id=None, owner_a=None, owner_b=None,
+                 target_catalog=None, require_target_catalog=False):
         self.root = root
         self.host_id, self.target_id = host_id, target_id
         self.owner_a, self.owner_b = owner_a, owner_b
+        self._require_target_catalog = require_target_catalog
+        self._target_catalog = target_catalog
+        if require_target_catalog and target_catalog is None:
+            raise ValueError('target_catalog_required')
+        if target_catalog is None:
+            self._target_catalog = {
+                'catalog_digest': hashlib.sha256(b'unit-control-lab-catalog').hexdigest(),
+                'execution_policy': {'policy_digest': hashlib.sha256(b'unit-control-lab-policy').hexdigest()},
+            }
+        self._validate_target_catalog(self._target_catalog)
         self.clients = []
         self.observed = []
         self.loop = asyncio.new_event_loop()
         self.thread = None
         self.original = None
         self.daemon = None
+        self._binding_override = None
+
+    @staticmethod
+    def _validate_target_catalog(catalog):
+        if (not isinstance(catalog, dict) or not isinstance(catalog.get('catalog_digest'), str)
+                or not isinstance(catalog.get('execution_policy'), dict)
+                or not isinstance(catalog['execution_policy'].get('policy_digest'), str)
+                or len(catalog['catalog_digest']) != 64 or len(catalog['execution_policy']['policy_digest']) != 64
+                or set(catalog['catalog_digest']) - set('0123456789abcdef')
+                or set(catalog['execution_policy']['policy_digest']) - set('0123456789abcdef')):
+            raise ValueError('invalid_target_catalog')
 
     @property
     def binding(self):
+        if self._binding_override is not None:
+            return dict(self._binding_override)
         return {'endpoint_id': 'target-b', 'fingerprint': self.owner_b['fingerprint'],
-                'target_install_id': self.target_id, 'target_profile': 'default'}
+                'target_install_id': self.target_id, 'target_profile': 'default',
+                'catalog_digest': self._target_catalog['catalog_digest'],
+                'policy_digest': self._target_catalog['execution_policy']['policy_digest']}
+
+    def set_binding(self, binding):
+        self._binding_override = dict(binding)
 
     @property
     def roster(self):

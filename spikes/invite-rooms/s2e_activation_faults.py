@@ -98,9 +98,10 @@ def run_activation_faults(lab, host_rpc, target_rpc, loop, Scenario):
                 lab.logs.append(log)
                 proc = subprocess.Popen(argv,cwd=HERE.parents[1],env=pf.isolated_child_env(lab.home),
                     stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
-                identity = next(r for r in processes() if r['pid'] == proc.pid)
-                record = dict(identity,role='s2e-owner-'+name,argv=argv,home=str(lab.home),signals=[])
+                record = dict(role='s2e-owner-'+name,argv=argv,home=str(lab.home),signals=[])
                 lab.owned.append((proc,record))
+                identity = next(r for r in processes() if r['pid'] == proc.pid)
+                record.update(identity)
                 lab.report['processes'].append(record)
                 lab.report['commands'].append(dict(argv=argv,cwd=str(HERE.parents[1]),home=str(lab.home)))
                 lab.flush()

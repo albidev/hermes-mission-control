@@ -213,6 +213,7 @@ async def native(lab):
         async with host, target:
             hr, tr = BoundedNativeRpc(host), BoundedNativeRpc(target)
             caps = await tr('groups.capabilities', {})
+            lab.target_catalog = caps['room_link']['catalog']
             lab.check('actual_native_target_identity', caps['authority_gateway_id'] == lab.report['identity']['second_gateway_id'])
             loop = asyncio.get_running_loop()
             # Owner reconcile uses its OWN native sockets: a poisoned/ambiguous owner RPC

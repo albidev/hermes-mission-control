@@ -87,7 +87,9 @@ def run_faults(lab, rpc, loop):
     for fault in ('after_intent', 'after_native_reply'):
         root = lab.out / fault
         root.mkdir(mode=0o700)
-        with ControlLab(root / 'network', host_id=lab.report['identity']['gateway_id'], target_id=lab.report['identity']['second_gateway_id']) as network:
+        with ControlLab(root / 'network', host_id=lab.report['identity']['gateway_id'],
+                        target_id=lab.report['identity']['second_gateway_id'],
+                        target_catalog=lab.target_catalog, require_target_catalog=True) as network:
             store = RoomInviteStore(root / 'mc.sqlite')
             lobby = store.create_lobby(name='S2.C killed local owner ' + fault, roster=network.roster)
             lid = lobby['lobby_id']
@@ -119,9 +121,10 @@ def run_faults(lab, rpc, loop):
             lab.logs.append(log)
             proc = subprocess.Popen(argv, cwd=HERE.parents[1], env=pf.isolated_child_env(lab.target),
                                     stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            identity = next(r for r in processes() if r['pid'] == proc.pid)
-            record = dict(identity, role='s2c-owner-' + fault, argv=argv, home=str(lab.target), signals=[])
+            record = dict(role='s2c-owner-' + fault, argv=argv, home=str(lab.target), signals=[])
             lab.owned.append((proc, record))
+            identity = next(r for r in processes() if r['pid'] == proc.pid)
+            record.update(identity)
             lab.report['processes'].append(record)
             lab.report['commands'].append({'argv': argv, 'cwd': str(HERE.parents[1]), 'home': str(lab.target)})
             lab.flush()

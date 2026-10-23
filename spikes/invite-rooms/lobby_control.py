@@ -4,6 +4,13 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
+import sys
+from pathlib import Path
+_SERVER = Path(__file__).resolve().parents[2] / 'server'
+if str(_SERVER) not in sys.path:
+    sys.path.insert(0, str(_SERVER))
+from invite_rooms.peer_binding import PeerBindingError, validate_peer_binding
+
 
 class ControlError(ValueError):
     """Machine code only."""
@@ -132,7 +139,10 @@ class PinnedControl:
 
 class HostLobbyControl:
     def __init__(self, store, lobby_id, binding, *, joining_owner_key=None, host_id=None, material_registry=None):
-        store._validate_binding(binding)
+        try:
+            binding = validate_peer_binding(binding)
+        except PeerBindingError:
+            raise ControlError('invalid_peer_binding') from None
         self.store, self.lobby_id, self.binding = store, lobby_id, dict(binding)
         self.joining_owner_key, self.host_id = joining_owner_key, host_id
         self.material_registry = material_registry
