@@ -5,7 +5,7 @@ import copy
 import re
 from dataclasses import dataclass
 
-from room_invite_store import RoomInviteStore, IssuedInvite, _validate_roster
+from room_invite_store import InviteError, RoomInviteStore, IssuedInvite, _validate_roster
 from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError, MaterialScope
 
 
@@ -32,6 +32,24 @@ class OwnerContext:
 
 _LOBBY_VIEW_KEYS = frozenset({"lobby_id", "name", "state", "planned_room_id", "created_at", "updated_at", "roster"})
 _REDEMPTION_VIEW_KEYS = frozenset({"invite_id", "member_id", "status", "host_decision", "joining_consent"})
+# Durable per-peer binding keys shown to the owner for the exact decision
+# contract ("decision bound to the exact peer/profile/scope and policy
+# digest shown"). Deliberately excludes endpoint_id (and everything else
+# private -- secrets, grants, signatures) from both the activation view and
+# the mandatory decision route expected_binding input (R3-1: every caller,
+# HTTP or direct, must supply it -- there is no unguarded internal path).
+_REDEEMED_BINDING_KEYS = frozenset({"fingerprint", "target_install_id", "target_profile", "catalog_digest", "policy_digest"})
+
+
+def _valid_expected_binding(value) -> bool:
+    """Single source of truth for the 5-key durable binding contract.
+
+    Exact 5 keys, each value str or None -- the same rule the HTTP route
+    enforces before ``decide_host`` is ever reached (see routes.py's
+    ``_valid_expected_binding``, which now simply re-exports this).
+    """
+    return (isinstance(value, dict) and set(value) == _REDEEMED_BINDING_KEYS
+            and all(v is None or isinstance(v, str) for v in value.values()))
 
 
 class InviteRoomsService:
@@ -132,10 +150,27 @@ class InviteRoomsService:
         self._owned_lobby(ctx, lobby_id)
         return self.store.revoke_invite(lobby_id, invite_id)
 
-    def decide_host(self, ctx: OwnerContext, lobby_id: str, invite_id: str, *, peer_id: str, approved: bool) -> dict:
+    def list_paired_peers(self, ctx: OwnerContext) -> list:
+        """Owner-facing, redacted listing of every pre-paired peer. Pure read:
+        never mutates the registry or the store."""
+        self._validate_ctx(ctx)
+        return self.registry.list_peers()
+
+    def decide_host(self, ctx: OwnerContext, lobby_id: str, invite_id: str, *, peer_id: str, approved: bool,
+                     expected_binding: dict | None = None) -> dict:
         lobby = self._owned_lobby(ctx, lobby_id)
         binding = self.registry.binding_for(peer_id)
         redemption = self.store.get_redemption(lobby_id, invite_id)
+        # Mandatory owner-UI-facing contract (R3-1): every caller -- HTTP or
+        # direct/headless -- must supply the exact durable binding it was
+        # shown, and it must still match before any state changes. There is
+        # no productive headless caller that may omit this; a missing or
+        # malformed value is rejected identically to a stale one, with zero
+        # store mutation either way.
+        if not _valid_expected_binding(expected_binding):
+            raise ServiceError("invalid_peer_binding")
+        if any(expected_binding.get(k) != redemption.get(k) for k in _REDEEMED_BINDING_KEYS):
+            raise ServiceError("binding_changed")
         target = next((m.get("target") for m in lobby["roster"]
                        if m.get("member_id") == redemption["member_id"]), None)
         if target is None or target.get("peer_id") != peer_id:
@@ -145,8 +180,8 @@ class InviteRoomsService:
 
     def _readiness(self, ctx: OwnerContext, lobby_id: str):
         lobby = self._owned_lobby(ctx, lobby_id)
-        redemptions = {r["member_id"]: r for r in self.store.list_redemptions(lobby_id)}
         peers, all_ready = [], True
+        latest_invites = self.store.latest_invites(lobby_id)
         for member in lobby["roster"]:
             if "target" not in member:
                 continue
@@ -155,25 +190,82 @@ class InviteRoomsService:
                 binding = self._approved_target(target)
             except ServiceError:
                 binding = None
-            redemption = redemptions.get(member_id)
+            # R3-2: the activation view and readiness must pair the member's
+            # LATEST (non-revoked) invite with the redemption of that SAME
+            # invite_id -- never an older invite's redemption left behind by
+            # a prior deny-then-reissue cycle. A latest invite with no
+            # redemption of its own is reported as null/pending, not paired
+            # with a stale redemption from an earlier invite of the member.
+            invite_id = latest_invites.get(member_id)
+            redemption = None
+            if invite_id is not None:
+                try:
+                    redemption = self.store.get_redemption(lobby_id, invite_id)
+                except InviteError:
+                    redemption = None
             pinned = redemption is not None and binding is not None and all(redemption.get(k) == binding[k] for k in _BINDING_KEYS)
             ready = bool(pinned and redemption["host_decision"] == "approved" and redemption["joining_consent"] == "given")
             all_ready &= ready
             peers.append({"member_id": member_id, "peer_id": target.get("peer_id") if isinstance(target, dict) else None,
+                          "invite_id": invite_id,
+                          "redeemed_binding": {k: redemption[k] for k in _REDEEMED_BINDING_KEYS} if redemption else None,
                           "host_decision": redemption["host_decision"] if redemption else "pending",
                           "joining_consent": redemption["joining_consent"] if redemption else "pending",
                           "material_available": bool(binding), "ready": ready})
         return lobby, all_ready, peers
 
     def activation_status(self, ctx: OwnerContext, lobby_id: str) -> dict:
-        _, ready, peers = self._readiness(ctx, lobby_id)
-        return {"lobby_id": lobby_id, "lobby_state": self.store.get_lobby(lobby_id)["state"], "ready": ready, "peers": peers}
+        lobby, ready, peers = self._readiness(ctx, lobby_id)
+        if lobby["state"] == "created":
+            registered = self.store.peer_registration_status(lobby_id)
+            for peer in peers:
+                peer["registered"] = bool(registered.get(peer["member_id"], False))
+        return {"lobby_id": lobby_id, "lobby_state": lobby["state"], "ready": ready, "peers": peers}
+
+    def _activation_result_if_already_created(self, lobby: dict) -> dict:
+        """Zero-native-call idempotency check for a lobby already past ``created``.
+
+        The store sets ``state == "created"`` BEFORE every remote roster
+        member's native peer registration is confirmed (see
+        ``RoomLobbyService.activate``: ``mark_created`` happens first, then
+        each ``groups.peer.register`` call, then ``mark_peer_registered``).
+        A bare "created" state is therefore ambiguous on its own and must
+        never be reported as a successful activation -- only the durable
+        per-peer registration projection decides that, and it is read here
+        with zero native RPC calls.
+        """
+        remote_ids = {member["member_id"] for member in lobby["roster"] if "target" in member}
+        registered = self.store.peer_registration_status(lobby["lobby_id"])
+        if not remote_ids <= {member_id for member_id, ok in registered.items() if ok}:
+            raise ServiceError("registration_incomplete")
+        return {"lobby_id": lobby["lobby_id"], "status": "activated", "room_id": lobby["planned_room_id"]}
+
+    def preflight_activate(self, ctx: OwnerContext, lobby_id: str):
+        """Every check that can be answered with no native transport at all.
+
+        Runs BEFORE any caller is allowed to open a native RPC connection
+        (R1): an already-created+fully-registered lobby must return its
+        durable idempotent result with zero connect attempts, a not-ready
+        lobby must fail closed with zero connect attempts, and a missing
+        material resolver must fail closed with zero connect attempts.
+        Returns ``(lobby, None)`` when the caller must proceed to open the
+        native transport, or ``(None, result)`` with the final response
+        already decided and no transport ever required.
+        """
+        lobby, ready, _ = self._readiness(ctx, lobby_id)
+        if lobby["state"] == "created":
+            return None, self._activation_result_if_already_created(lobby)
+        if not ready:
+            raise ServiceError("activation_not_ready")
+        if self._material_resolver is None:
+            raise ServiceError("material_channel_unavailable")
+        return lobby, None
 
     async def activate(self, ctx: OwnerContext, lobby_id: str) -> dict:
         """Explicit side-effect boundary; no native call occurs before durable approvals are pinned."""
-        lobby, ready, _ = self._readiness(ctx, lobby_id)
-        if not ready:
-            raise ServiceError("activation_not_ready")
+        lobby, early = self.preflight_activate(ctx, lobby_id)
+        if early is not None:
+            return early
         if self._rpc is None:
             raise ServiceError("activation_unavailable")
         from room_lobby_service import RoomLobbyService
@@ -199,8 +291,41 @@ class InviteRoomsService:
         try:
             room = await coordinator.activate(lobby_id)
         except Exception as exc:
-            code = str(exc) if str(exc) in {"native_room_conflict", "creation_ambiguous", "registration_ambiguous", "native_peer_conflict", "native_peer_unconfirmed", "native_rejected", "authority_mismatch", "native_contract_unavailable"} else "activation_failed"
+            code = str(exc)
+            if code not in {"native_room_conflict", "creation_ambiguous", "registration_ambiguous", "native_peer_conflict", "native_peer_unconfirmed", "native_rejected", "authority_mismatch", "native_contract_unavailable"}:
+                code = self.classify_unconfirmed_mutation(lobby_id)
             raise ServiceError(code) from None
         if not isinstance(room, dict) or room.get("room_id") != lobby["planned_room_id"]:
             raise ServiceError("native_room_conflict")
         return {"lobby_id": lobby_id, "status": "activated", "room_id": room["room_id"]}
+
+    def classify_unconfirmed_mutation(self, lobby_id: str) -> str:
+        """Derive a stable code for an unrecognized failure near a native
+        mutation, from durable state ALONE -- never from exception text
+        (P-3). Shared by this method's own caller and by the routes'
+        native-transport fallback (``_run_activation``) so both agree:
+
+          * durable lobby already ``created`` with an incomplete remote
+            peer registration -> ``registration_ambiguous`` (the native
+            create is confirmed; some peer registration may or may not
+            have landed);
+          * a native creation spec was pinned (``pin_native_spec``, which
+            only happens right before ``groups.create`` is attempted) but
+            the lobby never reached ``created`` -> ``creation_ambiguous``
+            (create may have been admitted remotely without a durable
+            confirmation);
+          * otherwise nothing was durably admitted -> ``activation_failed``.
+        """
+        try:
+            lobby = self.store.get_lobby(lobby_id)
+        except InviteError:
+            return "activation_failed"
+        if lobby["state"] == "created":
+            remote_ids = {member["member_id"] for member in lobby["roster"] if "target" in member}
+            registered = self.store.peer_registration_status(lobby_id)
+            if not remote_ids <= {member_id for member_id, ok in registered.items() if ok}:
+                return "registration_ambiguous"
+            return "activation_failed"
+        if self.store.has_pinned_spec(lobby_id):
+            return "creation_ambiguous"
+        return "activation_failed"

@@ -188,6 +188,21 @@ class PeerRegistry:
             consent_public_key=entry.consent_public_key,
         )
 
+    def list_peers(self) -> list:
+        """Redacted, owner-facing listing of every pre-paired peer: peer_id,
+        installation_id, profile, capability_digest only -- never fingerprint,
+        endpoint_id, catalog, grant, or consent key material. Read-only;
+        deterministic order (sorted by peer_id) for a stable product view."""
+        return [
+            {
+                "peer_id": entry.peer_id,
+                "installation_id": entry.installation_id,
+                "profile": entry.profile,
+                "capability_digest": entry.catalog_digest,
+            }
+            for entry in sorted(self._peers.values(), key=lambda e: e.peer_id)
+        ]
+
     def binding_for(self, peer_id: str) -> dict:
         """Return the binding dict for use in store.redeem/decide_host. Defensive copy."""
         _check(peer_id, _TOKEN, "peer_id")

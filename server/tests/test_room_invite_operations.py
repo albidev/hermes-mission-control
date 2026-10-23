@@ -38,6 +38,15 @@ _POLICY_UNSIGNED = {"version": 1, "target_profile": "default", "enabled_toolsets
 _POLICY = {**_POLICY_UNSIGNED, "policy_digest": hashlib.sha256(json.dumps(_POLICY_UNSIGNED, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest()}
 CATALOG = catalog_mapping(installation_id=INSTALL_B, protocol_versions=(2,), link_modes=("direct",), persistent_process=True, text=True, attachments=False, endpoint={"available": True, "url": ADAPTER_URL, "transport_security": "loopback"}, target_profile="default", execution_policy=_POLICY)
 CATALOG_DIGEST = CATALOG["catalog_digest"]
+
+_EXPECTED_BINDING_KEYS = ("fingerprint", "target_install_id", "target_profile", "catalog_digest", "policy_digest")
+
+
+def _expected_binding(binding: dict) -> dict:
+    """Project a full 6-key registry binding down to the 5-key durable
+    redemption binding the owner UI is shown and must echo back (R3-1)."""
+    return {k: binding[k] for k in _EXPECTED_BINDING_KEYS}
+
 POLICY_DIGEST = CATALOG["execution_policy"]["policy_digest"]
 ROSTER = [
     {"member_id": "local-a", "profile": "default", "handle": "local"},
@@ -209,8 +218,10 @@ class HostDecisionTests(unittest.TestCase):
         svc, ctx, store, reg, tmp = make_service()
         self.addCleanup(tmp.cleanup)
         view, issued = self.setUp_lobby_with_redemption(svc, ctx)
+        binding = reg.binding_for("owner-b")
         result = svc.decide_host(ctx, view["lobby_id"], issued.invite_id,
-                                  peer_id="owner-b", approved=True)
+                                  peer_id="owner-b", approved=True,
+                                  expected_binding=_expected_binding(binding))
         self.assertEqual(result["host_decision"], "approved")
         self.assertEqual(result["status"], "consent_required")
 
@@ -218,10 +229,27 @@ class HostDecisionTests(unittest.TestCase):
         svc, ctx, store, reg, tmp = make_service()
         self.addCleanup(tmp.cleanup)
         view, issued = self.setUp_lobby_with_redemption(svc, ctx)
+        binding = reg.binding_for("owner-b")
         result = svc.decide_host(ctx, view["lobby_id"], issued.invite_id,
-                                  peer_id="owner-b", approved=False)
+                                  peer_id="owner-b", approved=False,
+                                  expected_binding=_expected_binding(binding))
         self.assertEqual(result["host_decision"], "denied")
         self.assertEqual(result["status"], "denied")
+
+    def test_decide_host_result_is_redacted(self):
+        svc, ctx, store, reg, tmp = make_service()
+        self.addCleanup(tmp.cleanup)
+        view, issued = self.setUp_lobby_with_redemption(svc, ctx)
+        binding = reg.binding_for("owner-b")
+        result = svc.decide_host(ctx, view["lobby_id"], issued.invite_id,
+                                  peer_id="owner-b", approved=True,
+                                  expected_binding=_expected_binding(binding))
+        # No binding secrets in the view.
+        for key in ("fingerprint", "endpoint_id", "target_install_id", "target_profile"):
+            self.assertNotIn(key, result)
+        # No grant.
+        for v in result.values():
+            self.assertNotEqual(v, GRANT)
 
     def test_decide_host_unknown_peer_rejected(self):
         svc, ctx, store, reg, tmp = make_service()
@@ -240,18 +268,178 @@ class HostDecisionTests(unittest.TestCase):
             svc.decide_host(wrong_ctx, view["lobby_id"], issued.invite_id,
                             peer_id="owner-b", approved=True)
 
-    def test_decide_host_result_is_redacted(self):
+
+class ExpectedBindingMandatoryTests(unittest.TestCase):
+    """MVP.2a-fix6 R3-1: InviteRoomsService.decide_host requires
+    expected_binding at the service boundary -- there is no unguarded
+    internal/headless caller left. A missing or explicit-None value is
+    rejected identically to a stale/malformed one, with zero store
+    mutation either way."""
+
+    def _redeemed_lobby(self, svc, ctx, store, reg):
+        view = svc.create_lobby(ctx, name="Test", roster=copy.deepcopy(ROSTER))
+        issued = svc.issue_invite(ctx, view["lobby_id"], "peer-b", invitee_label="B")
+        binding = reg.binding_for("owner-b")
+        store.redeem(view["lobby_id"], issued.invite_id, issued.secret, binding=binding)
+        return view, issued, binding
+
+    def test_decide_host_without_expected_binding_is_rejected_with_zero_state_change(self):
         svc, ctx, store, reg, tmp = make_service()
         self.addCleanup(tmp.cleanup)
-        view, issued = self.setUp_lobby_with_redemption(svc, ctx)
-        result = svc.decide_host(ctx, view["lobby_id"], issued.invite_id,
-                                  peer_id="owner-b", approved=True)
-        # No binding secrets in the view.
-        for key in ("fingerprint", "endpoint_id", "target_install_id", "target_profile"):
-            self.assertNotIn(key, result)
-        # No grant.
-        for v in result.values():
-            self.assertNotEqual(v, GRANT)
+        view, issued, binding = self._redeemed_lobby(svc, ctx, store, reg)
+        before = store.get_redemption(view["lobby_id"], issued.invite_id)
+        with self.assertRaisesRegex(ServiceError, "^invalid_peer_binding$"):
+            svc.decide_host(ctx, view["lobby_id"], issued.invite_id, peer_id="owner-b", approved=True)
+        after = store.get_redemption(view["lobby_id"], issued.invite_id)
+        self.assertEqual(before, after)
+
+    def test_decide_host_with_explicit_none_expected_binding_is_also_rejected(self):
+        svc, ctx, store, reg, tmp = make_service()
+        self.addCleanup(tmp.cleanup)
+        view, issued, binding = self._redeemed_lobby(svc, ctx, store, reg)
+        before = store.get_redemption(view["lobby_id"], issued.invite_id)
+        with self.assertRaisesRegex(ServiceError, "^invalid_peer_binding$"):
+            svc.decide_host(ctx, view["lobby_id"], issued.invite_id, peer_id="owner-b", approved=True,
+                            expected_binding=None)
+        after = store.get_redemption(view["lobby_id"], issued.invite_id)
+        self.assertEqual(before, after)
+
+    def test_decide_host_with_the_displayed_projection_still_works(self):
+        svc, ctx, store, reg, tmp = make_service()
+        self.addCleanup(tmp.cleanup)
+        view, issued, binding = self._redeemed_lobby(svc, ctx, store, reg)
+        result = svc.decide_host(ctx, view["lobby_id"], issued.invite_id, peer_id="owner-b", approved=True,
+                                 expected_binding=_expected_binding(binding))
+        self.assertEqual(result["host_decision"], "approved")
+
+
+class ExpectedBindingValueValidationTests(unittest.TestCase):
+    """MVP.2a-fix7 R4-1: InviteRoomsService.decide_host validates
+    expected_binding VALUES (not just its 5 keys) before comparing against
+    the stored redemption -- a well-shaped-keys dict with a non-str/None
+    value must be rejected as ``invalid_peer_binding`` (never silently
+    treated as a stale ``binding_changed``), matching the HTTP route's own
+    ``_valid_expected_binding`` rule (routes.py:186)."""
+
+    def _redeemed_lobby(self, svc, ctx, store, reg):
+        view = svc.create_lobby(ctx, name="Test", roster=copy.deepcopy(ROSTER))
+        issued = svc.issue_invite(ctx, view["lobby_id"], "peer-b", invitee_label="B")
+        binding = reg.binding_for("owner-b")
+        store.redeem(view["lobby_id"], issued.invite_id, issued.secret, binding=binding)
+        return view, issued, binding
+
+    def _assert_bad_value_rejected(self, key, bad_value):
+        svc, ctx, store, reg, tmp = make_service()
+        self.addCleanup(tmp.cleanup)
+        view, issued, binding = self._redeemed_lobby(svc, ctx, store, reg)
+        before = store.get_redemption(view["lobby_id"], issued.invite_id)
+        expected = _expected_binding(binding)
+        expected[key] = bad_value
+        with self.assertRaisesRegex(ServiceError, "^invalid_peer_binding$"):
+            svc.decide_host(ctx, view["lobby_id"], issued.invite_id, peer_id="owner-b",
+                            approved=True, expected_binding=expected)
+        after = store.get_redemption(view["lobby_id"], issued.invite_id)
+        self.assertEqual(before, after)
+
+    def test_int_value_rejected_for_every_key(self):
+        for key in _EXPECTED_BINDING_KEYS:
+            with self.subTest(key=key):
+                self._assert_bad_value_rejected(key, 1)
+
+    def test_bool_value_rejected_for_every_key(self):
+        for key in _EXPECTED_BINDING_KEYS:
+            with self.subTest(key=key):
+                self._assert_bad_value_rejected(key, True)
+
+    def test_list_value_rejected_for_every_key(self):
+        for key in _EXPECTED_BINDING_KEYS:
+            with self.subTest(key=key):
+                self._assert_bad_value_rejected(key, ["x"])
+
+    def test_dict_value_rejected_for_every_key(self):
+        for key in _EXPECTED_BINDING_KEYS:
+            with self.subTest(key=key):
+                self._assert_bad_value_rejected(key, {"x": 1})
+
+    def test_float_value_rejected_for_every_key(self):
+        for key in _EXPECTED_BINDING_KEYS:
+            with self.subTest(key=key):
+                self._assert_bad_value_rejected(key, 1.5)
+
+    def test_valid_but_different_value_is_still_binding_changed(self):
+        svc, ctx, store, reg, tmp = make_service()
+        self.addCleanup(tmp.cleanup)
+        view, issued, binding = self._redeemed_lobby(svc, ctx, store, reg)
+        before = store.get_redemption(view["lobby_id"], issued.invite_id)
+        expected = _expected_binding(binding)
+        expected["fingerprint"] = "c" * 64
+        with self.assertRaisesRegex(ServiceError, "^binding_changed$"):
+            svc.decide_host(ctx, view["lobby_id"], issued.invite_id, peer_id="owner-b",
+                            approved=True, expected_binding=expected)
+        after = store.get_redemption(view["lobby_id"], issued.invite_id)
+        self.assertEqual(before, after)
+
+
+class PerInviteRedemptionPairingTests(unittest.TestCase):
+    """MVP.2a-fix6 R3-2: the activation view and readiness pair the
+    member's LATEST non-revoked invite_id with the redemption of that SAME
+    invite_id -- never a stale redemption left behind by an earlier,
+    already-denied invite of the same member (deny A -> reissue B)."""
+
+    def test_deny_then_reissue_resets_the_view_then_pairs_the_new_redemption(self):
+        svc, ctx, store, reg, tmp = make_service()
+        self.addCleanup(tmp.cleanup)
+        view = svc.create_lobby(ctx, name="Test", roster=copy.deepcopy(ROSTER))
+        lobby_id = view["lobby_id"]
+
+        invite_a = svc.issue_invite(ctx, lobby_id, "peer-b", invitee_label="A")
+        binding_a = reg.binding_for("owner-b")
+        store.redeem(lobby_id, invite_a.invite_id, invite_a.secret, binding=binding_a)
+        svc.decide_host(ctx, lobby_id, invite_a.invite_id, peer_id="owner-b", approved=False,
+                        expected_binding=_expected_binding(binding_a))
+
+        status = svc.activation_status(ctx, lobby_id)
+        peer = next(p for p in status["peers"] if p["member_id"] == "peer-b")
+        self.assertEqual(peer["invite_id"], invite_a.invite_id)
+        self.assertEqual(peer["host_decision"], "denied")
+
+        # Simulated drift: the peer re-registers with new material before
+        # the owner reissues a fresh invite (B) to the same member.
+        reg._peers["owner-b"].fingerprint = "c" * 64
+        invite_b = svc.issue_invite(ctx, lobby_id, "peer-b", invitee_label="B")
+
+        status = svc.activation_status(ctx, lobby_id)
+        peer = next(p for p in status["peers"] if p["member_id"] == "peer-b")
+        self.assertEqual(peer["invite_id"], invite_b.invite_id)
+        self.assertNotEqual(peer["invite_id"], invite_a.invite_id)
+        self.assertIsNone(peer["redeemed_binding"])
+        self.assertEqual(peer["host_decision"], "pending")
+        self.assertEqual(peer["joining_consent"], "pending")
+        self.assertFalse(peer["ready"])
+
+        binding_b = reg.binding_for("owner-b")
+        self.assertNotEqual(_expected_binding(binding_a), _expected_binding(binding_b))
+        store.redeem(lobby_id, invite_b.invite_id, invite_b.secret, binding=binding_b)
+
+        status = svc.activation_status(ctx, lobby_id)
+        peer = next(p for p in status["peers"] if p["member_id"] == "peer-b")
+        self.assertEqual(peer["invite_id"], invite_b.invite_id)
+        self.assertEqual(peer["redeemed_binding"], _expected_binding(binding_b))
+        self.assertEqual(peer["host_decision"], "pending")
+
+        # A decision bound to B's invite_id but A's (now stale) binding
+        # must fail closed with zero durable state change.
+        before = store.get_redemption(lobby_id, invite_b.invite_id)
+        with self.assertRaisesRegex(ServiceError, "^binding_changed$"):
+            svc.decide_host(ctx, lobby_id, invite_b.invite_id, peer_id="owner-b", approved=True,
+                            expected_binding=_expected_binding(binding_a))
+        after = store.get_redemption(lobby_id, invite_b.invite_id)
+        self.assertEqual(before, after)
+
+        # Deciding on B with B's own binding succeeds.
+        result = svc.decide_host(ctx, lobby_id, invite_b.invite_id, peer_id="owner-b", approved=True,
+                                 expected_binding=_expected_binding(binding_b))
+        self.assertEqual(result["host_decision"], "approved")
 
 
 class ActivationBoundaryTests(unittest.IsolatedAsyncioTestCase):
@@ -276,8 +464,10 @@ class ActivationBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_activation_status_after_approval_only_not_ready(self):
         """Approval alone cannot activate — joining consent still required."""
         svc, ctx, view, issued = self._setup()
+        binding = svc.registry.binding_for("owner-b")
         svc.decide_host(ctx, view["lobby_id"], issued.invite_id,
-                        peer_id="owner-b", approved=True)
+                        peer_id="owner-b", approved=True,
+                        expected_binding=_expected_binding(binding))
         status = svc.activation_status(ctx, view["lobby_id"])
         self.assertFalse(status["ready"])
         # host_decision is approved but joining_consent is still pending.
@@ -315,10 +505,20 @@ class ActivationBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_activation_status_result_redacted(self):
         svc, ctx, view, issued = self._setup()
         status = svc.activation_status(ctx, view["lobby_id"])
-        # No grant, fingerprint, endpoint_id in the status.
+        # No grant or endpoint_id anywhere in the status -- those stay
+        # private. fingerprint/target_install_id/target_profile DO appear
+        # inside each peer's redacted ``redeemed_binding`` (MVP.2a-fix5: the
+        # host UI needs the exact durable binding it is deciding against),
+        # but never bare at the top level and never paired with endpoint_id.
         status_str = str(status)
         self.assertNotIn(GRANT, status_str)
-        self.assertNotIn(FINGERPRINT_B, status_str)
+        self.assertNotIn("endpoint_id", status_str)
+        self.assertNotIn("endpoint-b", status_str)
+        for peer in status["peers"]:
+            self.assertIn("redeemed_binding", peer)
+            if peer["redeemed_binding"] is not None:
+                self.assertEqual(set(peer["redeemed_binding"]),
+                                  {"fingerprint", "target_install_id", "target_profile", "catalog_digest", "policy_digest"})
 
 
 class NoForgeConsentTests(unittest.TestCase):
@@ -401,7 +601,8 @@ class ParityTests(unittest.IsolatedAsyncioTestCase):
         """Host approval without joining consent does not make activation ready."""
         svc, ctx, view, issued, binding = self._full_setup()
         svc.decide_host(ctx, view["lobby_id"], issued.invite_id,
-                        peer_id="owner-b", approved=True)
+                        peer_id="owner-b", approved=True,
+                        expected_binding=_expected_binding(binding))
         status = svc.activation_status(ctx, view["lobby_id"])
         self.assertFalse(status["ready"])
 
@@ -409,7 +610,8 @@ class ParityTests(unittest.IsolatedAsyncioTestCase):
         """If the registry peer binding doesn't match the redemption, activation is blocked."""
         svc, ctx, view, issued, binding = self._full_setup()
         svc.decide_host(ctx, view["lobby_id"], issued.invite_id,
-                        peer_id="owner-b", approved=True)
+                        peer_id="owner-b", approved=True,
+                        expected_binding=_expected_binding(binding))
         # Give joining consent via store directly (signed consent path is deferred).
         store = svc.store
         store.consent_joining(view["lobby_id"], issued.invite_id, binding=binding, consented=True)

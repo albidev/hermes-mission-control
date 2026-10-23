@@ -83,3 +83,139 @@ pins, not proof of private material availability or native admission.
 The registry is installation-local trusted in-memory configuration; provisioning
 must reconstruct scoped approvals after a restart. This batch adds no secret store,
 new consent protocol, HTTP ingress, automatic retry or grant minting workflow.
+
+## Activation idempotency and the material-channel seam (MVP.2a-fix)
+
+`RoomInviteStore.mark_created` runs BEFORE any per-peer `groups.peer.register`
+call, and `mark_peer_registered` runs only after that peer's native
+registration is readback-verified (`RoomLobbyService.activate`). A lobby in
+state `"created"` is therefore not proof that every remote roster member is
+registered. `InviteRoomsService.activate` treats a `"created"` lobby as an
+explicit idempotency check, not a success shortcut: it reads the store's
+read-only `peer_registration_status` projection (zero native calls) and
+returns the activated result only when every remote roster member is
+durably `registered`; otherwise it raises `ServiceError("registration_incomplete")`
+(HTTP 409). Recovery/resume for a lobby stuck in that state belongs to the
+explicit reconcile packet (P2c) — this packet does not retry or resume a
+partial registration. `InviteRoomsService.activation_status` exposes the
+same projection as a redacted `registered: bool` per peer entry once the
+lobby has reached `"created"`.
+
+`InviteRoomsService(..., material_resolver=...)` and
+`runtime_config.load_service(..., material_resolver=...)` are the explicit
+constructor seam for the joining-owner material channel. Neither this module
+nor the owner-private JSON config format invents a resolver configuration:
+by default `material_resolver` stays `None`, and any activation attempt that
+actually needs remote peer material fails closed with
+`ServiceError("material_channel_unavailable")` (HTTP 503) BEFORE any native
+RPC call, including `groups.capabilities`. `invite_rooms.routes._MATERIAL_RESOLVER`
+is the single process-wiring point the routes layer reads today (`None`); P2b's
+joining-owner integration is expected to replace that module attribute with a
+real resolver coroutine, not to invent a new JSON field or a request-scoped
+parameter.
+
+**Known limitation, not fixed by this packet (P2c input):** if `/activate`
+times out mid-flight, the coroutine is cancelled and no durable "ambiguous"
+marker is written. The lobby is left exactly where the coordinator's own
+native calls left it (possibly `"created"` with a partially registered
+roster, or still `"sealed"`/`"open"` if the timeout hit before
+`groups.create`). The next attempt either resumes cleanly through the
+idempotency check above, or meets a native conflict (`409`-mapped
+`native_room_conflict`/`native_peer_conflict`) if the prior attempt is still
+in flight on the native side. Reconciling that ambiguity window is explicitly
+out of scope here and is the next packet's (P2c) job.
+
+## Control signals and post-mutation ambiguity (MVP.2a-fix4)
+
+`invite_rooms.routes._run_activation` only ever catches an in-flight
+activation's outcome to let the native transport's own teardown run before
+deciding what escapes; it never converts the outcome itself. A control
+signal (`KeyboardInterrupt`/`SystemExit`/`GeneratorExit`/`CancelledError`),
+a `TimeoutError`, or an already-classified `ServiceError`/`InviteError`/
+`PeerRegistryError` is always re-raised exactly as it left `scoped.activate`,
+regardless of what the transport's teardown (`__aexit__`) claims to have
+suppressed. Only an ordinary, unrecognized `Exception` may still be
+reclassified.
+
+`InviteRoomsService.activate`'s own catch-all for an unrecognized exception
+from `RoomLobbyService.activate` — and the routes-layer fallback for an
+unrecognized exception leaking past that service boundary — share one
+derivation (`InviteRoomsService.classify_unconfirmed_mutation`), so routes
+and the service always agree: the durable lobby state is read fresh, never
+the exception text. A lobby already `"created"` with an incomplete remote
+peer registration is `ServiceError("registration_ambiguous")` (the native
+create is confirmed; some peer registration may or may not have landed). A
+lobby that never reached `"created"` but already has a pinned native spec
+(`pin_native_spec`, written right before `groups.create` is attempted) is
+`ServiceError("creation_ambiguous")` (the create may have been admitted
+remotely without a durable confirmation). Only when neither durable signal
+is present — nothing was ever admitted — does the catch-all fall back to
+`ServiceError("activation_failed")`. The classified-code set is unchanged;
+this only narrows which of the existing codes an unrecognized exception
+maps to.
+
+## Browser host UI contract (MVP.2a-fix5)
+
+`GET /lobbies/{id}/activation` peers now also carry `invite_id` (the latest
+non-revoked invitation for that member, or `null`) and `redeemed_binding`
+(`null` before redemption, else the exact 5-key durable binding the owner is
+deciding against: `fingerprint`, `target_install_id`, `target_profile`,
+`catalog_digest`, `policy_digest` — never `endpoint_id`, secrets, or grants).
+`POST /lobbies/{id}/invites/{invite}/decision` now requires a body
+`expected_binding` carrying the identical 5 keys shown in the activation
+view; a mismatch on any field is `409 binding_changed` with zero durable
+state change, and a missing/malformed `expected_binding` is
+`400 invalid_body`. A decision attempted before the invite is redeemed keeps
+the pre-existing `404` (`invite_unavailable`) behavior unchanged.
+`GET /paired-peers` lists the owner's pre-paired peers for building a lobby
+roster without a free-text endpoint: `{"peers": [{"peer_id",
+"installation_id", "profile", "capability_digest"}]}`, redacted (no
+endpoint, fingerprint, or grant), empty when none are configured. All three
+endpoints share the existing owner-bearer auth, feature gate, and Origin/CSRF
+rules; `InviteRoomsService.decide_host`'s `expected_binding` parameter is
+**mandatory at the service boundary** (MVP.2a-fix6, R3-1) — a missing or
+malformed value is rejected as `ServiceError("invalid_peer_binding")` with
+zero store mutation, identically for the HTTP route and every direct/
+headless caller. There is no unguarded internal path left: every caller must
+supply the exact displayed 5-key projection.
+
+The activation view (and readiness used by `preflight_activate`/`activate`)
+pair each member's **latest** non-revoked `invite_id` with the redemption of
+that *same* invite_id only (MVP.2a-fix6, R3-2) — never a stale redemption
+left behind by an earlier invite of the same member (e.g. deny A, then
+reissue B: the view reports `invite_id` B, `redeemed_binding: null`,
+`host_decision`/`joining_consent: "pending"` until B itself is redeemed and
+decided). Invite/redemption history is never exposed; only the latest pair.
+
+## Route table
+
+| Method | Path                                                   | Handler                |
+| ------ | ------------------------------------------------------ | ----------------------- |
+| POST   | `/lobbies`                                              | `_h_create_lobby`       |
+| GET    | `/lobbies/{lobby_id}`                                   | `_h_inspect_lobby`      |
+| POST   | `/lobbies/{lobby_id}/invites`                           | `_h_issue_invite`       |
+| POST   | `/lobbies/{lobby_id}/invites/{invite_id}/revoke`        | `_h_revoke_invite`      |
+| POST   | `/lobbies/{lobby_id}/invites/{invite_id}/decision`      | `_h_decide_host`        |
+| GET    | `/lobbies/{lobby_id}/activation`                        | `_h_activation_status`  |
+| POST   | `/lobbies/{lobby_id}/activate`                          | `_h_activate`           |
+| GET    | `/paired-peers`                                         | `_h_paired_peers`       |
+
+All paths are mounted under `/api/local/room-invites`. Every route requires
+the owner bearer token (checked before the feature gate, so an unauthorized
+caller always gets `401` regardless of gate state) and, when an `Origin`
+header is present, an exact `MISSION_CONTROL_ALLOWED_ORIGIN` match.
+
+## Error code table
+
+| HTTP | `error`             | `code` (subset)                                                                 |
+| ---- | ------------------- | -------------------------------------------------------------------------------- |
+| 400  | `invalid_request`   | `invalid_lobby`, `invalid_invite`, `invalid_decision`, `invalid_peer_binding`, `invalid_peer_target`, `invalid_roster`, `mvp_roster_limit`, `distinct_peer_installation_required`, `catalog_digest_mismatch`, `invalid_binding`, `invalid_material_scope`, `invalid_owner_scope`, `invalid_peer_id` |
+| 400  | `bad_request`       | `invalid_content_type`, `invalid_body`, `invalid_content_length`                  |
+| 401  | *(unauthorized)*    | —                                                                                 |
+| 403  | `forbidden_origin`  | —                                                                                 |
+| 403  | `forbidden`         | `authority_mismatch`                                                             |
+| 404  | `not_found`         | `lobby_unavailable`, `invite_unavailable`, `owner_profile_mismatch`, `owner_context_mismatch`, `unknown_peer`, `peer_not_paired`, `peer_binding_mismatch` |
+| 409  | `conflict`          | `member_already_redeemed`, `fingerprint_mismatch`, `host_approval_required`, `decision_final`, `consent_required`, `native_spec_conflict`, `catalog_drift`, `material_scope_conflict`, `material_scope_mismatch`, `material_scope_unapproved`, `activation_not_ready`, `native_room_conflict`, `native_peer_conflict`, `native_rejected`, `registration_incomplete`, `binding_changed` |
+| 413  | `payload_too_large` | —                                                                                 |
+| 503  | `unavailable`       | `activation_unavailable`, `creation_ambiguous`, `registration_ambiguous`, `native_peer_unconfirmed`, `native_contract_unavailable`, `activation_failed`, `material_channel_unavailable`, `native_unavailable`, `activation_timeout` |
+| 500  | `internal`          | — (sanitized catch-all; never a traceback or an interpolated value)              |

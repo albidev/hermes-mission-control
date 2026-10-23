@@ -300,6 +300,24 @@ class RoomInviteStore:
                 (lobby_id,)).fetchall()
         return [dict(row) | {"status": self._consent_status(dict(row))} for row in rows]
 
+    def latest_invites(self, lobby_id: str) -> dict:
+        """Read-only: {member_id: invite_id} for the most recent non-revoked
+        invitation per member (insertion order via rowid). A member with no
+        non-revoked invitation at all is simply absent -- callers must treat
+        absence as null, never as an error. Never writes, never calls any
+        native transport."""
+        with self._connection() as conn:
+            row = conn.execute("SELECT 1 FROM lobbies WHERE lobby_id=?", (lobby_id,)).fetchone()
+            if row is None:
+                raise InviteError("lobby_unavailable")
+            rows = conn.execute(
+                "SELECT member_id,invite_id FROM invitations WHERE lobby_id=? AND state!='revoked' ORDER BY rowid",
+                (lobby_id,)).fetchall()
+        latest: dict = {}
+        for r in rows:
+            latest[r["member_id"]] = r["invite_id"]
+        return latest
+
     @staticmethod
     def _consent_status(row):
         if row["host_decision"] == "denied":
@@ -357,6 +375,17 @@ class RoomInviteStore:
                 raise InviteError("native_spec_conflict")
             conn.execute("UPDATE lobbies SET native_spec_json=? WHERE lobby_id=?", (encoded, lobby_id))
 
+    def has_pinned_spec(self, lobby_id: str) -> bool:
+        """Read-only: whether a native creation spec has been durably pinned
+        for this lobby (``pin_native_spec``), i.e. a create attempt was
+        committed to -- even if ``mark_created`` itself never confirmed.
+        Never exposes the spec content, only its presence (P-3)."""
+        with self._connection() as conn:
+            row = conn.execute("SELECT native_spec_json FROM lobbies WHERE lobby_id=?", (lobby_id,)).fetchone()
+            if row is None:
+                raise InviteError("lobby_unavailable")
+            return row["native_spec_json"] is not None
+
     def mark_created(self, lobby_id: str, room_id: str) -> None:
         with self._write() as conn:
             row = conn.execute("SELECT * FROM lobbies WHERE lobby_id=?", (lobby_id,)).fetchone()
@@ -371,6 +400,20 @@ class RoomInviteStore:
                 raise InviteError("lobby_unavailable")
             self._peer_member(row, member_id)
             conn.execute("INSERT INTO peer_links(lobby_id,member_id,state) VALUES(?,?,'registered') ON CONFLICT(lobby_id,member_id) DO UPDATE SET state='registered'", (lobby_id, member_id))
+
+    def peer_registration_status(self, lobby_id: str) -> dict:
+        # Read-only projection: {member_id: True} for every remote peer whose
+        # native registration this store has durably recorded via
+        # mark_peer_registered(). A missing key means "not yet registered" --
+        # callers must not treat absence as a transient/unknown state.
+        # Never writes, never calls native RPC, never raises on an
+        # unregistered member (only on an unknown lobby).
+        with self._connection() as conn:
+            row = conn.execute("SELECT 1 FROM lobbies WHERE lobby_id=?", (lobby_id,)).fetchone()
+            if row is None:
+                raise InviteError("lobby_unavailable")
+            rows = conn.execute("SELECT member_id,state FROM peer_links WHERE lobby_id=?", (lobby_id,)).fetchall()
+        return {r["member_id"]: r["state"] == "registered" for r in rows}
 
     def preview(self, invite_id: str, secret: str) -> dict:
         with self._connection() as conn:
