@@ -846,6 +846,11 @@ class RealLabParityTest(unittest.TestCase):
     def test_real_pinned_control_accepts_product_consent(self):
         spikes_dir = Path(__file__).resolve().parents[2] / "spikes" / "invite-rooms"
         sys.path.insert(0, str(spikes_dir))
+        import preflight
+        # The lab refuses to run outside its approved runtime root and managed Hermes
+        # interpreter (by design), so this parity proof only runs on a provisioned lab host.
+        if not (preflight.APPROVED_RUNTIME_ROOT.exists() and preflight.MANAGED_PYTHON.exists()):
+            self.skipTest("invite-rooms lab is not provisioned on this host")
         from lobby_control_lab import ControlLab
         import lobby_control as lab_control
 
