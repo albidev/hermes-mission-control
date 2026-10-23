@@ -1,0 +1,8 @@
+# Invite-only Rooms (server/invite_rooms) — only needed when the feature is enabled via
+# MISSION_CONTROL_ROOM_INVITES_CONFIG. The Hermes venv already ships both; install them
+# separately when running the telemetry server from another interpreter:
+#   python3 -m pip install -r server/requirements-rooms.txt
+# The feature also imports the Hermes core `gateway` package, so it runs from (or with
+# PYTHONPATH pointing at) a Hermes checkout.
+cryptography>=50.0.1,<51
+aiohttp>=3.14.3,<4
