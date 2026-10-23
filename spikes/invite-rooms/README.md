@@ -1,5 +1,14 @@
 # Invite-only Rooms A0 preflight
 
+## Product delegation boundary (R7)
+
+`lobby_material.TargetMint` is a lab adapter over the product
+`invite_rooms.joining_material.TargetMaterialMint`; the lab supplies only its
+local storage and control/RPC transport. `lobby_owner.JoiningOwner` and
+`lobby_activation.OnceActivation` remain deliberately lab-only until a reviewed
+six-field scope migration and product-owned activation journal seam exist. The
+lab must not grow a second product state machine or mint/signing implementation.
+
 This is a fail-closed behavioral harness only. It provisions two disposable Hermes homes under the designated scratch root and asks the native Hermes code for installation identity and effective RoomLink execution policy in short-lived child interpreters.
 
 It does not start `hermes serve`, a gateway, a listener, a model, a relay, or a connector. It performs no network request.

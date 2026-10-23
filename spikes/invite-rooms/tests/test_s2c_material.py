@@ -12,6 +12,32 @@ ROOT = Path('/Users/albi/.hermes/cache/scratch/room-network-spike-20261011-16493
 
 
 class MintConsentTests(unittest.TestCase):
+    def test_lab_target_adapter_delegates_to_product_mint(self):
+        import asyncio
+        from unittest.mock import patch
+        from lobby_material import TargetMint
+
+        class ProductSpy:
+            def __init__(self, *args, **kwargs):
+                self.calls = []
+
+            async def mint(self, payload):
+                self.calls.append(payload)
+                return {'status': 'product-spy'}
+
+        class Join:
+            lobby_id = 'lobby-spy'
+            host_id = 'install:' + 'a' * 32
+            control = object()
+
+        with patch('invite_rooms.joining_material.TargetMaterialMint', ProductSpy):
+            adapter = TargetMint(Join(), object(), object())
+            self.assertEqual(asyncio.run(adapter.mint({'lobby_id': 'lobby-spy', 'invite_id': 'invite-spy'})),
+                             {'status': 'product-spy'})
+            product = adapter._product
+            self.assertIsNotNone(product)
+            self.assertEqual(product.calls, [{'lobby_id': 'lobby-spy', 'invite_id': 'invite-spy'}])
+
     def test_local_authenticated_ambiguous_state_is_typed_not_success(self):
         from lobby_material import MintAmbiguous
         from lobby_owner import OwnerSurface

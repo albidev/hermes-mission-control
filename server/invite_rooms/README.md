@@ -232,13 +232,14 @@ mint journal), `joining.py` (`JoiningOwnerService`: preview/redeem/confirm_scope
 consent), and `joining_material.py` (`TargetMaterialMint`: the target-side handlers
 exercised during host activation, with a durable encrypted mint journal).
 
-These preserve the accepted S2 lab contract (`lobby_owner.JoiningOwner`,
-`lobby_material.TargetMint`/`MintJournal`, `lobby_consent`'s canonical encoding) by
-reimplementing the same scope/receipt/envelope shapes rather than importing spike
-code into product code; one test drives the REAL lab control classes against this
-implementation to prove interoperability (see
-`server/tests/test_room_invite_joining.py::RealLabParityTest`). No HTTP route exists
-yet; a `ControlChannel`-shaped object (`.call(request) -> dict`) and a bounded async
-`rpc(method, params)` callable (the exact contract in `native_rpc.py`) are injected,
-so a later packet can wire either the pinned TLS transport or a headless adapter
-without touching this module's logic.
+These preserve the accepted S2 lab contract through thin adapters: `lobby_material.TargetMint`
+uses the product `invite_rooms.joining_material.TargetMaterialMint` for scope checks,
+signing, and mint state transitions; its local journal/control objects are only storage and
+transport bridges. `lobby_owner.JoiningOwner` and `lobby_activation.OnceActivation` remain
+lab-only in this packet because their legacy four-field scope and operation journal cannot
+be passed to the product six-pin store without inventing digests or silently changing the
+once-only boundary. A follow-up must first provide an explicit legacy-scope migration seam
+and a product-owned activation journal contract; this packet deliberately does not fake it.
+One test drives the REAL lab control classes against the product mint implementation to prove
+interoperability. No HTTP route exists yet; a `ControlChannel`-shaped object (`.call(request)
+-> dict`) and a bounded async `rpc(method, params)` callable remain injected.
