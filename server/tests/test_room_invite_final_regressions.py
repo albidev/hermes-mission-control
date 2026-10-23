@@ -24,7 +24,8 @@ from invite_rooms.peer_registry import PeerRegistryError, _native_catalog
 from invite_rooms.service import InviteRoomsService, ServiceError
 from test_room_invite_operations import make_service, ROSTER, CATALOG, INSTALL_A, INSTALL_B, ADAPTER_URL, GRANT
 
-BASE = Path('/Users/albi/.hermes/cache/scratch/invite-rooms-mvp1-baseline-dc028f5/server')
+# Frozen MVP.1 sources (byte-identical to the checkpoint commit); see fixtures/mvp1_baseline/README.md.
+BASE = Path(__file__).resolve().parent / 'fixtures' / 'mvp1_baseline'
 
 
 def load(name, path):

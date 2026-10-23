@@ -849,8 +849,7 @@ class RealLabParityTest(unittest.TestCase):
         from lobby_control_lab import ControlLab
         import lobby_control as lab_control
 
-        scratch_root = Path("/Users/albi/.hermes/cache/scratch/room-network-spike-20261011-164930")
-        with tempfile.TemporaryDirectory(prefix="mvp2b-parity-", dir=scratch_root) as tmp:
+        with tempfile.TemporaryDirectory(prefix="mvp2b-parity-") as tmp:
             tmp = Path(tmp)
             with ControlLab(tmp) as lab:
                 store = RoomInviteStore(tmp / "host.sqlite")
