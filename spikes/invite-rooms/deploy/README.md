@@ -37,6 +37,11 @@ python pki.py init --out ~/.rooms-f1/pki --name host-a   # on A
 python pki.py init --out ~/.rooms-f1/pki --name host-b   # on B
 ```
 Exchange **only** `ca.pem` + `fingerprint` (public). Private keys never move.
+`pki.py` builds certificates in-process with the Python `cryptography` package (present in the
+Hermes venv; run it with that interpreter) and never shells out to `openssl`/LibreSSL. The CA is
+X.509 v3 (basicConstraints critical CA:TRUE pathlen:0, keyUsage critical keyCertSign+cRLSign,
+SKI/AKI) and leaves carry CA:FALSE + keyUsage + EKU + AKI, so the chain passes
+`VERIFY_X509_STRICT` (Python ≥3.13 default) on both hosts. No `OPENSSL_CONF` workaround needed.
 
 ## 3. Native invitation (Host B owner consent)
 Host B owner runs the native invitation on their own gateway (loopback API) and gives Host A the
@@ -63,7 +68,11 @@ Pass criteria (all required for F1):
 2. A's only listener is the loopback adapter; VPS exposes only 22/443 (`ufw status`, `ss -ltn`).
 3. Remote reply in A's canonical log == B's run output; duplicate dispatch → one durable receipt, `replayed=true`.
 4. Relay journal shows routes/counters only — no grant, prompt or reply text (`grep` checks in the script).
-5. Relay restart mid-idle: connectors reconnect with incarnation+1, no replayed POST on B.
+5. Relay restart mid-idle: both connectors reconnect through a **new authenticated relay session**
+   (fresh `READY` per endpoint after the restart) and B records **zero replayed POSTs**. Do not
+   expect `incarnation+1`: the relay keeps incarnations in memory per relay process
+   (`relay.py` `_incarnations`), so a restarted relay starts again at 1; incarnation only
+   increases across reconnects within one relay process. No relay-side persistence is implied.
 6. Stop/revoke on A behaves as in H (native semantics), unaffected by the relay hop.
 
 ## Route reload policy (MVP)

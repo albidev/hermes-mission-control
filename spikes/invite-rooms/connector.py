@@ -10,9 +10,9 @@ anything reaches its native loopback API.
   python connector.py host   --config host.json     # prints the loopback adapter URL
   python connector.py target --config target.json
 
-Relay loss fails in-flight requests (no offline replay); the client reconnects
-with backoff under a new incarnation. Retried native dispatches are made safe by
-the native Idempotency-Key, not by the transport.
+Relay loss holds a caller for at most ten seconds; only GET and identical
+idempotency-keyed dispatches may be resent after a broken stream. There is no
+offline queue. Native Idempotency-Key, not the transport, prevents admission twice.
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ import ssl
 import stat
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -39,7 +40,7 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from relay import MAX_FRAME_BYTES, MAX_RAW_CHUNK
 from room_firewall import FirewallDenied, ForwardedRequest, Request, RoomFirewall, UpstreamAmbiguous, UpstreamResponse
-from tls_stream import SequencedTLS, client_context, server_context, wrap_client, wrap_server
+from tls_stream import SequencedTLS, TLSIdentityError, TLSStreamClosed, client_context, server_context, wrap_client, wrap_server
 
 log = logging.getLogger("rooms-connector")
 
@@ -47,6 +48,8 @@ MESSAGE_CHUNK = 24 * 1024          # SequencedTLS hex-encodes; keeps frames unde
 MAX_MESSAGE = 1024 * 1024
 STREAM_OPEN_TIMEOUT = 10.0
 REQUEST_TIMEOUT = 60.0
+HOLD_BOUND = 10.0  # total host request budget, strictly below lease_ttl / 2 = 15s
+MAX_ENDED_STREAM_IDS = 1024  # per-session memory of relay-aborted ids (never resurrected)
 _DENIED = UpstreamResponse(403, (("content-type", "application/json"),), b'{"error":"room request denied"}')
 _AMBIGUOUS = UpstreamResponse(502, (("content-type", "application/json"),),
                               b'{"error":{"message":"room link outcome unknown","type":"room_error","code":null}}')
@@ -112,13 +115,16 @@ class _Stream:
         except (OSError, ConnectorError):
             pass
         finally:
-            if not self.remote_closed:
-                try:
-                    await self.client._send("CLOSE", self.stream_id)
-                except (OSError, ConnectorError):
-                    pass
-            self.client._streams.pop(self.stream_id, None)
-            self.relay_end.close()
+            try:
+                if not self.remote_closed:
+                    try:
+                        await self.client._send("CLOSE", self.stream_id)
+                    except (OSError, ConnectorError):
+                        pass
+            finally:
+                if self.client._streams.get(self.stream_id) is self:
+                    self.client._streams.pop(self.stream_id)
+                self.relay_end.close()
 
     async def deliver(self, raw: bytes) -> None:
         await asyncio.get_running_loop().sock_sendall(self.relay_end, raw)
@@ -155,10 +161,17 @@ class RelayClient:
         self.sessions = 0
         self._ws = None
         self._streams: dict[str, _Stream] = {}
+        # Ids ended by a relay STREAM_ERROR in the current session. Late DATA for
+        # them is answered stream-locally (CLOSE) and never opens a new stream.
+        self._ended: dict[str, None] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._connected = threading.Event()
         self._stopping = False
+        self._teardown_errors: list[str] = []
+        self._run_task: asyncio.Task | None = None
+        self._application_lock = threading.Lock()
+        self._application_threads: set[threading.Thread] = set()
 
     # thread-safe API --------------------------------------------------------
     def start(self, *, wait: float = 15.0) -> None:
@@ -171,17 +184,36 @@ class RelayClient:
         self._stopping = True
         if self._loop is not None and self._loop.is_running():
             async def shutdown() -> None:
-                if self._ws is not None:
-                    await self._ws.close(code=1000, reason="connector stopping")
-                for task in asyncio.all_tasks():
-                    if task is not asyncio.current_task():
-                        task.cancel()
+                try:
+                    if self._ws is not None:
+                        await asyncio.wait_for(self._ws.close(code=1000, reason="connector stopping"), 1)
+                finally:
+                    # Cancel the session owner, never the finalizer/drain task
+                    # which may already be running after websocket close.
+                    if self._run_task is not None and not self._run_task.done():
+                        self._run_task.cancel()
+            future = asyncio.run_coroutine_threadsafe(shutdown(), self._loop)
             try:
-                asyncio.run_coroutine_threadsafe(shutdown(), self._loop).result(5)
-            except Exception:
-                pass
+                future.result(2)
+            except Exception as exc:
+                self._teardown_errors.append("shutdown_" + type(exc).__name__)
+                future.cancel()
         if self._thread is not None:
-            self._thread.join(5)
+            self._thread.join(3)
+        deadline = time.monotonic() + 3
+        for thread in self.application_threads:
+            thread.join(max(0, deadline - time.monotonic()))
+        if self.application_threads or (self._thread is not None and self._thread.is_alive()) or (
+                self._loop is not None and not self._loop.is_closed()):
+            raise ConnectorError("connector_teardown_incomplete")
+        if self._teardown_errors:
+            raise ConnectorError("connector_teardown_failed:" + ",".join(sorted(set(self._teardown_errors))))
+
+    @property
+    def application_threads(self) -> tuple[threading.Thread, ...]:
+        """All serving callbacks still owned, including ones blocked in native I/O."""
+        with self._application_lock:
+            return tuple(self._application_threads)
 
     @property
     def connected(self) -> bool:
@@ -197,11 +229,42 @@ class RelayClient:
     def _thread_main(self) -> None:
         self._loop = asyncio.new_event_loop()
         try:
-            self._loop.run_until_complete(self._run())
+            self._run_task = self._loop.create_task(self._run())
+            self._loop.run_until_complete(self._run_task)
         except asyncio.CancelledError:
             pass
         finally:
-            self._loop.close()
+            pending = asyncio.all_tasks(self._loop)
+            for task in pending:
+                if not task.cancelling():
+                    task.cancel()
+            async def drain(tasks):
+                if not tasks:
+                    return set()
+                done, remaining = await asyncio.wait(tasks, timeout=1)
+                for task in done:
+                    if not task.cancelled():
+                        task.exception()  # retrieve, never render transport diagnostics
+                if remaining:
+                    self._teardown_errors.append("drain_timeout")
+                    for task in remaining:
+                        task.cancel()  # second cancellation interrupts a suspended CLOSE
+                    done, remaining = await asyncio.wait(remaining, timeout=1)
+                    for task in done:
+                        if not task.cancelled():
+                            task.exception()
+                return remaining
+
+            remaining = self._loop.run_until_complete(drain(pending))
+            if not remaining:
+                closing = self._loop.create_task(self._loop.shutdown_asyncgens())
+                remaining = self._loop.run_until_complete(drain({closing}))
+            # Never destroy pending tasks or pretend an open loop was released.
+            # Non-cooperative coroutines require caller escalation, not an unbounded join.
+            if not remaining:
+                self._loop.close()
+            else:
+                self._teardown_errors.append("pending_tasks")
 
     async def _run(self) -> None:
         delay = 1.0
@@ -244,6 +307,7 @@ class RelayClient:
                 for stream in list(self._streams.values()):
                     stream.abort()
                 self._streams.clear()
+                self._ended.clear()
 
     async def _dispatch(self, frame: dict[str, Any]) -> None:
         kind, stream_id = frame.get("type"), frame.get("stream_id")
@@ -255,6 +319,13 @@ class RelayClient:
             stream = self._streams.get(stream_id)
             if stream is not None:
                 stream.abort()
+                # The pump finalizer may never run (cancel before its first step),
+                # so unmap here; identity-conditional like every other removal (R1).
+                if self._streams.get(stream_id) is stream:
+                    self._streams.pop(stream_id)
+                self._ended[stream_id] = None
+                while len(self._ended) > MAX_ENDED_STREAM_IDS:
+                    self._ended.pop(next(iter(self._ended)))
             return
         if frame.get("source") != self.peer_identity or frame.get("link_id") != self.link_id \
                 or frame.get("room_id") != self.room_id or frame.get("target") != self.identity:
@@ -266,6 +337,11 @@ class RelayClient:
             return
         if kind != "DATA":
             raise ConnectorError("unexpected relay frame")
+        if stream is None and stream_id in self._ended:
+            # Late DATA for a relay-aborted stream: answer for this id only;
+            # never resurrect it and never fail the shared session.
+            await self._send("CLOSE", stream_id)
+            return
         if stream is None:
             if self.on_new_stream is None:
                 await self._send("CLOSE", stream_id)
@@ -273,8 +349,42 @@ class RelayClient:
             stream = _Stream(self, stream_id)
             self._streams[stream_id] = stream
             stream.start()
-            threading.Thread(target=self.on_new_stream, args=(stream.app_end, stream_id), daemon=True).start()
-        await stream.deliver(base64.b64decode(frame["payload"], validate=True))
+            thread = threading.Thread(target=self._serve_stream, args=(stream, self.on_new_stream),
+                                      name=f"room-stream-{self.identity}", daemon=True)
+            with self._application_lock:
+                self._application_threads.add(thread)
+            try:
+                thread.start()
+            except BaseException:
+                with self._application_lock:
+                    self._application_threads.discard(thread)
+                stream.app_end.close()
+                stream.abort()
+                if self._streams.get(stream_id) is stream:
+                    self._streams.pop(stream_id)
+                raise
+        raw = base64.b64decode(frame["payload"], validate=True)
+        try:
+            await stream.deliver(raw)
+        except OSError:
+            # A rejected TLS request closes its app socket while peer bytes may
+            # still be queued (BrokenPipe/Reset), or the local end is already
+            # closed (EBADF). Either way end that stream, not the shared WSS session.
+            stream.abort()
+            if self._streams.get(stream_id) is stream:
+                self._streams.pop(stream_id)
+            await self._send("CLOSE", stream_id)
+
+    def _serve_stream(self, stream: _Stream, callback: Callable[[socket.socket, str], None]) -> None:
+        try:
+            callback(stream.app_end, stream.stream_id)
+        except Exception as exc:
+            # Arbitrary callback diagnostics may contain credential material.
+            log.info(json.dumps({"event": "serving_failed", "error": type(exc).__name__}))
+        finally:
+            stream.app_end.close()
+            with self._application_lock:
+                self._application_threads.discard(threading.current_thread())
 
     async def _open_stream(self) -> socket.socket:
         stream = _Stream(self, uuid.uuid4().hex)
@@ -312,24 +422,47 @@ class HostConnector:
         self.peer_fingerprint = inner["peer_fingerprint"]
 
     def forward(self, request: ForwardedRequest) -> UpstreamResponse:
-        try:
-            sock = self.client.open_stream()
-        except Exception:
-            return _UNAVAILABLE
-        sock.settimeout(REQUEST_TIMEOUT)
-        tls = None
-        try:
-            tls = wrap_client(sock, self.context, expected_fingerprint=self.peer_fingerprint)
-            frames = SequencedTLS(tls)
-            send_message(frames, json.dumps({"method": request.method, "path": request.path,
-                                             "headers": [list(h) for h in request.headers],
-                                             "body": base64.b64encode(request.body).decode()},
-                                            separators=(",", ":")).encode())
-            result = json.loads(recv_message(frames))
-            return UpstreamResponse(int(result["status"]), tuple(tuple(h) for h in result["headers"]),
-                                    base64.b64decode(result["body"]))
-        finally:
-            (tls or sock).close()
+        # One absolute budget, NOT HOLD_BOUND + REQUEST_TIMEOUT per attempt.
+        # Serialize once: a dispatch retry cannot change its key, body or grant.
+        deadline = time.monotonic() + min(HOLD_BOUND, REQUEST_TIMEOUT)
+        payload = json.dumps({"method": request.method, "path": request.path,
+                              "headers": [list(h) for h in request.headers],
+                              "body": base64.b64encode(request.body).decode()},
+                             separators=(",", ":")).encode()
+        replay_safe = request.method == 'GET' or (
+            request.method == 'POST' and request.path == '/v1/runs'
+            and any(k.lower() == 'idempotency-key' and v for k, v in request.headers))
+        while time.monotonic() < deadline:
+            sock = tls = None
+            try:
+                try:
+                    sock = self.client.open_stream(timeout=min(STREAM_OPEN_TIMEOUT,
+                                                              deadline - time.monotonic()))
+                except Exception:
+                    # No application bytes sent: any method may wait for its first stream.
+                    pass
+                else:
+                    sock.settimeout(max(.001, deadline - time.monotonic()))
+                    tls = wrap_client(sock, self.context, expected_fingerprint=self.peer_fingerprint)
+                    frames = SequencedTLS(tls, deadline=deadline)
+                    send_message(frames, payload)
+                    result = json.loads(recv_message(frames))
+                    return UpstreamResponse(int(result["status"]), tuple(tuple(h) for h in result["headers"]),
+                                            base64.b64decode(result["body"]))
+            except OSError as exc:
+                # Only explicit transport failures are recovery signals. In particular,
+                # plain SSLError includes fatal TLS alerts, not just transport EOF.
+                retryable = isinstance(exc, (ConnectionError, TimeoutError, TLSStreamClosed,
+                                            ssl.SSLEOFError, ssl.SSLZeroReturnError))
+                if not retryable or not replay_safe:
+                    raise
+            finally:
+                if tls is not None or sock is not None:
+                    (tls or sock).close()
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(.1, remaining))
+        return _UNAVAILABLE
 
 
 class _NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
@@ -430,8 +563,9 @@ def build_client(config: dict, on_new_stream=None) -> RelayClient:
 
 
 def run_target(config: dict) -> tuple[RelayClient, TargetConnector]:
+    from run_bindings import NativeReceiptVerifier
     firewall = RoomFirewall(expected_scope=config["scope"], backend=native_http_backend(config["target_base"]),
-                            verify_native=lambda *_: True)
+                            verify_native=NativeReceiptVerifier(config["native_receipt_db"]))
     target = TargetConnector(inner=config["inner_tls"], firewall=firewall)
     client = build_client(config, on_new_stream=target.serve)
     client.start()
@@ -440,7 +574,9 @@ def run_target(config: dict) -> tuple[RelayClient, TargetConnector]:
 
 def run_host(config: dict):
     from adapter import LoopbackAdapter
+    from run_bindings import HostRunBindings
 
+    bindings = HostRunBindings(config["host_binding_db"])
     client = build_client(config)
     client.start()
     host = HostConnector(client, inner=config["inner_tls"])
@@ -448,7 +584,7 @@ def run_host(config: dict):
     adapter_cfg = config.get("adapter", {})
     adapter.start(host=adapter_cfg.get("host", "127.0.0.1"), port=int(adapter_cfg.get("port", 0)))
     url = adapter.bind(config["link_id"], RoomFirewall(expected_scope=config["scope"], backend=host.forward,
-                                                       verify_native=lambda *_: True),
+                                                       verify_native=bindings, on_admitted=bindings.record_ack),
                        target_url="relay:" + config["link_id"], scope=config["scope"])
     return client, adapter, url
 

@@ -12,6 +12,7 @@ import json
 import socket
 import ssl
 import struct
+import time
 from typing import Any
 
 MAX_FRAME_BYTES = 64 * 1024
@@ -20,6 +21,10 @@ _HEADER = struct.Struct("!I")
 
 class TLSIdentityError(ssl.SSLError):
     """Peer certificate or native installation binding is not approved."""
+
+
+class TLSStreamClosed(TLSIdentityError):
+    """Transport EOF, distinct from a failed identity/sequence check."""
 
 
 def certificate_fingerprint(cert_der: bytes) -> str:
@@ -48,13 +53,21 @@ def server_context(*, ca_file: str, cert_file: str, key_file: str) -> ssl.SSLCon
 
 def wrap_client(sock: socket.socket, context: ssl.SSLContext, *, expected_fingerprint: str) -> ssl.SSLSocket:
     stream = context.wrap_socket(sock, server_hostname=None)
-    _check_fingerprint(stream, expected_fingerprint)
+    try:
+        _check_fingerprint(stream, expected_fingerprint)
+    except BaseException:
+        stream.close()
+        raise
     return stream
 
 
 def wrap_server(sock: socket.socket, context: ssl.SSLContext, *, expected_fingerprint: str) -> ssl.SSLSocket:
     stream = context.wrap_socket(sock, server_side=True)
-    _check_fingerprint(stream, expected_fingerprint)
+    try:
+        _check_fingerprint(stream, expected_fingerprint)
+    except BaseException:
+        stream.close()
+        raise
     return stream
 
 
@@ -77,8 +90,10 @@ def hmac_compare(left: str, right: str) -> bool:
 class SequencedTLS:
     """Length-delimited application frames with monotonic anti-replay sequence."""
 
-    def __init__(self, stream: ssl.SSLSocket, *, max_frame_bytes: int = MAX_FRAME_BYTES) -> None:
+    def __init__(self, stream: ssl.SSLSocket, *, max_frame_bytes: int = MAX_FRAME_BYTES,
+                 deadline: float | None = None) -> None:
         self.stream = stream
+        self.deadline = deadline
         self.max_frame_bytes = max_frame_bytes
         self._next_send = 0
         self._next_receive = 0
@@ -90,16 +105,17 @@ class SequencedTLS:
         envelope = json.dumps({"sequence": sequence, "payload": payload.hex()}, separators=(",", ":")).encode()
         if len(envelope) > self.max_frame_bytes:
             raise TLSIdentityError("encoded frame exceeds limit")
+        _set_deadline(self.stream, self.deadline)
         self.stream.sendall(_HEADER.pack(len(envelope)) + envelope)
         self._next_send += 1
         return sequence
 
     def receive(self) -> tuple[int, bytes]:
-        header = _read_exact(self.stream, _HEADER.size)
+        header = _read_exact(self.stream, _HEADER.size, self.deadline)
         (length,) = _HEADER.unpack(header)
         if length == 0 or length > self.max_frame_bytes:
             raise TLSIdentityError("invalid frame length")
-        raw = _read_exact(self.stream, length)
+        raw = _read_exact(self.stream, length, self.deadline)
         try:
             value: Any = json.loads(raw)
             sequence = value["sequence"]
@@ -114,11 +130,20 @@ class SequencedTLS:
         return sequence, payload
 
 
-def _read_exact(stream: ssl.SSLSocket, size: int) -> bytes:
+def _set_deadline(stream, deadline):
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('TLS request deadline')
+        stream.settimeout(remaining)
+
+
+def _read_exact(stream: ssl.SSLSocket, size: int, deadline: float | None = None) -> bytes:
     chunks = bytearray()
     while len(chunks) < size:
+        _set_deadline(stream, deadline)
         chunk = stream.recv(size - len(chunks))
         if not chunk:
-            raise TLSIdentityError("TLS peer closed during frame")
+            raise TLSStreamClosed("TLS peer closed during frame")
         chunks.extend(chunk)
     return bytes(chunks)

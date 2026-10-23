@@ -168,6 +168,54 @@ class TLSPeerIdentityTests(unittest.TestCase):
         with self.assertRaises(TLSIdentityError):
             verify_binding(binding, peer_certificate_der=ssl.PEM_cert_to_DER_cert(Path(self.certificates["wrong"][0]).read_text()), native_identity_probe=lambda: {"install_id": "install:b"}, profile="default")
 
+    def test_failed_pin_closes_owned_tls_descriptor_before_unwinding(self):
+        # Retain the actual wrapped sockets (and exceptions): GC must not be
+        # responsible for closing descriptors on either side of a rejected pin.
+        for rejected_side in ("client", "server"):
+            with self.subTest(rejected_side=rejected_side):
+                client_sock, server_sock = socket.socketpair()
+                client_sock.settimeout(5)
+                server_sock.settimeout(5)
+                client_ctx, _ = self._contexts("a")
+                _, server_ctx = self._contexts("b")
+                owned, errors = {}, {}
+
+                class RecordingContext:
+                    def __init__(self, context, side):
+                        self.context, self.side = context, side
+
+                    def wrap_socket(self, sock, **kwargs):
+                        stream = self.context.wrap_socket(sock, **kwargs)
+                        owned[self.side] = stream
+                        return stream
+
+                def accept():
+                    try:
+                        wrap_server(server_sock, RecordingContext(server_ctx, "server"),
+                                    expected_fingerprint="0" * 64 if rejected_side == "server" else self._fp("a"))
+                    except Exception as exc:
+                        errors["server"] = exc
+
+                thread = threading.Thread(target=accept)
+                thread.start()
+                try:
+                    try:
+                        wrap_client(client_sock, RecordingContext(client_ctx, "client"),
+                                    expected_fingerprint="0" * 64 if rejected_side == "client" else self._fp("b"))
+                    except Exception as exc:
+                        errors["client"] = exc
+                    thread.join(6)
+                    self.assertFalse(thread.is_alive())
+                    self.assertIsInstance(errors.get(rejected_side), TLSIdentityError)
+                    self.assertEqual(owned[rejected_side].fileno(), -1,
+                                     "rejected wrapped TLS socket still owns a descriptor")
+                finally:
+                    for stream in owned.values():
+                        stream.close()
+                    client_sock.close()
+                    server_sock.close()
+                    thread.join(6)
+
     def test_native_installation_and_profile_are_independent_bindings(self):
         der = ssl.PEM_cert_to_DER_cert(Path(self.certificates["b"][0]).read_text())
         binding = approve_binding(link_id="link", peer_certificate_der=der, native_identity={"install_id": "install:b"}, profile="default")

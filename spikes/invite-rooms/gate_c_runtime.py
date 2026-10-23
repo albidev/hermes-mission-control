@@ -32,6 +32,12 @@ model:
   default: qwen3.8-27b-oq4e-mtp
   base_url: http://127.0.0.1:8083/v1
   api_key: local-lab-no-secret
+custom_providers:
+  - name: s1-lab-omlx
+    base_url: http://127.0.0.1:8083/v1
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
 model_options:
   reasoning:
     enabled: false
@@ -153,10 +159,13 @@ async def workflow(report, home, target, host_port, target_port, owner_key, ws_k
                      'authority_gateway_id': owner_id, 'authority_epoch': 1,
                      'member_id': 'peer-b', 'target_install_id': catalog['installation_id'],
                      'target_profile': 'default'}
+            from run_bindings import HostRunBindings
+            bindings = HostRunBindings(home / 'room-run-bindings.db')
+            adapter.native_receipt_db = target / 'runs_idempotency.db'
             adapter_url = adapter.bind(
                 'real-' + uuid.uuid4().hex,
                 RoomFirewall(expected_scope=scope, backend=native_backend(base, grant),
-                             verify_native=lambda *_: True),
+                             verify_native=bindings, on_admitted=bindings.record_ack),
                 target_url=base, scope=scope)
             report['adapter_url'] = adapter_url
             roster = [

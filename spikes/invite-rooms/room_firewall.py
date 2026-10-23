@@ -235,6 +235,10 @@ def _sanitize_response(response: UpstreamResponse, extra_fields: frozenset[str] 
         if key == "execution_generation" and value is not None and (
                 not isinstance(value, int) or isinstance(value, bool) or value < 0):
             _deny("native execution generation is invalid")
+        if key == "admission_id" and key in extra_fields and (
+                not isinstance(value, str) or not value or len(value) > 256
+                or any(ord(c) < 0x20 or ord(c) == 0x7f for c in value)):
+            _deny("native admission identity is invalid")
         if key == "acknowledged" and not isinstance(value, bool):
             _deny("native acknowledgement is invalid")
     clean = {key: payload[key] for key in payload if key in allowed}
@@ -249,10 +253,11 @@ def _sanitize_response(response: UpstreamResponse, extra_fields: frozenset[str] 
 class RoomFirewall:
     """Validate and forward only the fixed room-member native contract."""
 
-    def __init__(self, *, expected_scope: Mapping[str, str], backend: Callable[[ForwardedRequest], UpstreamResponse], verify_native: Callable[[str, Mapping[str, Any]], bool], backend_timeout_seconds: float = 30.0):
+    def __init__(self, *, expected_scope: Mapping[str, str], backend: Callable[[ForwardedRequest], UpstreamResponse], verify_native: Callable[[str, Mapping[str, Any]], bool], backend_timeout_seconds: float = 30.0, on_admitted=None):
         self._scope = _validated_scope(expected_scope)
         self._backend = backend
         self._verify_native = verify_native
+        self._on_admitted = on_admitted
         if not 0 < backend_timeout_seconds <= 30:
             raise ValueError("backend timeout must be between 0 and 30 seconds")
         self._backend_timeout_seconds = backend_timeout_seconds
@@ -320,6 +325,33 @@ class RoomFirewall:
                 _deny("invalid run status request")
             if not self._verify_native(match.group(1), self._scope):
                 _deny("native run verifier rejected status")
+        elif method == "POST" and (match := re.fullmatch(r"/v1/runs/([^/]+)/resolve-unknown", path)):
+            run_id = match.group(1)
+            if not _RUN_ID.fullmatch(run_id) or headers.get("content-type") != "application/json":
+                _deny("invalid unknown resolution request")
+            payload = _json(request.body, maximum=1024)
+            admission = payload.get("admission_id")
+            generation = payload.get("execution_generation")
+            if (set(payload) != {"admission_id", "execution_generation"}
+                    or not isinstance(admission, str) or not admission or len(admission) > 256
+                    or any(ord(c) < 0x20 or ord(c) == 0x7f for c in admission)
+                    or not isinstance(generation, int) or isinstance(generation, bool) or generation < 1):
+                _deny("invalid unknown resolution coordinates")
+            if not self._verify_native(run_id, self._scope):
+                _deny("native run verifier rejected unknown resolution")
+            # Read only the same bound native run. Never equate immutable
+            # dispatch generation with this runtime admission generation.
+            native = self._call_backend(ForwardedRequest("GET", "/v1/runs/" + run_id,
+                (("authorization", auth), ("accept", "application/json")), b""))
+            try:
+                observed = json.loads(native.body)
+            except (ValueError, UnicodeDecodeError):
+                raise FirewallDenied("unknown resolution native readback unavailable")
+            if (native.status != 200 or not isinstance(observed, dict)
+                    or observed.get("run_id") != run_id or observed.get("admission_id") != admission
+                    or type(observed.get("execution_generation")) is not int
+                    or observed["execution_generation"] != generation):
+                _deny("unknown resolution native coordinates mismatch")
         elif method == "POST" and (match := re.fullmatch(r"/v1/runs/([^/]+)/stop", path)):
             # The native peer client posts a literal ``{}`` (hosted_room_peer_http._post_run_action).
             if not _RUN_ID.fullmatch(match.group(1)) or not _empty_json_object(request.body):
@@ -349,7 +381,42 @@ class RoomFirewall:
         forwarded = ForwardedRequest(method, path, forwarded_headers, request.body)
         response = self._call_backend(forwarded)
         try:
-            return _sanitize_response(response, _ROUTE_RESPONSE_FIELDS.get(path, frozenset()))
+            extra_fields = _ROUTE_RESPONSE_FIELDS.get(path, frozenset())
+            if method == 'GET' and re.fullmatch(r"/v1/runs/([^/]+)", path) and 200 <= response.status < 300:
+                try:
+                    raw = json.loads(response.body)
+                except (ValueError, UnicodeDecodeError) as exc:
+                    raise UpstreamAmbiguous('invalid native status response') from exc
+                if isinstance(raw, dict) and raw.get('status') == 'unknown':
+                    extra_fields = frozenset({'admission_id'})
+            clean = _sanitize_response(response, extra_fields)
+            if method == 'POST' and path == '/v1/runs' and 200 <= clean.status < 300:
+                ack = json.loads(clean.body)
+                if ack.get('status') == 'unknown':
+                    if (clean.status not in (200, 202) or not isinstance(ack.get('run_id'), str)
+                            or not _RUN_ID.fullmatch(ack['run_id']) or ack.get('replayed') is not True
+                            or not self._verify_native(ack['run_id'], self._scope)
+                            or not callable(getattr(self._verify_native, 'exact_replay', None))
+                            or not self._verify_native.exact_replay(ack['run_id'], self._scope,
+                                dispatch['task_id'], dispatch['execution_generation'], headers['idempotency-key'])):
+                        raise UpstreamAmbiguous('unknown acknowledgement is not an exact bound replay')
+                    return clean  # No new acknowledged binding for an unknown replay.
+            if method == 'POST' and path == '/v1/runs' and self._on_admitted is not None and 200 <= clean.status < 300:
+                ack = json.loads(clean.body)
+                if (clean.status not in (200, 202) or not isinstance(ack.get('run_id'), str)
+                        or not _RUN_ID.fullmatch(ack['run_id'])
+                        or ack.get('status') not in {'started', 'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'}
+                        or not isinstance(ack.get('replayed'), bool)):
+                    raise UpstreamAmbiguous('invalid native admission acknowledgement')
+                try:
+                    record_dispatch = getattr(self._verify_native, 'record_dispatch_ack', None)
+                    if record_dispatch is not None:
+                        record_dispatch(ack['run_id'], dict(self._scope), dispatch['task_id'],
+                                        dispatch['execution_generation'], headers['idempotency-key'])
+                    self._on_admitted(ack['run_id'], dict(self._scope))
+                except Exception as exc:
+                    raise UpstreamAmbiguous('native admission binding unavailable') from exc
+            return clean
         except UpstreamAmbiguous:
             raise
         except FirewallDenied as exc:  # withheld response of a request the target already saw

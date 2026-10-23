@@ -48,6 +48,9 @@ async def workflow(report, home, target, host_port, target_port, owner_key, ws_k
                               "lobby-control invitation and consent actions are direct private store calls"]
     checks = report["product_checks"] = {}
     base = f"http://127.0.0.1:{target_port}"
+    # S1's target-side firewall verifies durable native receipts. This private
+    # path is owned by this fresh lab target, never a worker/production DB.
+    adapter.native_receipt_db = target / "runs_idempotency.db"
     try:
         async with aiohttp.ClientSession(trust_env=False, timeout=aiohttp.ClientTimeout(total=120)) as session:
             ws = await ready_socket(session, base, host_port, owner_key, ws_key, children)

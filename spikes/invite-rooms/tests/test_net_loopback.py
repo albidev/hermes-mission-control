@@ -64,7 +64,7 @@ class StubNative:
                 length = int(self.headers.get("Content-Length", "0"))
                 body = self.rfile.read(length)
                 stub.seen.append(("POST", self.path, self.headers.get("Authorization"), self.headers.get("Idempotency-Key"), body))
-                self._reply({"run_id": "run_stub_1", "status": "queued", "output": SENTINEL})
+                self._reply({"run_id": "run_stub_1", "status": "queued", "replayed": False, "output": SENTINEL})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -140,10 +140,12 @@ class NetLoopbackE2E(unittest.TestCase):
         common = {"relay_url": f"wss://127.0.0.1:{cls.port}/data", "relay_ca_file": relay_ca["ca_file"],
                   "link_id": "link-net", "room_id": "room-net", "scope": SCOPE}
         target_cfg = dict(common, role="target", identity="install:target", peer_identity="install:host",
+                          native_receipt_db=str(cls.root / 'native-fixture.db'),
                           credential_file=prov["credential_files"]["install:target"], target_base=cls.stub.base,
                           inner_tls={"cert_file": b["cert_file"], "key_file": b["key_file"],
                                      "peer_ca_file": a["ca_file"], "peer_fingerprint": a["fingerprint"]})
         host_cfg = dict(common, role="host", identity="install:host", peer_identity="install:target",
+                        host_binding_db=str(cls.root / 'host-bindings.db'),
                         credential_file=prov["credential_files"]["install:host"],
                         inner_tls={"cert_file": a["cert_file"], "key_file": a["key_file"],
                                    "peer_ca_file": b["ca_file"], "peer_fingerprint": b["fingerprint"]})
@@ -170,8 +172,14 @@ class NetLoopbackE2E(unittest.TestCase):
                     proc.wait(10)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+                    proc.wait(10)
+            proc.stdout.close()
+            proc.stderr.close()
         cls.stub.close()
         shutil.rmtree(cls.root, ignore_errors=True)
+        for proc in cls.procs:
+            assert proc.poll() is not None, "owned subprocess was not reaped"
+            assert proc.stdout.closed and proc.stderr.closed, "owned subprocess pipes were not closed"
 
     def test_1_capabilities_round_trip_and_grant_forwarded(self):
         status, body = _request(self.adapter_url + "/v1/room-members/capabilities",
@@ -223,6 +231,26 @@ class NetLoopbackE2E(unittest.TestCase):
 class RelaySeesCiphertextOnly(unittest.TestCase):
     """In-process relay core spy: payload bytes routed never contain plaintext."""
 
+    def test_native_gate_transport_releases_relay_loop(self):
+        from gate_f1_local import NetworkTransport
+        from room_firewall import RoomFirewall
+        transport = NetworkTransport()
+        stub = StubNative()
+        try:
+            transport.start()
+            transport.native_receipt_db = transport.root / 'native-fixture.db'
+            transport.bind("cleanup", RoomFirewall(expected_scope=SCOPE, backend=lambda _: None,
+                                                   verify_native=lambda *_: True),
+                           target_url=stub.base, scope=SCOPE)
+        finally:
+            transport.close()
+            stub.close()
+        self.assertTrue(transport.loop.is_closed(), "native gate relay loop was not closed")
+        self.assertFalse(any(c._thread.is_alive() for c in transport.clients))
+        from gate_f1_local import EVIDENCE
+        self.assertTrue(EVIDENCE["thread_inventory_complete"])
+        self.assertEqual(EVIDENCE["application_threads_alive"], [])
+
     def test_relay_payloads_do_not_contain_plaintext(self):
         import relay as relay_mod
         import connector
@@ -251,15 +279,18 @@ class RelaySeesCiphertextOnly(unittest.TestCase):
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(daemon.run(ready.set, install_signals=False))
 
-            threading.Thread(target=run_loop, daemon=True).start()
+            relay_thread = threading.Thread(target=run_loop, daemon=True)
+            relay_thread.start()
             self.assertTrue(ready.wait(10))
             url = f"ws://127.0.0.1:{daemon.port}/data"
             target_cfg = {"relay_url": url, "identity": "install:target", "peer_identity": "install:host",
+                          "native_receipt_db": str(root / 'native-fixture.db'),
                           "link_id": "l", "room_id": "room-net", "scope": SCOPE, "target_base": stub.base,
                           "credential_file": prov["credential_files"]["install:target"],
                           "inner_tls": {"cert_file": b["cert_file"], "key_file": b["key_file"],
                                         "peer_ca_file": a["ca_file"], "peer_fingerprint": a["fingerprint"]}}
             host_cfg = dict(target_cfg, identity="install:host", peer_identity="install:target",
+                            host_binding_db=str(root / 'host-bindings.db'),
                             credential_file=prov["credential_files"]["install:host"],
                             inner_tls={"cert_file": a["cert_file"], "key_file": a["key_file"],
                                        "peer_ca_file": b["ca_file"], "peer_fingerprint": b["fingerprint"]})
@@ -280,8 +311,13 @@ class RelaySeesCiphertextOnly(unittest.TestCase):
         finally:
             relay_mod.Relay.route = original
             loop.call_soon_threadsafe(daemon.stop_event.set)
+            relay_thread.join(10)
+            self.assertFalse(relay_thread.is_alive(), "spy daemon thread did not stop")
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
             stub.close()
             shutil.rmtree(root, ignore_errors=True)
+            self.assertTrue(loop.is_closed(), "spy loop ownership not released")
 
 
 if __name__ == "__main__":

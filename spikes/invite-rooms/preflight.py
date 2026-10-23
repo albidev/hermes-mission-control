@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import socket
 import subprocess
 from typing import Any, Mapping
@@ -28,6 +29,7 @@ DENIED_ENV_NAMES = {
     "HERMES_CONTEXT", "OPENROUTER_API_KEY", "API_SERVER_KEY",
 }
 SAFE_PASSTHROUGH_ENV = {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "PYTHONUTF8"}
+_PROBE_TIMEOUT = 120
 
 
 class PreflightBlocked(RuntimeError):
@@ -81,6 +83,13 @@ def isolated_child_env(home: Path) -> dict[str, str]:
         "TMPDIR": str(tmp),
         "PYTHONNOUSERSITE": "1",
         "PYTHONUTF8": "1",
+        # Every lab child (probes AND native gateway/TUI processes) runs on the checkout's
+        # interpreter. Without this, core treats each fresh scratch HERMES_HOME as a new
+        # data root and downloads a ~140 MB isolated runtime into it first: network-bound,
+        # it raced between gateway and TUI ("an update is still running") and timed out
+        # the s2g native gate, and it is where the per-home GBs came from. Same bridge var
+        # the core hermetic tests use.
+        "HERMES_DISABLE_LAZY_INSTALLS": "1",
     })
     for key in env:
         if key.startswith(DENIED_ENV_PREFIXES) or key in DENIED_ENV_NAMES:
@@ -110,12 +119,21 @@ def _native_probe(home: Path, script: str) -> dict[str, Any]:
     if not MANAGED_PYTHON.is_file() or not os.access(MANAGED_PYTHON, os.X_OK):
         raise PreflightBlocked(f"managed interpreter is unavailable: {MANAGED_PYTHON}")
     try:
-        result = subprocess.run(
+        # Own process group: on timeout the whole probe tree dies, never orphaned
+        # grandchildren that keep downloading into (or holding) a scratch home.
+        child = subprocess.Popen(
             [str(MANAGED_PYTHON), "-c", script], cwd=str(HERMES_AGENT_ROOT), env=env,
-            capture_output=True, text=True, timeout=120, check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
         raise PreflightBlocked(f"native probe did not complete: {exc}") from exc
+    try:
+        stdout, stderr = child.communicate(timeout=_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.communicate()
+        raise PreflightBlocked(f"native probe did not complete: {exc}") from exc
+    result = subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
     if result.returncode != 0:
         raise PreflightBlocked(f"native probe failed: {result.stderr.strip() or 'no diagnostic'}")
     try:

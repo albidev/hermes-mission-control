@@ -333,8 +333,11 @@ class RelayWebSocketServer:
         except ConnectionClosed:
             pass  # peer went away; its streams are closed towards the other endpoint below
         except (RelayError, json.JSONDecodeError, asyncio.TimeoutError) as exc:
-            await websocket.send(json.dumps({"type": "ERROR", "error": str(exc)}))
-            await websocket.close(code=1008, reason="relay rejected request")
+            try:
+                await websocket.send(json.dumps({"type": "ERROR", "error": str(exc)}))
+                await websocket.close(code=1008, reason="relay rejected request")
+            except ConnectionClosed:
+                pass  # Rejection raced the peer close; cleanup still runs below.
         finally:
             if sender is not None:
                 sender.cancel()
