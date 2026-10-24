@@ -32,11 +32,35 @@ export type RoomInvitePeerStatus = {
 export type RoomInviteActivationStatus = { lobby_id: string; lobby_state: string; ready: boolean; peers: RoomInvitePeerStatus[] };
 export type RoomInviteIssue = { invite_id: string; secret: string; expires_at: string };
 export type RoomInviteRedemption = { invite_id: string; member_id: string; status: string; host_decision: string; joining_consent: string };
+export type RoomInvitePairing = { peers: RoomInvitePeer[]; owner_profile: string };
+/** Browser-safe lobby body: the server resolves every peer attribute from its own registry. */
+export type RoomInviteCreateLobbyRequest = {
+  name: string;
+  roster: Array<{ member_id: string; handle: string; display_name?: string; target?: { peer_id: string } }>;
+};
+
+/**
+ * The exact body the owner UI posts to create an invite-only lobby (MVP: owner + one peer).
+ * The local member's profile comes from the trusted owner context server-side, and the peer is
+ * named by `peer_id` only. Handles must be unique, so a peer whose profile name equals the
+ * owner's is addressed by its peer id.
+ */
+export function buildCreateLobbyRequest(name: string, ownerProfile: string, peer: RoomInvitePeer): RoomInviteCreateLobbyRequest {
+  const peerHandle = peer.profile.toLowerCase() === ownerProfile.toLowerCase() ? peer.peer_id : peer.profile;
+  return {
+    name: name.trim(),
+    roster: [
+      { member_id: 'local-owner', handle: ownerProfile },
+      { member_id: `peer-${peer.peer_id}`, handle: peerHandle, target: { peer_id: peer.peer_id } },
+    ],
+  };
+}
 
 export type RoomInviteApi = {
   getLobby(lobbyId: string, signal?: AbortSignal): Promise<RoomInviteLobby>;
   listPairedPeers(signal?: AbortSignal): Promise<RoomInvitePeer[]>;
-  createLobby(input: { name: string; roster: Array<{ member_id: string; profile: string; handle: string; display_name?: string; target?: RoomInviteTarget }> }, signal?: AbortSignal): Promise<RoomInviteLobby>;
+  getPairing(signal?: AbortSignal): Promise<RoomInvitePairing>;
+  createLobby(input: RoomInviteCreateLobbyRequest, signal?: AbortSignal): Promise<RoomInviteLobby>;
   issueInvite(lobbyId: string, input: { member_id: string; invitee_label: string; ttl_seconds?: number }, signal?: AbortSignal): Promise<RoomInviteIssue>;
   revokeInvite(lobbyId: string, inviteId: string, signal?: AbortSignal): Promise<{ revoked: boolean }>;
   decideHost(lobbyId: string, inviteId: string, input: { peer_id: string; approved: boolean; expected_binding: RoomInviteBinding }, signal?: AbortSignal): Promise<RoomInviteRedemption>;
@@ -78,6 +102,7 @@ export function createRoomInviteApi(accessToken?: string, fetcher: typeof fetch 
   return {
     getLobby: async (id, signal) => (await request<{ lobby: RoomInviteLobby }>(`/lobbies/${encodeURIComponent(id)}`, { method: 'GET' }, signal)).lobby,
     listPairedPeers: async (signal) => (await request<{ peers: RoomInvitePeer[] }>('/paired-peers', { method: 'GET' }, signal)).peers,
+    getPairing: (signal) => request<RoomInvitePairing>('/paired-peers', { method: 'GET' }, signal),
     createLobby: async (input, signal) => (await request<{ lobby: RoomInviteLobby }>('/lobbies', { method: 'POST', body: JSON.stringify(input) }, signal)).lobby,
     issueInvite: (id, input, signal) => request<RoomInviteIssue>(`/lobbies/${encodeURIComponent(id)}/invites`, { method: 'POST', body: JSON.stringify(input) }, signal),
     revokeInvite: (id, invite, signal) => request<{ revoked: boolean }>(`/lobbies/${encodeURIComponent(id)}/invites/${encodeURIComponent(invite)}/revoke`, { method: 'POST', body: '{}' }, signal),

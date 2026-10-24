@@ -1839,6 +1839,25 @@ class PairedPeersRouteTests(RoomInviteRoutesHttpTest):
         status, data, _ = self._request("GET", "/api/local/room-invites/paired-peers")
         self.assertEqual(status, 404)
 
+    def test_reports_the_trusted_owner_profile(self):
+        self._write_config(profile="ops")
+        status, data, _ = self._request("GET", "/api/local/room-invites/paired-peers")
+        self.assertEqual(status, 200, data)
+        self.assertEqual(set(data), {"peers", "owner_profile"}, data)
+        self.assertEqual(data["owner_profile"], "ops")
+
+    def test_the_payload_the_browser_sends_creates_a_lobby(self):
+        # tests/fixtures/room-invites/create-lobby.json is the exact body the owner
+        # UI sends; the frontend suite asserts the same file, so the two sides
+        # cannot drift apart while both stay green.
+        fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "room-invites" / "create-lobby.json"
+        body = json.loads(fixture.read_text(encoding="utf-8"))
+        status, data, _ = self._request("POST", "/api/local/room-invites/lobbies", body)
+        self.assertEqual(status, 200, data)
+        roster = data["lobby"]["roster"]
+        self.assertEqual([member["handle"] for member in roster], ["default", "owner-b"])
+        self.assertEqual(roster[1]["target"]["peer_id"], "owner-b")
+
     def test_lists_the_configured_peer_with_exact_redacted_key_set(self):
         status, data, _ = self._request("GET", "/api/local/room-invites/paired-peers")
         self.assertEqual(status, 200, data)

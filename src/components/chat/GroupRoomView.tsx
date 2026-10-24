@@ -184,9 +184,19 @@ export function GroupRoomComposer({ state, onSend, mentionRoster }: { state: Gro
   );
 }
 
-export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '' }: { members: BotMentionCandidate[]; onCancel: () => void; onCreate: (name: string, handles: string[], vaultId: string) => Promise<unknown>; initialVault?: string }) {
+type CreateRoomFormProps = {
+  members: BotMentionCandidate[];
+  onCancel: () => void;
+  onCreate: (name: string, handles: string[], vaultId: string) => Promise<unknown>;
+  initialVault?: string;
+  /** Renders the invite-only creation flow; the room-type switch only appears when it is provided. */
+  renderInviteOnly?: (name: string) => React.ReactNode;
+};
+
+export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '', renderInviteOnly }: CreateRoomFormProps) {
   const { t } = useI18n();
   const [name, setName] = useState('');
+  const [kind, setKind] = useState<'local' | 'invite'>('local');
   const [selected, setSelected] = useState<string[]>([]);
   const [vault, setVault] = useState<string>(initialVault);
   const [vaultOptions, setVaultOptions] = useState<MissionControlVaultDescriptor[]>([]);
@@ -213,6 +223,8 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '' 
 
   const submit = useCallback(async (event: React.FormEvent) => {
     event.preventDefault();
+    // Enter inside the embedded invite-only flow must not create a local room.
+    if (kind === 'invite') return;
     if (!name.trim()) { setError(t('rooms.nameRequired')); return; }
     if (selected.length < 2) { setError(t('rooms.memberRequired')); return; }
     setSaving(true); setError(null);
@@ -223,7 +235,7 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '' 
     } finally {
       setSaving(false);
     }
-  }, [name, onCreate, selected, t, vault]);
+  }, [kind, name, onCreate, selected, t, vault]);
 
   const toggleAll = useCallback(() => {
     setSelected((current) => current.length === members.length ? [] : members.map((m) => m.handle));
@@ -235,6 +247,19 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '' 
         <h3 className="text-sm font-semibold text-text">{t('rooms.createTitle')}</h3>
         <button type="button" className="chat-control chat-icon-button" onClick={onCancel} aria-label={t('rooms.close')}><X size={16} /></button>
       </div>
+      {renderInviteOnly ? (
+        <div className="flex flex-col gap-1.5 text-xs text-text-muted">
+          <div role="radiogroup" aria-label={t('rooms.kind')} className="grid grid-cols-2 gap-1 rounded-lg border border-border-subtle bg-surface p-1">
+            {(['local', 'invite'] as const).map((option) => (
+              <button key={option} type="button" role="radio" aria-checked={kind === option} onClick={() => { setKind(option); setError(null); }} className={`rounded-md px-2 py-1.5 text-xs ${kind === option ? 'bg-accent text-white' : 'text-text-muted hover:bg-surface-sunken'}`}>
+                {option === 'local' ? t('rooms.kindLocal') : t('rooms.kindInvite')}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-text-subtle">{kind === 'local' ? t('rooms.kindLocalHint') : t('rooms.kindInviteHint')}</span>
+        </div>
+      ) : null}
+      {renderInviteOnly && kind === 'invite' ? renderInviteOnly(name) : <>
       <label className="flex flex-col gap-1.5 text-xs text-text-muted">
         <span>{t('rooms.name')}</span>
         <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={t('rooms.namePlaceholder')} className="mc-input h-9" />
@@ -273,6 +298,7 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '' 
       <button type="submit" disabled={saving} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm text-white disabled:opacity-50">
         {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}{t('rooms.createSubmit')}
       </button>
+      </>}
     </form>
   );
 }

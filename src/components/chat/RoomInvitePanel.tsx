@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Check, Copy, Loader2, RefreshCw, ShieldAlert, X } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
-import { createRoomInviteApi, RoomInviteApiError, type RoomInviteApi, type RoomInviteBinding, type RoomInviteError, type RoomInviteIssue, type RoomInviteMember, type RoomInvitePeer } from '../../lib/room-invite-api';
+import { createRoomInviteApi, type RoomInviteApi, type RoomInviteBinding, type RoomInviteIssue, type RoomInviteMember } from '../../lib/room-invite-api';
 import { useRoomInvite } from '../../lib/use-room-invite';
+import { InviteLobbyCreateForm } from './InviteLobbyCreateForm';
 
- type LocalBot = { handle: string; displayName?: string; description?: string };
- type PairedPeer = RoomInvitePeer;
- type RoomInvitePanelProps = { lobbyId: string | null; accessToken?: string; api?: RoomInviteApi; localBots?: LocalBot[]; pairedPeers?: PairedPeer[]; onRoomActivated?: (roomId: string) => void; onClose?: () => void };
+type RoomInvitePanelProps = { lobbyId: string | null; accessToken?: string; api?: RoomInviteApi; initialName?: string; embedded?: boolean; onLobbyCreated?: (lobbyId: string) => void; onRoomActivated?: (roomId: string) => void; onClose?: () => void };
 
 function stateLabel(value: string, t: (key: string) => string) {
   if (value === 'approved' || value === 'given') return t('rooms.invites.state.approved');
@@ -20,45 +19,19 @@ function persistLobbyId(lobbyId: string) {
   window.history.replaceState(window.history.state, '', url);
 }
 
-export function RoomInvitePanel({ lobbyId, accessToken, api, localBots = [], pairedPeers = [], onRoomActivated, onClose }: RoomInvitePanelProps) {
+export function RoomInvitePanel({ lobbyId, accessToken, api, initialName, embedded, onLobbyCreated, onRoomActivated, onClose }: RoomInvitePanelProps) {
   const { t } = useI18n();
-  const state = useRoomInvite(lobbyId, accessToken, api);
+  const [createdLobbyId, setCreatedLobbyId] = useState<string | null>(null);
+  const activeLobbyId = lobbyId ?? createdLobbyId;
+  const state = useRoomInvite(activeLobbyId, accessToken, api);
   const inviteApi = useMemo(() => api ?? createRoomInviteApi(accessToken), [accessToken, api]);
   const [issue, setIssue] = useState<RoomInviteIssue | null>(null);
   const [busy, setBusy] = useState(false);
   const [inviteeLabel, setInviteeLabel] = useState('');
   const [confirmActivate, setConfirmActivate] = useState(false);
-  const [lobbyName, setLobbyName] = useState('');
-  const [selectedPeer, setSelectedPeer] = useState('');
-  const [pairedState, setPairedState] = useState<{ status: 'loading' | 'ready' | 'error'; peers: RoomInvitePeer[]; error: RoomInviteError | null }>({ status: 'loading', peers: [], error: null });
-  const loadPairedPeers = useCallback(async () => {
-    const controller = new AbortController();
-    setPairedState({ status: 'loading', peers: [], error: null });
-    try {
-      const peers = await inviteApi.listPairedPeers(controller.signal);
-      if (!controller.signal.aborted) setPairedState({ status: 'ready', peers, error: null });
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        const problem = error instanceof RoomInviteApiError ? error.problem : { kind: 'error' as const, code: 'network_error' };
-        setPairedState({ status: 'error', peers: [], error: problem });
-      }
-    }
-    return () => controller.abort();
-  }, [inviteApi]);
-  useEffect(() => { if (!lobbyId) void loadPairedPeers(); }, [lobbyId, loadPairedPeers]);
   const remoteMembers = useMemo(() => state.lobby?.roster.filter((member) => Boolean(member.target)) ?? [], [state.lobby?.roster]);
 
-  if (!lobbyId) return <section className="grid gap-3 rounded-lg border border-border-subtle p-4 text-sm" aria-label={t('rooms.invites.title')}>
-    <div><p className="eyebrow">{t('rooms.invites.eyebrow')}</p><h3 className="font-semibold text-text">{t('rooms.invites.createTitle')}</h3></div>
-    <input className="mc-input h-8 text-xs" value={lobbyName} onChange={(event) => setLobbyName(event.target.value)} placeholder={t('rooms.invites.namePlaceholder')} aria-label={t('rooms.invites.name')} />
-    <div className="text-xs text-text-muted"><strong>{t('rooms.invites.roster')}</strong><ul className="mt-1">{localBots.map((bot) => <li key={bot.handle}>{bot.displayName || bot.handle} · {bot.handle}</li>)}</ul></div>
-    {pairedState.status === 'loading' ? <div className="flex items-center gap-2 text-xs text-text-muted"><Loader2 size={13} className="animate-spin" />{t('rooms.invites.loadingPeers')}</div> : pairedState.status === 'error' ? <div className="rounded-lg border border-negative/30 bg-negative-subtle p-2 text-xs text-negative" role="alert">{pairedState.error?.kind === 'unavailable' ? t('rooms.invites.unavailable') : t('rooms.invites.peerLoadError')} <button type="button" className="ml-2 underline" onClick={() => void loadPairedPeers()}>{t('rooms.invites.retry')}</button></div> : pairedState.peers.length === 0 ? <div className="rounded-lg border border-warning/40 bg-warning-subtle p-2 text-xs text-warning" role="status">{t('rooms.invites.noPairedPeer')}</div> : <select className="mc-input h-8 text-xs" value={selectedPeer} onChange={(event) => setSelectedPeer(event.target.value)} aria-label={t('rooms.invites.pairedPeer')}><option value="">{t('rooms.invites.choosePeer')}</option>{pairedState.peers.map((peer) => <option key={peer.peer_id} value={peer.peer_id}>{peer.profile} · {peer.peer_id}</option>)}</select>}
-    <button type="button" className="chat-control" disabled={busy || !lobbyName.trim() || !selectedPeer || pairedState.status !== 'ready' || pairedState.peers.length === 0} onClick={() => {
-      const peer = pairedState.peers.find((candidate) => candidate.peer_id === selectedPeer); const local = localBots[0]; if (!peer || !local) return;
-      setBusy(true);
-      void inviteApi.createLobby({ name: lobbyName.trim(), roster: [{ member_id: 'local-owner', profile: local.handle, handle: local.handle, ...(local.displayName ? { display_name: local.displayName } : {}) }, { member_id: `peer-${peer.peer_id}`, profile: peer.profile, handle: peer.profile, target: { kind: 'peer', peer_id: peer.peer_id, installation_id: peer.installation_id, profile: peer.profile, capability_digest: peer.capability_digest } }] }).then((lobby) => { persistLobbyId(lobby.lobby_id); return state.resume(lobby.lobby_id); }).finally(() => setBusy(false));
-    }}>{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {t('rooms.invites.create')}</button>
-  </section>;
+  if (!activeLobbyId) return <InviteLobbyCreateForm api={inviteApi} initialName={initialName} embedded={embedded} onCreated={(id) => { persistLobbyId(id); setCreatedLobbyId(id); onLobbyCreated?.(id); }} />;
   if (state.status === 'loading' || state.status === 'idle') return <div className="flex items-center gap-2 p-4 text-sm text-text-muted"><Loader2 size={15} className="animate-spin" />{t('rooms.invites.loading')}</div>;
   if (state.status === 'empty') return <div className="rounded-lg border border-border-subtle p-4 text-sm text-text-muted" role="status">{t('rooms.invites.empty')}</div>;
   if (state.status === 'error' && !state.lobby) return <div className="rounded-lg border border-negative/30 bg-negative-subtle p-4 text-sm text-negative" role="alert">{state.error?.kind === 'unavailable' ? t('rooms.invites.unavailable') : `${t('rooms.invites.error')} (${state.error?.code})`} <button type="button" className="ml-2 underline" onClick={() => void state.reload()}>{t('rooms.invites.retry')}</button></div>;

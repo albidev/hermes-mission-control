@@ -439,7 +439,9 @@ def _h_paired_peers(handler, service, ctx, config, args, params) -> None:
     except _KNOWN_ERRORS as exc:
         _respond_error(handler, exc)
         return
-    handler._json(200, {"peers": peers})
+    # The owner profile is the trusted local lobby member; the browser needs it to
+    # label the owner and to pick a remote handle that does not collide with it.
+    handler._json(200, {"peers": peers, "owner_profile": ctx.profile})
 
 
 def _h_activation_status(handler, service, ctx, config, args, params) -> None:

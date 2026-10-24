@@ -106,7 +106,7 @@ function activation(
 }
 
 function fakeApi(overrides: Record<string, unknown> = {}) {
-  return {
+  const api: any = {
     getLobby: async (id: string, _signal?: AbortSignal) => lobby(id),
     getActivation: async (id: string, _signal?: AbortSignal) => activation(id),
     createLobby: async () => lobby('created'),
@@ -130,6 +130,14 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
       room_id: 'room-1',
     }),
     ...overrides,
+  };
+  // The creation form reads peers and the trusted owner profile from one call.
+  return {
+    getPairing: async (signal?: AbortSignal) => ({
+      peers: await api.listPairedPeers(signal),
+      owner_profile: 'default',
+    }),
+    ...api,
   };
 }
 
@@ -555,25 +563,10 @@ try {
     );
     await click('Create lobby');
 
+    // Browser-safe body only: the server resolves every peer attribute from its registry.
     assert.deepEqual(received.roster, [
-      {
-        member_id: 'local-owner',
-        profile: 'default',
-        handle: 'default',
-        display_name: 'Local',
-      },
-      {
-        member_id: 'peer-peer-b',
-        profile: 'remote_b',
-        handle: 'remote_b',
-        target: {
-          kind: 'peer',
-          peer_id: 'peer-b',
-          installation_id: peerB.installation_id,
-          profile: peerB.profile,
-          capability_digest: peerB.capability_digest,
-        },
-      },
+      { member_id: 'local-owner', handle: 'default' },
+      { member_id: 'peer-peer-b', handle: 'remote_b', target: { peer_id: 'peer-b' } },
     ]);
     await flush(() => root.unmount());
   }
@@ -675,15 +668,8 @@ try {
     );
     await click('Create lobby');
 
-    assert.equal(received.roster[1].target.peer_id, 'peer-b');
-    assert.equal(
-      received.roster[1].target.installation_id,
-      peers[1].installation_id,
-    );
-    assert.notEqual(
-      received.roster[1].target.capability_digest,
-      peers[0].capability_digest,
-    );
+    assert.deepEqual(received.roster[1].target, { peer_id: 'peer-b' });
+    assert.equal(received.roster[1].handle, 'remote_b');
     await flush(() => root.unmount());
   }
   });
