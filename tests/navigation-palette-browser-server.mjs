@@ -54,6 +54,7 @@ const vite = await createServer({
         import { ToastProvider } from ${JSON.stringify(resolve(root, 'src/components/ui/ToastProvider.tsx'))};
         import { MissionControlShell } from ${JSON.stringify(resolve(root, 'src/components/MissionControlShell.tsx'))};
         import { QuickActions } from ${JSON.stringify(resolve(root, 'src/components/overview/QuickActions.tsx'))};
+        import { AgentStatusBar } from ${JSON.stringify(resolve(root, 'src/components/overview/AgentStatusBar.tsx'))};
         import ${JSON.stringify(resolve(root, 'src/styles.css'))};
 
         function LocationProbe() {
@@ -84,7 +85,7 @@ const vite = await createServer({
               delete window.__mcUnregisterExtraRefresh;
             };
           }, [name, registerCurrentViewRefresh]);
-          return React.createElement('div', { 'data-testid': 'page' }, name,
+          return React.createElement('div', { 'data-testid': 'page' }, name === '/' ? React.createElement(AgentStatusBar) : name,
             name === '/' ? React.createElement('section', { className: 'widget-quick-actions' },
               React.createElement(QuickActions, {
                 gatewayActions: window.__mcFixtureStore.gatewayActions,
@@ -137,7 +138,7 @@ const injection = `
   window.__mcActionFailure = false;
   window.__mcFixtureStore = {
     authRequired: false, authError: null, loading: false, storedToken: 'fixture-only',
-    snapshot: { alerts: { items: [] }, sessions: { items: [], totalSessions: 0, activeAgents: 0 }, cron: { items: [], queuedJobs: 0 }, machine: { source: 'fixture' } },
+    snapshot: { gatewayStatus: 'online', activeAgents: 1, activeModel: 'fixture-model @ fixture-provider', fallbackModel: 'fixture-fallback', alerts: { items: [] }, sessions: { items: [], totalSessions: 0, activeAgents: 0 }, cron: { items: [], queuedJobs: 0 }, machine: { source: 'fixture' } },
     tools: { available: false }, skills: { available: false }, config: { available: false },
     tokenDraft: '', setTokenDraft: () => {}, unlock: async () => {}, logout: () => {},
     refreshAll: async () => {}, reloadConfig: async () => ({}), saveConfig: async () => ({}),
@@ -158,6 +159,21 @@ const injection = `
   };
   addEventListener('error', event => window.failures.push(String(event.message)));
   addEventListener('unhandledrejection', event => window.failures.push(String(event.reason)));
+  // Only identity metadata is answered in-browser; chat keeps its existing
+  // local upgrade-only fixture. No profile/session data comes from the live.
+  window.__mcPrimaryName = 'Primary Agent';
+  window.WebSocket = class extends WebSocket {
+    send(data) {
+      const request = JSON.parse(data);
+      if (request.method !== 'profiles.list') return super.send(data);
+      queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
+        jsonrpc: '2.0', id: request.id, result: { profiles: [
+          { name: 'builder', display_name: 'Unrelated Bot' },
+          { name: 'default', is_default: true, display_name: window.__mcPrimaryName },
+        ] },
+      }) })));
+    }
+  };
   const errorOriginal = console.error.bind(console);
   console.error = (...args) => { window.consoleErrors.push(args.map(String).join(' ')); errorOriginal(...args); };
   const fetchOriginal = window.fetch.bind(window);
@@ -203,7 +219,9 @@ const server = createHttpServer(async (req, res) => {
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws:; img-src 'self' data:; font-src 'self'");
     const html = `<html class="dark"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script>${injection}</script><script type="module" src="/shell-palette-entry.tsx"></script></body></html>`;
-    res.end(await vite.transformIndexHtml('/', html));
+    // This fixture has no HMR upgrade handler; do not inject a client that
+    // opens an unrelated socket and reports a delayed connection failure.
+    res.end((await vite.transformIndexHtml('/', html)).replace(/<script type="module" src="\/@vite\/client"><\/script>/, ''));
     return;
   }
   vite.middlewares(req, res, () => { res.writeHead(404); res.end(); });
@@ -226,7 +244,7 @@ server.on('upgrade', (req, socket) => {
 });
 
 server.listen(0, '127.0.0.1', () => writeFileSync(resolve(runtime, 'port'), String(server.address().port)));
-process.on('SIGTERM', async () => {
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, async () => {
   for (const socket of upgrades) socket.destroy();
   server.close();
   await vite.close();

@@ -254,6 +254,11 @@ export async function loadBotProfiles(accessToken?: string): Promise<BotProfiles
   return normalizeProfiles(await requestBotRpc<unknown>('profiles.list', { include_sessions: true }, accessToken));
 }
 
+export async function loadPrimaryProfileDisplayName(accessToken?: string): Promise<string | null> {
+  const { profiles } = normalizeProfiles(await requestBotRpc<unknown>('profiles.list', { include_sessions: false }, accessToken));
+  return profiles.find((profile) => profile.name === 'default')?.display_name?.trim() || null;
+}
+
 export async function loadBotModelOptions(
   accessToken?: string,
   profile?: string,

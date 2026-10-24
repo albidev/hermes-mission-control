@@ -532,14 +532,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
         <aside className="card side-menu" aria-label={t('nav.aria')}>
           <div className="side-menu-head">
             <div className="side-menu-head-top">
-              <p className="eyebrow">{t('nav.missionControl')}</p>
-              <span
-                className="sidebar-version"
-                aria-label={t('nav.version', { version: APP_VERSION })}
-                title={t('nav.version', { version: APP_VERSION })}
-              >
-                v{APP_VERSION}
-              </span>
+              <strong className="sidebar-brand">{t('nav.missionControl')}</strong>
               <Button
                 variant="ghost"
                 size="md"
@@ -553,8 +546,6 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
                 onClick={toggleSidebar}
               />
             </div>
-            <strong>{t('nav.operatorPanel')}</strong>
-            <span className="mini-note">{t('nav.miniNote')}</span>
           </div>
 
           <nav className="side-nav" aria-label={t('nav.routesAria')}>
@@ -639,6 +630,11 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
               </Button>
             </div>
           </div>
+          <footer className="side-menu-footer">
+            <span className="sidebar-version" aria-label={t('nav.version', { version: APP_VERSION })} title={t('nav.version', { version: APP_VERSION })}>
+              v{APP_VERSION}
+            </span>
+          </footer>
         </aside>
 
         {sideOpen ? (

@@ -1,10 +1,8 @@
 {
   "app.loading": "Caricamento Mission Control…",
   "app.workspace": "Area di lavoro",
-  "nav.missionControl": "Hermes Mission Control",
+  "nav.missionControl": "Mission Control",
   "nav.version": "Versione Mission Control {version}",
-  "nav.operatorPanel": "Pannello operatore",
-  "nav.miniNote": "Gateway, sessioni, agenti, Bot, uso, strumenti, competenze, configurazione, log",
   "nav.overview": "Panoramica",
   "nav.sessions": "Sessioni",
   "nav.kanban": "Kanban",

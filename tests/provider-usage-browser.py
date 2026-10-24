@@ -118,8 +118,13 @@ def main():
                 except __import__('urllib.error', fromlist=['HTTPError']).HTTPError as error:
                     assert error.code == 401
                 profile = runtime / 'chrome-profile'
+                # A Chrome started detached (new session, fresh profile) cannot
+                # resolve a default keychain on macOS, so its cookie-encryption
+                # lookup fails with -25307 and the system raises a keychain
+                # prompt. The mock keystore keeps the disposable profile
+                # keychain-free; it never touches the user's login keychain.
                 browser = subprocess.Popen([str(CHROME), '--headless=new', '--no-first-run', '--no-default-browser-check',
-                    '--disable-extensions', '--disable-background-networking', '--disable-sync',
+                    '--disable-extensions', '--disable-background-networking', '--disable-sync', '--use-mock-keychain',
                     '--disable-component-update', '--disable-default-apps', '--no-service-autorun',
                     '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1',
                     '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
