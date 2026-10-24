@@ -11,6 +11,8 @@ import { usePullToReload } from '../hooks/usePullToReload';
 import { PullToReloadIndicator } from '../components/PullToReloadIndicator';
 import { HonchoSettingsPanel } from '../components/HonchoSettingsPanel';
 import { useRegisterCurrentViewRefresh } from '../lib/current-view-actions';
+import { useRoomInvitesAvailable } from '../lib/use-room-invites-available';
+import { PairingSection } from '../components/chat/PairingSection';
 
 type PathSegment = string | number;
 type PendingEdit = { path: PathSegment[]; value: unknown };
@@ -125,7 +127,8 @@ function MetricCard({
 
 export function ConfigRoute() {
   const { t } = useI18n();
-  const { config, snapshot, reloadConfig, saveConfig } = useMissionControl();
+  const { config, snapshot, reloadConfig, saveConfig, storedToken } = useMissionControl();
+  const roomInvitesAvailable = useRoomInvitesAvailable(true, storedToken || undefined);
   const [editorBase, setEditorBase] = useState(config);
   const [draft, setDraft] = useState(config.content);
   const [status, setStatus] = useState<string | null>(null);
@@ -606,6 +609,8 @@ export function ConfigRoute() {
       ) : null}
 
       <HonchoSettingsPanel />
+
+      {roomInvitesAvailable ? <PairingSection accessToken={storedToken || undefined} /> : null}
 
       <div className="config-editor-mode-bar sticky top-0 z-20 -mx-1 px-2 py-2 sm:-mx-0 sm:px-3">
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
