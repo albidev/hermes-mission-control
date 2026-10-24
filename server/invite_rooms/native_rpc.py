@@ -17,7 +17,7 @@ import uuid
 import aiohttp
 
 from room_lobby_service import AdmissionDenied, NativeRpcRejected, REGISTER_ADMISSION  # noqa: F401 — re-exported for canonical surface
-from invite_rooms.peer_registry import ADMISSION_DEADLINE
+from invite_rooms.peer_registry import ADMISSION_DEADLINE, run_admission
 
 MAX_REQUEST = 24 * 1024
 MAX_RESPONSE = 256 * 1024
@@ -148,7 +148,7 @@ class BoundedNativeRpc:
                     # The returned final validator runs AFTER the await, never before it.
                     token = ADMISSION_DEADLINE.set(deadline)
                     try:
-                        final_check = await asyncio.to_thread(admission)
+                        final_check = await run_admission(admission)
                         if time.monotonic() >= deadline:
                             raise TimeoutError()
                         if final_check is not None:
@@ -192,9 +192,13 @@ class BoundedNativeRpc:
             if sent:
                 self._poisoned = True
             raise
-        except Exception:
+        except Exception as exc:
             if sent:
                 self._poisoned = True
+            elif admission is not None and isinstance(exc, TimeoutError) and not self._poisoned:
+                # Expired before the frame was written (admission wait/final check): nothing was sent
+                # and the stream is intact, so this is a denial, not an ambiguous outcome.
+                raise AdmissionDenied() from None
             raise NativeRpcAmbiguous() from None
         finally:
             if acquired:

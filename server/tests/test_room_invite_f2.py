@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import invite_rooms.material_receipts as mr
+import invite_rooms.native_rpc as NR
 from invite_rooms.native_rpc import BoundedNativeRpc
 from room_lobby_service import REGISTER_ADMISSION
 try:
@@ -394,7 +395,7 @@ class PostAwaitAdmissionTests(unittest.IsolatedAsyncioTestCase):
     async def test_change_after_worker_read_before_await_returns_is_rejected(self):
         h = Harness(self); sock = MemorySocket(RecordingRpc(INSTALL_A)); sock.release.set()
         native = BoundedNativeRpc(sock, require_register_admission=True)
-        real_thread = asyncio.to_thread
+        real_thread = NR.run_admission
         from test_room_invite_admission import bump_generation
         async def cutover_after_worker(fn, *a, **kw):
             result = await real_thread(fn, *a, **kw)
@@ -402,7 +403,7 @@ class PostAwaitAdmissionTests(unittest.IsolatedAsyncioTestCase):
             return result
         token = REGISTER_ADMISSION.set(lambda: h.reg.check_admission('owner-b', 1, h.scope.binding))
         try:
-            with patch.object(asyncio, 'to_thread', cutover_after_worker):
+            with patch.object(NR, 'run_admission', cutover_after_worker):
                 with self.assertRaises(Exception):
                     await native('groups.peer.register', dict(room_id='room-r2', member_id='peer-b',
                         target_url='http://127.0.0.1:19001/links/x', target_profile='default', grant=M.GRANT_A, catalog=M.CATALOG))
@@ -440,7 +441,7 @@ class PostAwaitAdmissionTests(unittest.IsolatedAsyncioTestCase):
     async def test_writer_contending_after_worker_await_fails_closed_without_waiting(self):
         h = Harness(self); sock = MemorySocket(RecordingRpc(INSTALL_A)); sock.release.set()
         native = BoundedNativeRpc(sock, require_register_admission=True)
-        real_thread = asyncio.to_thread
+        real_thread = NR.run_admission
         held, release = threading.Event(), threading.Event()
         def writer():
             with h.reg._source.write_lock(): held.set(); release.wait(1)
@@ -453,7 +454,7 @@ class PostAwaitAdmissionTests(unittest.IsolatedAsyncioTestCase):
         token = REGISTER_ADMISSION.set(lambda: h.reg.check_admission('owner-b', 1, h.scope.binding))
         before = time.monotonic()
         try:
-            with patch.object(asyncio, 'to_thread', worker_then_writer):
+            with patch.object(NR, 'run_admission', worker_then_writer):
                 with self.assertRaises(Exception):
                     await native('groups.peer.register', dict(room_id='room-r2', member_id='peer-b',
                         target_url='http://127.0.0.1:19001/links/x', target_profile='default', grant=M.GRANT_A, catalog=M.CATALOG))
