@@ -108,6 +108,7 @@ class ControlDispatcher:
         self.timeout = timeout
         self.op_timeouts = dict(op_timeouts or {})
         self._slots = asyncio.BoundedSemaphore(queue_size)
+        self._completion_slots = asyncio.BoundedSemaphore(completion_workers)
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="invite-control")
         # Completion callbacks are never queued behind user handlers.
         self._completion_executor = ThreadPoolExecutor(max_workers=completion_workers,
@@ -150,9 +151,9 @@ class ControlDispatcher:
         if state.protocol_state == "confirmed" and op != "pair_ack":
             raise ControlError()
         if op == "material_request" and self.direction != "A_to_B":
-            raise ControlError()
+            raise ControlError("forbidden")
         if op == "material_receipt" and self.direction != "B_to_A":
-            raise ControlError()
+            raise ControlError("forbidden")
 
     def _owner_check(self, endpoint_id: str, request: dict) -> None:
         if request["op"] in {"pair_ack"}:
@@ -174,8 +175,10 @@ class ControlDispatcher:
         timeout = self.op_timeouts.get(op, self.timeout)
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
             raise ControlError()
+        slots = self._completion_slots if op == "material_receipt" else self._slots
+        executor = self._completion_executor if op == "material_receipt" else self._executor
         try:
-            await asyncio.wait_for(self._slots.acquire(), timeout=timeout)
+            await asyncio.wait_for(slots.acquire(), timeout=timeout)
         except (TimeoutError, asyncio.TimeoutError):
             raise BusyError() from None
         try:
@@ -201,7 +204,7 @@ class ControlDispatcher:
                 return await asyncio.wait_for(result, timeout=timeout)
             # Submit without awaiting: the admission decision and this submission
             # are adjacent, while blocking handlers cannot starve the event loop.
-            future = loop.run_in_executor(self._executor, handler, effective_request)
+            future = loop.run_in_executor(executor, handler, effective_request)
             return await asyncio.wait_for(future, timeout=timeout)
         except ControlError:
             raise
@@ -210,4 +213,4 @@ class ControlDispatcher:
         except Exception:
             raise ControlError() from None
         finally:
-            self._slots.release()
+            slots.release()
