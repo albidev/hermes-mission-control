@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import contextvars
 import fcntl
 import hashlib
 import json
@@ -30,6 +31,9 @@ _PROFILE = r"[a-z0-9][a-z0-9_-]{0,63}"
 _INSTALL = r"install:[0-9a-f]{32}"
 _FINGERPRINT = r"[0-9a-f]{64}"
 _DIGEST = r"[0-9a-f]{64}"
+
+# Propagated by asyncio.to_thread to bound even legacy no-argument admission callbacks.
+ADMISSION_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("registry_admission_deadline", default=None)
 
 
 def _check(value: str, pattern: str, label: str) -> None:
@@ -138,7 +142,7 @@ class RegistrySource:
     re-reading it.  Both are held only for the file operation, never across network I/O.
     """
     LOCK_NAME = ".peers.json.lock"
-    LOCK_WAIT = 2.0  # bounded: a stuck writer makes admission fail closed, never hang the loop
+    LOCK_WAIT = 2.0  # sync callers/worker threads only; never poll this lock on the asyncio loop
 
     def __init__(self, path, loader: Callable[[Path], "PeerRegistry"]):
         self.path = Path(path)
@@ -159,7 +163,7 @@ class RegistrySource:
             os.close(dfd)
 
     @contextmanager
-    def _lock(self, *, exclusive: bool):
+    def _lock(self, *, exclusive: bool, deadline=None):
         with self._dir() as dfd:
             try:
                 fd = os.open(self.LOCK_NAME, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
@@ -170,7 +174,7 @@ class RegistrySource:
                 if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
                     raise PeerRegistryError("registry_source_unsafe")
                 mode = (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB
-                deadline = time.monotonic() + self.LOCK_WAIT
+                deadline = min(time.monotonic() + self.LOCK_WAIT, deadline if deadline is not None else float('inf'))
                 while True:
                     try:
                         fcntl.flock(fd, mode)
@@ -178,7 +182,7 @@ class RegistrySource:
                     except OSError:
                         if time.monotonic() >= deadline:
                             raise PeerRegistryError("registry_source_busy") from None
-                        time.sleep(0.005)
+                        time.sleep(min(0.005, max(0, deadline - time.monotonic())))
                 try:
                     yield dfd
                 finally:
@@ -192,8 +196,19 @@ class RegistrySource:
 
     def read_current(self) -> "PeerRegistry":
         """A fresh registry parsed from the file as it is NOW, under the shared lock."""
-        with self._lock(exclusive=False):
+        deadline = ADMISSION_DEADLINE.get()
+        if deadline is not None and time.monotonic() >= deadline:
+            raise PeerRegistryError("registry_source_busy")
+        with self._lock(exclusive=False, deadline=deadline):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise PeerRegistryError("registry_source_busy")
             return self._loader(self.path)
+
+    def version(self):
+        st = os.stat(self.path, follow_symlinks=False)
+        if not stat.S_ISREG(st.st_mode):
+            raise PeerRegistryError("registry_source_unsafe")
+        return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
 
     def replace(self, entries: list) -> None:
         """Atomic, durable, lock-holding replacement of the registry file (the only supported writer)."""
@@ -249,22 +264,37 @@ class PeerRegistry:
     def has_source(self) -> bool:
         return self._source is not None
 
-    def check_admission(self, peer_id: str, generation, binding: dict) -> None:
+    def check_admission(self, peer_id: str, generation, binding: dict) -> Callable[[], None]:
         """R1-05 admission check against the AUTHORITATIVE on-disk registry (never this instance's memory).
 
         Re-reads ``peers.json`` under the shared registry lock and requires the exact generation and
         six-field binding (which includes the endpoint) the request was built from.  Any doubt fails closed.
+        Returns a non-waiting final validator for the transport to call AFTER its worker await.
         """
         if self._source is None:
             raise PeerRegistryError("admission_unavailable")
         try:
-            fresh = self._source.read_current()
+            source = self._source
+            version = source.version()
+            fresh = source.read_current()
+            if source.version() != version:
+                raise PeerRegistryError("peer_binding_changed")
             current = fresh.lookup(peer_id)
             ok = current.pairing_generation == generation and fresh.binding_for(peer_id) == binding
         except Exception:
             raise PeerRegistryError("peer_binding_changed") from None
         if not ok:
             raise PeerRegistryError("peer_binding_changed")
+
+        def final_check():
+            # Called on-loop AFTER the worker await. No polling or parsing here: a busy
+            # writer fails closed. Supported writers cannot change the version under this lock.
+            with source._lock(exclusive=False, deadline=time.monotonic()):
+                if source.version() != version or self._source is not source:
+                    raise PeerRegistryError("peer_binding_changed")
+                if fresh.lookup(peer_id).pairing_generation != generation or fresh.binding_for(peer_id) != binding:
+                    raise PeerRegistryError("peer_binding_changed")
+        return final_check
 
     def register(self, *, peer_id: str, installation_id: str, profile: str, fingerprint: str,
                  endpoint_id: str, catalog: dict, consent_public_key: bytes,
