@@ -37,6 +37,7 @@ from typing import Optional
 from invite_rooms import runtime_config
 from invite_rooms.peer_registry import PeerRegistryError
 from invite_rooms.service import InviteRoomsService, ServiceError, _valid_expected_binding
+from invite_rooms.guest import GuestRoomService, GuestServiceError
 from room_invite_store import InviteError
 
 PREFIX = "/api/local/room-invites"
@@ -57,6 +58,14 @@ _LOG = logging.getLogger("invite_rooms.routes")
 # integration point is to replace this attribute with a real resolver
 # coroutine at process wiring time -- never a request-scoped value.
 _MATERIAL_RESOLVER = None
+# Installed by process wiring (or tests). Keeping this explicit preserves the
+# feature-off-by-default contract; no guest channel is inferred from HTTP input.
+_GUEST_SERVICE: GuestRoomService | None = None
+
+def configure_guest_service(service: GuestRoomService | None) -> None:
+    global _GUEST_SERVICE
+    _GUEST_SERVICE = service
+
 
 
 # --------------------------------------------------------------------------
@@ -473,8 +482,83 @@ def _h_activate(handler, service, ctx, config, args, params) -> None:
     handler._json(200, result)
 
 
+def _h_guest_rooms(handler, service, ctx, config, args, params) -> None:
+    handler._json(200, {"rooms": service.list_rooms()})
+
+
+def _query_int(params: dict, key: str, default: int) -> int:
+    values = params.get(key, [])
+    raw = values[0] if isinstance(values, list) and values else default
+    value = int(raw)
+    if value < 0:
+        raise ValueError()
+    return value
+
+
+def _h_guest_log(handler, service, ctx, config, args, params) -> None:
+    try:
+        since_seq = _query_int(params, "since_seq", 0)
+        limit = _query_int(params, "limit", 200)
+        if limit < 1 or limit > 200:
+            raise ValueError()
+        page = service.log(args[0], since_seq=since_seq, limit=limit)
+    except GuestServiceError as exc:
+        if str(exc) == "host_offline":
+            handler._json(503, {"code": "host_offline", "last_seen_at": None})
+        else:
+            handler._json(403, {"code": "forbidden"})
+        return
+    except (TypeError, ValueError):
+        handler._json(400, {"code": "invalid_request"})
+        return
+    handler._json(200, page)
+
+
+def _h_guest_bot(handler, service, ctx, config, args, params) -> None:
+    try:
+        result = service.my_bot(args[0])
+    except GuestServiceError:
+        handler._json(403, {"code": "forbidden"})
+        return
+    handler._json(200, result)
+
+
+def _h_guest_approval(handler, service, ctx, config, args, params) -> None:
+    if not _content_type_is_json(handler):
+        handler._json(400, {"code": "invalid_request"})
+        return
+    body = _read_strict_body(handler, {"choice"})
+    if body is None or body.get("choice") not in {"approve", "reject"}:
+        handler._json(400, {"code": "invalid_request"})
+        return
+    try:
+        service.decide_approval(args[0], args[1], body["choice"])
+    except GuestServiceError as exc:
+        handler._json(501 if str(exc) == "not_supported" else 403,
+                      {"code": str(exc) if str(exc) == "not_supported" else "forbidden"})
+        return
+    handler._json(200, {})
+
+
+def _h_guest_leave(handler, service, ctx, config, args, params) -> None:
+    if _read_strict_body(handler, set()) is None:
+        return
+    try:
+        service.leave(args[0])
+    except GuestServiceError as exc:
+        handler._json(501 if str(exc) == "not_supported" else 403,
+                      {"code": str(exc) if str(exc) == "not_supported" else "forbidden"})
+        return
+    handler._json(200, {})
+
+
 _ROUTES = (
     ("POST", re.compile(r"^/lobbies$"), _h_create_lobby),
+    ("GET", re.compile(r"^/guest-rooms$"), _h_guest_rooms),
+    ("GET", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/log$"), _h_guest_log),
+    ("GET", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/my-bot$"), _h_guest_bot),
+    ("POST", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/approvals/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})$"), _h_guest_approval),
+    ("POST", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/leave$"), _h_guest_leave),
     ("GET", re.compile(rf"^/lobbies/({_LOBBY_ID})$"), _h_inspect_lobby),
     ("POST", re.compile(rf"^/lobbies/({_LOBBY_ID})/invites$"), _h_issue_invite),
     ("POST", re.compile(rf"^/lobbies/({_LOBBY_ID})/invites/({_INVITE_ID})/revoke$"), _h_revoke_invite),
@@ -502,7 +586,14 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized)
         handler._unauthorized()
         return True
 
-    loaded = runtime_config.load_service(material_resolver=_MATERIAL_RESOLVER)
+    is_guest_path = path[len(PREFIX):].startswith("/guest-rooms")
+    if is_guest_path:
+        if _GUEST_SERVICE is None:
+            handler._json(404, {"error": "not_found", "path": path})
+            return True
+        loaded = (_GUEST_SERVICE, None, None)
+    else:
+        loaded = runtime_config.load_service(material_resolver=_MATERIAL_RESOLVER)
     if loaded is None:
         # Disabled or misconfigured: identical to an unknown path.
         handler._json(404, {"error": "not_found", "path": path})
