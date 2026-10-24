@@ -248,7 +248,7 @@ async def _connect_native_rpc(rpc_config: dict):
         raise ServiceError("activation_unavailable")
     async with aiohttp.ClientSession() as session:
         async with session.ws_connect(rpc_config["endpoint"], headers={"Authorization": f"Bearer {token}"}) as ws:
-            yield BoundedNativeRpc(ws)
+            yield BoundedNativeRpc(ws, require_register_admission=True)
 
 
 async def _run_activation(service: InviteRoomsService, ctx, lobby_id: str, config) -> dict:

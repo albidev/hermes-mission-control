@@ -16,7 +16,7 @@ import uuid
 
 import aiohttp
 
-from room_lobby_service import NativeRpcRejected  # noqa: F401 — re-exported for canonical surface
+from room_lobby_service import AdmissionDenied, NativeRpcRejected, REGISTER_ADMISSION  # noqa: F401 — re-exported for canonical surface
 
 MAX_REQUEST = 24 * 1024
 MAX_RESPONSE = 256 * 1024
@@ -66,10 +66,12 @@ def _unique(pairs):
 
 
 class BoundedNativeRpc:
-    def __init__(self, ws, *, timeout: float = 10):
+    def __init__(self, ws, *, timeout: float = 10, require_register_admission: bool = False):
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 10:
             raise NativeRpcDenied()
         self.ws = ws
+        # Production transports set this: a groups.peer.register with no admission seam is never sent.
+        self._require_register_admission = bool(require_register_admission)
         self.timeout = timeout
         self._lock = asyncio.Lock()
         self._poisoned = False
@@ -119,6 +121,9 @@ class BoundedNativeRpc:
         required, allowed = _FIELDS[method]
         if not required <= set(params) <= allowed:
             raise NativeRpcDenied()
+        admission = REGISTER_ADMISSION.get() if method == 'groups.peer.register' else None
+        if method == 'groups.peer.register' and admission is None and self._require_register_admission:
+            raise NativeRpcDenied()
         rid = uuid.uuid4().hex
         try:
             raw = json.dumps({'jsonrpc': '2.0', 'id': rid, 'method': method, 'params': params},
@@ -137,6 +142,13 @@ class BoundedNativeRpc:
                 if self._poisoned:
                     raise NativeRpcAmbiguous()
                 await self._drain_idle(deadline)
+                if admission is not None:
+                    # R1-05: after the queue lock and the idle drain, immediately before the frame is
+                    # written. Synchronous and with NO await between this check and the send below.
+                    try:
+                        admission()
+                    except Exception:
+                        raise AdmissionDenied() from None
                 sent = True  # send failure can follow partial native admission
                 await self.ws.send_str(raw)
                 # Native notifications are permitted, but cannot reset time/byte budgets.
@@ -164,7 +176,7 @@ class BoundedNativeRpc:
                         raise ValueError()
                     return value['result']
                 raise ValueError()
-        except NativeRpcRejected:
+        except (NativeRpcRejected, AdmissionDenied):
             raise
         except asyncio.CancelledError:
             if sent:

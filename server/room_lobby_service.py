@@ -6,6 +6,7 @@ This module neither mints a grant nor sends a prompt. A Room Card is not an inpu
 """
 from __future__ import annotations
 
+import contextvars
 import copy
 from dataclasses import dataclass, field
 import re
@@ -22,6 +23,16 @@ class NativeRpcRejected(InviteError):
     """
     def __init__(self, code="native_rejected"):
         super().__init__(code if code in {"room_conflict", "invalid_roster", "native_rejected"} else "native_rejected")
+
+
+class AdmissionDenied(Exception):
+    """Raised by a transport when the register admission seam refuses; nothing was sent."""
+
+
+# R1-05 admission seam. The coordinator sets a synchronous callable here for exactly one
+# ``groups.peer.register`` call; a transport that owns the queue/idle-drain waits (BoundedNativeRpc)
+# runs it AFTER those waits and immediately before the frame is written, with no await in between.
+REGISTER_ADMISSION: contextvars.ContextVar = contextvars.ContextVar("native_register_admission", default=None)
 
 
 @dataclass(frozen=True)
@@ -49,11 +60,14 @@ def _validate_adapter(url):
 
 
 class RoomLobbyService:
-    def __init__(self, store: RoomInviteStore, rpc, peer_material, *, expected_authority=None):
+    def __init__(self, store: RoomInviteStore, rpc, peer_material, *, expected_authority=None, pre_register_check=None,
+                 register_admission=None):
         self.store = store
         self.rpc = rpc
         self.peer_material = peer_material
         self.expected_authority = expected_authority
+        self.pre_register_check = pre_register_check
+        self.register_admission = register_admission  # (member_id, material) -> sync callable raising on refusal
 
     async def _plan(self, lobby_id):
         lobby = self.store.seal_lobby(lobby_id)
@@ -159,14 +173,24 @@ class RoomLobbyService:
         room = await self._create(lobby_id, spec, authority)
         for member_id, material in materials.items():
             try:
-                registered = await self.rpc("groups.peer.register", {
-                    "room_id": room["room_id"], "member_id": member_id,
-                    "target_url": material.adapter_url, "target_profile": material.binding["target_profile"],
-                    "catalog": material.catalog, "grant": material.grant,
-                    "cancellation_scope_id": "cancel-" + room["room_id"],
-                    "trace_id": "trace-" + room["room_id"],
-                })
+                if self.pre_register_check is not None and not self.pre_register_check(member_id, material):
+                    raise InviteError("peer_binding_changed")
+                admission = self.register_admission(member_id, material) if self.register_admission is not None else None
+                token = REGISTER_ADMISSION.set(admission)
+                try:
+                    registered = await self.rpc("groups.peer.register", {
+                        "room_id": room["room_id"], "member_id": member_id,
+                        "target_url": material.adapter_url, "target_profile": material.binding["target_profile"],
+                        "catalog": material.catalog, "grant": material.grant,
+                        "cancellation_scope_id": "cancel-" + room["room_id"],
+                        "trace_id": "trace-" + room["room_id"],
+                    })
+                finally:
+                    REGISTER_ADMISSION.reset(token)
                 state = await self.rpc("groups.state", {"room_id": room["room_id"]})
+            except AdmissionDenied:
+                # The transport refused BEFORE writing the frame: the binding changed under the request.
+                raise InviteError("peer_binding_changed") from None
             except Exception:
                 # A lost register reply is not proof the route was never installed.
                 raise InviteError("registration_ambiguous") from None

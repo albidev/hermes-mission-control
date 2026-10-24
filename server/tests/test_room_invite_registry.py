@@ -26,6 +26,11 @@ from invite_rooms.peer_registry import (
 from room_lobby_service import PeerMaterial
 from gateway.hosted_room_peer import catalog_mapping
 
+try:
+    from server.tests.test_room_invite_routes import CA_PEM
+except ModuleNotFoundError:
+    from test_room_invite_routes import CA_PEM
+
 PEER_ID = "owner-b"
 INSTALL_ID = "install:" + "b" * 32
 FINGERPRINT = "b" * 64
@@ -48,9 +53,9 @@ def make_registry():
         fingerprint=FINGERPRINT,
         endpoint_id="endpoint-b",
         catalog=copy.deepcopy(CATALOG),
-        adapter_url=ADAPTER_URL,
-        grant=GRANT,
         consent_public_key=CONSENT_PUBKEY,
+        tls_ca_pem=CA_PEM,
+        pairing_generation=1,
     )
     return reg
 
@@ -84,7 +89,7 @@ class RegistrationTests(unittest.TestCase):
         reg.register(
             peer_id=PEER_ID, installation_id=INSTALL_ID, profile="default",
             fingerprint=FINGERPRINT, endpoint_id="endpoint-b",
-            catalog=catalog, adapter_url=ADAPTER_URL, grant=GRANT,
+            catalog=catalog, consent_public_key=CONSENT_PUBKEY, tls_ca_pem=CA_PEM, pairing_generation=1,
         )
         # Mutate the original input — registry must be unaffected.
         catalog["catalog_digest"] = "e" * 64
@@ -97,7 +102,7 @@ class RegistrationTests(unittest.TestCase):
             reg.register(
                 peer_id=PEER_ID, installation_id=INSTALL_ID, profile="default",
                 fingerprint=FINGERPRINT, endpoint_id="endpoint-b",
-                catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT,
+                catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBKEY, tls_ca_pem=CA_PEM, pairing_generation=1,
             )
 
     def test_invalid_peer_id_rejected(self):
@@ -106,7 +111,7 @@ class RegistrationTests(unittest.TestCase):
             reg.register(
                 peer_id="", installation_id=INSTALL_ID, profile="default",
                 fingerprint=FINGERPRINT, endpoint_id="endpoint-b",
-                catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT,
+                catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBKEY, tls_ca_pem=CA_PEM, pairing_generation=1,
             )
 
     def test_invalid_installation_id_rejected(self):
@@ -115,111 +120,26 @@ class RegistrationTests(unittest.TestCase):
             reg.register(
                 peer_id=PEER_ID, installation_id="not-an-install-id", profile="default",
                 fingerprint=FINGERPRINT, endpoint_id="endpoint-b",
-                catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT,
+                catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBKEY, tls_ca_pem=CA_PEM, pairing_generation=1,
             )
 
 
 class MaterialResolutionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_resolve_material_returns_peer_material(self):
+    async def test_static_material_path_is_removed(self):
         reg = make_registry()
-        binding = {
-            "endpoint_id": "endpoint-b",
-            "fingerprint": FINGERPRINT,
-            "target_install_id": INSTALL_ID,
-            "target_profile": "default",
-            "catalog_digest": CATALOG_DIGEST,
-            "policy_digest": POLICY_DIGEST,
-        }
-        material = await reg.resolve_material(PEER_ID, expected_binding=binding)
-        self.assertIsInstance(material, PeerMaterial)
-        self.assertEqual(material.binding, binding)
-        self.assertEqual(material.grant, GRANT)
-        self.assertEqual(material.adapter_url, ADAPTER_URL)
-        self.assertEqual(material.catalog["catalog_digest"], CATALOG_DIGEST)
+        self.assertFalse(hasattr(reg, "resolve_material"))
+        self.assertFalse(hasattr(reg, "approve_scoped_material"))
 
-    async def test_resolve_unknown_peer_fails_closed(self):
+    async def test_unapproved_scoped_material_fails_closed(self):
         reg = make_registry()
+        from invite_rooms.peer_registry import MaterialScope
+        scope = MaterialScope(owner_installation_id="install:" + "a" * 32, owner_profile="default", lobby_id="lobby-x", planned_room_id="room-x", member_id="member-x", invite_id="invite-x", peer_id=PEER_ID, pairing_generation=1, **reg.binding_for(PEER_ID))
         with self.assertRaises(PeerRegistryError):
-            await reg.resolve_material("unknown", expected_binding={
-                "endpoint_id": "endpoint-b", "fingerprint": FINGERPRINT,
-                "target_install_id": INSTALL_ID, "target_profile": "default", "catalog_digest": CATALOG_DIGEST, "policy_digest": POLICY_DIGEST})
+            await reg.resolve_scoped_material(scope)
 
-    async def test_resolve_mismatched_fingerprint_fails_closed(self):
+    async def test_loopback_route_without_receipt_fails_closed(self):
         reg = make_registry()
-        with self.assertRaises(PeerRegistryError):
-            await reg.resolve_material(PEER_ID, expected_binding={
-                "endpoint_id": "endpoint-b", "fingerprint": "c" * 64,
-                "target_install_id": INSTALL_ID, "target_profile": "default", "catalog_digest": CATALOG_DIGEST, "policy_digest": POLICY_DIGEST})
-
-    async def test_resolve_mismatched_install_fails_closed(self):
-        reg = make_registry()
-        with self.assertRaises(PeerRegistryError):
-            await reg.resolve_material(PEER_ID, expected_binding={
-                "endpoint_id": "endpoint-b", "fingerprint": FINGERPRINT,
-                "target_install_id": "install:" + "c" * 32, "target_profile": "default", "catalog_digest": CATALOG_DIGEST, "policy_digest": POLICY_DIGEST})
-
-    async def test_resolve_mismatched_profile_fails_closed(self):
-        reg = make_registry()
-        with self.assertRaises(PeerRegistryError):
-            await reg.resolve_material(PEER_ID, expected_binding={
-                "endpoint_id": "endpoint-b", "fingerprint": FINGERPRINT,
-                "target_install_id": INSTALL_ID, "target_profile": "other"})
-
-    async def test_resolve_mismatched_endpoint_fails_closed(self):
-        reg = make_registry()
-        with self.assertRaises(PeerRegistryError):
-            await reg.resolve_material(PEER_ID, expected_binding={
-                "endpoint_id": "wrong-endpoint", "fingerprint": FINGERPRINT,
-                "target_install_id": INSTALL_ID, "target_profile": "default", "catalog_digest": CATALOG_DIGEST, "policy_digest": POLICY_DIGEST})
-
-    async def test_resolve_catalog_mismatch_fails_closed(self):
-        """Catalog digest drift between registration and stored catalog is caught."""
-        reg = PeerRegistry()
-        bad_catalog = copy.deepcopy(CATALOG)
-        bad_catalog["catalog_digest"] = "x" * 64
-        # This should fail at registration because catalog_digest doesn't match
-        # the catalog's own digest field.
-        with self.assertRaises(PeerRegistryError):
-            reg.register(
-                peer_id=PEER_ID, installation_id=INSTALL_ID, profile="default",
-                fingerprint=FINGERPRINT, endpoint_id="endpoint-b",
-                catalog=bad_catalog, adapter_url=ADAPTER_URL, grant=GRANT,
-            )
-
-    async def test_resolve_material_defensive_copy(self):
-        reg = make_registry()
-        binding = {
-            "endpoint_id": "endpoint-b", "fingerprint": FINGERPRINT,
-            "target_install_id": INSTALL_ID, "target_profile": "default", "catalog_digest": CATALOG_DIGEST, "policy_digest": POLICY_DIGEST,
-        }
-        material = await reg.resolve_material(PEER_ID, expected_binding=binding)
-        # Mutate returned material's catalog — registry must be unaffected.
-        material.catalog["catalog_digest"] = "z" * 64
-        material2 = await reg.resolve_material(PEER_ID, expected_binding=binding)
-        self.assertEqual(material2.catalog["catalog_digest"], CATALOG_DIGEST)
-
-    async def test_url_alone_does_not_imply_trust(self):
-        """A loopback adapter URL is valid but never sufficient for trust."""
-        reg = make_registry()
-        # Cannot resolve by URL — must use peer_id.
-        with self.assertRaises(PeerRegistryError):
-            await reg.resolve_material(ADAPTER_URL, expected_binding={
-                "endpoint_id": "endpoint-b", "fingerprint": FINGERPRINT,
-                "target_install_id": INSTALL_ID, "target_profile": "default", "catalog_digest": CATALOG_DIGEST, "policy_digest": POLICY_DIGEST})
-
-    async def test_grant_repr_is_private(self):
-        """Grant must not appear in repr of any registry output."""
-        reg = make_registry()
-        rec = reg.lookup(PEER_ID)
-        self.assertNotIn(GRANT, repr(rec))
-        self.assertNotIn("grant", repr(rec))
-        binding = {
-            "endpoint_id": "endpoint-b", "fingerprint": FINGERPRINT,
-            "target_install_id": INSTALL_ID, "target_profile": "default", "catalog_digest": CATALOG_DIGEST, "policy_digest": POLICY_DIGEST,
-        }
-        material = await reg.resolve_material(PEER_ID, expected_binding=binding)
-        # PeerMaterial.grant has repr=False in the dataclass.
-        self.assertNotIn(GRANT, repr(material))
+        self.assertFalse(hasattr(reg, "resolve_material"))
 
 
 class ConsentSeamTests(unittest.TestCase):
@@ -228,15 +148,15 @@ class ConsentSeamTests(unittest.TestCase):
         rec = reg.lookup(PEER_ID)
         self.assertEqual(rec.consent_public_key, CONSENT_PUBKEY)
 
-    def test_consent_public_key_optional(self):
+    def test_consent_public_key_required_and_stored(self):
         reg = PeerRegistry()
         reg.register(
             peer_id=PEER_ID, installation_id=INSTALL_ID, profile="default",
             fingerprint=FINGERPRINT, endpoint_id="endpoint-b",
-            catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT,
+            catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBKEY, tls_ca_pem=CA_PEM, pairing_generation=1,
         )
         rec = reg.lookup(PEER_ID)
-        self.assertIsNone(rec.consent_public_key)
+        self.assertEqual(rec.consent_public_key, CONSENT_PUBKEY)
 
     def test_owner_flag_does_not_authenticate(self):
         """A dict with an owner flag must not be treated as authenticated consent."""

@@ -28,6 +28,10 @@ from room_invite_store import InviteError, RoomInviteStore, IssuedInvite
 
 from gateway.hosted_room_peer import catalog_mapping
 from gateway.hosted_room_execution_policy import RoomExecutionPolicy
+try:
+    from server.tests.test_room_invite_routes import CA_PEM, CONSENT_PUBLIC
+except ModuleNotFoundError:
+    from test_room_invite_routes import CA_PEM, CONSENT_PUBLIC
 
 INSTALL_A = "install:" + "a" * 32
 INSTALL_B = "install:" + "b" * 32
@@ -64,7 +68,7 @@ def make_service():
     registry.register(
         peer_id="owner-b", installation_id=INSTALL_B, profile="default",
         fingerprint=FINGERPRINT_B, endpoint_id="endpoint-b",
-        catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT,
+        catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBLIC, tls_ca_pem=CA_PEM, pairing_generation=1,
     )
     svc = InviteRoomsService(store, registry, trusted_owner=OwnerContext(installation_id=INSTALL_A, profile="default"))
     ctx = OwnerContext(installation_id=INSTALL_A, profile="default")

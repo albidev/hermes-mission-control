@@ -3,6 +3,7 @@ No native admission/cryptographic grant verification is claimed by RecordingRpc.
 Run with the native contract explicitly available on PYTHONPATH, never a hidden fallback.
 """
 import asyncio
+import base64
 import builtins
 import copy
 from concurrent.futures import ThreadPoolExecutor
@@ -22,7 +23,14 @@ from room_invite_store import RoomInviteStore, InviteError
 from room_lobby_service import RoomLobbyService, PeerMaterial
 from invite_rooms.peer_registry import PeerRegistryError, _native_catalog
 from invite_rooms.service import InviteRoomsService, ServiceError
-from test_room_invite_operations import make_service, ROSTER, CATALOG, INSTALL_A, INSTALL_B, ADAPTER_URL, GRANT
+from invite_rooms.material_receipts import MaterialReceiptStore
+from invite_rooms.consent import canonical
+try:
+    from server.tests.test_room_invite_operations import make_service, ROSTER, CATALOG, INSTALL_A, INSTALL_B, ADAPTER_URL, GRANT
+    from server.tests.test_room_invite_routes import CA_PEM, CONSENT_PUBLIC, target_signed_envelope
+except ModuleNotFoundError:
+    from test_room_invite_operations import make_service, ROSTER, CATALOG, INSTALL_A, INSTALL_B, ADAPTER_URL, GRANT
+    from test_room_invite_routes import CA_PEM, CONSENT_PUBLIC, target_signed_envelope
 
 # Frozen MVP.1 sources (byte-identical to the checkpoint commit); see fixtures/mvp1_baseline/README.md.
 BASE = Path(__file__).resolve().parent / 'fixtures' / 'mvp1_baseline'
@@ -125,6 +133,8 @@ class ActivationR2R4R5R6Tests(unittest.IsolatedAsyncioTestCase):
     def setup_service(self, *, authority=INSTALL_A, legacy=False):
         svc, ctx, store, reg, tmp = make_service()
         self.addCleanup(tmp.cleanup)
+        reg._receipt_store = MaterialReceiptStore(Path(tmp.name) / 'receipts')
+        reg._route_provider = lambda _scope: 19001
         rpc = RecordingRpc(authority)
         svc._rpc = rpc
         lobby = svc.create_lobby(ctx, name='Scoped activation', roster=copy.deepcopy(ROSTER))
@@ -137,6 +147,15 @@ class ActivationR2R4R5R6Tests(unittest.IsolatedAsyncioTestCase):
         store.decide_host(lid, inv.invite_id, binding=binding, approved=True)
         store.consent_joining(lid, inv.invite_id, binding=binding, consented=True)
         return svc, ctx, store, reg, rpc, lobby, inv, binding
+
+    @staticmethod
+    def admit(reg, scoped):
+        try:
+            from server.tests.test_room_invite_routes import _CONSENT_SIGNER
+        except ModuleNotFoundError:
+            from test_room_invite_routes import _CONSENT_SIGNER
+        envelope = target_signed_envelope(scoped.scope, scoped.material.grant, scoped.material.catalog)
+        reg.admit_signed_material(scoped.scope, envelope)
 
     def scoped(self, ctx, lobby, inv, binding):
         from invite_rooms.peer_registry import MaterialScope, ScopedPeerMaterial
@@ -183,45 +202,169 @@ class ActivationR2R4R5R6Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(row['catalog_digest'])
         self.assertIsNone(row['policy_digest'])
 
-    async def test_R4_valid_scoped_approved_material_activates_lazily(self):
+    async def test_R4_valid_scoped_material_is_loaded_from_durable_receipt(self):
         svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
         scoped = self.scoped(ctx, lobby, inv, binding)
-        reg.approve_scoped_material(scoped)
-        seen = []
-        async def resolve(scope):
-            seen.append(scope)
-            return scoped
-        svc._material_resolver = resolve
-        svc.inspect_lobby(ctx, lobby['lobby_id'])
-        self.assertTrue(svc.activation_status(ctx, lobby['lobby_id'])['ready'])
-        self.assertEqual((seen, rpc.calls), ([], []))
-        result = await svc.activate(ctx, lobby['lobby_id'])
-        self.assertEqual(result['status'], 'activated')
-        self.assertEqual(seen, [scoped.scope])
-        self.assertEqual(rpc.mutations(), ['groups.create', 'groups.peer.register'])
-        payload = next(p for m,p in rpc.calls if m == 'groups.peer.register')
-        self.assertEqual((payload['target_url'],payload['grant']), (ADAPTER_URL,GRANT))
+        self.admit(reg, scoped)
+        self.assertIsNone(svc._material_resolver)  # R-05: no legacy resolver is needed
+        result = await svc.activate(ctx, lobby["lobby_id"])
+        self.assertEqual(result["status"], "activated")
+        self.assertEqual(rpc.mutations(), ["groups.create", "groups.peer.register"])
 
-    async def test_R4_rejects_url_grant_catalog_binding_and_scope_substitution_before_mutation(self):
-        for field in ('url','grant','catalog','binding','owner_installation_id','owner_profile','lobby_id','planned_room_id','member_id','invite_id','peer_id'):
-            with self.subTest(field=field):
+    async def test_R4_conflicting_second_receipt_is_rejected_before_native_mutation(self):
+        svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
+        scoped = self.scoped(ctx, lobby, inv, binding)
+        self.admit(reg, scoped)
+        conflicting = replace(scoped, material=replace(scoped.material, grant="foreign-room-private-grant"))
+        with self.assertRaises(PeerRegistryError):
+            self.admit(reg, conflicting)
+        self.assertEqual(rpc.mutations(), [])
+
+    @staticmethod
+    def _forbid_legacy_resolver(svc):
+        # R-05: the receipt-backed path needs no resolver at all; the service runs with None.
+        svc._material_resolver = None
+
+    def _assert_no_native_mutation(self, rpc):
+        # groups.capabilities is the read-only authority probe that precedes material
+        # resolution; nothing else (no create/register/send/invite) may have been issued.
+        self.assertEqual(rpc.mutations(), [])
+        self.assertLessEqual({m for m, _ in rpc.calls}, {'groups.capabilities'})
+
+    def _receipt_rows(self, reg):
+        with sqlite3.connect(reg._receipt_store.path) as db:
+            return db.execute('SELECT scope_key, generation FROM receipts ORDER BY scope_key').fetchall()
+
+    async def test_R4_receipt_for_another_scope_never_authorizes_activation(self):
+        for field, value in (('owner_installation_id', 'install:' + 'c' * 32), ('owner_profile', 'other'),
+                             ('lobby_id', 'other-lobby'), ('planned_room_id', 'other-room'),
+                             ('member_id', 'other-member'), ('invite_id', 'other-invite')):
+            with self.subTest(scope_field=field):
                 svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
+                self._forbid_legacy_resolver(svc)
                 good = self.scoped(ctx, lobby, inv, binding)
-                reg.approve_scoped_material(good)
-                material, scope = good.material, good.scope
-                if field == 'url': material = replace(material, adapter_url='http://127.0.0.1:19002/links/unapproved')
-                elif field == 'grant': material = replace(material, grant='foreign-room-private-grant')
-                elif field == 'catalog':
-                    catalog = copy.deepcopy(material.catalog); catalog['catalog_digest'] = 'f'*64
-                    material = replace(material, catalog=catalog)
-                elif field == 'binding': material = replace(material, binding=dict(binding, fingerprint='c'*64))
-                else: scope = replace(scope, **{field: 'install:'+'c'*32 if field == 'owner_installation_id' else 'other'})
-                bad = replace(good, scope=scope, material=material)
-                async def resolve(_): return bad
-                svc._material_resolver = resolve
+                other = replace(good, scope=replace(good.scope, **{field: value}))
+                self.admit(reg, other)  # a legitimate receipt, but for scope B
+                self.assertEqual(len(self._receipt_rows(reg)), 1)
                 with self.assertRaises(ServiceError):
                     await svc.activate(ctx, lobby['lobby_id'])
-                self.assertEqual(rpc.mutations(), [])
+                self._assert_no_native_mutation(rpc)
+                self.assertEqual(len(self._receipt_rows(reg)), 1)
+
+    async def test_R4_binding_catalog_generation_peer_substitution_rejected_before_any_native_call(self):
+        cases = {
+            'fingerprint': (dict(fingerprint='c' * 64), 'binding_mismatch'),
+            'endpoint': (dict(endpoint_id='endpoint-evil'), 'binding_mismatch'),
+            'catalog_digest': (dict(catalog_digest='f' * 64), 'binding_mismatch'),
+            'policy_digest': (dict(policy_digest='f' * 64), 'binding_mismatch'),
+            'wrong_generation': (dict(pairing_generation=2), 'binding_mismatch'),
+            'peer': (dict(peer_id='ghost-peer'), 'unknown_peer'),
+        }
+        for name, (change, code) in cases.items():
+            with self.subTest(substitution=name):
+                svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
+                self._forbid_legacy_resolver(svc)
+                good = self.scoped(ctx, lobby, inv, binding)
+                bad = replace(good, scope=replace(good.scope, **change))
+                with self.assertRaises(PeerRegistryError) as cm:
+                    self.admit(reg, bad)
+                self.assertEqual(str(cm.exception), code)
+                self.assertEqual(self._receipt_rows(reg), [])
+                with self.assertRaises(ServiceError):
+                    await svc.activate(ctx, lobby['lobby_id'])
+                self._assert_no_native_mutation(rpc)
+
+    async def test_R4_envelope_url_grant_catalog_scope_substitution_rejected_with_no_row(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        try:
+            from server.tests.test_room_invite_routes import _CONSENT_SIGNER
+        except ModuleNotFoundError:
+            from test_room_invite_routes import _CONSENT_SIGNER
+
+        def envelope(scoped, *, signer=_CONSENT_SIGNER, catalog=None, grant=None, sign_scope=None, post_grant=None):
+            env = target_signed_envelope(sign_scope or scoped.scope, grant or scoped.material.grant,
+                                         catalog or scoped.material.catalog, signer=signer)
+            if post_grant is not None:
+                env['grant'] = post_grant  # substituted AFTER signing
+            return env
+
+        def forged_catalog(scoped):
+            catalog = copy.deepcopy(scoped.material.catalog); catalog['catalog_digest'] = 'f' * 64
+            return catalog
+
+        cases = {
+            'grant_after_signature': (lambda s: envelope(s, post_grant='foreign-room-private-grant-Hx41'), 'invalid_consent'),
+            'foreign_signer': (lambda s: envelope(s, signer=Ed25519PrivateKey.generate()), 'invalid_consent'),
+            'catalog_digest': (lambda s: envelope(s, catalog=forged_catalog(s)), 'invalid_catalog'),
+            'scope_in_envelope': (lambda s: envelope(s, sign_scope=replace(s.scope, invite_id='other-invite')), 'material_scope_mismatch'),
+        }
+        for name, (build, code) in cases.items():
+            with self.subTest(substitution=name):
+                svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
+                self._forbid_legacy_resolver(svc)
+                scoped = self.scoped(ctx, lobby, inv, binding)
+                with self.assertRaises(PeerRegistryError) as cm:
+                    reg.admit_signed_material(scoped.scope, build(scoped))
+                self.assertEqual(str(cm.exception), code)
+                self.assertEqual(self._receipt_rows(reg), [])
+                with self.assertRaises(ServiceError):
+                    await svc.activate(ctx, lobby['lobby_id'])
+                self._assert_no_native_mutation(rpc)
+        with self.subTest(substitution='url'):
+            svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
+            self._forbid_legacy_resolver(svc)
+            scoped = self.scoped(ctx, lobby, inv, binding)
+            material = dict(binding=copy.deepcopy(binding), catalog=copy.deepcopy(CATALOG), grant=GRANT,
+                            adapter_url='http://127.0.0.1:19002/links/unapproved')
+            from invite_rooms.material_receipts import MaterialReceiptError
+            with self.assertRaises(MaterialReceiptError):
+                reg._receipt_store.admit(scoped.scope, material)
+            self.assertEqual(self._receipt_rows(reg), [])
+            with self.assertRaises(ServiceError):
+                await svc.activate(ctx, lobby['lobby_id'])
+            self._assert_no_native_mutation(rpc)
+
+    async def test_R4_receipt_admission_is_lazy_route_resolved_only_on_first_use(self):
+        svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
+        self._forbid_legacy_resolver(svc)
+        routes = []
+        reg._route_provider = lambda scope: routes.append(scope) or 19001
+        scoped = self.scoped(ctx, lobby, inv, binding)
+        self.admit(reg, scoped)
+        svc.inspect_lobby(ctx, lobby['lobby_id'])
+        svc.activation_status(ctx, lobby['lobby_id'])
+        self.assertEqual((rpc.calls, routes), ([], []))
+        result = await svc.activate(ctx, lobby['lobby_id'])
+        self.assertEqual(result['status'], 'activated')
+        self.assertTrue(routes)
+        self.assertTrue(all(scope == scoped.scope for scope in routes))
+        self.assertEqual(rpc.mutations(), ['groups.create', 'groups.peer.register'])
+        from invite_rooms.peer_registry import adapter_id_for
+        payload = next(p for m, p in rpc.calls if m == 'groups.peer.register')
+        self.assertEqual((payload['target_url'], payload['grant']),
+                         ('http://127.0.0.1:19001/links/' + adapter_id_for(scoped.scope), GRANT))
+
+    async def test_R1_05_generation_change_after_admission_never_calls_peer_register(self):
+        svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
+        scoped = self.scoped(ctx, lobby, inv, binding)
+        self.admit(reg, scoped)
+
+        self._forbid_legacy_resolver(svc)
+
+        class BumpingRpc(RecordingRpc):
+            async def __call__(inner, method, params):
+                result = await super(BumpingRpc, inner).__call__(method, params)
+                if method == 'groups.create':
+                    reg._peers['owner-b'].pairing_generation = 2  # re-pair lands mid-activation
+                return result
+
+        bumping = BumpingRpc(INSTALL_A)
+        svc._rpc = bumping
+        with self.assertRaises(ServiceError):
+            await svc.activate(ctx, lobby['lobby_id'])
+        methods = [m for m, _ in bumping.calls]
+        self.assertNotIn('groups.peer.register', methods)
+        self.assertEqual(methods, ['groups.capabilities', 'groups.create', 'groups.state'])
 
     async def test_R4_existing_resolver_cannot_forward_unapproved_loopback(self):
         svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service()
@@ -257,7 +400,7 @@ class ActivationR2R4R5R6Tests(unittest.IsolatedAsyncioTestCase):
     async def test_R5_foreign_authority_rejected_before_native_mutations(self):
         svc, ctx, store, reg, rpc, lobby, inv, binding = self.setup_service(authority='install:'+'c'*32)
         scoped = self.scoped(ctx, lobby, inv, binding)
-        reg.approve_scoped_material(scoped)
+        self.admit(reg, scoped)
         async def resolve(_): return scoped
         svc._material_resolver = resolve
         with self.assertRaisesRegex(ServiceError, '^authority_mismatch$'):
@@ -286,7 +429,7 @@ class ActivationR2R4R5R6Tests(unittest.IsolatedAsyncioTestCase):
         other_inv = store.issue_invite(other['lobby_id'],'peer-b',invitee_label='B')
         with self.assertRaises(InviteError):
             svc.decide_host(ctx,lobby['lobby_id'],other_inv.invite_id,peer_id='owner-b',approved=True)
-        reg.register(peer_id='alias',installation_id=INSTALL_B,profile='default',fingerprint='b'*64,endpoint_id='endpoint-b',catalog=CATALOG,adapter_url=ADAPTER_URL,grant=GRANT)
+        reg.register(peer_id='alias',installation_id=INSTALL_B,profile='default',fingerprint='b'*64,endpoint_id='endpoint-b',catalog=CATALOG,consent_public_key=CONSENT_PUBLIC,tls_ca_pem=CA_PEM,pairing_generation=1)
         with self.assertRaises(ServiceError):
             svc.decide_host(ctx,lobby['lobby_id'],inv.invite_id,peer_id='alias',approved=True)
 

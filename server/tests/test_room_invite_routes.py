@@ -21,6 +21,12 @@ import threading
 import unittest
 from http.client import HTTPConnection
 from pathlib import Path
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.x509.oid import NameOID
+import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -38,10 +44,27 @@ INSTALL_C = "install:" + "c" * 32
 FINGERPRINT_B = "b" * 64
 ADAPTER_URL = "http://127.0.0.1:19001/links/unit-link"
 GRANT = "unit-fixture-grant-secret-value"
+_CONSENT_SIGNER = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+CONSENT_PUBLIC = _CONSENT_SIGNER.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 _POLICY_UNSIGNED = {"version": 1, "target_profile": "default", "enabled_toolsets": ["bot_room"], "approval_mode": "manual", "max_iterations": 10}
 _POLICY = {**_POLICY_UNSIGNED, "policy_digest": hashlib.sha256(json.dumps(_POLICY_UNSIGNED, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest()}
 CATALOG = catalog_mapping(installation_id=INSTALL_B, protocol_versions=(2,), link_modes=("direct",), persistent_process=True, text=True, attachments=False, endpoint={"available": True, "url": ADAPTER_URL, "transport_security": "loopback"}, target_profile="default", execution_policy=_POLICY)
 CATALOG_DIGEST = CATALOG["catalog_digest"]
+
+
+def _make_ca_pem() -> str:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "unit-test-ca")])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=1))
+            .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .sign(key, hashes.SHA256()))
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+CA_PEM = _make_ca_pem()
 
 
 def _write_private_file(path: Path, content: str) -> None:
@@ -63,10 +86,30 @@ def _peer_registry_payload():
             "fingerprint": FINGERPRINT_B,
             "endpoint_id": "endpoint-b",
             "catalog": copy.deepcopy(CATALOG),
-            "adapter_url": ADAPTER_URL,
-            "grant": GRANT,
+            "consent_public_key_b64": __import__("base64").b64encode(CONSENT_PUBLIC).decode(),
+            "tls_ca_pem": CA_PEM,
+            "pairing_generation": 1,
         }
     ])
+
+
+def target_wire_scope(scope):
+    """The scope the REAL TargetMaterialMint signs (joining.py / joining_material.py:
+    host_id, room_id, lobby_id, member_id, invite_id, binding). Derived from a host
+    MaterialScope only to build fixtures; the host never trusts it from the wire."""
+    return {"host_id": scope.owner_installation_id, "room_id": scope.planned_room_id,
+            "lobby_id": scope.lobby_id, "member_id": scope.member_id,
+            "invite_id": scope.invite_id, "binding": dict(scope.binding)}
+
+
+def target_signed_envelope(scope, grant, catalog, *, signer=None, wire_scope=None):
+    """Envelope in the exact shape TargetMaterialMint.mint() emits and signs."""
+    from invite_rooms.consent import canonical as _canonical
+    import base64 as _b64
+    signed = {"scope": wire_scope if wire_scope is not None else target_wire_scope(scope), "grant": grant,
+              "catalog": copy.deepcopy(catalog), "purpose": "joining-owner-material-v1"}
+    return {"scope": signed["scope"], "grant": signed["grant"], "catalog": signed["catalog"],
+            "signature": _b64.b64encode((signer or _CONSENT_SIGNER).sign(_canonical(signed))).decode()}
 
 
 _EXPECTED_BINDING_KEYS = ("fingerprint", "target_install_id", "target_profile", "catalog_digest", "policy_digest")
@@ -189,7 +232,7 @@ class RoomInviteRoutesHttpTest(unittest.TestCase):
         registry = PeerRegistry()
         registry.register(peer_id="owner-b", installation_id=INSTALL_B, profile="default",
                            fingerprint=FINGERPRINT_B, endpoint_id="endpoint-b",
-                           catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT)
+                           catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBLIC, tls_ca_pem=CA_PEM, pairing_generation=1)
         binding = registry.binding_for("owner-b")
         store = RoomInviteStore(self.store_path)
         store.redeem(lobby["lobby_id"], issued["invite_id"], issued["secret"], binding=binding)
@@ -218,7 +261,11 @@ class RoomInviteRoutesHttpTest(unittest.TestCase):
 
         def patched(path):
             registry = original_build(path)
-            registry.approve_scoped_material(scoped)
+            from invite_rooms.material_receipts import MaterialReceiptStore
+            registry._receipt_store = MaterialReceiptStore(self.store_path.parent / "material-receipts")
+            registry._route_provider = lambda _scope: 19001
+            envelope = target_signed_envelope(scoped.scope, scoped.material.grant, scoped.material.catalog)
+            registry.admit_signed_material(scoped.scope, envelope)
             return registry
 
         runtime_config.build_peer_registry = patched
@@ -309,7 +356,7 @@ class RoomInviteRoutesHttpTest(unittest.TestCase):
         registry = PeerRegistry()
         registry.register(peer_id="owner-b", installation_id=INSTALL_B, profile="default",
                            fingerprint=FINGERPRINT_B, endpoint_id="endpoint-b",
-                           catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT)
+                           catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBLIC, tls_ca_pem=CA_PEM, pairing_generation=1)
         binding = registry.binding_for("owner-b")
         store.redeem(lobby["lobby_id"], issued["invite_id"], issued["secret"], binding=binding)
         return store, binding
@@ -512,7 +559,7 @@ class LifecycleTests(RoomInviteRoutesHttpTest):
         registry = PeerRegistry()
         registry.register(peer_id="owner-b", installation_id=INSTALL_B, profile="default",
                            fingerprint=FINGERPRINT_B, endpoint_id="endpoint-b",
-                           catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT)
+                           catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBLIC, tls_ca_pem=CA_PEM, pairing_generation=1)
         binding = registry.binding_for("owner-b")
         store.redeem(lobby["lobby_id"], issued["invite_id"], issued["secret"], binding=binding)
         return store, binding
@@ -628,7 +675,7 @@ class ActivationTests(RoomInviteRoutesHttpTest):
         registry = PeerRegistry()
         registry.register(peer_id="owner-b", installation_id=INSTALL_B, profile="default",
                            fingerprint=FINGERPRINT_B, endpoint_id="endpoint-b",
-                           catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT)
+                           catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBLIC, tls_ca_pem=CA_PEM, pairing_generation=1)
         binding = registry.binding_for("owner-b")
         store.redeem(lobby["lobby_id"], issued["invite_id"], issued["secret"], binding=binding)
         store.decide_host(lobby["lobby_id"], issued["invite_id"], binding=binding, approved=True)
@@ -902,7 +949,7 @@ class MaterialChannelTests(RoomInviteRoutesHttpTest):
         registry = PeerRegistry()
         registry.register(peer_id="owner-b", installation_id=INSTALL_B, profile="default",
                            fingerprint=FINGERPRINT_B, endpoint_id="endpoint-b",
-                           catalog=copy.deepcopy(CATALOG), adapter_url=ADAPTER_URL, grant=GRANT)
+                           catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBLIC, tls_ca_pem=CA_PEM, pairing_generation=1)
         binding = registry.binding_for("owner-b")
         store.redeem(lobby["lobby_id"], issued["invite_id"], issued["secret"], binding=binding)
         store.decide_host(lobby["lobby_id"], issued["invite_id"], binding=binding, approved=True)
