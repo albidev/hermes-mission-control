@@ -1,9 +1,0 @@
-  ok   room-guest-view-model-p3b-ui.test.ts
-  ok   room-invite-api-p3b-ui.test.ts
-  ok   room-invite-mounted-p3b-ui.test.mjs
-  ok   room-invite-mounting-p3b-ui.test.ts
-  ok   room-invite-p3b-ui.test.ts
-  ok   room-joining-state-p3b-ui.test.ts
-  ok   room-pairing-state-p3b-ui.test.ts
-
-run-frontend-tests: 7/7 files passed
