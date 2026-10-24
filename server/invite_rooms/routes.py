@@ -58,13 +58,26 @@ _LOG = logging.getLogger("invite_rooms.routes")
 # integration point is to replace this attribute with a real resolver
 # coroutine at process wiring time -- never a request-scoped value.
 _MATERIAL_RESOLVER = None
-# Installed by process wiring (or tests). Keeping this explicit preserves the
-# feature-off-by-default contract; no guest channel is inferred from HTTP input.
-_GUEST_SERVICE: GuestRoomService | None = None
+# P3b.3b.2 installs a per-config pinned-link connector. Absence means
+# host_offline for log, not a disabled local guest view.
+_HOST_CHANNEL_FACTORY = None
 
-def configure_guest_service(service: GuestRoomService | None) -> None:
-    global _GUEST_SERVICE
-    _GUEST_SERVICE = service
+
+def configure_guest_host_channel(factory=None) -> None:
+    global _HOST_CHANNEL_FACTORY
+    if factory is not None and not callable(factory):
+        raise ValueError("invalid_host_channel_factory")
+    _HOST_CHANNEL_FACTORY = factory
+
+
+def _guest_rpc_factory(config):
+    if config.native_rpc is None:
+        return None
+
+    async def call(method, params):
+        async with _connect_native_rpc(config.native_rpc) as rpc:
+            return await rpc(method, params)
+    return call
 
 
 
@@ -517,8 +530,10 @@ def _h_guest_log(handler, service, ctx, config, args, params) -> None:
 def _h_guest_bot(handler, service, ctx, config, args, params) -> None:
     try:
         result = service.my_bot(args[0])
-    except GuestServiceError:
-        handler._json(403, {"code": "forbidden"})
+    except GuestServiceError as exc:
+        code = str(exc)
+        status = 501 if code == "not_supported" else 503 if code == "host_offline" else 403
+        handler._json(status, {"code": code if status != 403 else "forbidden"})
         return
     handler._json(200, result)
 
@@ -537,6 +552,8 @@ def _h_guest_approval(handler, service, ctx, config, args, params) -> None:
         code = str(exc)
         if code == "invalid_choice":
             handler._json(400, {"code": "invalid_request"})
+        elif code == "not_supported":
+            handler._json(501, {"code": "not_supported"})
         elif code == "host_offline":
             handler._json(503, {"code": "host_offline"})
         else:
@@ -593,14 +610,9 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized)
 
     is_guest_path = path[len(PREFIX):].startswith("/guest-rooms")
     if is_guest_path:
-        if _GUEST_SERVICE is None:
-            # Process wiring is intentionally lazy: it uses only validated
-            # runtime_config and never accepts transport/config from HTTP.
-            configure_guest_service(runtime_config.load_guest_service())
-        if _GUEST_SERVICE is None:
-            handler._json(404, {"error": "not_found", "path": path})
-            return True
-        loaded = (_GUEST_SERVICE, None, None)
+        guest = runtime_config.load_guest_service(
+            channel_factory=_HOST_CHANNEL_FACTORY, rpc_factory=_guest_rpc_factory)
+        loaded = (guest, None, None) if guest is not None else None
     else:
         loaded = runtime_config.load_service(material_resolver=_MATERIAL_RESOLVER)
     if loaded is None:

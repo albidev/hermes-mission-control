@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from invite_rooms.guest import GuestRoomService
+from invite_rooms.joining_store import JoiningStore
 from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError, RegistrySource
 from invite_rooms.material_receipts import MaterialReceiptStore, MaterialReceiptError
 from invite_rooms.service import InviteRoomsService, OwnerContext, ServiceError, _INSTALL_PATTERN, _PROFILE_PATTERN
@@ -224,34 +226,25 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
     return service, ctx, config
 
 
-# Process wiring supplies the authenticated control channel and bounded local
-# native RPC. They are never accepted from the JSON config or an HTTP request.
-_GUEST_CHANNEL = None
-_GUEST_RPC = None
+def load_guest_service(env: Optional[dict] = None, *, channel_factory=None, rpc_factory=None):
+    """Build per request from validated config, without stale transport globals.
 
-
-def configure_guest_transport(*, channel=None, rpc=None) -> None:
-    global _GUEST_CHANNEL, _GUEST_RPC
-    _GUEST_CHANNEL, _GUEST_RPC = channel, rpc
-
-
-def load_guest_service(env: Optional[dict] = None):
-    """Build the guest service from the same validated runtime config.
-
-    No joining store or route is enabled unless ``joining.store_dir`` is
-    explicitly configured and process wiring has supplied both transports.
+    The sidecar supplies the factories. No host connector yet means an offline
+    host, not a disabled local guest view. Native sockets are acquired lazily by
+    the sidecar's RPC callable, never in construction or for read-only listing.
     """
     loaded = load_service(env)
     if loaded is None:
         return None
     _service, _ctx, config = loaded
-    if config.joining_store_dir is None or _GUEST_CHANNEL is None or _GUEST_RPC is None:
+    if config.joining_store_dir is None:
         return None
     try:
-        from invite_rooms.guest import GuestRoomService
-        joining = __import__("invite_rooms.joining_store", fromlist=["JoiningStore"]).JoiningStore(config.joining_store_dir)
-        return GuestRoomService(joining, channel=_GUEST_CHANNEL, rpc=_GUEST_RPC,
-                                 host_label=config.joining_host_label, own_bot_id=config.joining_own_bot_id)
+        joining = JoiningStore(config.joining_store_dir)
+        channel = channel_factory(config) if channel_factory is not None else None
+        rpc = rpc_factory(config) if rpc_factory is not None else None
+        return GuestRoomService(joining, channel=channel, rpc=rpc,
+                                host_label=config.joining_host_label, own_bot_id=config.joining_own_bot_id)
     except Exception:
         _warn_once("joining", "guest joining configuration is unavailable")
         return None

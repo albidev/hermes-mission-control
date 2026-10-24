@@ -4,15 +4,27 @@ from invite_rooms.guest import GuestRoomService, GuestServiceError
 from invite_rooms.joining_store import JoiningStore
 
 
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+from invite_rooms.consent import canonical
+
+
 class Store(JoiningStore):
+    """Real durable joining fixture; no invented session fields in the scope."""
     def __init__(self):
-        pass
-    def list_imports(self):
-        return [{"import_id": "import-1", "state": "consent_given"}]
-    def confirmed_scope(self, _):
-        return {"room_id": "invite-room-r", "session_id": "sid-b", "binding": {"target_profile": "default"}}
-    def mint_load(self, _):
-        return b'{"grant":"grant-local"}'
+        self.tmp = tempfile.TemporaryDirectory(prefix='guest-operation-')
+        super().__init__(Path(self.tmp.name) / 'joining')
+        iid = self.create_import(lobby_id='lobby-one', invite_id='invite-one',
+                                 secret='x' * 43, host_peer_id='host-a')
+        scope = {"room_id": "invite-room-r", "binding": {"target_profile": "default"}}
+        self.confirm_scope(iid, scope)
+        self.mark_redeemed(iid)
+        self.begin_consent(iid, receipt={'scope': scope}, signature='sig')
+        self.mark_consent_delivered(iid)
+        key = canonical(dict(scope, invite_id='invite-one')).decode()
+        self.mint_begin(key)
+        self.mint_complete(key, b'{"grant":"grant-local"}')
 
 
 class Channel:
@@ -37,7 +49,13 @@ class Rpc:
 class GuestOperationsTests(unittest.TestCase):
     def setUp(self):
         self.channel, self.rpc = Channel(), Rpc()
-        self.service = GuestRoomService(Store(), channel=self.channel, rpc=self.rpc)
+        store = Store()
+        self.addCleanup(store.tmp.cleanup)
+        self.service = GuestRoomService(store, channel=self.channel, rpc=self.rpc)
+        # Retain every pre-existing approval mapping assertion as isolated
+        # contract tests. Production lookup is unsupported (HTTP tests cover
+        # 501); this explicit test-only identity is NOT joining metadata.
+        self.enterContext(patch.object(GuestRoomService, '_session_id', return_value='sid-b'))
 
     def test_log_is_verbatim_and_channel_only(self):
         page = self.service.log("invite-room-r", since_seq=2, limit=200)

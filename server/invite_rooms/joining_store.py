@@ -463,6 +463,21 @@ class JoiningStore:
                 "UPDATE imports SET state='consent_given',updated_at=? WHERE import_id=?", (time.time(), import_id)
             )
 
+    def mark_left(self, import_id: str) -> None:
+        """Persist an acknowledged local revoke atomically; terminal/idempotent.
+
+        State-only transition in the existing version-1 imports schema: no DDL
+        change or implicit migration. Consent delivery cannot resurrect it.
+        """
+        _check_import_id(import_id)
+        with self._write() as conn:
+            row = conn.execute("SELECT state FROM imports WHERE import_id=?", (import_id,)).fetchone()
+            if row is None or row["state"] not in ("consent_given", "left"):
+                raise JoiningStoreError("import_state_conflict")
+            if row["state"] != "left":
+                conn.execute("UPDATE imports SET state='left',updated_at=? WHERE import_id=?",
+                             (time.time(), import_id))
+
     def get_consent(self, import_id: str):
         _check_import_id(import_id)
         with self._read() as conn:

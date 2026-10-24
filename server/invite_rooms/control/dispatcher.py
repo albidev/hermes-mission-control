@@ -126,7 +126,7 @@ class ControlDispatcher:
             raise ControlError()
         state = self.authority.current(endpoint_id)
         if state is None or state.generation != generation:
-            raise ControlError()
+            raise ControlError("forbidden")
         binding = state.binding
         bound_endpoint = (binding.get("endpoint_id") if isinstance(binding, Mapping)
                           else getattr(binding, "endpoint_id", None))
