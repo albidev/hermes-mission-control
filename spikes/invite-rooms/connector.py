@@ -56,37 +56,26 @@ _AMBIGUOUS = UpstreamResponse(502, (("content-type", "application/json"),),
 _UNAVAILABLE = UpstreamResponse(503, (("content-type", "application/json"),), b'{"error":"room link unavailable"}')
 
 
+# The relay lifecycle and retry policy remain spike-only. Inner data messages,
+# the actual one-stream exchange, target firewall and native HTTP are product.
+_SERVER = Path(__file__).resolve().parents[2] / "server"
+if str(_SERVER) not in sys.path:
+    sys.path.insert(0, str(_SERVER))
+from invite_rooms.control.connector import (
+    HostConnector as ProductHostConnector, TargetConnector as ProductTargetConnector,
+    native_http_backend, send_message, recv_message, _NoCredentialRedirect,
+)
+
+
 class ConnectorError(RuntimeError):
-    pass
+    """Legacy relay diagnostics; never used by the product data path."""
 
 
-# ---------------------------------------------------------------- inner messages
-
-def send_message(frames: SequencedTLS, data: bytes) -> None:
-    if not data or len(data) > MAX_MESSAGE:
-        raise ConnectorError("message size out of bounds")
-    chunks = [data[i:i + MESSAGE_CHUNK] for i in range(0, len(data), MESSAGE_CHUNK)]
-    frames.send(json.dumps({"chunks": len(chunks), "length": len(data)}).encode())
-    for chunk in chunks:
-        frames.send(chunk)
-
-
-def recv_message(frames: SequencedTLS) -> bytes:
-    _, raw = frames.receive()
-    try:
-        header = json.loads(raw)
-        count, length = header["chunks"], header["length"]
-    except (ValueError, TypeError, KeyError) as exc:
-        raise ConnectorError("malformed message header") from exc
-    if not (isinstance(count, int) and isinstance(length, int) and 0 < length <= MAX_MESSAGE
-            and count == -(-length // MESSAGE_CHUNK)):
-        raise ConnectorError("message header out of bounds")
-    data = bytearray()
-    for _ in range(count):
-        data.extend(frames.receive()[1])
-    if len(data) != length:
-        raise ConnectorError("message length mismatch")
-    return bytes(data)
+class TargetConnector(ProductTargetConnector):
+    def serve(self, sock: socket.socket, stream_id: str = "") -> None:
+        # The old lab changes this module constant after constructing a target.
+        self.timeout = REQUEST_TIMEOUT
+        super().serve(sock, stream_id)
 
 
 # ---------------------------------------------------------------- relay client
@@ -413,120 +402,48 @@ def _resolve_literal(host: str) -> str:
 
 # ---------------------------------------------------------------- roles
 
-class HostConnector:
-    """Host side: native host gateway → loopback adapter → firewall → this → relay."""
+class HostConnector(ProductHostConnector):
+    """Legacy relay recovery policy around the product's single-stream exchange.
 
-    def __init__(self, client: RelayClient, *, inner: dict[str, str]) -> None:
-        self.client = client
-        self.context = client_context(ca_file=inner["peer_ca_file"], cert_file=inner["cert_file"], key_file=inner["key_file"])
-        self.peer_fingerprint = inner["peer_fingerprint"]
-
+    This subclass is NOT used by the direct product adapter. The lab's relay
+    hold/replay contract predates R1-07; only this wrapper retains it.
+    """
     def forward(self, request: ForwardedRequest) -> UpstreamResponse:
-        # One absolute budget, NOT HOLD_BOUND + REQUEST_TIMEOUT per attempt.
-        # Serialize once: a dispatch retry cannot change its key, body or grant.
+        from invite_rooms.control.connector import encode_request
         deadline = time.monotonic() + min(HOLD_BOUND, REQUEST_TIMEOUT)
-        payload = json.dumps({"method": request.method, "path": request.path,
-                              "headers": [list(h) for h in request.headers],
-                              "body": base64.b64encode(request.body).decode()},
-                             separators=(",", ":")).encode()
+        payload = encode_request(request)
         replay_safe = request.method == 'GET' or (
             request.method == 'POST' and request.path == '/v1/runs'
             and any(k.lower() == 'idempotency-key' and v for k, v in request.headers))
         while time.monotonic() < deadline:
-            sock = tls = None
+            opened = False
+            original_client = self.client
+            class Attempt:
+                def open_stream(attempt, timeout):
+                    nonlocal opened
+                    sock = original_client.open_stream(timeout=min(STREAM_OPEN_TIMEOUT, timeout))
+                    opened = True
+                    return sock
+            # No shared-client mutation: a lightweight exchange view keeps the
+            # inherited I/O implementation and one socket owner per attempt.
+            import copy
+            exchange = copy.copy(self)
+            exchange.client = Attempt()
             try:
-                try:
-                    sock = self.client.open_stream(timeout=min(STREAM_OPEN_TIMEOUT,
-                                                              deadline - time.monotonic()))
-                except Exception:
-                    # No application bytes sent: any method may wait for its first stream.
-                    pass
-                else:
-                    sock.settimeout(max(.001, deadline - time.monotonic()))
-                    tls = wrap_client(sock, self.context, expected_fingerprint=self.peer_fingerprint)
-                    frames = SequencedTLS(tls, deadline=deadline)
-                    send_message(frames, payload)
-                    result = json.loads(recv_message(frames))
-                    return UpstreamResponse(int(result["status"]), tuple(tuple(h) for h in result["headers"]),
-                                            base64.b64decode(result["body"]))
+                return exchange.exchange(payload, deadline, wrap=wrap_client,
+                    send=send_message, receive=recv_message, frames_factory=SequencedTLS)
             except OSError as exc:
-                # Only explicit transport failures are recovery signals. In particular,
-                # plain SSLError includes fatal TLS alerts, not just transport EOF.
                 retryable = isinstance(exc, (ConnectionError, TimeoutError, TLSStreamClosed,
                                             ssl.SSLEOFError, ssl.SSLZeroReturnError))
-                if not retryable or not replay_safe:
+                if opened and (not retryable or not replay_safe):
                     raise
-            finally:
-                if tls is not None or sock is not None:
-                    (tls or sock).close()
+            except Exception:
+                if opened:
+                    raise
             remaining = deadline - time.monotonic()
             if remaining > 0:
                 time.sleep(min(.1, remaining))
         return _UNAVAILABLE
-
-
-class _NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None  # Reject BEFORE a credential can leave the fixed backend origin.
-
-
-def native_http_backend(target_base: str) -> Callable[[ForwardedRequest], UpstreamResponse]:
-    host = urlsplit(target_base).hostname or ""
-    if urlsplit(target_base).scheme != "http" or not ipaddress.ip_address(_resolve_literal(host)).is_loopback:
-        raise ConnectorError("native target must be a fixed loopback http:// base")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoCredentialRedirect())
-
-    def forward(request: ForwardedRequest) -> UpstreamResponse:
-        native = urllib.request.Request(target_base + request.path, data=request.body or None,
-                                        method=request.method, headers=dict(request.headers))
-        try:
-            with opener.open(native, timeout=25) as response:
-                headers = tuple((k, v) for k, v in response.headers.items() if k.lower() in {"content-type", "content-length"})
-                return UpstreamResponse(response.status, headers, response.read())
-        except urllib.error.HTTPError as exc:
-            headers = tuple((k, v) for k, v in exc.headers.items() if k.lower() in {"content-type", "content-length"})
-            return UpstreamResponse(exc.code, headers, exc.read())
-    return forward
-
-
-class TargetConnector:
-    """Target side: relay → inner TLS server → firewall → fixed native loopback API."""
-
-    def respond(self, request: Request) -> UpstreamResponse:
-        try:
-            return self.firewall.forward(request)
-        except UpstreamAmbiguous as exc:
-            # Forwarded to the native API, outcome withheld/unknown: 5xx so the host
-            # client keeps it ambiguous; a 403 would read as a definitive refusal.
-            log.info(json.dumps({"event": "upstream_ambiguous", "reason": str(exc)[:80]}))
-            return _AMBIGUOUS
-        except FirewallDenied:
-            return _DENIED
-
-    def __init__(self, *, inner: dict[str, str], firewall: RoomFirewall) -> None:
-        self.context = server_context(ca_file=inner["peer_ca_file"], cert_file=inner["cert_file"], key_file=inner["key_file"])
-        self.peer_fingerprint = inner["peer_fingerprint"]
-        self.firewall = firewall
-        self.served = 0
-
-    def serve(self, sock: socket.socket, stream_id: str = "") -> None:
-        sock.settimeout(REQUEST_TIMEOUT)
-        tls = None
-        try:
-            tls = wrap_server(sock, self.context, expected_fingerprint=self.peer_fingerprint)
-            frames = SequencedTLS(tls)
-            raw = json.loads(recv_message(frames))
-            request = Request(raw["method"], raw["path"], tuple(tuple(h) for h in raw["headers"]),
-                              base64.b64decode(raw["body"]))
-            response = self.respond(request)
-            send_message(frames, json.dumps({"status": response.status, "headers": [list(h) for h in response.headers],
-                                             "body": base64.b64encode(response.body).decode()},
-                                            separators=(",", ":")).encode())
-            self.served += 1
-        except Exception as exc:  # a broken stream never takes the daemon down
-            log.info(json.dumps({"event": "stream_failed", "error": type(exc).__name__}))
-        finally:
-            (tls or sock).close()
 
 
 # ---------------------------------------------------------------- config + CLI

@@ -1,9 +1,10 @@
 """Loopback RoomLink adapter backed by an owner-registered pinned control link.
 
-The listener is deliberately inert until :meth:`start` is called.  A route is
-identified only by the endpoint id and pairing generation; request data never
-selects an upstream.  Each request gets one connector invocation, which is the
-transport seam for the P3b.3a pinned mTLS link.
+The listener is deliberately inert until :meth:`start` is called. Product routes
+use the existing deterministic MaterialScope adapter id and retain the pairing
+endpoint/generation separately. Request data never selects an upstream. Each
+request uses the real pinned connector exactly once. Explicit injected
+connectors and endpoint-shaped routes are retained for the older spike fixtures.
 """
 from __future__ import annotations
 
@@ -74,7 +75,7 @@ class _Link:
 
 
 class LoopbackAdapter:
-    """Expose fixed ``/links/<endpoint_id>/...`` routes on loopback only."""
+    """Expose fixed ``/links/<adapter_id>/...`` routes on loopback only."""
 
     def __init__(self, *, authority: Callable[[str], Any] | None = None,
                  state: FixedLinkStore | None = None,
@@ -130,11 +131,11 @@ class LoopbackAdapter:
                     # Authority is read on every request, not cached at route
                     # creation.  Any generation mismatch is generic 404.
                     if adapter.authority is not None:
-                        current = adapter.authority(endpoint)
+                        current = adapter.authority(link.endpoint_id)
                         generation = getattr(current, "generation", None)
                         if isinstance(current, Mapping): generation = current.get("generation")
                         if type(generation) is not int or generation != link.generation:
-                            adapter.deregister(endpoint, generation=link.generation)
+                            adapter.deregister(link.endpoint_id, generation=link.generation)
                             self._reply(404, _GENERIC_404); return
                     result = link.firewall.forward(request)
                 except UpstreamAmbiguous:
@@ -163,13 +164,17 @@ class LoopbackAdapter:
         self._thread.start()
 
     def register(self, endpoint_id: str, generation: int, *,
-                 firewall: RoomFirewall, connector: Callable[..., Any]) -> str:
+                 firewall: RoomFirewall, connector: Callable[..., Any],
+                 adapter_id: str | None = None) -> str:
         if not isinstance(endpoint_id, str) or not endpoint_id or "/" in endpoint_id or "\\" in endpoint_id:
             raise ValueError("endpoint id must be path-safe")
         if type(generation) is not int or generation < 1:
             raise ValueError("invalid pairing generation")
         if not isinstance(firewall, RoomFirewall) or not callable(connector):
             raise TypeError("invalid link registration")
+        route_id = adapter_id if adapter_id is not None else endpoint_id
+        if not isinstance(route_id, str) or not route_id or "/" in route_id or "\\" in route_id:
+            raise ValueError("adapter id must be path-safe")
         # The connector supplied at registration is authoritative. Rebuild the
         # firewall around it so a caller cannot accidentally retain a second
         # upstream backend on the same route.
@@ -201,27 +206,58 @@ class LoopbackAdapter:
         with self._lock:
             if self._server is None:
                 raise RuntimeError("adapter is not started")
-            old = self._routes.get(endpoint_id)
+            old = self._routes.get(route_id)
+            if old is not None and adapter_id is not None:
+                raise ValueError("scoped route already registered")
             if old is not None:
                 old.closed = True
             link = _Link(endpoint_id, generation, firewall, connector)
             link_ref.append(link)
-            self._routes[endpoint_id] = link
-            return self.url(endpoint_id)
+            self._routes[route_id] = link
+            return self.url(route_id)
 
     def register_link(self, endpoint_id: str, generation: int, *,
                       expected_scope: Mapping[str, Any],
                       verify_native: Callable[[str, Mapping[str, Any]], bool],
-                      connector: Callable[..., Any], backend_timeout_seconds: float = 30.0,
+                      connector: Callable[..., Any] | None = None,
+                      binding=None, identity=None, authority=None, material_scope=None,
+                      backend_timeout_seconds: float = 30.0,
                       on_admitted: Callable[[str, Mapping[str, Any]], Any] | None = None) -> str:
-        """Register one generation and build its fixed firewall policy."""
+        """Register a real fixed link, or an explicit transport fixture connector.
+
+        Product callers supply binding/identity/authority. No network destination
+        or identity is ever inferred from an inbound request.
+        """
+        adapter_id = None
+        if connector is None:
+            from .connector import make_link_connector
+            from invite_rooms.peer_registry import MaterialScope, adapter_id_for
+            if binding is None or binding.endpoint_id != endpoint_id or binding.generation != generation:
+                raise ValueError("link binding does not match route")
+            if (not isinstance(material_scope, MaterialScope)
+                    or material_scope.endpoint_id != endpoint_id
+                    or material_scope.pairing_generation != generation
+                    or material_scope.fingerprint != binding.peer_fingerprint
+                    or any(expected_scope.get(key) != value for key, value in {
+                        "room_id": material_scope.planned_room_id,
+                        "member_id": material_scope.member_id,
+                        "home_install_id": material_scope.owner_installation_id,
+                        "target_install_id": material_scope.target_install_id,
+                        "target_profile": material_scope.target_profile,
+                    }.items())):
+                raise ValueError("material scope does not match route")
+            adapter_id = adapter_id_for(material_scope)
+            connector = make_link_connector(binding, identity, authority)
+        elif any(value is not None for value in (binding, identity, authority)):
+            raise ValueError("ambiguous connector registration")
         firewall = RoomFirewall(expected_scope=expected_scope,
                                 backend=lambda _request: (_ for _ in ()).throw(
                                     FirewallDenied("unregistered backend")),
                                 verify_native=verify_native,
                                 backend_timeout_seconds=backend_timeout_seconds,
                                 on_admitted=on_admitted)
-        return self.register(endpoint_id, generation, firewall=firewall, connector=connector)
+        return self.register(endpoint_id, generation, firewall=firewall, connector=connector,
+                             adapter_id=adapter_id)
 
     def bind(self, endpoint_id: str, firewall: RoomFirewall, *, target_url: str | None = None,
              scope: Mapping[str, Any] | None = None, generation: int = 1,
@@ -259,17 +295,17 @@ class LoopbackAdapter:
 
     def deregister(self, endpoint_id: str, *, generation: int | None = None) -> None:
         with self._lock:
-            link = self._routes.get(endpoint_id)
-            if link is not None and (generation is None or link.generation == generation):
-                link.closed = True
-                self._routes.pop(endpoint_id, None)
+            for route_id, link in tuple(self._routes.items()):
+                if link.endpoint_id == endpoint_id and (generation is None or link.generation == generation):
+                    link.closed = True
+                    self._routes.pop(route_id, None)
 
     def observe_generation(self, endpoint_id: str, generation: int) -> None:
         with self._lock:
-            link = self._routes.get(endpoint_id)
-            if link is not None and link.generation != generation:
-                link.closed = True
-                self._routes.pop(endpoint_id, None)
+            for route_id, link in tuple(self._routes.items()):
+                if link.endpoint_id == endpoint_id and link.generation != generation:
+                    link.closed = True
+                    self._routes.pop(route_id, None)
 
     def url(self, endpoint_id: str) -> str:
         if self._server is None:
