@@ -1,0 +1,5 @@
+import type { ReactNode } from 'react';
+export function BottomSheet({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
+  if (!open) return null;
+  return <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-label={title}><button type="button" className="absolute inset-0 bg-black/60" aria-label="Close" onClick={onClose} /><section className="relative flex max-h-[100dvh] w-full flex-col overflow-auto rounded-t-2xl border border-border bg-surface p-4 shadow-2xl sm:max-w-xl sm:rounded-2xl" data-bottom-sheet><header className="mb-3 flex items-center justify-between gap-2"><h2 className="text-base font-semibold text-text">{title}</h2><button type="button" className="chat-control min-h-11 px-3" onClick={onClose}>×</button></header>{children}</section></div>;
+}

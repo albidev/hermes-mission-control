@@ -1,0 +1,3 @@
+export function SegmentedControl<T extends string>({ value, options, onChange, label }: { value: T; options: Array<{ value: T; label: string }>; onChange: (value: T) => void; label: string }) {
+  return <div className="flex min-h-11 gap-1 rounded-lg bg-surface-sunken p-1" role="tablist" aria-label={label}>{options.map((option) => <button key={option.value} type="button" role="tab" aria-selected={value === option.value} className={`min-h-11 rounded-md px-3 text-sm ${value === option.value ? 'bg-surface-raised font-semibold text-text' : 'text-text-muted'}`} onClick={() => onChange(option.value)}>{option.label}</button>)}</div>;
+}

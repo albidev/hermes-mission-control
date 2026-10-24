@@ -1377,5 +1377,15 @@
   "rooms.invites.bindingChanged": "Invite redemption changed; lobby refreshed. Review the new binding before deciding.",
   "rooms.invites.checkStatus": "Check status",
   "rooms.invites.activate": "Activate Room",
-  "rooms.invites.confirmActivate": "Confirm activation"
+  "rooms.invites.confirmActivate": "Confirm activation",
+  "inviteRooms.pairing": "Invite-only rooms",
+  "inviteRooms.invitations": "Invitations",
+  "inviteRooms.guest": "Guest",
+  "inviteRooms.myBot": "My bot",
+  "inviteRooms.chat": "Chat",
+  "inviteRooms.readOnly": "Read-only: the room is run by the owner",
+  "inviteRooms.namesNotVerified": "Owner names are chosen by each owner, not verified identities.",
+  "inviteRooms.offline": "Owner offline; you are seeing the last version received, not saved on this device.",
+  "inviteRooms.leave": "Leave room",
+  "inviteRooms.consent": "Give consent"
 }

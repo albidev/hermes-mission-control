@@ -1,0 +1,5 @@
+import type { ReactNode } from 'react';
+export type StepperStep = { id: string; label: string; content?: ReactNode };
+export function Stepper({ steps, active, onSelect }: { steps: StepperStep[]; active: string; onSelect?: (id: string) => void }) {
+  return <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="Progress">{steps.map((step, index) => { const selected = step.id === active; return <li key={step.id} className={`rounded-lg border p-2 text-xs ${selected ? 'border-accent bg-accent-subtle/30 text-text' : 'border-border-subtle text-text-muted'}`}><button type="button" className="flex min-h-11 w-full items-center gap-2 text-left" aria-current={selected ? 'step' : undefined} onClick={() => onSelect?.(step.id)}><span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-surface-sunken font-semibold">{index + 1}</span><span>{step.label}</span></button>{selected && step.content ? <div className="mt-2 pl-8">{step.content}</div> : null}</li>; })}</ol>;
+}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Lock, LogOut, RefreshCw, X } from 'lucide-react';
 import { createRoomGuestApi, mergeGuestEvents, type GuestBot, type GuestLogEvent, type GuestRoom, type RoomGuestApi } from '../../lib/room-guest-api';
 import { Button } from '../ui/Button';
+import { SegmentedControl } from '../ui/SegmentedControl';
 
 type Props = { room: GuestRoom; accessToken?: string; api?: RoomGuestApi; onLeave?: () => void };
 export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: Props) {
@@ -15,7 +16,7 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
   const approve = async (requestId: string, choice: 'approve' | 'reject') => { try { await api.decideApproval(room.room_id, requestId, choice); setBot((current) => current ? { ...current, approvals: current.approvals.filter((item) => item.request_id !== requestId) } : current); } catch { setError('Approval could not be updated'); } };
   const leave = async () => { setLeaving(true); try { await api.leaveRoom(room.room_id); onLeave?.(); } catch { setError('Could not leave room'); } finally { setLeaving(false); } };
   return <section className="guest-room-view flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface" aria-label={room.name}>
-    <header className="flex flex-wrap items-center gap-3 border-b border-border p-3 sm:p-4"><div className="flex min-w-0 items-center gap-2"><Lock size={16} aria-hidden /><div className="min-w-0"><h2 className="truncate text-sm font-semibold text-text">{room.name}</h2><p className="text-xs text-text-muted">guest · {room.owner}</p></div></div><div className="ml-auto flex min-h-11 items-center gap-1 rounded-lg bg-surface-sunken p-1" role="tablist" aria-label="Guest room view"><button className={`min-h-11 rounded-md px-3 text-sm ${tab === 'bot' ? 'bg-surface-raised font-semibold text-text' : 'text-text-muted'}`} role="tab" aria-selected={tab === 'bot'} onClick={() => setTab('bot')}>My bot</button><button className={`min-h-11 rounded-md px-3 text-sm ${tab === 'chat' ? 'bg-surface-raised font-semibold text-text' : 'text-text-muted'}`} role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>Chat</button></div></header>
+    <header className="flex flex-wrap items-center gap-3 border-b border-border p-3 sm:p-4"><div className="flex min-w-0 items-center gap-2"><Lock size={16} aria-hidden /><div className="min-w-0"><h2 className="truncate text-sm font-semibold text-text">{room.name}</h2><p className="text-xs text-text-muted">guest · {room.owner}</p></div></div><div className="w-full sm:ml-auto sm:w-auto"><SegmentedControl value={tab} label="Guest room view" options={[{ value: 'bot', label: 'My bot' }, { value: 'chat', label: 'Chat' }]} onChange={setTab} /></div></header>
     {!room.owner_online ? <div className="border-b border-negative/30 bg-negative-subtle px-3 py-2 text-sm text-negative">{room.owner} offline since {room.owner_offline_since ?? 'unknown'}; you are seeing the last version received, not saved on this device</div> : null}
     {error ? <div className="m-3 rounded-lg border border-negative/30 bg-negative-subtle p-3 text-sm text-negative" role="alert">{error}</div> : null}
     <div className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[340px_minmax(0,1fr)]">

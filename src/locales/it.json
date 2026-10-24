@@ -1377,5 +1377,15 @@
   "rooms.invites.bindingChanged": "La redemption dell'invito è cambiata; lobby aggiornata. Ricontrolla il nuovo binding prima di decidere.",
   "rooms.invites.checkStatus": "Ricontrolla stato",
   "rooms.invites.activate": "Attiva stanza",
-  "rooms.invites.confirmActivate": "Conferma attivazione"
+  "rooms.invites.confirmActivate": "Conferma attivazione",
+  "inviteRooms.pairing": "Stanze su invito",
+  "inviteRooms.invitations": "Inviti",
+  "inviteRooms.guest": "Ospite",
+  "inviteRooms.myBot": "Il mio bot",
+  "inviteRooms.chat": "Chat",
+  "inviteRooms.readOnly": "Sola lettura: la stanza è gestita dal padrone",
+  "inviteRooms.namesNotVerified": "I nomi dei padroni li sceglie ciascun padrone: non sono identità verificate.",
+  "inviteRooms.offline": "Il padrone è offline; vedi l'ultima versione ricevuta, non salvata su questo dispositivo.",
+  "inviteRooms.leave": "Esci dalla stanza",
+  "inviteRooms.consent": "Do il consenso"
 }
