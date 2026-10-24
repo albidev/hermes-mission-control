@@ -75,7 +75,7 @@ class TransportRegistry:
 
 
 _ALLOWED = {"pair_ack", "preview", "redeem", "consent", "status",
-            "material_request", "material_receipt"}
+            "material_request", "material_receipt", "room_log", "member_left"}
 # No native method, URL, or arbitrary parameter can cross this boundary.
 _FIELDS = {
     "pair_ack": {"op", "ack"},
@@ -85,6 +85,8 @@ _FIELDS = {
     "status": {"op", "lobby_id", "invite_id"},
     "material_request": {"op", "lobby_id", "invite_id"},
     "material_receipt": {"op", "lobby_id", "invite_id", "receipt"},
+    "room_log": {"op", "room_id", "since_seq", "limit"},
+    "member_left": {"op", "room_id"},
 }
 
 
@@ -124,7 +126,7 @@ class ControlDispatcher:
             raise ControlError()
         state = self.authority.current(endpoint_id)
         if state is None or state.generation != generation:
-            raise ControlError()
+            raise ControlError("forbidden")
         binding = state.binding
         bound_endpoint = (binding.get("endpoint_id") if isinstance(binding, Mapping)
                           else getattr(binding, "endpoint_id", None))
@@ -143,6 +145,13 @@ class ControlDispatcher:
         if op in {"preview", "redeem", "consent", "status", "material_request", "material_receipt"}:
             if not all(isinstance(value.get(k), str) and value[k] for k in ("lobby_id", "invite_id")):
                 raise ControlError()
+        if op == "room_log":
+            if (not isinstance(value.get("room_id"), str) or not value["room_id"]
+                    or type(value.get("since_seq")) is not int or value["since_seq"] < 0
+                    or type(value.get("limit")) is not int or not 1 <= value["limit"] <= 200):
+                raise ControlError()
+        if op == "member_left" and (not isinstance(value.get("room_id"), str) or not value["room_id"]):
+            raise ControlError()
         return op, dict(value)
 
     def _allowed(self, state: LinkState, op: str) -> None:
@@ -153,6 +162,8 @@ class ControlDispatcher:
         if op == "material_request" and self.direction != "A_to_B":
             raise ControlError("forbidden")
         if op == "material_receipt" and self.direction != "B_to_A":
+            raise ControlError("forbidden")
+        if op == "member_left" and self.direction != "B_to_A":
             raise ControlError("forbidden")
 
     def _owner_check(self, endpoint_id: str, request: dict) -> None:
@@ -201,11 +212,23 @@ class ControlDispatcher:
             loop = asyncio.get_running_loop()
             if inspect.iscoroutinefunction(handler):
                 result = handler(effective_request)
-                return await asyncio.wait_for(result, timeout=timeout)
-            # Submit without awaiting: the admission decision and this submission
-            # are adjacent, while blocking handlers cannot starve the event loop.
-            future = loop.run_in_executor(executor, handler, effective_request)
-            return await asyncio.wait_for(future, timeout=timeout)
+                result = await asyncio.wait_for(result, timeout=timeout)
+            else:
+                # Submit without awaiting: the admission decision and this submission
+                # are adjacent, while blocking handlers cannot starve the event loop.
+                future = loop.run_in_executor(executor, handler, effective_request)
+                result = await asyncio.wait_for(future, timeout=timeout)
+            if op == "room_log":
+                # A revocation or generation cutover during groups.log must
+                # invalidate the page; never return a stale canonical transcript.
+                try:
+                    if self.admit(endpoint_id, generation, "room_log") is not True:
+                        raise ControlError("forbidden")
+                except ControlError:
+                    raise
+                except Exception:
+                    raise ControlError("forbidden") from None
+            return result
         except ControlError:
             raise
         except (TimeoutError, asyncio.TimeoutError):
