@@ -102,16 +102,19 @@ def _check(value, pattern, label) -> None:
 class HostBinding:
     """Public, redacted identity of one pre-approved host peer."""
     peer_id: str
+    endpoint_id: str
     installation_id: str
     profile: str
     fingerprint: str
     policy_digest: str
     catalog_digest: str
+    consent_public_key: bytes
+    pairing_generation: int
 
     @property
     def binding(self) -> dict:
         return validate_peer_binding({
-            "endpoint_id": self.peer_id,
+            "endpoint_id": self.endpoint_id,
             "fingerprint": self.fingerprint,
             "target_install_id": self.installation_id,
             "target_profile": self.profile,
@@ -128,11 +131,17 @@ class ApprovedHostRegistry:
     def __init__(self):
         self._hosts: dict[str, HostBinding] = {}
 
-    def register(self, *, peer_id: str, installation_id: str, profile: str,
-                 fingerprint: str, policy_digest: str, catalog_digest: str) -> None:
+    def register(self, *, peer_id: str, endpoint_id: str, installation_id: str, profile: str,
+                 fingerprint: str, policy_digest: str, catalog_digest: str,
+                 consent_public_key: bytes, pairing_generation: int) -> None:
         _check(peer_id, _TOKEN, "peer_id")
+        _check(endpoint_id, _TOKEN, "endpoint_id")
+        if not isinstance(consent_public_key, bytes) or len(consent_public_key) != 32:
+            raise InvitationError("invalid_consent_public_key")
+        if isinstance(pairing_generation, bool) or not isinstance(pairing_generation, int) or pairing_generation < 1:
+            raise InvitationError("invalid_pairing_generation")
         try:
-            validate_peer_binding({"endpoint_id": peer_id, "fingerprint": fingerprint,
+            validate_peer_binding({"endpoint_id": endpoint_id, "fingerprint": fingerprint,
                                    "target_install_id": installation_id,
                                    "target_profile": profile, "catalog_digest": catalog_digest,
                                    "policy_digest": policy_digest})
@@ -141,8 +150,9 @@ class ApprovedHostRegistry:
         if peer_id in self._hosts:
             raise InvitationError("host_already_registered")
         self._hosts[peer_id] = HostBinding(
-            peer_id=peer_id, installation_id=installation_id, profile=profile,
+            peer_id=peer_id, endpoint_id=endpoint_id, installation_id=installation_id, profile=profile,
             fingerprint=fingerprint, policy_digest=policy_digest, catalog_digest=catalog_digest,
+            consent_public_key=bytes(consent_public_key), pairing_generation=pairing_generation,
         )
 
     def binding_for(self, peer_id: str) -> HostBinding:

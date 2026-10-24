@@ -257,7 +257,9 @@ class InviteRoomsService:
             return None, self._activation_result_if_already_created(lobby)
         if not ready:
             raise ServiceError("activation_not_ready")
-        if self._material_resolver is None:
+        # Receipt-backed material needs a durable receipt store and a pinned route provider; the legacy
+        # material resolver is not part of this path. Still fail-closed, still before any transport.
+        if not self.registry.material_capability():
             raise ServiceError("material_channel_unavailable")
         return lobby, None
 
@@ -270,6 +272,8 @@ class InviteRoomsService:
             raise ServiceError("activation_unavailable")
         from room_lobby_service import RoomLobbyService
 
+        generation_by_member = {}
+
         async def product_material(peer):
             # Re-read the approved target; no browser-selected peer/material or
             # generic legacy resolver is ever passed through to the coordinator.
@@ -279,15 +283,49 @@ class InviteRoomsService:
             binding = self._approved_target(member["target"])
             if any(peer.get(k) != binding[k] for k in _BINDING_KEYS):
                 raise ServiceError("peer_binding_mismatch")
+            peer_record = self.registry.lookup(member["target"]["peer_id"])
+            generation_by_member[peer["member_id"]] = peer_record.pairing_generation
             scope = MaterialScope(owner_installation_id=self._trusted_owner.installation_id,
                                   owner_profile=self._trusted_owner.profile,
                                   lobby_id=lobby_id, planned_room_id=lobby["planned_room_id"],
                                   member_id=peer["member_id"], invite_id=peer["invite_id"],
-                                  peer_id=member["target"]["peer_id"], **binding)
+                                  peer_id=member["target"]["peer_id"], pairing_generation=peer_record.pairing_generation, **binding)
             return await self.registry.resolve_scoped_material(scope, self._material_resolver)
 
+        def _peer_id_for(member_id):
+            return next(m["target"]["peer_id"] for m in lobby["roster"] if m.get("member_id") == member_id and "target" in m)
+
+        def pre_register_check(member_id, material):
+            # Early, cheap, request-local check. It is NOT the R1-05 admission boundary (the awaits that
+            # follow can outlive it); the binding transport re-checks via register_admission below.
+            try:
+                peer_id = _peer_id_for(member_id)
+                current = self.registry.lookup(peer_id)
+                if not (current.pairing_generation == generation_by_member.get(member_id)
+                        and current.endpoint_id == material.binding["endpoint_id"]
+                        and self.registry.binding_for(peer_id) == material.binding):
+                    return False
+                if self.registry.has_source():
+                    self.registry.check_admission(peer_id, generation_by_member.get(member_id), material.binding)
+                return True
+            except Exception:
+                return False
+
+        def register_admission(member_id, material):
+            """R1-05 seam: a synchronous callable the native transport runs after its lock and idle
+            drain, immediately before writing groups.peer.register. Re-reads the AUTHORITATIVE peers.json
+            from disk under the registry's cutover lock; fails closed if there is no authoritative source."""
+            peer_id = _peer_id_for(member_id)
+            generation = generation_by_member.get(member_id)
+            binding = copy.deepcopy(material.binding)
+
+            def admit():
+                self.registry.check_admission(peer_id, generation, binding)
+            return admit
+
         coordinator = RoomLobbyService(self.store, self._rpc, product_material,
-                                       expected_authority=self._trusted_owner.installation_id)
+                                       expected_authority=self._trusted_owner.installation_id,
+                                       pre_register_check=pre_register_check, register_admission=register_admission)
         try:
             room = await coordinator.activate(lobby_id)
         except Exception as exc:

@@ -59,30 +59,25 @@ path via the test runner, not a fallback in the product or test modules.
 Trusted owner provisioning uses immutable `MaterialScope` and `ScopedPeerMaterial`.
 Scope includes owner installation/profile, lobby ID, planned native room ID, member
 ID, invite ID, selected peer ID, endpoint, fingerprint, target installation/profile,
-and reviewed catalog/policy digests. Registration of a peer/global grant alone is
-**not** approval for a room. `PeerRegistry.approve_scoped_material` explicitly associates
-already-provisioned private material with this complete scope, defensively snapshots
-it, and requires exact match with the approved peer metadata, adapter URL, catalog,
-and grant. Conflicting associations are rejected. This privileged method is not a
-product service operation or a way to record Joining-owner consent.
+reviewed catalog/policy digests, and pairing generation. Static registration of a peer
+or global grant is **not** approval for a room. Host material is admitted only from a
+signed owner envelope and stored in the owner-private encrypted material-receipt store;
+the first receipt for a complete scope is immutable.
 
 The provisioning integration must establish provenance before approval; this layer
 checks metadata association, **not native grant signature/HMAC validity**. Only actual
 native admission can establish the latter. Never approve a browser-supplied bearer
 or turn a claimed scope dict into proof of origin.
 
-On explicit activation, an optional trusted private loader receives the complete
-typed scope and must return the identical approved `ScopedPeerMaterial`. The registry
-compares scope, URL, binding, catalog and private grant before native mutation, then
-revalidates metadata after the await. Without a loader it uses its own approved
-snapshot; without a scoped approval it fails closed. No unscoped `PeerMaterial` can
-fall through. Inspection/readiness never calls that loader, resolves private material,
-mints, seals, creates, registers or sends. Readiness reports durable consent/metadata
-pins, not proof of private material availability or native admission.
+On explicit activation, the registry loads the exact encrypted receipt on every
+request (including after a process restart), rechecks the pinned binding,
+catalog and pairing generation, and obtains the adapter URL only from the injected
+local route provider. With no route provider result, activation fails closed before
+any native connect. Inspection/readiness never resolves private material, mints,
+seals, creates, registers or sends.
 
-The registry is installation-local trusted in-memory configuration; provisioning
-must reconstruct scoped approvals after a restart. This batch adds no secret store,
-new consent protocol, HTTP ingress, automatic retry or grant minting workflow.
+The JSON registry is installation-local trusted configuration; it contains identity,
+TLS CA, catalog and consent pins only. Private grants never live in it.
 
 ## Activation idempotency and the material-channel seam (MVP.2a-fix)
 

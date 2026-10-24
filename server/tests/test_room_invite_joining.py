@@ -167,10 +167,12 @@ def make_fixture(tmp_root):
     store = RoomInviteStore(tmp_root / "host.sqlite")
     lobby = store.create_lobby(name="Joining lab", roster=copy.deepcopy(ROSTER))
     invite = store.issue_invite(lobby["lobby_id"], "peer-b", invitee_label="Known owner")
+    consent_key = ConsentKey(tmp_root / "consent")
     registry = ApprovedHostRegistry()
     registry.register(peer_id="host-a", installation_id=HOST_INSTALL, profile="default",
-                       fingerprint=FINGERPRINT, policy_digest=POLICY_DIGEST, catalog_digest=CATALOG_DIGEST)
-    consent_key = ConsentKey(tmp_root / "consent")
+                       endpoint_id="endpoint-b", fingerprint=FINGERPRINT, policy_digest=POLICY_DIGEST,
+                       catalog_digest=CATALOG_DIGEST, consent_public_key=consent_key.public_bytes,
+                       pairing_generation=1)
     channel = FakeHostChannel(store, lobby["lobby_id"], SELF_BINDING,
                                joining_owner_key=consent_key.public_bytes, host_id=HOST_INSTALL)
     joining_store = JoiningStore(tmp_root / "joining")
@@ -232,15 +234,18 @@ class ApprovedHostRegistryTests(unittest.TestCase):
     def test_duplicate_registration_rejected(self):
         reg = ApprovedHostRegistry()
         reg.register(peer_id="host-a", installation_id=HOST_INSTALL, profile="default",
-                      fingerprint=FINGERPRINT, policy_digest=POLICY_DIGEST, catalog_digest=CATALOG_DIGEST)
+                      endpoint_id="endpoint-b", fingerprint=FINGERPRINT, policy_digest=POLICY_DIGEST,
+                      catalog_digest=CATALOG_DIGEST, consent_public_key=bytes(32), pairing_generation=1)
         with self.assertRaisesRegex(InvitationError, "^host_already_registered$"):
             reg.register(peer_id="host-a", installation_id=HOST_INSTALL, profile="default",
-                          fingerprint=FINGERPRINT, policy_digest=POLICY_DIGEST, catalog_digest=CATALOG_DIGEST)
+                          endpoint_id="endpoint-b", fingerprint=FINGERPRINT, policy_digest=POLICY_DIGEST,
+                      catalog_digest=CATALOG_DIGEST, consent_public_key=bytes(32), pairing_generation=1)
 
     def test_binding_is_a_copy(self):
         reg = ApprovedHostRegistry()
         reg.register(peer_id="host-a", installation_id=HOST_INSTALL, profile="default",
-                      fingerprint=FINGERPRINT, policy_digest=POLICY_DIGEST, catalog_digest=CATALOG_DIGEST)
+                      endpoint_id="endpoint-b", fingerprint=FINGERPRINT, policy_digest=POLICY_DIGEST,
+                      catalog_digest=CATALOG_DIGEST, consent_public_key=bytes(32), pairing_generation=1)
         b1 = reg.binding_for("host-a")
         b2 = reg.binding_for("host-a")
         self.assertEqual(b1, b2)
@@ -867,11 +872,12 @@ class RealLabParityTest(unittest.TestCase):
                     endpoint=CATALOG["endpoint"], target_profile="default", execution_policy=_POLICY,
                 )
                 parity_catalog_digest = parity_catalog["catalog_digest"]
+                consent_key = ConsentKey(tmp / "consent")
                 registry = ApprovedHostRegistry()
                 registry.register(peer_id="host-a", installation_id=lab.host_id, profile="default",
-                                   fingerprint=lab.owner_a["fingerprint"], policy_digest=POLICY_DIGEST,
-                                   catalog_digest=parity_catalog_digest)
-                consent_key = ConsentKey(tmp / "consent")
+                                   endpoint_id="target-b", fingerprint=lab.owner_a["fingerprint"],
+                                   policy_digest=POLICY_DIGEST, catalog_digest=parity_catalog_digest,
+                                   consent_public_key=consent_key.public_bytes, pairing_generation=1)
                 joining_store = JoiningStore(tmp / "joining")
                 self_binding = {
                     "endpoint_id": "target-b", "fingerprint": lab.owner_b["fingerprint"],

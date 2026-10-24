@@ -26,13 +26,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError
+from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError, RegistrySource
+from invite_rooms.material_receipts import MaterialReceiptStore, MaterialReceiptError
 from invite_rooms.service import InviteRoomsService, OwnerContext, ServiceError, _INSTALL_PATTERN, _PROFILE_PATTERN
 from room_invite_store import InviteError, RoomInviteStore
 
 _CONFIG_ENV = "MISSION_CONTROL_ROOM_INVITES_CONFIG"
 _TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc"}
-_PEER_FIELDS = {"peer_id", "installation_id", "profile", "fingerprint", "endpoint_id", "catalog", "adapter_url", "grant"}
+_PEER_FIELDS = {"peer_id", "installation_id", "profile", "fingerprint", "endpoint_id", "catalog", "consent_public_key_b64", "tls_ca_pem", "pairing_generation"}
 _NATIVE_RPC_FIELDS = {"endpoint", "token_path"}
 
 _LOG = logging.getLogger("invite_rooms.runtime_config")
@@ -136,18 +137,16 @@ def build_peer_registry(peer_registry_path: Path) -> PeerRegistry:
         raise RuntimeConfigError("peer_registry_invalid") from None
     registry = PeerRegistry()
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) - (_PEER_FIELDS | {"consent_public_key_b64"}) or not _PEER_FIELDS <= set(entry):
+        if not isinstance(entry, dict) or set(entry) != _PEER_FIELDS:
             raise RuntimeConfigError("peer_registry_invalid") from None
-        kwargs = {key: entry[key] for key in _PEER_FIELDS}
-        consent_b64 = entry.get("consent_public_key_b64")
-        consent_key = None
-        if consent_b64 is not None:
-            if not isinstance(consent_b64, str):
-                raise RuntimeConfigError("peer_registry_invalid") from None
-            try:
-                consent_key = base64.b64decode(consent_b64, validate=True)
-            except (ValueError, TypeError):
-                raise RuntimeConfigError("peer_registry_invalid") from None
+        try:
+            consent_b64 = entry["consent_public_key_b64"]
+            if not isinstance(consent_b64, str): raise ValueError()
+            consent_key = base64.b64decode(consent_b64, validate=True)
+            if len(consent_key) != 32: raise ValueError()
+        except (ValueError, TypeError):
+            raise RuntimeConfigError("peer_registry_invalid") from None
+        kwargs = {key: entry[key] for key in _PEER_FIELDS if key != "consent_public_key_b64"}
         try:
             registry.register(consent_public_key=consent_key, **kwargs)
         except (PeerRegistryError, TypeError, KeyError):
@@ -185,9 +184,14 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
     try:
         registry = build_peer_registry(config.peer_registry_path)
         store = RoomInviteStore(config.store_path)
+        # Trusted anchor = the owner-private parent of store_path (~/.config/mc-room-invites).
+        receipts = MaterialReceiptStore(config.store_path.parent / "material-receipts", anchor=config.store_path.parent)
+        registry._receipt_store = receipts
+        # Authoritative source for the R1-05 admission seam; the loader is resolved at call time.
+        registry._source = RegistrySource(config.peer_registry_path, lambda path: build_peer_registry(path))
         ctx = OwnerContext(installation_id=config.installation_id, profile=config.profile)
         service = InviteRoomsService(store, registry, trusted_owner=ctx, material_resolver=material_resolver)
-    except (RuntimeConfigError, InviteError, ServiceError, PeerRegistryError, sqlite3.Error, OSError):
+    except (RuntimeConfigError, InviteError, ServiceError, PeerRegistryError, MaterialReceiptError, sqlite3.Error, OSError):
         # A store that can't be opened (corrupt file, unreadable schema row,
         # locked/foreign file bytes, ...) must behave exactly like any other
         # misconfiguration: feature off / 404, one sanitized warning, and the
