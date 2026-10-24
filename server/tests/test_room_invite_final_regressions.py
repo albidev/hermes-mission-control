@@ -232,8 +232,11 @@ class ActivationR2R4R5R6Tests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual({m for m, _ in rpc.calls}, {'groups.capabilities'})
 
     def _receipt_rows(self, reg):
-        with sqlite3.connect(reg._receipt_store.path) as db:
-            return db.execute('SELECT scope_key, generation FROM receipts ORDER BY scope_key').fetchall()
+        rows = []
+        for path in reg._receipt_store.root.glob('*.receipt'):
+            row = json.loads(path.read_bytes())
+            rows.append((row['scope_key'], row['generation']))
+        return sorted(rows)
 
     async def test_R4_receipt_for_another_scope_never_authorizes_activation(self):
         for field, value in (('owner_installation_id', 'install:' + 'c' * 32), ('owner_profile', 'other'),

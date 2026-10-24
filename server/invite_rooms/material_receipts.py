@@ -1,32 +1,25 @@
-"""Durable, owner-private encrypted host material receipts (P3b.0b, hardened in P3b.0-F).
+"""Durable owner-private AES-GCM receipts, one immutable file per scope.
 
-Storage model (R-03/R-06)
--------------------------
-* The receipt directory is opened ONCE as a directory descriptor (``O_DIRECTORY|O_NOFOLLOW``)
-  by walking from a trusted *anchor* (production: the parent of ``store_path`` under
-  ``~/.config/mc-room-invites``; default when none is given: the nearest existing parent).  Every component from the anchor
-  down is opened no-follow relative to its parent descriptor and fstat-checked.  Ancestors ABOVE
-  the anchor (``/Users``, ``/var`` -> ``/private/var`` ...) are deliberately not our business.
-* The key, the lock, the staging key and the database are created/opened relative to that
-  descriptor (``dir_fd=``), no-follow, with fstat type/UID/mode checks.  The pathname of the
-  receipt root is never trusted again for key/lock/staging I/O.
-* SQLite only accepts a pathname.  Every connection therefore (a) opens a no-follow descriptor on
-  the database relative to the retained directory fd, (b) refuses unless it is the exact inode
-  validated at initialisation, (c) refuses unless the receipt-root pathname still resolves to the
-  retained directory, and (d) repeats the inode/root check immediately after ``connect``.
-  (``/dev/fd/<dirfd>/name`` is not an option on macOS: fdescfs exposes no directory traversal,
-  and SQLite also needs to create ``-journal`` siblings by path.)
-* The key is generated, written to a private no-follow staging file, fsynced, published by
-  ``link`` (never overwrites) and the directory is fsynced, all under the bootstrap lock.
+Walk from a trusted anchor using O_DIRECTORY|O_NOFOLLOW and retain the directory fd.
+All key/lock/receipt/staging IO is descriptor-relative. Readers validate and read the
+same O_NOFOLLOW fd (regular, owner UID, 0600, one link). Writers fsync a private
+exclusive staging fd, publish by no-clobber link, verify its inode against the still
+open written fd, unlink staging and fsync the directory. A pathname ABA cannot
+redirect writes: there is no SQLite connection, journal or pathname reopen.
+
+Ancestors above the configured anchor are trusted. Root pathname identity is an
+additional fail-closed check, not the mechanism that confines IO. SQLite remnants
+are refused without opening them; this unreleased format has no migration.
 """
 from __future__ import annotations
 
 import copy
+import fcntl
 import hashlib
 import json
 import os
 import secrets
-import sqlite3
+# No SQLite: every receipt is opened through the retained directory descriptor.
 import stat
 import threading
 from contextlib import contextmanager
@@ -74,7 +67,7 @@ def _check_dir(fd: int, *, private: bool) -> None:
 
 def _check_regular(fd: int) -> None:
     st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1:
         _refuse()
 
 
@@ -136,7 +129,7 @@ def _validate_material(material) -> None:
 
 
 class MaterialReceiptStore:
-    """SQLite receipt store. The key is never shared with JoiningStore or TLS."""
+    """Immutable per-scope receipt files. The key is never shared with JoiningStore or TLS."""
 
     def __init__(self, root: str | Path, *, anchor: str | Path | None = None):
         self.root = Path(root)
@@ -148,13 +141,24 @@ class MaterialReceiptStore:
         try:
             st = os.fstat(self._fd)
             self._root_id = (st.st_dev, st.st_ino)
-            self._db_id = None
+
             lock_fd = self._open_regular(LOCK_NAME, create=True)
             try:
                 import fcntl
                 fcntl.flock(lock_fd, fcntl.LOCK_EX)
-                self._load_key()
-                self._init_db()
+                self._check_store()
+                initialized = os.pread(lock_fd, 2, 0)
+                if initialized not in (b'', b'\x01'):
+                    _refuse()
+                self._load_key(initialized=bool(initialized))
+                # Durable initialized marker on the locked fd replaces the old empty-DB
+                # sentinel: losing the key of even an empty initialized store never regenerates it.
+                if not initialized:
+                    if os.pwrite(lock_fd, b'\x01', 0) != 1:
+                        _refuse()
+                    os.fsync(lock_fd)
+                    os.fsync(self._dirfd())
+                self._check_store()
             finally:
                 os.close(lock_fd)  # releases the bootstrap lock
         except BaseException:
@@ -187,7 +191,7 @@ class MaterialReceiptStore:
 
     def _open_regular(self, name: str, *, create: bool = False, writable: bool = False) -> int:
         """Open ``name`` no-follow relative to the directory fd; fstat type/UID/mode 0600 or refuse."""
-        base = (os.O_RDWR if (create or writable) else os.O_RDONLY) | _NOFOLLOW | _CLOEXEC
+        base = (os.O_RDWR if (create or writable) else os.O_RDONLY) | _NOFOLLOW | os.O_NONBLOCK | _CLOEXEC
         fd = None
         try:
             if create:
@@ -199,6 +203,7 @@ class MaterialReceiptStore:
             if fd is None:
                 fd = os.open(name, base, dir_fd=self._dirfd())
             _check_regular(fd)
+            fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
             return fd
         except MaterialReceiptError:
             if fd is not None:
@@ -217,15 +222,17 @@ class MaterialReceiptStore:
         return stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == self._root_id
 
     # -- key bootstrap (R-06) -----------------------------------------------------------------
-    def _load_key(self):
-        key_exists, db_exists = self._exists(KEY_NAME), self._exists(DB_NAME)
-        if not key_exists and db_exists:
+    def _load_key(self, *, initialized=False):
+        key_exists = self._exists(KEY_NAME)
+        if not key_exists and (initialized or any(n.endswith('.receipt') for n in os.listdir(self._dirfd()))):
             raise MaterialReceiptError("receipt_key_missing")
         if not key_exists:
             self._bootstrap_key()
         fd = self._open_regular(KEY_NAME)
         try:
             raw = os.read(fd, 33)
+            self._check_name(KEY_NAME, fd)
+            os.fsync(self._dirfd())
         finally:
             os.close(fd)
         if len(raw) != 32:
@@ -233,60 +240,98 @@ class MaterialReceiptStore:
         self._aes = AESGCM(raw)
 
     def _bootstrap_key(self):
-        """generate -> private no-follow staging file -> fsync -> link to final name -> fsync dir."""
-        key = AESGCM.generate_key(bit_length=256)
-        staging = f".{KEY_NAME}.{secrets.token_hex(8)}.tmp"
+        """Publish only a complete, fsynced key; bootstrap lock prevents empty-key races."""
+        self._publish(KEY_NAME, AESGCM.generate_key(bit_length=256))
+
+    # -- immutable per-scope files ------------------------------------------------------------
+    def _check_store(self):
+        _check_dir(self._dirfd(), private=True)
+        if not self._root_unchanged() or self._exists(DB_NAME):
+            _refuse()  # unreleased SQLite format is deliberately NOT migrated or opened
+
+    @staticmethod
+    def receipt_name(scope):
+        return hashlib.sha256(canonical(scope.as_dict())).hexdigest() + ".receipt"
+
+    @staticmethod
+    def _identity(st):
+        return st.st_dev, st.st_ino
+
+    def _check_name(self, name, fd):
+        """Bind publication to the still-open staging inode, not just to its pathname."""
+        st = os.stat(name, dir_fd=self._dirfd(), follow_symlinks=False)
+        if self._identity(st) != self._identity(os.fstat(fd)):
+            _refuse()
+
+    def _publish(self, name, data):
+        """Exclusive publication; keep the written fd alive through link/unlink/verification/fsync.
+
+        link never follows the source symlink and never replaces the destination. A staging-name
+        swap during link is caught by comparing the actual published file with the written fd.
+        No writes are made through either of these interchangeable names.
+        """
         dirfd = self._dirfd()
+        staging = name + ".tmp-" + secrets.token_hex(16)
         fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC, 0o600, dir_fd=dirfd)
         try:
-            try:
-                os.fchmod(fd, 0o600)
-                view = memoryview(key)
-                while view:
-                    view = view[os.write(fd, view):]
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            os.link(staging, KEY_NAME, src_dir_fd=dirfd, dst_dir_fd=dirfd, follow_symlinks=False)
+            os.fchmod(fd, 0o600)
+            _check_regular(fd)
+            view = memoryview(data)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("storage_write_failed")
+                view = view[written:]
+            os.fsync(fd)
+            self._check_name(staging, fd)
+            os.link(staging, name, src_dir_fd=dirfd, dst_dir_fd=dirfd, follow_symlinks=False)
+            self._check_name(name, fd)
+            os.unlink(staging, dir_fd=dirfd)
+            _check_regular(fd)  # after unlink, the published inode must have exactly one link
+            self._check_name(name, fd)
+            os.fsync(dirfd)
+            if not self._root_unchanged():
+                _refuse()
         finally:
+            os.close(fd)
             try:
                 os.unlink(staging, dir_fd=dirfd)
             except FileNotFoundError:
                 pass
-        os.fsync(dirfd)
 
-    # -- database -----------------------------------------------------------------------------
-    def _init_db(self):
-        fd = self._open_regular(DB_NAME, create=True)
+    def _read_receipt(self, scope):
+        self._check_store()
+        name = self.receipt_name(scope)
         try:
-            st = os.fstat(fd)
-            self._db_id = (st.st_dev, st.st_ino)
-        finally:
-            os.close(fd)
-        with self._db() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS receipts (scope_key TEXT PRIMARY KEY, generation INTEGER NOT NULL, nonce BLOB NOT NULL, ciphertext BLOB NOT NULL, digest BLOB NOT NULL)")
-
-    def _same_database(self, fd=None) -> bool:
-        try:
-            st = os.fstat(fd) if fd is not None else os.stat(DB_NAME, dir_fd=self._dirfd(), follow_symlinks=False)
+            fd = os.open(name, os.O_RDONLY | _NOFOLLOW | _CLOEXEC | os.O_NONBLOCK, dir_fd=self._dirfd())
+        except FileNotFoundError:
+            raise MaterialReceiptError("material_scope_unapproved") from None
         except OSError:
-            return False
-        return (st.st_dev, st.st_ino) == self._db_id and self._root_unchanged()
-
-    @contextmanager
-    def _db(self):
-        fd = self._open_regular(DB_NAME)  # no-follow, regular, owner, 0600
+            _refuse()
         try:
-            if not self._same_database(fd):
-                _refuse()
-            db = sqlite3.connect(str(self.path), isolation_level=None, timeout=5)
-            try:
-                if not self._same_database():
-                    _refuse()
-                db.execute("PRAGMA synchronous=FULL"); db.execute("PRAGMA fullfsync=1")
-                yield db
-            finally:
-                db.close()
+            _check_regular(fd)
+            fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+            # Read ONLY the file whose descriptor was verified. Never reopen by path.
+            raw = bytearray()
+            while len(raw) <= 256 * 1024:
+                chunk = os.read(fd, min(65536, 256 * 1024 + 1 - len(raw)))
+                if not chunk:
+                    break
+                raw.extend(chunk)
+            if len(raw) > 256 * 1024:
+                raise ValueError()
+            self._check_name(name, fd)
+            self._check_store()
+            row = json.loads(raw)
+            if set(row) != {"scope_key", "generation", "nonce", "ciphertext", "digest"}:
+                raise ValueError()
+            if row["scope_key"] != self.key_for(scope) or row["generation"] != scope.pairing_generation:
+                raise ValueError()
+            return (row["generation"], bytes.fromhex(row["nonce"]), bytes.fromhex(row["ciphertext"]), bytes.fromhex(row["digest"]))
+        except MaterialReceiptError:
+            raise
+        except Exception:
+            raise MaterialReceiptError("material_unavailable") from None
         finally:
             os.close(fd)
 
@@ -312,22 +357,51 @@ class MaterialReceiptStore:
         plaintext = canonical(material)
         digest = hashlib.sha256(plaintext).digest(); nonce = secrets.token_bytes(12)
         encrypted = self._aes.encrypt(nonce, plaintext, self._aad(scope))
-        with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT generation, nonce, ciphertext, digest FROM receipts WHERE scope_key=?", (key,)).fetchone()
-            if row:
-                if row[0] != scope.pairing_generation: raise MaterialReceiptError("material_scope_conflict")
-                try:
-                    existing = self._aes.decrypt(row[1], row[2], self._aad(scope))
-                except Exception: raise MaterialReceiptError("material_unavailable") from None
-                if hashlib.sha256(existing).digest() != row[3] or existing != plaintext: raise MaterialReceiptError("material_scope_conflict")
+        with self._operation():
+            self._check_store()
+            try:
+                row = self._read_receipt(scope)
+            except MaterialReceiptError as exc:
+                if str(exc) != "material_scope_unapproved":
+                    raise
+            else:
+                self._check_identical(scope, row, plaintext)
+                os.fsync(self._dirfd())  # retry after a failed publication dir-fsync must be durable
                 return
-            db.execute("INSERT INTO receipts VALUES(?,?,?,?,?)", (key, scope.pairing_generation, nonce, encrypted, digest)); db.commit()
+            data = canonical(dict(scope_key=key, generation=scope.pairing_generation,
+                                  nonce=nonce.hex(), ciphertext=encrypted.hex(), digest=digest.hex()))
+            try:
+                self._publish(self.receipt_name(scope), data)
+            except FileExistsError:
+                # Exclusive publication is the first-receipt-wins boundary. Never overwrite.
+                self._check_identical(scope, self._read_receipt(scope), plaintext)
+            except OSError:
+                _refuse()
+            self._check_store()
+
+    @contextmanager
+    def _operation(self):
+        import fcntl
+        with self._lock:
+            fd = self._open_regular(LOCK_NAME)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                os.close(fd)
+
+    def _check_identical(self, scope, row, plaintext):
+        try:
+            existing = self._aes.decrypt(row[1], row[2], self._aad(scope))
+        except Exception:
+            raise MaterialReceiptError("material_unavailable") from None
+        if row[0] != scope.pairing_generation or hashlib.sha256(existing).digest() != row[3] or existing != plaintext:
+            raise MaterialReceiptError("material_scope_conflict")
 
     def load(self, scope) -> dict:
-        key = self.key_for(scope)
-        with self._db() as db: row = db.execute("SELECT generation, nonce, ciphertext, digest FROM receipts WHERE scope_key=?", (key,)).fetchone()
-        if row is None: raise MaterialReceiptError("material_scope_unapproved")
+        self.key_for(scope)
+        with self._operation():
+            row = self._read_receipt(scope)
         if row[0] != scope.pairing_generation: raise MaterialReceiptError("material_scope_unapproved")
         try:
             raw = self._aes.decrypt(row[1], row[2], self._aad(scope))

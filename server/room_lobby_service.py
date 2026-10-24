@@ -173,8 +173,13 @@ class RoomLobbyService:
         room = await self._create(lobby_id, spec, authority)
         for member_id, material in materials.items():
             try:
-                if self.pre_register_check is not None and not self.pre_register_check(member_id, material):
-                    raise InviteError("peer_binding_changed")
+                if self.pre_register_check is not None:
+                    import inspect
+                    checked = self.pre_register_check(member_id, material)
+                    if inspect.isawaitable(checked):
+                        checked = await checked
+                    if not checked:
+                        raise InviteError("peer_binding_changed")
                 admission = self.register_admission(member_id, material) if self.register_admission is not None else None
                 token = REGISTER_ADMISSION.set(admission)
                 try:

@@ -71,14 +71,33 @@ def envelope_for(scope, grant, *, catalog=None, signer=_CONSENT_SIGNER):
     return target_signed_envelope(scope, grant, CATALOG if catalog is None else catalog, signer=signer)
 
 
+def receipt_path(store, scope):
+    return store.root / store.receipt_name(scope)
+
+
 def raw_rows(store):
-    with sqlite3.connect(store.path) as db:
-        return db.execute("SELECT scope_key, generation, nonce, ciphertext, digest FROM receipts ORDER BY scope_key").fetchall()
+    return raw_rows_at(store.root)
 
 
 def raw_rows_at(path):
-    with sqlite3.connect(path) as db:
-        return db.execute("SELECT scope_key, generation, nonce, ciphertext, digest FROM receipts ORDER BY scope_key").fetchall()
+    root = Path(path)
+    if not root.is_dir():
+        root = root.parent
+    rows = []
+    for path in root.glob('*.receipt'):
+        r = json.loads(path.read_bytes())
+        rows.append((r['scope_key'], r['generation'], bytes.fromhex(r['nonce']),
+                     bytes.fromhex(r['ciphertext']), bytes.fromhex(r['digest'])))
+    return sorted(rows)
+
+
+def put_row(store, scope, row):
+    path = receipt_path(store, scope)
+    data = dict(scope_key=store.key_for(scope), generation=scope.pairing_generation,
+                nonce=bytes(row[2]).hex(), ciphertext=bytes(row[3]).hex(), digest=bytes(row[4]).hex())
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as out:
+        json.dump(data, out)
 
 
 class TmpCase(unittest.TestCase):
@@ -95,7 +114,7 @@ class ReceiptStorePermissionTests(TmpCase):
     def test_new_storage_is_private_0700_dir_0600_files(self):
         store = self.store()
         self.assertEqual(stat.S_IMODE(store.root.stat().st_mode), 0o700)
-        for name in ("material_receipts.sqlite", "material_receipts.key", ".material-receipts.lock"):
+        for name in ("material_receipts.key", ".material-receipts.lock"):
             self.assertEqual(stat.S_IMODE((store.root / name).stat().st_mode), 0o600, name)
 
     def test_existing_broader_directory_is_refused_and_nothing_written(self):
@@ -126,6 +145,7 @@ class ReceiptStorePermissionTests(TmpCase):
 
     def test_existing_broader_database_file_is_refused_and_unchanged(self):
         store = self.store()
+        store.path.write_bytes(b"legacy-sqlite-must-not-be-read")
         before = store.path.read_bytes()
         os.chmod(store.path, 0o644)
         with self.assertRaises(MaterialReceiptError) as cm:
@@ -146,6 +166,7 @@ class ReceiptStorePermissionTests(TmpCase):
     def test_symlinked_database_file_is_refused(self):
         store = self.store()
         decoy = self.tmp / "decoy.sqlite"
+        store.path.write_bytes(b"legacy-sqlite-must-not-be-read")
         decoy.write_bytes(store.path.read_bytes())
         os.chmod(decoy, 0o600)
         store.path.unlink()
@@ -197,11 +218,11 @@ class ReceiptStoreCryptoTests(TmpCase):
         self.store_.admit(self.scope_a, material_for(self.scope_a, GRANT_A))
         key = self.store_.key_path.read_bytes()
         self.assertEqual(len(key), 32)
-        blob = self.store_.path.read_bytes()
+        blob = receipt_path(self.store_, self.scope_a).read_bytes()
         self.assertNotIn(GRANT_A.encode(), blob)
         self.assertNotIn(b"grant", blob)
         self.assertNotIn(key, blob)
-        for path in (self.store_.path, self.store_.root / ".material-receipts.lock"):
+        for path in (receipt_path(self.store_, self.scope_a), self.store_.root / ".material-receipts.lock"):
             self.assertNotIn(key, path.read_bytes())
 
     def test_same_plaintext_uses_a_fresh_nonce_each_write(self):
@@ -224,9 +245,7 @@ class ReceiptStoreCryptoTests(TmpCase):
     def test_ciphertext_is_bound_to_scope_aad(self):
         self.store_.admit(self.scope_a, material_for(self.scope_a, GRANT_A))
         row = raw_rows(self.store_)[0]
-        with sqlite3.connect(self.store_.path) as db:
-            db.execute("INSERT INTO receipts VALUES(?,?,?,?,?)",
-                       (self.store_.key_for(self.scope_b), 1, row[2], row[3], row[4]))
+        put_row(self.store_, self.scope_b, row)
         with self.assertRaises(MaterialReceiptError) as cm:
             self.store_.load(self.scope_b)
         self.assertEqual(str(cm.exception), "material_unavailable")
@@ -236,9 +255,7 @@ class ReceiptStoreCryptoTests(TmpCase):
         self.store_.admit(self.scope_a, material_for(self.scope_a, GRANT_A))
         row = raw_rows(self.store_)[0]
         gen2 = make_scope(self.reg, pairing_generation=2)
-        with sqlite3.connect(self.store_.path) as db:
-            db.execute("INSERT INTO receipts VALUES(?,?,?,?,?)",
-                       (self.store_.key_for(gen2), 2, row[2], row[3], row[4]))
+        put_row(self.store_, gen2, row)
         with self.assertRaises(MaterialReceiptError) as cm:
             self.store_.load(gen2)
         self.assertEqual(str(cm.exception), "material_unavailable")
@@ -248,9 +265,8 @@ class ReceiptStoreCryptoTests(TmpCase):
         self.store_.admit(self.scope_b, material_for(self.scope_b, GRANT_B))
         ka, kb = self.store_.key_for(self.scope_a), self.store_.key_for(self.scope_b)
         rows = {r[0]: r for r in raw_rows(self.store_)}
-        with sqlite3.connect(self.store_.path) as db:
-            for key, src in ((ka, rows[kb]), (kb, rows[ka])):
-                db.execute("UPDATE receipts SET nonce=?, ciphertext=?, digest=? WHERE scope_key=?", (src[2], src[3], src[4], key))
+        for scope, src in ((self.scope_a, rows[kb]), (self.scope_b, rows[ka])):
+            put_row(self.store_, scope, src)
         for scope in (self.scope_a, self.scope_b):
             with self.assertRaises(MaterialReceiptError) as cm:
                 self.store_.load(scope)
@@ -265,13 +281,11 @@ class ReceiptStoreCryptoTests(TmpCase):
             with self.subTest(part=label):
                 tampered = bytearray(ct)
                 tampered[pos] ^= 0x01
-                with sqlite3.connect(self.store_.path) as db:
-                    db.execute("UPDATE receipts SET ciphertext=?", (bytes(tampered),))
+                put_row(self.store_, self.scope_a, (*row[:3], bytes(tampered), row[4]))
                 with self.assertRaises(MaterialReceiptError) as cm:
                     self.store_.load(self.scope_a)
                 self.assertEqual(str(cm.exception), "material_unavailable")
-                with sqlite3.connect(self.store_.path) as db:
-                    db.execute("UPDATE receipts SET ciphertext=?", (ct,))
+                put_row(self.store_, self.scope_a, row)
         self.assertEqual(self.store_.load(self.scope_a)["grant"], GRANT_A)
 
     def test_first_receipt_is_immutable_and_conflict_leaves_it_intact(self):
@@ -285,10 +299,10 @@ class ReceiptStoreCryptoTests(TmpCase):
 
     def test_identical_rewrite_is_idempotent_with_no_side_effects(self):
         self.store_.admit(self.scope_a, material_for(self.scope_a, GRANT_A))
-        before_rows, before_db = raw_rows(self.store_), self.store_.path.read_bytes()
+        before_rows, before_db = raw_rows(self.store_), receipt_path(self.store_, self.scope_a).read_bytes()
         self.assertIsNone(self.store_.admit(self.scope_a, material_for(self.scope_a, GRANT_A)))
         self.assertEqual(raw_rows(self.store_), before_rows)
-        self.assertEqual(self.store_.path.read_bytes(), before_db)
+        self.assertEqual(receipt_path(self.store_, self.scope_a).read_bytes(), before_db)
 
     def test_extra_adapter_url_field_is_rejected_and_nothing_written(self):
         material = dict(material_for(self.scope_a, GRANT_A), adapter_url="http://127.0.0.1:19002/links/unapproved")
