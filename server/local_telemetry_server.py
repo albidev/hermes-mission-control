@@ -3084,6 +3084,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
+        if parsed.path == room_invite_routes.PREFIX or parsed.path.startswith(room_invite_routes.PREFIX + "/"):
+            if room_invite_routes.handle_request(self, "DELETE", parsed.path, params, _is_authorized):
+                return
         if parsed.path.startswith('/api/local/cron/jobs/') and parsed.path.rstrip('/').endswith('/run'):
             if not _is_authorized(self):
                 self._unauthorized()

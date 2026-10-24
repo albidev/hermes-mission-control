@@ -1,6 +1,7 @@
 """Owner-authenticated invite-room product boundary."""
 from __future__ import annotations
 
+import asyncio
 import copy
 import re
 from dataclasses import dataclass
@@ -295,7 +296,7 @@ class InviteRoomsService:
         def _peer_id_for(member_id):
             return next(m["target"]["peer_id"] for m in lobby["roster"] if m.get("member_id") == member_id and "target" in m)
 
-        def pre_register_check(member_id, material):
+        async def pre_register_check(member_id, material):
             # Early, cheap, request-local check. It is NOT the R1-05 admission boundary (the awaits that
             # follow can outlive it); the binding transport re-checks via register_admission below.
             try:
@@ -306,21 +307,23 @@ class InviteRoomsService:
                         and self.registry.binding_for(peer_id) == material.binding):
                     return False
                 if self.registry.has_source():
-                    self.registry.check_admission(peer_id, generation_by_member.get(member_id), material.binding)
+                    final_check = await asyncio.to_thread(self.registry.check_admission,
+                        peer_id, generation_by_member.get(member_id), material.binding)
+                    final_check()
                 return True
             except Exception:
                 return False
 
         def register_admission(member_id, material):
-            """R1-05 seam: a synchronous callable the native transport runs after its lock and idle
-            drain, immediately before writing groups.peer.register. Re-reads the AUTHORITATIVE peers.json
-            from disk under the registry's cutover lock; fails closed if there is no authoritative source."""
+            """R1-05 seam: worker reads AUTHORITATIVE peers.json after queue/idle drain;
+            returned non-waiting validator rechecks it after the worker await, just before send.
+            No authoritative source means fail closed. This is not the P3b.1a durable journal."""
             peer_id = _peer_id_for(member_id)
             generation = generation_by_member.get(member_id)
             binding = copy.deepcopy(material.binding)
 
             def admit():
-                self.registry.check_admission(peer_id, generation, binding)
+                return self.registry.check_admission(peer_id, generation, binding)
             return admit
 
         coordinator = RoomLobbyService(self.store, self._rpc, product_material,

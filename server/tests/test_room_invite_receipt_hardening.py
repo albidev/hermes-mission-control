@@ -84,14 +84,11 @@ class MalformedGrantTests(MR.TmpCase):
         scope = MR.make_scope(reg)
         for label, grant in (("null", None), ("empty", ""), ("int", 5)):
             with self.subTest(grant=label):
-                with sqlite3.connect(store.path) as db:
-                    db.execute("DELETE FROM receipts")
                 plaintext = canonical(MR.material_for(scope, grant))
                 import hashlib
                 nonce = b"\x07" * 12
                 blob = store._aes.encrypt(nonce, plaintext, store._aad(scope))
-                with sqlite3.connect(store.path) as db:
-                    db.execute("INSERT INTO receipts VALUES(?,?,?,?,?)", (store.key_for(scope), 1, nonce, blob, hashlib.sha256(plaintext).digest()))
+                MR.put_row(store, scope, (store.key_for(scope), 1, nonce, blob, hashlib.sha256(plaintext).digest()))
                 with self.assertRaises(MaterialReceiptError) as cm:
                     store.load(scope)
                 self.assertEqual(str(cm.exception), "material_unavailable")
@@ -182,6 +179,7 @@ class AnchoredStorageTests(MR.TmpCase):
         scope = MR.make_scope(reg)
         store.admit(scope, MR.material_for(scope, GRANT_A))
         decoy = self.tmp / "decoy.sqlite"
+        store.path.write_bytes(b"legacy-sqlite-must-not-be-read")
         decoy.write_bytes(store.path.read_bytes())
         os.chmod(decoy, 0o600)
         store.path.unlink()
@@ -191,14 +189,15 @@ class AnchoredStorageTests(MR.TmpCase):
         self.assertEqual(str(cm.exception), "private_storage_required")
         with self.assertRaises(MaterialReceiptError):
             store.admit(scope, MR.material_for(scope, GRANT_B))
-        self.assertEqual(len(MR.raw_rows_at(decoy)), 1)
+        self.assertEqual(decoy.read_bytes(), b"legacy-sqlite-must-not-be-read")
+        self.assertEqual(len(MR.raw_rows(store)), 1)
 
     def test_database_replaced_by_a_different_regular_file_after_init_is_refused(self):
         reg, store = MR.new_registry(self.tmp)
         scope = MR.make_scope(reg)
         store.admit(scope, MR.material_for(scope, GRANT_A))
         swapped = store.root / "swapped.sqlite"
-        swapped.write_bytes(store.path.read_bytes())
+        swapped.write_bytes(b"legacy-sqlite-must-not-be-read")
         os.chmod(swapped, 0o600)
         os.replace(swapped, store.path)  # same bytes and mode, different inode
         with self.assertRaises(MaterialReceiptError):
@@ -238,6 +237,7 @@ class AnchoredStorageTests(MR.TmpCase):
         root.mkdir(mode=0o700)
         MaterialReceiptStore(root)
         real_fstat = os.fstat
+        lock_ino = (root / LOCK).stat().st_ino
 
         class Foreign:
             def __init__(self, st): self._st = st
@@ -246,8 +246,8 @@ class AnchoredStorageTests(MR.TmpCase):
 
         def fake_fstat(fd, *a, **k):
             st = real_fstat(fd, *a, **k)
-            if stat.S_ISREG(st.st_mode) and st.st_size == 0 and stat.S_IMODE(st.st_mode) == 0o600:
-                return Foreign(st)  # only the (empty) lock file looks foreign
+            if st.st_ino == lock_ino:
+                return Foreign(st)  # only the lock file looks foreign (it now holds the initialized marker)
             return st
 
         with patch.object(mr.os, "fstat", fake_fstat):
@@ -349,7 +349,7 @@ class AtomicKeyBootstrapTests(MR.TmpCase):
         with patch.object(mr.os, "link", spy):
             MaterialReceiptStore(root)
         self.assertEqual(seen, [(0o600, 32)])  # fully written before it can become the final name
-        self.assertEqual(names(root), [LOCK, "material_receipts.key", "material_receipts.sqlite"])
+        self.assertEqual(names(root), [LOCK, "material_receipts.key"])
 
     def test_existing_database_without_key_never_regenerates(self):
         reg, store = MR.new_registry(self.tmp)

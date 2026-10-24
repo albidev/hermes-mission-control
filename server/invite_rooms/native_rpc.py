@@ -17,6 +17,7 @@ import uuid
 import aiohttp
 
 from room_lobby_service import AdmissionDenied, NativeRpcRejected, REGISTER_ADMISSION  # noqa: F401 — re-exported for canonical surface
+from invite_rooms.peer_registry import ADMISSION_DEADLINE
 
 MAX_REQUEST = 24 * 1024
 MAX_RESPONSE = 256 * 1024
@@ -143,12 +144,21 @@ class BoundedNativeRpc:
                     raise NativeRpcAmbiguous()
                 await self._drain_idle(deadline)
                 if admission is not None:
-                    # R1-05: after the queue lock and the idle drain, immediately before the frame is
-                    # written. Synchronous and with NO await between this check and the send below.
+                    # Waiting/reading/parsing is off-loop and bounded by this request's deadline.
+                    # The returned final validator runs AFTER the await, never before it.
+                    token = ADMISSION_DEADLINE.set(deadline)
                     try:
-                        admission()
+                        final_check = await asyncio.to_thread(admission)
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError()
+                        if final_check is not None:
+                            final_check()
                     except Exception:
                         raise AdmissionDenied() from None
+                    finally:
+                        ADMISSION_DEADLINE.reset(token)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError()
                 sent = True  # send failure can follow partial native admission
                 await self.ws.send_str(raw)
                 # Native notifications are permitted, but cannot reset time/byte budgets.

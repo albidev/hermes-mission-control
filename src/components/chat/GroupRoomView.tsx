@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {AlertTriangle, Check, ChevronRight, Loader2, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon, ChevronDown, EyeOff} from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
-import { ChatMessageCard } from '../chat-messages';
+import { RoomTranscriptRow } from './RoomTranscriptRow';
 import { loadMissionControlVaults, type MissionControlVaultDescriptor } from '../../lib/hermes-api';
 import { loadRoomTools, type RoomToolTrace } from '../../lib/room-tools';
 import { RoomToolStrip } from './RoomToolPanel';
@@ -433,7 +433,26 @@ export const GroupRoomView = memo(function GroupRoomView({ state, onSend, classN
     {state.error && !state.serviceUnavailable ? <div className="text-xs text-negative" role="alert">{state.error.message}</div> : null}
     <div ref={transcriptRef} onScroll={handleScroll} className="chat-transcript min-h-[220px] flex-1">
       {state.loading ? <div className="chat-empty"><Loader2 size={16} className="chat-spin" />{t('rooms.loading')}</div> : filtered.length === 0 ? <p className="chat-empty">{t('rooms.noMessages')}</p> : (
-        filtered.map(({ event, member }, index) => <div key={event.id} style={{ display: 'contents' }}>{event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div> : null}{event.actor.kind === 'member' && toolsByMemberReply.has(event.id) ? <RoomToolStrip tools={toolsByMemberReply.get(event.id) ?? []} memberHandle={member?.handle ?? ''} expanded={expandedStrips.has(event.id)} onToggle={() => toggleStrip(event.id)} /> : null}<ChatMessageCard message={groupEventToChatMessage(event, member)} mentionHandles={(state.room?.members ?? []).map((m) => m.handle)} /></div>)
+        filtered.map(({ event, member }, index) => (
+          <div key={event.id} style={{ display: 'contents' }}>
+            {event.round !== undefined && (index === 0 || filtered[index - 1].event.round !== event.round) ? (
+              <div className="chat-round-divider" aria-hidden>{t('rooms.round', { round: event.round })}</div>
+            ) : null}
+            <RoomTranscriptRow
+              message={groupEventToChatMessage(event, member)}
+              mentionHandles={(state.room?.members ?? []).map((item) => item.handle)}
+            >
+              {event.actor.kind === 'member' && toolsByMemberReply.has(event.id) ? (
+                <RoomToolStrip
+                  tools={toolsByMemberReply.get(event.id) ?? []}
+                  memberHandle={member?.handle ?? ''}
+                  expanded={expandedStrips.has(event.id)}
+                  onToggle={() => toggleStrip(event.id)}
+                />
+              ) : null}
+            </RoomTranscriptRow>
+          </div>
+        ))
       )}
       {!nearBottom ? (
         <button

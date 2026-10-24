@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import sqlite3
 import stat
 import threading
@@ -26,13 +27,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from invite_rooms.guest import GuestRoomService
+from invite_rooms.joining_store import JoiningStore
+from invite_rooms import private_fs
 from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError, RegistrySource
 from invite_rooms.material_receipts import MaterialReceiptStore, MaterialReceiptError
 from invite_rooms.service import InviteRoomsService, OwnerContext, ServiceError, _INSTALL_PATTERN, _PROFILE_PATTERN
 from room_invite_store import InviteError, RoomInviteStore
 
 _CONFIG_ENV = "MISSION_CONTROL_ROOM_INVITES_CONFIG"
-_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc"}
+_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing"}
+_JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id"}
+_PAIRING_FIELDS = {"identity_dir", "journal_dir", "peers_path"}
 _PEER_FIELDS = {"peer_id", "installation_id", "profile", "fingerprint", "endpoint_id", "catalog", "consent_public_key_b64", "tls_ca_pem", "pairing_generation"}
 _NATIVE_RPC_FIELDS = {"endpoint", "token_path"}
 
@@ -75,6 +81,46 @@ class RuntimeConfig:
     profile: str
     peer_registry_path: Path
     native_rpc: Optional[dict]  # {"endpoint": str, "token_path": Path} or None
+    joining_store_dir: Optional[Path] = None
+    joining_host_label: str = "host"
+    joining_own_bot_id: Optional[str] = None
+    pairing: Optional["PairingConfig"] = None  # P3b.1a-2: OFF unless a valid ``pairing`` block is present
+
+
+@dataclass(frozen=True)
+class PairingConfig:
+    identity_dir: Path
+    journal_dir: Path
+    peers_path: Path
+
+
+def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
+    """Validate the optional ``pairing`` block.  Any problem -> ``None`` (pairing routes 404), never a partial feature.
+
+    Directories that already exist must be owner-private (0700, owner UID, no symlink component below the nearest
+    existing ancestor); ones that do not exist yet are created 0700 on first use.  ``peers_path`` must be the very
+    registry file the sidecar reads (``peer_registry_path``): the journal is its only writer.
+    """
+    if not isinstance(raw, dict) or set(raw) != _PAIRING_FIELDS:
+        return None
+    values = []
+    for key in ("identity_dir", "journal_dir", "peers_path"):
+        value = raw[key]
+        if not isinstance(value, str) or not value or "\x00" in value or not os.path.isabs(value):
+            return None
+        values.append(Path(os.path.abspath(value)))
+    identity_dir, journal_dir, peers_path = values
+    if peers_path != Path(os.path.abspath(peer_registry_path)):
+        return None
+    if identity_dir == journal_dir or peers_path.parent in (identity_dir, journal_dir):
+        return None
+    for directory in (identity_dir, journal_dir):
+        if os.path.lexists(directory):
+            try:
+                os.close(private_fs.open_private_dir(directory, None, create=False))
+            except private_fs.PrivateStorageError:
+                return None
+    return PairingConfig(identity_dir=identity_dir, journal_dir=journal_dir, peers_path=peers_path)
 
 
 def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
@@ -117,14 +163,37 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
             if not _is_private_file(token_path):
                 raise RuntimeConfigError("invalid_native_rpc_token_permissions")
             native_rpc = {"endpoint": endpoint, "token_path": token_path}
+        joining_raw = data.get("joining")
+        joining_store_dir = None
+        joining_host_label = "host"
+        joining_own_bot_id = None
+        if joining_raw is not None:
+            if not isinstance(joining_raw, dict) or not {"store_dir"} <= set(joining_raw) or set(joining_raw) - _JOINING_FIELDS:
+                raise RuntimeConfigError("invalid_joining")
+            if not isinstance(joining_raw["store_dir"], str) or not joining_raw["store_dir"]:
+                raise RuntimeConfigError("invalid_joining")
+            joining_store_dir = Path(joining_raw["store_dir"])
+            if "host_label" in joining_raw and not isinstance(joining_raw["host_label"], str):
+                raise RuntimeConfigError("invalid_joining")
+            if "own_bot_id" in joining_raw and not isinstance(joining_raw["own_bot_id"], str):
+                raise RuntimeConfigError("invalid_joining")
+            joining_host_label = joining_raw.get("host_label", "host")
+            joining_own_bot_id = joining_raw.get("own_bot_id")
     except RuntimeConfigError:
         _warn_once("values", "config file contains invalid owner identity, store, peer registry or native RPC values")
         return None
     if not _is_private_file(peer_registry_path):
         _warn_once("peer-registry-perm", "peer registry path missing or not mode 0600 with a 0700 parent directory")
         return None
+    pairing = None
+    if "pairing" in data:
+        pairing = _parse_pairing(data["pairing"], peer_registry_path)
+        if pairing is None:
+            _warn_once("pairing", "pairing block is invalid; pairing routes are disabled")
     return RuntimeConfig(store_path=store_path, installation_id=installation_id, profile=profile,
-                          peer_registry_path=peer_registry_path, native_rpc=native_rpc)
+                          peer_registry_path=peer_registry_path, native_rpc=native_rpc,
+                          joining_store_dir=joining_store_dir, joining_host_label=joining_host_label,
+                          joining_own_bot_id=joining_own_bot_id, pairing=pairing)
 
 
 def build_peer_registry(peer_registry_path: Path) -> PeerRegistry:
@@ -200,3 +269,27 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
         _warn_once("build", "service construction from config failed")
         return None
     return service, ctx, config
+
+
+def load_guest_service(env: Optional[dict] = None, *, channel_factory=None, rpc_factory=None):
+    """Build per request from validated config, without stale transport globals.
+
+    The sidecar supplies the factories. No host connector yet means an offline
+    host, not a disabled local guest view. Native sockets are acquired lazily by
+    the sidecar's RPC callable, never in construction or for read-only listing.
+    """
+    loaded = load_service(env)
+    if loaded is None:
+        return None
+    _service, _ctx, config = loaded
+    if config.joining_store_dir is None:
+        return None
+    try:
+        joining = JoiningStore(config.joining_store_dir)
+        channel = channel_factory(config) if channel_factory is not None else None
+        rpc = rpc_factory(config) if rpc_factory is not None else None
+        return GuestRoomService(joining, channel=channel, rpc=rpc,
+                                host_label=config.joining_host_label, own_bot_id=config.joining_own_bot_id)
+    except Exception:
+        _warn_once("joining", "guest joining configuration is unavailable")
+        return None

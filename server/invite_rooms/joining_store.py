@@ -284,6 +284,12 @@ class JoiningStore:
                 raise JoiningStoreError("import_unavailable")
             return dict(row)
 
+    def list_imports(self) -> list[dict]:
+        """Return redacted joining records for the local guest read model."""
+        with self._read() as conn:
+            rows = conn.execute("SELECT * FROM imports ORDER BY created_at, import_id").fetchall()
+        return [dict(row) for row in rows]
+
     def find_import(self, lobby_id: str, invite_id: str):
         """Read-only lookup by (lobby_id, invite_id). Returns None if unknown
         rather than raising, so handlers can map an inbound payload without
@@ -456,6 +462,21 @@ class JoiningStore:
             conn.execute(
                 "UPDATE imports SET state='consent_given',updated_at=? WHERE import_id=?", (time.time(), import_id)
             )
+
+    def mark_left(self, import_id: str) -> None:
+        """Persist an acknowledged local revoke atomically; terminal/idempotent.
+
+        State-only transition in the existing version-1 imports schema: no DDL
+        change or implicit migration. Consent delivery cannot resurrect it.
+        """
+        _check_import_id(import_id)
+        with self._write() as conn:
+            row = conn.execute("SELECT state FROM imports WHERE import_id=?", (import_id,)).fetchone()
+            if row is None or row["state"] not in ("consent_given", "left"):
+                raise JoiningStoreError("import_state_conflict")
+            if row["state"] != "left":
+                conn.execute("UPDATE imports SET state='left',updated_at=? WHERE import_id=?",
+                             (time.time(), import_id))
 
     def get_consent(self, import_id: str):
         _check_import_id(import_id)
