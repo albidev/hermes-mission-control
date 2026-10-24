@@ -17,10 +17,9 @@ import json
 import time
 import os
 import sqlite3
-import stat
 from contextlib import contextmanager
 from pathlib import Path
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from invite_rooms.anchored_sqlite import AnchoredSQLite
 
 from invite_rooms.consent import canonical
 
@@ -45,47 +44,52 @@ class MaterialError(ValueError):
 
 class MintJournal:
     """Product-owned durable one-shot mint journal, also used by the lab adapter."""
-    def __init__(self, root):
-        import fcntl
+    def __init__(self, root, *, anchor=None):
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if stat.S_IMODE(os.stat(self.root).st_mode) != 0o700:
-            raise MaterialError("private_storage_required")
         self.path = self.root / "material.sqlite"
-        lockfd = os.open(self.root / "initialize.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(lockfd, "rb") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            keyfile = self.root / "material.key"
-            try:
-                fd = os.open(keyfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
-            except FileExistsError:
-                pass
-            else:
-                with os.fdopen(fd, "wb") as out:
-                    out.write(AESGCM.generate_key(bit_length=256)); out.flush(); os.fsync(out.fileno())
-            fd = os.open(keyfile, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(fd, "rb") as inp:
-                if stat.S_IMODE(os.fstat(inp.fileno()).st_mode) != 0o600:
-                    raise MaterialError("private_storage_required")
-                key = inp.read(33)
-            if len(key) != 32:
-                raise MaterialError("private_storage_required")
-            self._cipher = AESGCM(key)
-            fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-            if stat.S_IMODE(os.fstat(fd).st_mode) != 0o600:
-                os.close(fd); raise MaterialError("private_storage_required")
-            os.close(fd)
-            with self._db() as db:
-                db.execute("CREATE TABLE IF NOT EXISTS material(scope TEXT PRIMARY KEY, grant_id TEXT NOT NULL, state TEXT NOT NULL, ciphertext BLOB)")
+        self._storage = AnchoredSQLite(root, "material.sqlite", "material.key", MaterialError, anchor=anchor)
+        try:
+            with self._storage.initialize(self._check_schema) as (fresh, cipher):
+                self._cipher = cipher
+                with self._storage.connection(timeout=5) as db:
+                    if fresh:
+                        db.execute("CREATE TABLE material(scope TEXT PRIMARY KEY, grant_id TEXT NOT NULL, state TEXT NOT NULL, ciphertext BLOB)")
+                    self._check_schema(db)
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        if getattr(self, '_storage', None) is not None:
+            self._storage.close()
+
+    @staticmethod
+    def _check_schema(db):
+        try:
+            objects = {(r[0], r[1]) for r in db.execute(
+                "SELECT type,name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
+            layout = tuple((r[1], r[2], r[3], r[5]) for r in db.execute('PRAGMA table_info(material)'))
+            indexes = list(db.execute('PRAGMA index_list(material)'))
+            # Material's exact layout is the storage contract. Existing callers
+            # also keep their operation/reconciliation tables in this database;
+            # those do not make an otherwise valid material journal foreign.
+            if (('table', 'material') not in objects
+                    or layout != (('scope', 'TEXT', 0, 1), ('grant_id', 'TEXT', 1, 0),
+                                  ('state', 'TEXT', 1, 0), ('ciphertext', 'BLOB', 0, 0))
+                    or len(indexes) != 1 or indexes[0][2] != 1
+                    or tuple(r[2] for r in db.execute(f'PRAGMA index_info({indexes[0][1]!r})')) != ('scope',)
+                    or list(db.execute('PRAGMA foreign_key_list(material)'))):
+                raise MaterialError('material_unavailable')
+        except sqlite3.DatabaseError:
+            raise MaterialError('material_unavailable') from None
 
     @contextmanager
     def _db(self):
-        db = sqlite3.connect(self.path, isolation_level=None, timeout=5)
-        try:
-            db.execute("PRAGMA synchronous=FULL"); db.execute("PRAGMA fullfsync=1")
+        with self._storage.connection(timeout=5) as db:
+            self._check_schema(db)
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("PRAGMA fullfsync=1")
             yield db
-        finally:
-            db.close()
 
     @staticmethod
     def _scope(scope):
