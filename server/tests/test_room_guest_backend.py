@@ -44,4 +44,32 @@ class RoomLogTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await dispatcher.close()
 
+
+
+class MemberLeftTests(unittest.IsolatedAsyncioTestCase):
+    async def test_member_left_requires_acknowledged_reverse_link(self):
+        state = LinkState({"endpoint_id": "ep"}, 1, "confirmed")
+        dispatcher = ControlDispatcher(Authority(state), handlers={"member_left": lambda _: {"recorded": True}},
+                                       direction="B_to_A", owner_verify=lambda *_: True)
+        try:
+            with self.assertRaises(ControlError):
+                await dispatcher.dispatch("ep", 1, {"op": "member_left", "room_id": "r"})
+        finally:
+            await dispatcher.close()
+
+    async def test_member_left_is_admitted_only_on_acknowledged_reverse_link(self):
+        state = LinkState({"endpoint_id": "ep"}, 1, "acknowledged")
+        seen = []
+        async def left(request):
+            seen.append(request)
+            return {"recorded": True}
+        dispatcher = ControlDispatcher(Authority(state), handlers={"member_left": left},
+                                       direction="B_to_A", owner_verify=lambda *_: True)
+        try:
+            result = await dispatcher.dispatch("ep", 1, {"op": "member_left", "room_id": "r"})
+            self.assertEqual(result, {"recorded": True})
+            self.assertEqual(seen, [{"op": "member_left", "room_id": "r"}])
+        finally:
+            await dispatcher.close()
+
 if __name__ == "__main__": unittest.main()

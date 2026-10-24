@@ -534,8 +534,13 @@ def _h_guest_approval(handler, service, ctx, config, args, params) -> None:
     try:
         service.decide_approval(args[0], args[1], body["choice"])
     except GuestServiceError as exc:
-        handler._json(501 if str(exc) == "not_supported" else 403,
-                      {"code": str(exc) if str(exc) == "not_supported" else "forbidden"})
+        code = str(exc)
+        if code == "invalid_choice":
+            handler._json(400, {"code": "invalid_request"})
+        elif code == "host_offline":
+            handler._json(503, {"code": "host_offline"})
+        else:
+            handler._json(403, {"code": "forbidden"})
         return
     handler._json(200, {})
 
@@ -546,8 +551,8 @@ def _h_guest_leave(handler, service, ctx, config, args, params) -> None:
     try:
         service.leave(args[0])
     except GuestServiceError as exc:
-        handler._json(501 if str(exc) == "not_supported" else 403,
-                      {"code": str(exc) if str(exc) == "not_supported" else "forbidden"})
+        handler._json(503 if str(exc) == "host_offline" else 403,
+                      {"code": "host_offline" if str(exc) == "host_offline" else "forbidden"})
         return
     handler._json(200, {})
 
@@ -588,6 +593,10 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized)
 
     is_guest_path = path[len(PREFIX):].startswith("/guest-rooms")
     if is_guest_path:
+        if _GUEST_SERVICE is None:
+            # Process wiring is intentionally lazy: it uses only validated
+            # runtime_config and never accepts transport/config from HTTP.
+            configure_guest_service(runtime_config.load_guest_service())
         if _GUEST_SERVICE is None:
             handler._json(404, {"error": "not_found", "path": path})
             return True

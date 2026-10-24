@@ -32,7 +32,8 @@ from invite_rooms.service import InviteRoomsService, OwnerContext, ServiceError,
 from room_invite_store import InviteError, RoomInviteStore
 
 _CONFIG_ENV = "MISSION_CONTROL_ROOM_INVITES_CONFIG"
-_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc"}
+_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining"}
+_JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id"}
 _PEER_FIELDS = {"peer_id", "installation_id", "profile", "fingerprint", "endpoint_id", "catalog", "consent_public_key_b64", "tls_ca_pem", "pairing_generation"}
 _NATIVE_RPC_FIELDS = {"endpoint", "token_path"}
 
@@ -75,6 +76,9 @@ class RuntimeConfig:
     profile: str
     peer_registry_path: Path
     native_rpc: Optional[dict]  # {"endpoint": str, "token_path": Path} or None
+    joining_store_dir: Optional[Path] = None
+    joining_host_label: str = "host"
+    joining_own_bot_id: Optional[str] = None
 
 
 def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
@@ -117,6 +121,22 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
             if not _is_private_file(token_path):
                 raise RuntimeConfigError("invalid_native_rpc_token_permissions")
             native_rpc = {"endpoint": endpoint, "token_path": token_path}
+        joining_raw = data.get("joining")
+        joining_store_dir = None
+        joining_host_label = "host"
+        joining_own_bot_id = None
+        if joining_raw is not None:
+            if not isinstance(joining_raw, dict) or not {"store_dir"} <= set(joining_raw) or set(joining_raw) - _JOINING_FIELDS:
+                raise RuntimeConfigError("invalid_joining")
+            if not isinstance(joining_raw["store_dir"], str) or not joining_raw["store_dir"]:
+                raise RuntimeConfigError("invalid_joining")
+            joining_store_dir = Path(joining_raw["store_dir"])
+            if "host_label" in joining_raw and not isinstance(joining_raw["host_label"], str):
+                raise RuntimeConfigError("invalid_joining")
+            if "own_bot_id" in joining_raw and not isinstance(joining_raw["own_bot_id"], str):
+                raise RuntimeConfigError("invalid_joining")
+            joining_host_label = joining_raw.get("host_label", "host")
+            joining_own_bot_id = joining_raw.get("own_bot_id")
     except RuntimeConfigError:
         _warn_once("values", "config file contains invalid owner identity, store, peer registry or native RPC values")
         return None
@@ -124,7 +144,9 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
         _warn_once("peer-registry-perm", "peer registry path missing or not mode 0600 with a 0700 parent directory")
         return None
     return RuntimeConfig(store_path=store_path, installation_id=installation_id, profile=profile,
-                          peer_registry_path=peer_registry_path, native_rpc=native_rpc)
+                          peer_registry_path=peer_registry_path, native_rpc=native_rpc,
+                          joining_store_dir=joining_store_dir, joining_host_label=joining_host_label,
+                          joining_own_bot_id=joining_own_bot_id)
 
 
 def build_peer_registry(peer_registry_path: Path) -> PeerRegistry:
@@ -200,3 +222,36 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
         _warn_once("build", "service construction from config failed")
         return None
     return service, ctx, config
+
+
+# Process wiring supplies the authenticated control channel and bounded local
+# native RPC. They are never accepted from the JSON config or an HTTP request.
+_GUEST_CHANNEL = None
+_GUEST_RPC = None
+
+
+def configure_guest_transport(*, channel=None, rpc=None) -> None:
+    global _GUEST_CHANNEL, _GUEST_RPC
+    _GUEST_CHANNEL, _GUEST_RPC = channel, rpc
+
+
+def load_guest_service(env: Optional[dict] = None):
+    """Build the guest service from the same validated runtime config.
+
+    No joining store or route is enabled unless ``joining.store_dir`` is
+    explicitly configured and process wiring has supplied both transports.
+    """
+    loaded = load_service(env)
+    if loaded is None:
+        return None
+    _service, _ctx, config = loaded
+    if config.joining_store_dir is None or _GUEST_CHANNEL is None or _GUEST_RPC is None:
+        return None
+    try:
+        from invite_rooms.guest import GuestRoomService
+        joining = __import__("invite_rooms.joining_store", fromlist=["JoiningStore"]).JoiningStore(config.joining_store_dir)
+        return GuestRoomService(joining, channel=_GUEST_CHANNEL, rpc=_GUEST_RPC,
+                                 host_label=config.joining_host_label, own_bot_id=config.joining_own_bot_id)
+    except Exception:
+        _warn_once("joining", "guest joining configuration is unavailable")
+        return None

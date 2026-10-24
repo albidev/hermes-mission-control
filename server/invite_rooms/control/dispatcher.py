@@ -75,7 +75,7 @@ class TransportRegistry:
 
 
 _ALLOWED = {"pair_ack", "preview", "redeem", "consent", "status",
-            "material_request", "material_receipt", "room_log"}
+            "material_request", "material_receipt", "room_log", "member_left"}
 # No native method, URL, or arbitrary parameter can cross this boundary.
 _FIELDS = {
     "pair_ack": {"op", "ack"},
@@ -86,6 +86,7 @@ _FIELDS = {
     "material_request": {"op", "lobby_id", "invite_id"},
     "material_receipt": {"op", "lobby_id", "invite_id", "receipt"},
     "room_log": {"op", "room_id", "since_seq", "limit"},
+    "member_left": {"op", "room_id"},
 }
 
 
@@ -149,6 +150,8 @@ class ControlDispatcher:
                     or type(value.get("since_seq")) is not int or value["since_seq"] < 0
                     or type(value.get("limit")) is not int or not 1 <= value["limit"] <= 200):
                 raise ControlError()
+        if op == "member_left" and (not isinstance(value.get("room_id"), str) or not value["room_id"]):
+            raise ControlError()
         return op, dict(value)
 
     def _allowed(self, state: LinkState, op: str) -> None:
@@ -159,6 +162,8 @@ class ControlDispatcher:
         if op == "material_request" and self.direction != "A_to_B":
             raise ControlError("forbidden")
         if op == "material_receipt" and self.direction != "B_to_A":
+            raise ControlError("forbidden")
+        if op == "member_left" and self.direction != "B_to_A":
             raise ControlError("forbidden")
 
     def _owner_check(self, endpoint_id: str, request: dict) -> None:
