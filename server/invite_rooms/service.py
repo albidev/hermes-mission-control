@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 
 from room_invite_store import InviteError, RoomInviteStore, IssuedInvite, _validate_roster
-from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError, MaterialScope
+from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError, MaterialScope, run_admission
 
 
 class ServiceError(ValueError):
@@ -307,7 +307,7 @@ class InviteRoomsService:
                         and self.registry.binding_for(peer_id) == material.binding):
                     return False
                 if self.registry.has_source():
-                    final_check = await asyncio.to_thread(self.registry.check_admission,
+                    final_check = await run_admission(self.registry.check_admission,
                         peer_id, generation_by_member.get(member_id), material.binding)
                     final_check()
                 return True
