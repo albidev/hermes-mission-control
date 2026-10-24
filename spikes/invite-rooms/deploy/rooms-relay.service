@@ -1,0 +1,30 @@
+[Unit]
+Description=Hermes invite-rooms opaque relay (F1 lab)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rooms-relay
+Group=rooms-relay
+WorkingDirectory=/opt/rooms-relay
+ExecStart=/opt/rooms-relay/venv/bin/python /opt/rooms-relay/relay_daemon.py serve --routes /etc/rooms-relay/routes.json --host 127.0.0.1 --port 8443
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+# hardening: the relay needs loopback networking and read access to its route file only
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadOnlyPaths=/etc/rooms-relay
+InaccessiblePaths=/etc/rooms-relay/creds
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+MemoryMax=256M
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

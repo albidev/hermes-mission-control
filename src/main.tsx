@@ -5,6 +5,7 @@ import { I18nProvider, useI18n } from './lib/i18n';
 import { ensureServiceWorker } from './lib/push-client';
 import { installReloadDiagnostics, recordReloadDiagnostic } from './lib/reload-diagnostics';
 import './styles.css';
+import './invite-rooms.css';
 
 class AppErrorBoundary extends Component<{ children: ReactNode; copy: { title: string; message: string; reload: string } }, { hasError: boolean }> {
   state = { hasError: false };
