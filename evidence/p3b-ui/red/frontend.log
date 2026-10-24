@@ -1,0 +1,124 @@
+  FAIL room-guest-view-model-p3b-ui.test.ts (exit 1)
+  FAIL room-invite-api-p3b-ui.test.ts (exit 1)
+  FAIL room-invite-mounted-p3b-ui.test.mjs (exit 1)
+  FAIL room-invite-mounting-p3b-ui.test.ts (exit 1)
+  FAIL room-invite-p3b-ui.test.ts (exit 1)
+  FAIL room-joining-state-p3b-ui.test.ts (exit 1)
+  FAIL room-pairing-state-p3b-ui.test.ts (exit 1)
+
+run-frontend-tests: 0/7 files passed
+
+7 NEW failing file(s):
+
+--- room-guest-view-model-p3b-ui.test.ts ---
+    at moduleResolve (node:internal/modules/esm/resolve:879:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:708:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:728:38)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolve (file://<home>/.hermes/cache/scratch/ui3redHN95/scripts/test-resolve-hooks.mjs:28:14)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:754:16) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file://<home>/.hermes/cache/scratch/ui3redHN95/src/lib/room-guest-api.ts'
+}
+
+Node.js v26.5.1
+
+--- room-invite-api-p3b-ui.test.ts ---
+    at moduleResolve (node:internal/modules/esm/resolve:879:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:708:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:728:38)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolve (file://<home>/.hermes/cache/scratch/ui3redHN95/scripts/test-resolve-hooks.mjs:28:14)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:754:16) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file://<home>/.hermes/cache/scratch/ui3redHN95/src/lib/room-pairing-api.ts'
+}
+
+Node.js v26.5.1
+
+--- room-invite-mounted-p3b-ui.test.mjs ---
+
+Error: Failed to load url /src/components/chat/PairingSection.tsx (resolved id: /src/components/chat/PairingSection.tsx). Does the file exist?
+    at loadAndTransform (file://<home>/Projects/hermes-mission-control/.worktrees/feat-invite-rooms/node_modules/.pnpm/vite@8.3.4_jiti@2.7.0_yaml@2.9.1/node_modules/vite/dist/node/chunks/node.js:20173:31) {
+  code: 'ERR_LOAD_URL',
+  runnerError: Error: RunnerError
+      at reviveInvokeError (file://<home>/Projects/hermes-mission-control/.worktrees/feat-invite-rooms/node_modules/.pnpm/vite@8.3.4_jiti@2.7.0_yaml@2.9.1/node_modules/vite/dist/node/module-runner.js:557:64)
+      at Object.invoke (file://<home>/Projects/hermes-mission-control/.worktrees/feat-invite-rooms/node_modules/.pnpm/vite@8.3.4_jiti@2.7.0_yaml@2.9.1/node_modules/vite/dist/node/module-runner.js:630:11)
+      at async SSRCompatModuleRunner.getModuleInformation (file://<home>/Projects/hermes-mission-control/.worktrees/feat-invite-rooms/node_modules/.pnpm/vite@8.3.4_jiti@2.7.0_yaml@2.9.1/node_modules/vite/dist/node/module-runner.js:1228:7)
+      at async SSRCompatModuleRunner.import (file://<home>/Projects/hermes-mission-control/.worktrees/feat-invite-rooms/node_modules/.pnpm/vite@8.3.4_jiti@2.7.0_yaml@2.9.1/node_modules/vite/dist/node/module-runner.js:1149:23)
+      at async instantiateModule (file://<home>/Projects/hermes-mission-control/.worktrees/feat-invite-rooms/node_modules/.pnpm/vite@8.3.4_jiti@2.7.0_yaml@2.9.1/node_modules/vite/dist/node/chunks/node.js:15965:10)
+      at async file://<home>/.hermes/cache/scratch/ui3redHN95/tests/room-invite-mounted-p3b-ui.test.mjs:54:30
+}
+
+Node.js v26.5.1
+
+--- room-invite-mounting-p3b-ui.test.ts ---
+      at TestContext.<anonymous> (file://<home>/.hermes/cache/scratch/ui3redHN95/tests/room-invite-mounting-p3b-ui.test.ts:29:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: "import { lazy, useEffect, useState, type ReactNode } from 'react';\nimport { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';\nimport { MissionControlProvider } from './lib/mission-control-store';\nimport { I18nProvider, useI18n } from './lib/i18n';\nimport { MissionControlShell } from './components/MissionControlShell';\nimport { ToastProvider } from './components/ui/ToastProvider';\nimport { OverviewLayout } from './routes/OverviewRoute';\nimport { OverviewDashboard } from './components/overview/OverviewDashboard';\nimport { PluginRegistry } from './core/plugins/registry';\nimport { setPluginRegistry } from './core/plugin-registry';\n...",
+    expected: /import\.meta\.env\.DEV\s*\?\s*lazy/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+--- room-invite-p3b-ui.test.ts ---
+    at moduleResolve (node:internal/modules/esm/resolve:879:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:708:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:728:38)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolve (file://<home>/.hermes/cache/scratch/ui3redHN95/scripts/test-resolve-hooks.mjs:28:14)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:754:16) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file://<home>/.hermes/cache/scratch/ui3redHN95/src/lib/room-joining-state.ts'
+}
+
+Node.js v26.5.1
+
+--- room-joining-state-p3b-ui.test.ts ---
+    at moduleResolve (node:internal/modules/esm/resolve:879:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:708:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:728:38)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolve (file://<home>/.hermes/cache/scratch/ui3redHN95/scripts/test-resolve-hooks.mjs:28:14)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:754:16) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file://<home>/.hermes/cache/scratch/ui3redHN95/src/lib/room-joining-state.ts'
+}
+
+Node.js v26.5.1
+
+--- room-pairing-state-p3b-ui.test.ts ---
+    at moduleResolve (node:internal/modules/esm/resolve:879:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:708:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:728:38)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolve (file://<home>/.hermes/cache/scratch/ui3redHN95/scripts/test-resolve-hooks.mjs:28:14)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:754:16) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file://<home>/.hermes/cache/scratch/ui3redHN95/src/lib/room-joining-state.ts'
+}
+
+Node.js v26.5.1
+
