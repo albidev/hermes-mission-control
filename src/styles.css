@@ -3317,6 +3317,19 @@ body.modal-open .route-page-scroll {
     justify-content: center;
     padding: 0;
     border-radius: 12px;
+    position: relative;
+  }
+
+  /* Compact: the status dot leaves the flex flow so the icon stays centred,
+     and sits in the top-right corner of the link (ring = sidebar background). */
+  .layout-frame.is-collapsed .side-nav-link .nav-status-dot {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 8px;
+    height: 8px;
+    margin: 0;
+    box-shadow: 0 0 0 2px var(--color-surface-base);
   }
 
   .layout-frame.is-collapsed .side-nav-label,

@@ -59,7 +59,7 @@ export function NavStatusIndicator({ indicator }: { indicator: MCPluginNavIndica
   return (
     <span
       aria-label={label}
-      className={`ml-auto h-2 w-2 shrink-0 rounded-full ${toneClass[tone]}`}
+      className={`nav-status-dot ml-auto h-2 w-2 shrink-0 rounded-full ${toneClass[tone]}`}
       title={label}
     />
   );
