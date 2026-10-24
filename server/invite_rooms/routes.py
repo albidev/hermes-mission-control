@@ -35,6 +35,9 @@ from pathlib import Path
 from typing import Optional
 
 from invite_rooms import runtime_config
+from invite_rooms import pairing_codec
+from invite_rooms.pairing_journal import E_BUSY, JournalError
+from invite_rooms.pairing_service import PairingError, PairingService
 from invite_rooms.peer_registry import PeerRegistryError
 from invite_rooms.service import InviteRoomsService, ServiceError, _valid_expected_binding
 from invite_rooms.guest import GuestRoomService, GuestServiceError
@@ -44,6 +47,8 @@ PREFIX = "/api/local/room-invites"
 
 _LOBBY_ID = r"lobby-[0-9a-f]{32}"
 _INVITE_ID = r"invite-[0-9a-f]{32}"
+_PAIRING_ID = r"pairing-[0-9a-f]{32}"
+_PEER_ID = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
 
 _MAX_ROUTE_BODY_BYTES = 16 * 1024
 _ACTIVATE_TIMEOUT_SECONDS = 9.0
@@ -79,6 +84,10 @@ def _guest_rpc_factory(config):
             return await rpc(method, params)
     return call
 
+
+# Seam for the owner's own catalog (``groups.capabilities`` -> ``room_link.catalog``) used by pairing.  ``None`` means
+# "ask the configured native RPC"; tests may replace it with a labelled stand-in ``callable(config, ctx) -> dict``.
+_PAIRING_CATALOG_SOURCE = None
 
 
 # --------------------------------------------------------------------------
@@ -574,6 +583,151 @@ def _h_guest_leave(handler, service, ctx, config, args, params) -> None:
     handler._json(200, {})
 
 
+# --------------------------------------------------------------------------
+# Pairing routes (P3b.1a-2).  Same auth/Origin/404/no-store rules; request and response bodies carry pairing codes
+# and SAS values and are never logged.
+# --------------------------------------------------------------------------
+
+_PAIRING_PATH = re.compile(r"^/(?:pairing(?:/.*)?|peers(?:/.*)?)$")
+_PAIRING_ERROR_STATUS = {
+    "pairing_code_invalid": (400, "invalid_request"),
+    "pairing_sas_invalid": (400, "invalid_request"),
+    "pairing_unavailable": (409, "conflict"),
+    "pairing_sas_mismatch": (409, "conflict"),
+    "pairing_pending_exists": (409, "conflict"),
+    "pairing_cooldown": (429, "too_many_attempts"),
+    "pairing_native_unavailable": (503, "unavailable"),
+    "pairing_identity_unavailable": (503, "unavailable"),
+    "pairing_busy": (503, "unavailable"),
+}
+
+
+def _pairing_catalog(config, ctx) -> dict:
+    if _PAIRING_CATALOG_SOURCE is not None:
+        return _PAIRING_CATALOG_SOURCE(config, ctx)
+    if config.native_rpc is None:
+        raise ServiceError("native_unavailable")
+
+    async def _fetch():
+        async with _connect_native_rpc(config.native_rpc) as rpc:
+            result = await rpc("groups.capabilities", {})
+        link = result.get("room_link") if isinstance(result, dict) else None
+        if not isinstance(link, dict) or link.get("enabled") is not True or not isinstance(link.get("catalog"), dict):
+            raise ServiceError("native_contract_unavailable")
+        return link["catalog"]
+
+    return asyncio.run(asyncio.wait_for(_fetch(), timeout=_ACTIVATE_TIMEOUT_SECONDS))
+
+
+def _pairing_service(config, ctx) -> PairingService:
+    return PairingService(config.pairing, installation_id=ctx.installation_id, profile=ctx.profile,
+                          catalog_source=lambda: _pairing_catalog(config, ctx))
+
+
+def _pairing_call(handler, ctx, config, fn, *, status=200):
+    """Run ``fn(service)``; map every failure to a generic response.  A corrupt journal or a tampered projection
+    makes the pairing feature look absent (404 + one sanitized machine-code warning), never partially working."""
+    try:
+        result = fn(_pairing_service(config, ctx))
+    except PairingError as exc:
+        code_status = _PAIRING_ERROR_STATUS.get(exc.code)
+        if code_status is None:
+            handler._json(500, {"error": "internal"})
+        else:
+            handler._json(code_status[0], {"error": code_status[1], "code": exc.code})
+        return
+    except JournalError as exc:
+        if exc.code == E_BUSY:
+            handler._json(503, {"error": "unavailable", "code": "pairing_busy"})
+            return
+        runtime_config._warn_once("pairing-" + exc.code, "pairing journal unavailable (" + exc.code + ")")
+        handler._json(404, {"error": "not_found", "path": handler.path.split("?", 1)[0]})
+        return
+    handler._json(status, result)
+
+
+def _body_code(handler) -> Optional[str]:
+    if not _content_type_is_json(handler):
+        handler._json(400, {"error": "bad_request", "code": "invalid_content_type"})
+        return None
+    body = _read_strict_body(handler, {"code"})
+    if body is None:
+        return None
+    code = body.get("code")
+    if not isinstance(code, str) or not 0 < len(code) <= pairing_codec.MAX_WIRE_CHARS:
+        handler._json(400, {"error": "bad_request", "code": "invalid_body"})
+        return None
+    return code
+
+
+def _body_sas(handler) -> Optional[str]:
+    if not _content_type_is_json(handler):
+        handler._json(400, {"error": "bad_request", "code": "invalid_content_type"})
+        return None
+    body = _read_strict_body(handler, {"sas"})
+    if body is None:
+        return None
+    sas = body.get("sas")
+    if not isinstance(sas, str) or len(sas) > 64:
+        handler._json(400, {"error": "bad_request", "code": "invalid_body"})
+        return None
+    return sas
+
+
+def _h_pairing_offer(handler, service, ctx, config, args, params) -> None:
+    if _read_strict_body(handler, set()) is None:
+        return
+    _pairing_call(handler, ctx, config, lambda s: {"offer": s.start_offer()})
+
+
+def _h_pairing_accept(handler, service, ctx, config, args, params) -> None:
+    code = _body_code(handler)
+    if code is not None:
+        _pairing_call(handler, ctx, config, lambda s: {"reveal": s.accept_offer(args[0], code)})
+
+
+def _h_pairing_confirm_offer(handler, service, ctx, config, args, params) -> None:
+    sas = _body_sas(handler)
+    if sas is not None:
+        _pairing_call(handler, ctx, config, lambda s: {"pairing": s.confirm_offer(args[0], sas)})
+
+
+def _h_pairing_cancel(handler, service, ctx, config, args, params) -> None:
+    if _read_strict_body(handler, set()) is None:
+        return
+    _pairing_call(handler, ctx, config, lambda s: (s.cancel_offer(args[0]), {"cancelled": True})[1])
+
+
+def _h_pairing_import(handler, service, ctx, config, args, params) -> None:
+    code = _body_code(handler)
+    if code is not None:
+        _pairing_call(handler, ctx, config, lambda s: {"accept": s.import_offer(code)})
+
+
+def _h_pairing_reveal(handler, service, ctx, config, args, params) -> None:
+    code = _body_code(handler)
+    if code is not None:
+        _pairing_call(handler, ctx, config, lambda s: s.reveal_import(args[0], code))
+
+
+def _h_pairing_confirm_import(handler, service, ctx, config, args, params) -> None:
+    sas = _body_sas(handler)
+    if sas is not None:
+        _pairing_call(handler, ctx, config, lambda s: {"pairing": s.confirm_import(args[0], sas)})
+
+
+def _h_pairing_list(handler, service, ctx, config, args, params) -> None:
+    _pairing_call(handler, ctx, config, lambda s: {"available": True, "pairings": s.list_pairings()})
+
+
+def _h_pairing_peers(handler, service, ctx, config, args, params) -> None:
+    _pairing_call(handler, ctx, config, lambda s: {"peers": s.list_peers()})
+
+
+def _h_pairing_unpair(handler, service, ctx, config, args, params) -> None:
+    _pairing_call(handler, ctx, config, lambda s: {"unpaired": True, **s.unpair(args[0])})
+
+
 _ROUTES = (
     ("POST", re.compile(r"^/lobbies$"), _h_create_lobby),
     ("GET", re.compile(r"^/guest-rooms$"), _h_guest_rooms),
@@ -588,6 +742,19 @@ _ROUTES = (
     ("GET", re.compile(rf"^/lobbies/({_LOBBY_ID})/activation$"), _h_activation_status),
     ("POST", re.compile(rf"^/lobbies/({_LOBBY_ID})/activate$"), _h_activate),
     ("GET", re.compile(r"^/paired-peers$"), _h_paired_peers),
+)
+
+_PAIRING_ROUTES = (
+    ("POST", re.compile(r"^/pairing/offers$"), _h_pairing_offer),
+    ("POST", re.compile(rf"^/pairing/offers/({_PAIRING_ID})/accept$"), _h_pairing_accept),
+    ("POST", re.compile(rf"^/pairing/offers/({_PAIRING_ID})/confirm$"), _h_pairing_confirm_offer),
+    ("POST", re.compile(rf"^/pairing/offers/({_PAIRING_ID})/cancel$"), _h_pairing_cancel),
+    ("POST", re.compile(r"^/pairing/imports$"), _h_pairing_import),
+    ("POST", re.compile(rf"^/pairing/imports/({_PAIRING_ID})/reveal$"), _h_pairing_reveal),
+    ("POST", re.compile(rf"^/pairing/imports/({_PAIRING_ID})/confirm$"), _h_pairing_confirm_import),
+    ("GET", re.compile(r"^/pairing$"), _h_pairing_list),
+    ("GET", re.compile(r"^/peers$"), _h_pairing_peers),
+    ("DELETE", re.compile(rf"^/peers/({_PEER_ID})$"), _h_pairing_unpair),
 )
 
 
@@ -621,12 +788,17 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized)
         return True
     service, ctx, config = loaded
 
+    suffix = path[len(PREFIX):] or "/"
+    if _PAIRING_PATH.match(suffix) and config.pairing is None:
+        # Pairing OFF (absent/invalid block): indistinguishable from an unknown path, before the Origin check.
+        handler._json(404, {"error": "not_found", "path": path})
+        return True
+
     if not _origin_allowed(handler):
         handler._json(403, {"error": "forbidden_origin"})
         return True
 
-    suffix = path[len(PREFIX):] or "/"
-    for allowed_method, pattern, fn in _ROUTES:
+    for allowed_method, pattern, fn in _ROUTES + _PAIRING_ROUTES:
         if allowed_method != method:
             continue
         match = pattern.match(suffix)
