@@ -1,0 +1,63 @@
+
+  VITE v8.3.4  ready in 111 ms
+
+  ➜  Local:   http://127.0.0.1:5180/
+
+DevTools listening on ws://127.0.0.1:54934/devtools/browser/9044e7d7-6447-4940-9957-df6c3841629f
+Trying to load the allocator multiple times. This is *not* supported.
+[74522:83798949:1024/162648.995436:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162649.002840:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162649.010093:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162649.012893:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162649.014056:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162649.019428:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162649.055356:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162649.055472:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162649.055985:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162649.056078:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162649.056223:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162649.056288:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+4:26:49 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:49.170Z", type: "boot", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing", visibility: "visible", navigationType: "navigate", previousBreadcrumbCount: 0, wasDiscarded: false }
+4:26:49 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:49.173Z", type: "pageshow", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing", visibility: "visible", navigationType: "navigate", persisted: false }
+[74522:83798949:1024/162651.125820:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162651.125889:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162651.179536:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162651.179594:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162651.204651:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162651.204715:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162651.248211:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162651.248283:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162651.273640:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162651.273693:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162651.310884:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162651.310949:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83798949:1024/162651.337637:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162651.337727:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+4:26:52 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:52.666Z", type: "beforeunload", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing", visibility: "visible", navigationType: "navigate", stack: "Error: Mission Control beforeunload\n    at onBeforeUnload (http://127.0.0.1:5180/src/lib/reload-diagnostics.ts:115:11)", persisted: false }
+4:26:52 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:52.670Z", type: "pagehide", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing", visibility: "visible", navigationType: "navigate", persisted: true }
+4:26:52 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:52.671Z", type: "visibilitychange", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing", visibility: "hidden", navigationType: "navigate" }
+4:26:52 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:52.714Z", type: "boot", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation", visibility: "visible", navigationType: "navigate", previousBreadcrumbCount: 5, wasDiscarded: false }
+4:26:52 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:52.716Z", type: "pageshow", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation", visibility: "visible", navigationType: "navigate", persisted: false }
+[74522:83798949:1024/162652.789800:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[74522:83799012:1024/162652.789858:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+4:26:57 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:57.154Z", type: "beforeunload", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation", visibility: "visible", navigationType: "navigate", stack: "Error: Mission Control beforeunload\n    at onBeforeUnload (http://127.0.0.1:5180/src/lib/reload-diagnostics.ts:115:11)", persisted: false }
+4:26:57 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:57.158Z", type: "pagehide", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation", visibility: "visible", navigationType: "navigate", persisted: true }
+4:26:57 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:57.158Z", type: "visibilitychange", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation", visibility: "hidden", navigationType: "navigate" }
+4:26:57 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:57.195Z", type: "boot", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=guest&offline=1", visibility: "visible", navigationType: "navigate", previousBreadcrumbCount: 10, wasDiscarded: false }
+4:26:57 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:57.197Z", type: "pageshow", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=guest&offline=1", visibility: "visible", navigationType: "navigate", persisted: false }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.116Z", type: "beforeunload", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=guest&offline=1", visibility: "visible", navigationType: "navigate", stack: "Error: Mission Control beforeunload\n    at onBeforeUnload (http://127.0.0.1:5180/src/lib/reload-diagnostics.ts:115:11)", persisted: false }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.120Z", type: "pagehide", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=guest&offline=1", visibility: "visible", navigationType: "navigate", persisted: true }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.121Z", type: "visibilitychange", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=guest&offline=1", visibility: "hidden", navigationType: "navigate" }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.157Z", type: "boot", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing&feature=off", visibility: "visible", navigationType: "navigate", previousBreadcrumbCount: 15, wasDiscarded: false }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.158Z", type: "pageshow", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing&feature=off", visibility: "visible", navigationType: "navigate", persisted: false }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.711Z", type: "beforeunload", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing&feature=off", visibility: "visible", navigationType: "navigate", stack: "Error: Mission Control beforeunload\n    at onBeforeUnload (http://127.0.0.1:5180/src/lib/reload-diagnostics.ts:115:11)", persisted: false }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.717Z", type: "pagehide", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing&feature=off", visibility: "visible", navigationType: "navigate", persisted: true }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.717Z", type: "visibilitychange", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=pairing&feature=off", visibility: "hidden", navigationType: "navigate" }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.754Z", type: "boot", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation&feature=off", visibility: "visible", navigationType: "navigate", previousBreadcrumbCount: 20, wasDiscarded: false }
+4:26:58 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:58.755Z", type: "pageshow", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation&feature=off", visibility: "visible", navigationType: "navigate", persisted: false }
+4:26:59 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:59.330Z", type: "beforeunload", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation&feature=off", visibility: "visible", navigationType: "navigate", stack: "Error: Mission Control beforeunload\n    at onBeforeUnload (http://127.0.0.1:5180/src/lib/reload-diagnostics.ts:115:11)", persisted: false }
+4:26:59 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:59.335Z", type: "pagehide", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation&feature=off", visibility: "visible", navigationType: "navigate", persisted: true }
+4:26:59 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:59.335Z", type: "visibilitychange", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=invitation&feature=off", visibility: "hidden", navigationType: "navigate" }
+4:26:59 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:59.374Z", type: "boot", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=guest&feature=off", visibility: "visible", navigationType: "navigate", previousBreadcrumbCount: 25, wasDiscarded: false }
+4:26:59 PM [vite] (client) [console.warn] [MissionControl reload-diagnostic] { timestamp: "2026-10-24T14:26:59.376Z", type: "pageshow", href: "http://127.0.0.1:5180/?mock=invite-rooms&screen=guest&feature=off", visibility: "visible", navigationType: "navigate", persisted: false }
+[74515:83798815:1024/162659.991624:ERROR:content/browser/gpu/gpu_process_host.cc:1043] GPU process exited unexpectedly: exit_code=15

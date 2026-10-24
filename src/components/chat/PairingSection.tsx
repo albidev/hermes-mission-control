@@ -1,16 +1,264 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Trash2 } from 'lucide-react';
-import { createRoomPairingApi, isValidSas, type PairingRow, type RoomPairingApi } from '../../lib/room-pairing-api';
+import { useEffect, useMemo, useReducer, useState } from 'react';
+import { Copy, ShieldCheck, Trash2 } from 'lucide-react';
+import { useI18n } from '../../lib/i18n';
+import { createRoomPairingApi, type PairingRow, type RoomPairingApi } from '../../lib/room-pairing-api';
+import { initialPairingWizardState, pairingWizardReducer, secondsRemaining, canConfirmSas } from '../../lib/room-joining-state';
+import { inviteErrorCode, isInviteUnavailable } from '../../lib/invite-ui-errors';
+import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
+import { Stepper } from '../ui/Stepper';
 
-type Props = { accessToken?: string; api?: RoomPairingApi };
-export function PairingSection({ accessToken, api: apiOverride }: Props) {
+type PairingSectionProps = { accessToken?: string; api?: RoomPairingApi };
+
+function PeerList({ rows, busy, onRemove }: {
+  rows: PairingRow[];
+  busy: boolean;
+  onRemove: (id: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <section className="invite-card" aria-label={t('inviteUi.peers')}>
+      <h3 className="text-base font-semibold text-text">{t('inviteUi.peers')}</h3>
+      <div className="mt-4 grid gap-3">
+        {!rows.length ? <p className="text-sm text-text-muted">{t('inviteUi.noPeers')}</p> : null}
+        {rows.map((row) => (
+          <article className="invite-peer" key={row.id}>
+            <ShieldCheck size={22} className="shrink-0 text-accent" aria-hidden="true" />
+            <div className="min-w-0 flex-1 break-words">
+              <h4 className="font-semibold text-text">{row.peer?.profile ?? t('inviteUi.peer')}</h4>
+              <p className="mt-1 text-xs text-text-muted">{row.peer?.installation_id ?? '—'}</p>
+              <p className="mt-1 text-xs text-text-muted">
+                {t(row.state === 'acknowledged' ? 'inviteUi.linkReady' : 'inviteUi.linkPending')}
+              </p>
+              {row.peer?.policy_digest ? <code className="mt-2 block break-all text-xs">{row.peer.policy_digest}</code> : null}
+            </div>
+            {row.peer ? (
+              <Button
+                size="sm" variant="danger" disabled={busy}
+                aria-label={t('inviteUi.removePeer', { peer: row.peer.profile })}
+                icon={<Trash2 size={14} />} onClick={() => onRemove(row.peer!.peer_id)}
+              >
+                {t('inviteUi.remove')}
+              </Button>
+            ) : null}
+          </article>
+        ))}
+      </div>
+      <p className="mt-4 text-xs leading-relaxed text-text-muted">{t('inviteUi.unpairHint')}</p>
+    </section>
+  );
+}
+
+export function PairingSection({ accessToken, api: apiOverride }: PairingSectionProps) {
+  const { t } = useI18n();
   const api = useMemo(() => apiOverride ?? createRoomPairingApi(accessToken), [accessToken, apiOverride]);
-  const [rows, setRows] = useState<PairingRow[]>([]); const [code, setCode] = useState(''); const [sas, setSas] = useState(''); const [activeId, setActiveId] = useState<string | null>(null); const [message, setMessage] = useState<string | null>(null);
-  const reload = async () => { try { const next = await api.listPairings(); setRows(Array.isArray(next) ? next : []); } catch { setRows([]); } };
-  useEffect(() => { void reload(); }, [api]);
-  const start = async () => { const offer = await api.createOffer(); setActiveId(offer.id); setCode(offer.code); setMessage('Share this code, then paste the accept code when it arrives.'); };
-  const importCode = async () => { const accepted = await api.importOffer(code.trim()); setActiveId(accepted.id); setCode(accepted.code); setMessage(`Review peer: ${accepted.identity.profile}`); };
-  const confirm = async () => { if (!activeId || !isValidSas(sas)) return; await api.confirmOffer(activeId, sas); setCode(''); setSas(''); setMessage('Pairing confirmed.'); await reload(); };
-  return <section className="rounded-xl border border-border bg-surface p-4 sm:p-5" aria-labelledby="pairing-title"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Invite-only rooms</p><h2 id="pairing-title" className="text-base font-semibold text-text">Pair trusted peers</h2><p className="mt-1 max-w-2xl text-xs leading-relaxed text-text-muted">Codes and SAS stay on this screen only. A phone call is a second channel; if someone controls both channels, pairing cannot protect you.</p></div><Button size="sm" onClick={() => void start()}>Start</Button></div><div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]"><label className="min-w-0"><span className="mb-1 block text-xs font-medium text-text">I have a pairing code</span><input className="mc-input min-h-11 w-full" value={code} onChange={(event) => setCode(event.target.value)} autoComplete="off" spellCheck={false} /></label><Button className="self-end" size="sm" disabled={!code.trim()} onClick={() => void importCode()}>Use code</Button></div>{activeId ? <div className="mt-4 grid gap-3 rounded-lg border border-accent/30 bg-accent-subtle/20 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-text">One-time code</span><button className="chat-control min-h-11" type="button" onClick={() => void navigator.clipboard?.writeText(code)}><Copy size={14} /> Copy</button></div><code className="max-h-32 overflow-auto break-all rounded bg-surface p-3 text-xs text-text">{code || 'Code shown once'}</code><label><span className="mb-1 block text-xs font-medium text-text">SAS (6 digits)</span><input className="mc-input min-h-11 w-full text-lg tracking-[.3em]" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={sas} onChange={(event) => setSas(event.target.value.replace(/\D/g, ''))} /></label><Button size="lg" disabled={!isValidSas(sas)} icon={<Check size={16} />} onClick={() => void confirm()}>Confirm pairing</Button></div> : null}{message ? <p className="mt-3 text-xs text-text-muted" role="status">{message}</p> : null}<div className="mt-5 grid gap-2"><h3 className="text-sm font-semibold text-text">Paired peers</h3>{rows.length ? rows.map((row) => <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border-subtle p-3" key={row.id}><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-text">{row.peer?.profile ?? 'Peer'}</p><p className="truncate text-xs text-text-muted">{row.peer?.installation_id ?? 'Installation unavailable'} · {row.state}</p></div><Button size="sm" variant="danger" icon={<Trash2 size={14} />} onClick={() => void api.removePeer(row.peer?.peer_id ?? row.id).then(reload)}>Remove</Button></div>) : <p className="text-xs text-text-muted">No paired peers.</p>}</div><p className="mt-3 text-[11px] leading-relaxed text-text-subtle">Removing a peer does not revoke grants already minted and does not stop runs already admitted. It only prevents new operations.</p></section>;
+  const [state, dispatch] = useReducer(pairingWizardReducer, initialPairingWizardState);
+  const [rows, setRows] = useState<PairingRow[]>([]);
+  const [role, setRole] = useState<'host' | 'joining'>('host');
+  const [input, setInput] = useState('');
+  const [outgoing, setOutgoing] = useState('');
+  const [typedSas, setTypedSas] = useState('');
+  const [peer, setPeer] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [hidden, setHidden] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setHidden(false);
+    setLoading(true);
+    api.listPairings(controller.signal).then((next) => {
+      if (!controller.signal.aborted) setRows(next);
+    }).catch((error) => {
+      if (controller.signal.aborted) return;
+      if (isInviteUnavailable(error)) setHidden(true);
+      else dispatch({ type: 'error', code: inviteErrorCode(error) });
+    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [api]);
+
+  const active = ['offer', 'accept', 'reveal', 'sas'].includes(state.step);
+  const remaining = secondsRemaining(state.expiresAt, now);
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  useEffect(() => {
+    if (active && remaining === 0) {
+      dispatch({ type: 'expire' });
+      setOutgoing('');
+      setInput('');
+      setTypedSas('');
+      setSheetOpen(false);
+    }
+  }, [active, remaining]);
+
+  const run = async (action: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    try { await action(); }
+    catch (error) {
+      if (isInviteUnavailable(error)) setHidden(true);
+      else dispatch({ type: 'error', code: inviteErrorCode(error) });
+    } finally { setBusy(false); }
+  };
+  const start = () => run(async () => {
+    const result = await api.createOffer();
+    setRole('host');
+    dispatch({ type: 'start_offer', id: result.id, expiresAt: Date.parse(result.expires_at) });
+    setOutgoing(result.code);
+    setInput('');
+    setSheetOpen(true);
+  });
+  const importOffer = () => run(async () => {
+    const result = await api.importOffer(input.trim());
+    setRole('joining');
+    setPeer(`${result.identity.profile} · ${result.identity.installation_id}`);
+    dispatch({ type: 'import_offer', id: result.id, expiresAt: Date.parse(result.expires_at) });
+    setOutgoing(result.code);
+    setInput('');
+    setSheetOpen(true);
+  });
+  const accept = () => run(async () => {
+    if (!state.id) return;
+    if (role === 'host') {
+      const result = await api.acceptOffer(state.id, input.trim());
+      dispatch({ type: 'accept', sas: result.sas });
+      setOutgoing(result.code);
+      setSheetOpen(true);
+    } else {
+      const result = await api.revealImport(state.id, input.trim());
+      dispatch({ type: 'reveal', sas: result.sas });
+      setOutgoing('');
+    }
+    setInput('');
+  });
+  const confirm = () => run(async () => {
+    if (!state.id || !canConfirmSas(typedSas) || remaining === 0) return;
+    const result = role === 'host'
+      ? await api.confirmOffer(state.id, typedSas)
+      : await api.confirmImport(state.id, typedSas);
+    dispatch({ type: 'confirm' });
+    setTypedSas('');
+    setOutgoing('');
+    setRows((current) => [...current.filter((row) => row.id !== result.id), result]);
+  });
+  const cancel = () => run(async () => {
+    if (role === 'host' && state.id) await api.cancelOffer(state.id);
+    dispatch({ type: 'cancel' });
+    setInput('');
+    setOutgoing('');
+    setTypedSas('');
+  });
+  const copy = () => run(async () => {
+    await navigator.clipboard.writeText(outgoing);
+    setCopied(true);
+  });
+
+  if (hidden) return null;
+  const codeControl = outgoing ? (
+    <Button className="w-full" icon={<Copy size={16} />} onClick={() => { setCopied(false); setSheetOpen(true); }}>
+      {t('inviteUi.showCode')}
+    </Button>
+  ) : null;
+  const exchange = (
+    <div className="grid gap-3">
+      {peer ? <p className="break-words text-sm text-text">{peer}</p> : null}
+      {codeControl}
+      <label className="grid gap-2 text-sm text-text-muted">
+        {t(role === 'host' ? 'inviteUi.pasteAccept' : 'inviteUi.pasteReveal')}
+        <textarea className="mc-input min-h-24 w-full" autoComplete="off" value={input}
+          onChange={(event) => setInput(event.target.value)} spellCheck={false} />
+      </label>
+      <Button variant="primary" loading={busy} disabled={!input.trim()} onClick={() => void accept()}>
+        {t('inviteUi.continue')}
+      </Button>
+    </div>
+  );
+  const sasControl = (
+    <div className="grid gap-4">
+      <p className="text-sm text-text-muted">{t('inviteUi.sasHint')}</p>
+      <div>
+        <p className="text-xs text-text-muted">{t('inviteUi.yourSas')}</p>
+        <output className="mt-1 block font-mono text-3xl font-semibold tracking-widest text-text">{state.sas}</output>
+      </div>
+      <label className="grid gap-2 text-sm text-text-muted">
+        {t('inviteUi.otherSas')}
+        <input className="mc-input min-h-11 w-full font-mono text-xl tracking-widest" inputMode="numeric"
+          pattern="[0-9]{6}" maxLength={6} autoComplete="off" value={typedSas}
+          onChange={(event) => setTypedSas(event.target.value)} />
+      </label>
+      <p className="invite-warning">{t('inviteUi.securityHint')}</p>
+      <Button variant="primary" loading={busy} disabled={!canConfirmSas(typedSas)} onClick={() => void confirm()}>
+        {t('inviteUi.confirmPairing')}
+      </Button>
+    </div>
+  );
+  return (
+    <section className="invite-ui grid gap-5" aria-labelledby="pairing-title">
+      <header>
+        <p className="eyebrow">{t('inviteUi.title')}</p>
+        <h2 id="pairing-title" className="mt-1 text-xl font-semibold text-text">{t('inviteUi.pairTitle')}</h2>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-text-muted">{t('inviteUi.pairLead')}</p>
+      </header>
+      {state.error ? <p className="invite-error" role="alert">{t('inviteUi.error')} ({state.error})</p> : null}
+      <div className="grid items-start gap-5 lg:grid-cols-2">
+        <div className="invite-card">
+          {state.step === 'start' ? (
+            <div className="grid gap-4">
+              <h3 className="text-base font-semibold text-text">{t('inviteUi.newPair')}</h3>
+              <Button variant="primary" loading={busy} onClick={() => void start()}>{t('inviteUi.start')}</Button>
+              <label className="grid gap-2 text-sm text-text-muted">
+                {t('inviteUi.haveCode')}
+                <input className="mc-input min-h-11 w-full" autoComplete="off" spellCheck={false}
+                  value={input} onChange={(event) => setInput(event.target.value)} />
+              </label>
+              <Button loading={busy} disabled={!input.trim()} onClick={() => void importOffer()}>{t('inviteUi.useCode')}</Button>
+              <p className="text-xs leading-relaxed text-text-muted">{t('inviteUi.securityHint')}</p>
+            </div>
+          ) : active ? (
+            <div className="grid gap-4">
+              <p className="text-xs text-warning" role="timer">{t('inviteUi.expires', { seconds: remaining })}</p>
+              <Stepper active={state.step} steps={[
+                { id: role === 'host' ? 'offer' : 'accept', label: t('inviteUi.exchange'), content: exchange },
+                { id: 'reveal', label: t('inviteUi.sendReveal'), content: (
+                  <div className="grid gap-3">
+                    {codeControl}
+                    <Button onClick={() => dispatch({ type: 'reveal', sas: state.sas! })}>{t('inviteUi.codeSent')}</Button>
+                  </div>
+                ) },
+                { id: 'sas', label: t('inviteUi.compare'), content: sasControl },
+              ]} />
+              <Button variant="ghost" disabled={busy} onClick={() => void cancel()}>{t('inviteUi.cancel')}</Button>
+            </div>
+          ) : (
+            <div className="grid gap-4" role="status">
+              <p className="text-sm text-text">{t(`inviteUi.pairResult.${state.step}`)}</p>
+              <Button onClick={() => dispatch({ type: 'reset' })}>{t('inviteUi.newPair')}</Button>
+            </div>
+          )}
+        </div>
+        {loading ? <p role="status">{t('inviteUi.loading')}</p> : (
+          <PeerList rows={rows} busy={busy} onRemove={(id) => void run(async () => {
+            await api.removePeer(id);
+            setRows((current) => current.filter((row) => row.peer?.peer_id !== id));
+          })} />
+        )}
+      </div>
+      <BottomSheet open={sheetOpen} title={t('inviteUi.oneTimeCode')} onClose={() => setSheetOpen(false)}>
+        <div className="grid gap-4">
+          <p className="text-sm text-text-muted">{t('inviteUi.codeHint')}</p>
+          <code className="invite-code">{outgoing}</code>
+          <p className="text-xs text-warning">{t('inviteUi.expires', { seconds: remaining })}</p>
+          <Button variant="primary" className="w-full" icon={<Copy size={18} />} onClick={() => void copy()}>
+            {t(copied ? 'inviteUi.copied' : 'inviteUi.copy')}
+          </Button>
+        </div>
+      </BottomSheet>
+    </section>
+  );
 }

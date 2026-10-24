@@ -1,5 +1,34 @@
+import { Check } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useI18n } from '../../lib/i18n';
+
 export type StepperStep = { id: string; label: string; content?: ReactNode };
-export function Stepper({ steps, active, onSelect }: { steps: StepperStep[]; active: string; onSelect?: (id: string) => void }) {
-  return <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="Progress">{steps.map((step, index) => { const selected = step.id === active; return <li key={step.id} className={`rounded-lg border p-2 text-xs ${selected ? 'border-accent bg-accent-subtle/30 text-text' : 'border-border-subtle text-text-muted'}`}><button type="button" className="flex min-h-11 w-full items-center gap-2 text-left" aria-current={selected ? 'step' : undefined} onClick={() => onSelect?.(step.id)}><span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-surface-sunken font-semibold">{index + 1}</span><span>{step.label}</span></button>{selected && step.content ? <div className="mt-2 pl-8">{step.content}</div> : null}</li>; })}</ol>;
+type StepperProps = {
+  steps: StepperStep[];
+  active: string;
+  onSelect?: (id: string) => void;
+};
+
+export function Stepper({ steps, active, onSelect }: StepperProps) {
+  const { t } = useI18n();
+  const activeIndex = steps.findIndex((step) => step.id === active);
+  return (
+    <ol className="invite-stepper" aria-label={t('inviteUi.progress')}>
+      {steps.map((step, index) => (
+        <li key={step.id} className={index === activeIndex ? 'is-current' : index < activeIndex ? 'is-done' : ''}>
+          <div className="invite-step-heading" aria-current={index === activeIndex ? 'step' : undefined}>
+            <span className="invite-step-number" aria-hidden="true">
+              {index < activeIndex ? <Check size={13} /> : index + 1}
+            </span>
+            {onSelect ? (
+              <button type="button" className="min-h-11 text-left" onClick={() => onSelect(step.id)}>
+                {step.label}
+              </button>
+            ) : <span>{step.label}</span>}
+          </div>
+          {index === activeIndex && step.content ? <div className="invite-step-content">{step.content}</div> : null}
+        </li>
+      ))}
+    </ol>
+  );
 }

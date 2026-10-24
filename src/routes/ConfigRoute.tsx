@@ -610,7 +610,9 @@ export function ConfigRoute() {
 
       <HonchoSettingsPanel />
 
-      {roomInvitesAvailable ? <PairingSection accessToken={storedToken || undefined} /> : null}
+      {roomInvitesAvailable ? (
+        <PairingSection accessToken={storedToken || undefined} />
+      ) : null}
 
       <div className="config-editor-mode-bar sticky top-0 z-20 -mx-1 px-2 py-2 sm:-mx-0 sm:px-3">
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

@@ -2037,16 +2037,43 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, onRoomChange, onResumeSession }: ChatDrawerProps) {
   const { t } = useI18n();
   const client = useMemo(() => createGroupGatewayClient(storedToken?.trim() || undefined), [storedToken]);
-  const state = useGroupRoom({ client, enabled: open, initialRoomId: roomId ?? null, accessToken: storedToken?.trim() || undefined });
+  const invitesAvailable = useRoomInvitesAvailable(open, storedToken);
+  const [guestRooms, setGuestRooms] = useState<GuestRoom[]>([]);
+  const [guestRoomsLoaded, setGuestRoomsLoaded] = useState(false);
+  const [selectedGuestId, setSelectedGuestId] = useState<string | null>(null);
+  const selectedGuest = invitesAvailable
+    ? guestRooms.find((room) => room.room_id === (selectedGuestId ?? roomId)) ?? null
+    : null;
+  const state = useGroupRoom({
+    client,
+    enabled: open && (!invitesAvailable || guestRoomsLoaded) && !selectedGuest,
+    initialRoomId: null,
+    accessToken: storedToken?.trim() || undefined,
+  });
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
   const [creating, setCreating] = useState(false);
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
   const [activeLobbyId, setActiveLobbyId] = useState<string | null>(inviteLobbyId ?? null);
-  const invitesAvailable = useRoomInvitesAvailable(open, storedToken);
   const [receivedInvitationsOpen, setReceivedInvitationsOpen] = useState(false);
-  const [guestRooms, setGuestRooms] = useState<GuestRoom[]>([]);
+  const [pendingReceivedCount, setPendingReceivedCount] = useState(0);
   const guestApi = useMemo(() => createRoomGuestApi(storedToken?.trim() || undefined), [storedToken]);
-  useEffect(() => { if (!open || !invitesAvailable) return; const controller = new AbortController(); void guestApi.listRooms(controller.signal).then(setGuestRooms).catch(() => setGuestRooms([])); return () => controller.abort(); }, [guestApi, invitesAvailable, open]);
+  useEffect(() => {
+    if (!open || !invitesAvailable) {
+      setGuestRooms([]);
+      setGuestRoomsLoaded(false);
+      setReceivedInvitationsOpen(false);
+      return;
+    }
+    const controller = new AbortController();
+    void guestApi.listRooms(controller.signal).then((rooms) => {
+      if (!controller.signal.aborted) setGuestRooms(rooms);
+    }).catch(() => {
+      if (!controller.signal.aborted) setGuestRooms([]);
+    }).finally(() => {
+      if (!controller.signal.aborted) setGuestRoomsLoaded(true);
+    });
+    return () => controller.abort();
+  }, [guestApi, invitesAvailable, open]);
   useEffect(() => { if (inviteLobbyId) setActiveLobbyId(inviteLobbyId); }, [inviteLobbyId]);
   const closeLobby = useCallback(() => {
     setActiveLobbyId(null);
@@ -2131,9 +2158,15 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
   }, [botCandidates.length, open]);
 
   useEffect(() => {
-    if (!open || !state.selectedRoomId || state.selectedRoomId === roomId) return;
+    if (roomId && !selectedGuest && state.rooms.some((room) => room.id === roomId) && state.selectedRoomId !== roomId) {
+      void state.selectRoom(roomId);
+    }
+  }, [roomId, selectedGuest, state.rooms]);
+
+  useEffect(() => {
+    if (!open || selectedGuest || !state.selectedRoomId || state.selectedRoomId === roomId) return;
     onRoomChange?.(state.selectedRoomId, state.room?.name ?? null);
-  }, [onRoomChange, open, roomId, state.selectedRoomId]);
+  }, [onRoomChange, open, roomId, selectedGuest, state.selectedRoomId]);
 
   const selectRoom = useCallback((nextRoomId: string | null) => {
     onRoomChange?.(nextRoomId, state.room?.name ?? null);
@@ -2167,7 +2200,30 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
               <span className="chat-mark" aria-hidden><Users size={18} /></span>
               <div className="chat-head-copy">
                 <p className="eyebrow">{t('rooms.eyebrow')}</p>
-                {editingName && state.room ? <form onSubmit={(event) => { event.preventDefault(); if (nameDraft.trim() && nameDraft.trim() !== state.room?.name) void state.renameRoom(nameDraft); setEditingName(false); }} className="flex min-w-0 items-center gap-1"><input autoFocus value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => setEditingName(false)} onKeyDown={(event) => { if (event.key === 'Escape') setEditingName(false); }} aria-label={t('rooms.name')} className="mc-input h-7 min-w-0 flex-1 text-xs" /><button type="submit" aria-label={t('rooms.saveName')} title={t('rooms.saveName')} className="chat-control chat-icon-button !h-7 !w-7"><Check size={14} /></button></form> : <h2 title={state.rooms.length > 0 ? t('rooms.selectRoom') : undefined} className={state.rooms.length > 0 ? 'inline-flex cursor-pointer items-center gap-1 hover:text-accent' : ''} onClick={state.rooms.length > 0 ? () => setRoomPickerOpen((open) => !open) : undefined}>{state.room?.name || t('rooms.title')}{state.rooms.length > 0 ? <ChevronDown size={13} className={`shrink-0 transition-transform ${roomPickerOpen ? 'rotate-180' : ''}`} /> : null}</h2>}
+                {editingName && state.room && !selectedGuest ? (
+                  <form className="flex min-w-0 items-center gap-1" onSubmit={(event) => {
+                    event.preventDefault();
+                    if (nameDraft.trim() && nameDraft.trim() !== state.room?.name) void state.renameRoom(nameDraft);
+                    setEditingName(false);
+                  }}>
+                    <input autoFocus value={nameDraft} onChange={(event) => setNameDraft(event.target.value)}
+                      onBlur={() => setEditingName(false)}
+                      onKeyDown={(event) => { if (event.key === 'Escape') setEditingName(false); }}
+                      aria-label={t('rooms.name')} className="mc-input min-h-11 min-w-0 flex-1 text-xs" />
+                    <button type="submit" aria-label={t('rooms.saveName')} className="chat-control chat-icon-button">
+                      <Check size={14} />
+                    </button>
+                  </form>
+                ) : (
+                  <h2>
+                    <button type="button" className="flex min-h-11 min-w-0 items-center gap-2 text-left"
+                      aria-label={t('rooms.selectRoom')} aria-expanded={roomPickerOpen}
+                      onClick={() => setRoomPickerOpen((current) => !current)}>
+                      <span className="break-words">{selectedGuest?.name || state.room?.name || t('rooms.title')}</span>
+                      <ChevronDown size={14} className="shrink-0" />
+                    </button>
+                  </h2>
+                )}
                 {state.room && !state.disbanded ? <span className="chat-session-title">{t('rooms.membersCount', { count: state.room.members.length })} · {t('rooms.messagesCount', { count: state.events.length })}</span> : <span className="chat-session-title">{t('rooms.selectRoom')}</span>}
               </div>
             </div>
@@ -2179,21 +2235,86 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title={t('rooms.close')} aria-label={t('rooms.close')}><X size={18} /></button>
             </div>
           </div>
-          {roomPickerOpen && state.rooms.length > 0 ? (
+          {roomPickerOpen && (state.rooms.length > 0 || guestRooms.length > 0) ? (
             <div className="absolute left-3 right-3 top-full z-40 mt-1 flex max-h-56 flex-col overflow-y-auto rounded-lg border border-border-subtle bg-surface shadow-lg" role="listbox">
-              {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" role="option" aria-selected={room.id === state.selectedRoomId} onClick={() => { void selectRoom(room.id); setRoomPickerOpen(false); }} className={`px-2.5 py-1.5 text-left text-xs ${room.id === state.selectedRoomId ? 'bg-accent-subtle text-accent' : 'text-text hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
+              {state.rooms.map((room: GroupRoom) => (
+                <button key={room.id} type="button" role="option" aria-selected={!selectedGuest && room.id === state.selectedRoomId}
+                  className="min-h-11 px-3 py-2 text-left text-xs text-text hover:bg-surface-sunken"
+                  onClick={() => { setSelectedGuestId(null); void selectRoom(room.id); setRoomPickerOpen(false); }}>
+                  {room.name || room.id}
+                </button>
+              ))}
+              {guestRooms.map((room) => (
+                <button type="button" key={room.room_id} role="option" aria-selected={selectedGuest?.room_id === room.room_id}
+                  className="flex min-h-11 items-center gap-2 px-3 py-2 text-left text-xs text-text"
+                  onClick={() => {
+                    setSelectedGuestId(room.room_id);
+                    setRoomPickerOpen(false);
+                    onRoomChange?.(room.room_id, room.name);
+                  }}>
+                  <span aria-hidden="true">🔒</span>
+                  <span className="min-w-0 flex-1 break-words">{room.name}</span>
+                  <span className="rounded-full bg-surface-sunken px-2 py-1">{t('inviteUi.guest')}</span>
+                </button>
+              ))}
             </div>
           ) : null}
         </header>
         <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} chatLed="none" roomsLed={roomAttention} storedToken={storedToken} enabled={open} onResumeSession={onResumeSession} />
-        {invitesAvailable ? <button type="button" className="mx-3 mt-3 flex min-h-11 items-center justify-between rounded-lg border border-accent/30 bg-accent-subtle/20 px-3 text-left text-sm text-text" onClick={() => setReceivedInvitationsOpen(true)}><span>Invitations</span><span className="rounded-full bg-accent px-2 py-0.5 text-xs text-white">{guestRooms.length || 1}</span></button> : null}
+        {invitesAvailable ? (
+          <button type="button" className="chat-control mx-3 mt-3 min-h-11 justify-between"
+            onClick={() => setReceivedInvitationsOpen(true)}>
+            <span>{t('inviteUi.invitations')}</span>
+            <span className="rounded-full bg-accent px-2 py-0.5 text-xs text-white">{pendingReceivedCount}</span>
+          </button>
+        ) : null}
         <div className="flex min-h-0 flex-1 flex-col">
-          {!canUseRooms && !state.loading ? <div className="chat-error m-4" role="status">{t('rooms.driverUnavailable')}</div> : null}
-          {activeLobbyId && invitesAvailable ? <div className="chat-transcript rooms-empty"><RoomInvitePanel lobbyId={activeLobbyId} accessToken={storedToken} onClose={closeLobby} onRoomActivated={(nextRoomId) => { closeLobby(); void selectRoom(nextRoomId); onRoomChange?.(nextRoomId, null); }} /></div> : creating ? <div className="chat-transcript rooms-empty"><CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} renderInviteOnly={invitesAvailable ? (name) => <RoomInvitePanel lobbyId={null} accessToken={storedToken} initialName={name} embedded onLobbyCreated={(id) => { setCreating(false); setActiveLobbyId(id); }} /> : undefined} /></div> : state.room && canUseRooms ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} onNearBottomChange={(near) => { roomsNearBottomRef.current = near; setRoomsNearBottom(near); }} /> : canUseRooms ? <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p>{guestRooms.map((room) => <button type="button" key={room.room_id} className="mt-2 flex min-h-11 w-full items-center gap-2 rounded-lg border border-border-subtle p-3 text-left" onClick={() => { onRoomChange?.(room.room_id, room.name); }}><span aria-hidden>🔒</span><span className="min-w-0 flex-1 truncate">{room.name}</span><span className="rounded-full bg-surface-sunken px-2 py-0.5 text-xs">guest</span></button>)}</div> : null}
+          {!selectedGuest && !canUseRooms && !state.loading ? (
+            <div className="chat-error m-4" role="status">{t('rooms.driverUnavailable')}</div>
+          ) : null}
+          {selectedGuest ? (
+            <div className="min-h-0 overflow-y-auto p-3">
+              <GuestRoomView key={selectedGuest.room_id} room={selectedGuest} accessToken={storedToken} api={guestApi}
+                onLeave={() => {
+                  setGuestRooms((rooms) => rooms.filter((room) => room.room_id !== selectedGuest.room_id));
+                  setSelectedGuestId(null);
+                  onRoomChange?.(null);
+                }} />
+            </div>
+          ) : activeLobbyId && invitesAvailable ? (
+            <div className="chat-transcript rooms-empty">
+              <RoomInvitePanel lobbyId={activeLobbyId} accessToken={storedToken} onClose={closeLobby}
+                onRoomActivated={(nextRoomId) => { closeLobby(); void selectRoom(nextRoomId); }} />
+            </div>
+          ) : creating ? (
+            <div className="chat-transcript rooms-empty">
+              <CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster}
+                onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer}
+                renderInviteOnly={invitesAvailable ? (name) => (
+                  <RoomInvitePanel lobbyId={null} accessToken={storedToken} initialName={name} embedded
+                    onLobbyCreated={(id) => { setCreating(false); setActiveLobbyId(id); }} />
+                ) : undefined} />
+            </div>
+          ) : state.room && canUseRooms ? (
+            <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster}
+              onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)}
+              onNearBottomChange={(near) => { roomsNearBottomRef.current = near; setRoomsNearBottom(near); }} />
+          ) : canUseRooms || guestRooms.length > 0 ? (
+            <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div>
+          ) : null}
           {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
         </div>
-        <BottomSheet open={receivedInvitationsOpen} title="Invitations" onClose={() => setReceivedInvitationsOpen(false)}><ReceivedInvitationPanel accessToken={storedToken} onOpenRoom={(nextRoomId) => { setReceivedInvitationsOpen(false); onRoomChange?.(nextRoomId, null); }} /></BottomSheet>
-        {state.selectedRoomId && guestRooms.some((room) => room.room_id === state.selectedRoomId) ? <GuestRoomView room={guestRooms.find((room) => room.room_id === state.selectedRoomId)!} accessToken={storedToken} api={guestApi} onLeave={() => { setGuestRooms((rooms) => rooms.filter((room) => room.room_id !== state.selectedRoomId)); onRoomChange?.(null); }} /> : null}
+        <BottomSheet open={receivedInvitationsOpen && invitesAvailable} title={t('inviteUi.invitations')}
+          onClose={() => setReceivedInvitationsOpen(false)}>
+          <ReceivedInvitationPanel accessToken={storedToken} onPendingChange={setPendingReceivedCount} onOpenRoom={(nextRoomId) => {
+            setReceivedInvitationsOpen(false);
+            void guestApi.listRooms().then((rooms) => {
+              setGuestRooms(rooms);
+              setSelectedGuestId(nextRoomId);
+              onRoomChange?.(nextRoomId, null);
+            });
+          }} />
+        </BottomSheet>
       </aside>
     </>
   );
