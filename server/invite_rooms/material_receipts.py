@@ -19,6 +19,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import secrets
 # No SQLite: every receipt is opened through the retained directory descriptor.
 import stat
@@ -244,7 +245,8 @@ class MaterialReceiptStore:
     def _recover_staging(self) -> None:
         """Under the flock: drop staging files left by a crashed/aborted publication (R3-01).
 
-        Only names ``<KEY|*.receipt>.tmp-*`` are considered, classified with an lstat and opened
+        Only producer names ``<KEY|64-lowercase-hex.receipt>.tmp-<32-lowercase-hex>``
+        are considered, classified with an lstat and opened
         O_NOFOLLOW|O_NONBLOCK only when regular (symlinks/FIFOs/dirs are never followed or opened and
         are left untouched). A staging inode that is also the published final name (crash between
         link and unlink) is unlinked; a pre-link orphan is unlinked once older than STAGING_MAX_AGE.
@@ -252,9 +254,10 @@ class MaterialReceiptStore:
         dirfd = self._dirfd()
         removed = False
         for entry in os.listdir(dirfd):
-            base, sep, _ = entry.partition(".tmp-")
-            if not sep or not (base == KEY_NAME or base.endswith(".receipt")):
+            match = re.fullmatch(r'(' + re.escape(KEY_NAME) + r'|[0-9a-f]{64}\.receipt)\.tmp-[0-9a-f]{32}', entry)
+            if match is None:
                 continue
+            base = match.group(1)
             try:
                 before = os.stat(entry, dir_fd=dirfd, follow_symlinks=False)
                 if not stat.S_ISREG(before.st_mode):

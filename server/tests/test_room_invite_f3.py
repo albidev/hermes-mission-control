@@ -29,7 +29,7 @@ def _names(root):
 
 
 def _stage(root, name, data=b'x', mode=0o600, age=None):
-    path = Path(root) / (name + '.tmp-' + os.urandom(8).hex())
+    path = Path(root) / (name + '.tmp-' + os.urandom(16).hex())
     path.write_bytes(data)
     path.chmod(mode)
     if age is not None:
@@ -44,7 +44,7 @@ class StagingRecoveryTests(M.TmpCase):
         store = MR_open(root)
         store.close()
         key = root / mr.KEY_NAME
-        crash = root / (mr.KEY_NAME + '.tmp-' + os.urandom(8).hex())
+        crash = root / (mr.KEY_NAME + '.tmp-' + os.urandom(16).hex())
         os.link(key, crash)  # exact post-crash state: staging and final name share the inode, nlink == 2
         self.assertEqual(key.stat().st_nlink, 2)
         reopened = MR_open(root)
@@ -63,7 +63,7 @@ class StagingRecoveryTests(M.TmpCase):
         scope = M.make_scope(reg)
         store.admit(scope, M.material_for(scope, M.GRANT_A))
         final = store.root / store.receipt_name(scope)
-        crash = store.root / (final.name + '.tmp-' + os.urandom(8).hex())
+        crash = store.root / (final.name + '.tmp-' + os.urandom(16).hex())
         os.link(final, crash)
         with self.assertRaisesRegex(mr.MaterialReceiptError, '^private_storage_required$'):
             store.load(scope)  # refused until recovered (nlink rule unchanged)
@@ -110,9 +110,9 @@ class StagingRecoveryTests(M.TmpCase):
         outside.write_bytes(b'untouched'); outside.chmod(0o600)
         old = time.time() - getattr(mr, "STAGING_MAX_AGE", 300.0) - 60
         os.utime(outside, (old, old))
-        link = store.root / (mr.KEY_NAME + '.tmp-' + 'a' * 16)
+        link = store.root / (mr.KEY_NAME + '.tmp-' + 'a' * 32)
         link.symlink_to(outside)
-        fifo = store.root / ('b' * 64 + '.receipt.tmp-' + 'c' * 16)
+        fifo = store.root / ('b' * 64 + '.receipt.tmp-' + 'c' * 32)
         os.mkfifo(fifo, 0o600)
         opened = []
         real_open = os.open
