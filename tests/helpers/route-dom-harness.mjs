@@ -60,5 +60,5 @@ export async function routeHarness(route, store, fetcher) {
     await flush(()=>{Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);el.dispatchEvent(new window.Event('input',{bubbles:true}));el.dispatchEvent(new window.Event('change',{bubbles:true}));});
   }
   async function emit() { await flush(()=>{fixture.version++;subscribers.forEach(fn=>fn());}); }
-  return { calls, flush, find, button, change, emit, click: key=>flush(()=>button(key).click()), async close(){await flush(()=>root.unmount());await server.close();dom.window.close();rmSync(cacheDir,{recursive:true,force:true});delete globalThis.__routeDomFixture;} };
+  return { calls, flush, find, button, change, emit, click: key=>flush(()=>button(key).click()), async close(){await flush(()=>root.unmount());await server.close();dom.window.close();rmSync(cacheDir,{recursive:true,force:true,maxRetries:10,retryDelay:50});delete globalThis.__routeDomFixture;} };
 }
