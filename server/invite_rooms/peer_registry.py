@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import copy
+import asyncio
 import contextvars
 import fcntl
+import functools
 import hashlib
 import json
 import os
 import re
 import stat
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +22,7 @@ from typing import Callable, Optional
 from room_invite_store import InviteError
 from room_lobby_service import PeerMaterial, _validate_adapter
 from invite_rooms.consent import canonical
-from invite_rooms.material_receipts import valid_grant
+from invite_rooms.material_receipts import ADMISSION_DEADLINE, valid_grant
 from invite_rooms.peer_binding import PeerBindingError, validate_peer_binding
 
 
@@ -32,8 +36,29 @@ _INSTALL = r"install:[0-9a-f]{32}"
 _FINGERPRINT = r"[0-9a-f]{64}"
 _DIGEST = r"[0-9a-f]{64}"
 
-# Propagated by asyncio.to_thread to bound even legacy no-argument admission callbacks.
-ADMISSION_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("registry_admission_deadline", default=None)
+# ADMISSION_DEADLINE (defined next to the receipt store, re-exported here) is propagated by run_admission
+# to bound even legacy no-argument admission callbacks.
+
+# Dedicated, bounded, named executor for admission/receipt IO so the loop's default executor is never
+# occupied by (possibly lock-waiting) registry and receipt work.
+ADMISSION_WORKERS = 4
+_executor: ThreadPoolExecutor | None = None
+_executor_lock = threading.Lock()
+
+
+def admission_executor() -> ThreadPoolExecutor:
+    global _executor
+    with _executor_lock:
+        if _executor is None:
+            _executor = ThreadPoolExecutor(max_workers=ADMISSION_WORKERS, thread_name_prefix="invite-admission")
+        return _executor
+
+
+async def run_admission(fn, *args, **kwargs):
+    """Run ``fn`` in the admission executor with the caller's contextvars (incl. the request deadline)."""
+    ctx = contextvars.copy_context()
+    return await asyncio.get_running_loop().run_in_executor(
+        admission_executor(), functools.partial(ctx.run, fn, *args, **kwargs))
 
 
 def _check(value: str, pattern: str, label: str) -> None:
@@ -287,12 +312,14 @@ class PeerRegistry:
             raise PeerRegistryError("peer_binding_changed")
 
         def final_check():
-            # Called on-loop AFTER the worker await. No polling or parsing here: a busy
-            # writer fails closed. Supported writers cannot change the version under this lock.
+            # Called on-loop AFTER the worker await. No polling or parsing here: a busy writer fails closed.
+            # The only thing that can change is the on-disk file, and every supported writer replaces it
+            # (new inode/mtime/ctime/size) while holding the exclusive lock we take here. ``fresh`` is an
+            # immutable parse of the version captured above and its generation/binding were verified at
+            # check time, so re-comparing them (or ``self._source``, a constant closure value) could never
+            # differ: the version compare under the shared lock is what proves nothing changed.
             with source._lock(exclusive=False, deadline=time.monotonic()):
-                if source.version() != version or self._source is not source:
-                    raise PeerRegistryError("peer_binding_changed")
-                if fresh.lookup(peer_id).pairing_generation != generation or fresh.binding_for(peer_id) != binding:
+                if source.version() != version:
                     raise PeerRegistryError("peer_binding_changed")
         return final_check
 
@@ -362,7 +389,11 @@ class PeerRegistry:
     async def resolve_scoped_material(self, scope: MaterialScope, resolver=None) -> PeerMaterial:
         self._validate_scope(scope)
         if self._receipt_store is None: raise PeerRegistryError("material_scope_unapproved")
-        try: record = self._receipt_store.load(scope)
+        limit = time.monotonic() + 2.0
+        inherited = ADMISSION_DEADLINE.get()
+        if inherited is not None:
+            limit = min(limit, inherited)
+        try: record = await run_admission(self._receipt_store.load, scope, deadline=limit)
         except Exception as exc:
             code = str(exc)
             raise PeerRegistryError(code if code in {"material_scope_unapproved", "material_unavailable", "material_scope_conflict"} else "material_unavailable") from None

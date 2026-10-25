@@ -24,10 +24,10 @@ function expectCall(call: { url: string; init: RequestInit }, path: string, meth
 }
 
 test('pairing client uses all nine exact routes, response envelopes, bodies and signals', async () => {
-  const offer = { id: 'id', code: 'offer', expires_at: 'date' };
+  const offer = { id: 'id', code: 'offer', expires_at: 1792869000 };
   const accept = { ...offer, code: 'accept', identity: { peer_id: 'p', installation_id: 'i', profile: 'b' } };
   const reveal = { ...offer, code: 'reveal', sas: '123456' };
-  const pairing = { id: 'id', role: 'host', state: 'confirmed', expires_at: 'date' };
+  const pairing = { id: 'id', role: 'host', state: 'confirmed', expires_at: 1792869000 };
   const { calls, fetcher } = recorder({ offer, accept, reveal, pairing, pairings: [pairing], sas: '123456' });
   const api = createRoomPairingApi(' owner ', fetcher);
   const signal = new AbortController().signal;

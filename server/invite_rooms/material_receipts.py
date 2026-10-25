@@ -13,15 +13,18 @@ are refused without opening them; this unreleased format has no migration.
 """
 from __future__ import annotations
 
+import contextvars
 import copy
 import fcntl
 import hashlib
 import json
 import os
+import re
 import secrets
 # No SQLite: every receipt is opened through the retained directory descriptor.
 import stat
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -36,6 +39,12 @@ _DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _NOFOLLOW | _CLOEXEC
 KEY_NAME = "material_receipts.key"
 DB_NAME = "material_receipts.sqlite"
 LOCK_NAME = ".material-receipts.lock"
+
+# Propagated by asyncio.to_thread / run_admission to bound every lock wait by the request deadline.
+ADMISSION_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("registry_admission_deadline", default=None)
+LOCK_WAIT = 2.0          # default cap for an operation-lock wait (never blocks indefinitely)
+BOOTSTRAP_LOCK_WAIT = 10.0
+STAGING_MAX_AGE = 300.0  # an unpublished staging file older than this is an orphan of a dead writer
 
 # The target side (joining_material.validate_material) already caps the grant at 8192 characters
 # before signing, so nothing legitimate is longer; the host mirrors that exact bound.
@@ -54,6 +63,18 @@ def valid_grant(value) -> bool:
 
 def _refuse():
     raise MaterialReceiptError("private_storage_required")
+
+
+def _flock_until(fd: int, deadline: float) -> None:
+    """Exclusive flock without ever blocking past ``deadline`` (monotonic)."""
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise MaterialReceiptError("receipt_busy") from None
+            time.sleep(min(0.005, max(0.0, deadline - time.monotonic())))
 
 
 def _check_dir(fd: int, *, private: bool) -> None:
@@ -144,9 +165,9 @@ class MaterialReceiptStore:
 
             lock_fd = self._open_regular(LOCK_NAME, create=True)
             try:
-                import fcntl
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                _flock_until(lock_fd, time.monotonic() + BOOTSTRAP_LOCK_WAIT)
                 self._check_store()
+                self._recover_staging()  # crash remnants must be gone before any nlink==1 check
                 initialized = os.pread(lock_fd, 2, 0)
                 if initialized not in (b'', b'\x01'):
                     _refuse()
@@ -220,6 +241,49 @@ class MaterialReceiptStore:
         except OSError:
             return False
         return stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == self._root_id
+
+    def _recover_staging(self) -> None:
+        """Under the flock: drop staging files left by a crashed/aborted publication (R3-01).
+
+        Only producer names ``<KEY|64-lowercase-hex.receipt>.tmp-<32-lowercase-hex>``
+        are considered, classified with an lstat and opened
+        O_NOFOLLOW|O_NONBLOCK only when regular (symlinks/FIFOs/dirs are never followed or opened and
+        are left untouched). A staging inode that is also the published final name (crash between
+        link and unlink) is unlinked; a pre-link orphan is unlinked once older than STAGING_MAX_AGE.
+        A foreign hardlink on a final name has no staging name and is still refused later."""
+        dirfd = self._dirfd()
+        removed = False
+        for entry in os.listdir(dirfd):
+            match = re.fullmatch(r'(' + re.escape(KEY_NAME) + r'|[0-9a-f]{64}\.receipt)\.tmp-[0-9a-f]{32}', entry)
+            if match is None:
+                continue
+            base = match.group(1)
+            try:
+                before = os.stat(entry, dir_fd=dirfd, follow_symlinks=False)
+                if not stat.S_ISREG(before.st_mode):
+                    continue
+                fd = os.open(entry, os.O_RDONLY | _NOFOLLOW | os.O_NONBLOCK | _CLOEXEC, dir_fd=dirfd)
+            except OSError:
+                continue
+            try:
+                st = os.fstat(fd)
+                if (not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600
+                        or self._identity(st) != self._identity(before)):
+                    continue
+                try:
+                    published = self._identity(os.stat(base, dir_fd=dirfd, follow_symlinks=False)) == self._identity(st)
+                except OSError:
+                    published = False
+                if published or time.time() - st.st_mtime > STAGING_MAX_AGE:
+                    try:
+                        os.unlink(entry, dir_fd=dirfd)
+                        removed = True
+                    except FileNotFoundError:
+                        pass
+            finally:
+                os.close(fd)
+        if removed:
+            os.fsync(dirfd)
 
     # -- key bootstrap (R-06) -----------------------------------------------------------------
     def _load_key(self, *, initialized=False):
@@ -345,7 +409,7 @@ class MaterialReceiptStore:
     def _aad(scope):
         return _DOMAIN + canonical(scope.as_dict()) + b"\0" + str(scope.pairing_generation).encode("ascii")
 
-    def admit(self, scope, material: dict):
+    def admit(self, scope, material: dict, *, deadline=None):
         """Insert the first validated host association; identical is idempotent."""
         key = self.key_for(scope)
         if not isinstance(material, dict) or set(material) != {"binding", "catalog", "grant"} or material["binding"] != scope.binding:
@@ -357,7 +421,7 @@ class MaterialReceiptStore:
         plaintext = canonical(material)
         digest = hashlib.sha256(plaintext).digest(); nonce = secrets.token_bytes(12)
         encrypted = self._aes.encrypt(nonce, plaintext, self._aad(scope))
-        with self._operation():
+        with self._operation(deadline):
             self._check_store()
             try:
                 row = self._read_receipt(scope)
@@ -380,15 +444,23 @@ class MaterialReceiptStore:
             self._check_store()
 
     @contextmanager
-    def _operation(self):
-        import fcntl
-        with self._lock:
+    def _operation(self, deadline=None):
+        """Process lock + flock, both bounded by min(LOCK_WAIT, request deadline, ``deadline``)."""
+        limit = time.monotonic() + LOCK_WAIT
+        for extra in (deadline, ADMISSION_DEADLINE.get()):
+            if extra is not None:
+                limit = min(limit, extra)
+        if not self._lock.acquire(timeout=max(0.0, limit - time.monotonic())):
+            raise MaterialReceiptError("receipt_busy")
+        try:
             fd = self._open_regular(LOCK_NAME)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                _flock_until(fd, limit)
                 yield
             finally:
                 os.close(fd)
+        finally:
+            self._lock.release()
 
     def _check_identical(self, scope, row, plaintext):
         try:
@@ -398,9 +470,9 @@ class MaterialReceiptStore:
         if row[0] != scope.pairing_generation or hashlib.sha256(existing).digest() != row[3] or existing != plaintext:
             raise MaterialReceiptError("material_scope_conflict")
 
-    def load(self, scope) -> dict:
+    def load(self, scope, *, deadline=None) -> dict:
         self.key_for(scope)
-        with self._operation():
+        with self._operation(deadline):
             row = self._read_receipt(scope)
         if row[0] != scope.pairing_generation: raise MaterialReceiptError("material_scope_unapproved")
         try:

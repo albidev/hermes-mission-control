@@ -1,6 +1,6 @@
 import { createInviteRequest, type InviteApiProblem } from './room-invite-request';
 
-// PROVISIONAL: verbatim groups.log wire events, not the gateway-owned GroupRoomResult state.
+// Verbatim groups.log wire events, not the gateway-owned GroupRoomResult state.
 export type GuestRoom = {
   room_id: string;
   name: string;
@@ -24,7 +24,7 @@ export type GuestLogPage = {
   cursor: string | null;
   latest_seq: number;
   has_more: boolean;
-  authority: { gateway_id: string; epoch: number };
+  authority?: { gateway_id: string; epoch: number };
 };
 export type GuestBot = {
   status: 'online' | 'offline' | 'pending' | string;

@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useReducer, useState } from 'react';
 import { Copy, ShieldCheck, Trash2 } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
-import { createRoomPairingApi, type PairingRow, type RoomPairingApi } from '../../lib/room-pairing-api';
+import { createRoomPairingApi, type PairedPeer, type RoomPairingApi } from '../../lib/room-pairing-api';
 import { initialPairingWizardState, pairingWizardReducer, secondsRemaining, canConfirmSas } from '../../lib/room-joining-state';
 import { inviteErrorCode, isInviteUnavailable } from '../../lib/invite-ui-errors';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
 import { Stepper } from '../ui/Stepper';
+import { PairingCode } from './PairingCode';
 
 type PairingSectionProps = { accessToken?: string; api?: RoomPairingApi };
 
 function PeerList({ rows, busy, onRemove }: {
-  rows: PairingRow[];
+  rows: PairedPeer[];
   busy: boolean;
   onRemove: (id: string) => void;
 }) {
@@ -22,25 +23,25 @@ function PeerList({ rows, busy, onRemove }: {
       <div className="mt-4 grid gap-3">
         {!rows.length ? <p className="text-sm text-text-muted">{t('inviteUi.noPeers')}</p> : null}
         {rows.map((row) => (
-          <article className="invite-peer" key={row.id}>
+          <article className="invite-peer" key={row.peer_id}>
             <ShieldCheck size={22} className="shrink-0 text-accent" aria-hidden="true" />
             <div className="min-w-0 flex-1 break-words">
-              <h4 className="font-semibold text-text">{row.peer?.profile ?? t('inviteUi.peer')}</h4>
-              <p className="mt-1 text-xs text-text-muted">{row.peer?.installation_id ?? '—'}</p>
+              <h4 className="font-semibold text-text">{row.profile}</h4>
+              <p className="mt-1 text-xs text-text-muted">{row.installation_id}</p>
               <p className="mt-1 text-xs text-text-muted">
                 {t(row.state === 'acknowledged' ? 'inviteUi.linkReady' : 'inviteUi.linkPending')}
               </p>
-              {row.peer?.policy_digest ? <code className="mt-2 block break-all text-xs">{row.peer.policy_digest}</code> : null}
+              {row.policy_digest ? <code className="mt-2 block break-all text-xs">{row.policy_digest}</code> : null}
             </div>
-            {row.peer ? (
+            <div>
               <Button
                 size="sm" variant="danger" disabled={busy}
-                aria-label={t('inviteUi.removePeer', { peer: row.peer.profile })}
-                icon={<Trash2 size={14} />} onClick={() => onRemove(row.peer!.peer_id)}
+                aria-label={t('inviteUi.removePeer', { peer: row.profile })}
+                icon={<Trash2 size={14} />} onClick={() => onRemove(row.peer_id)}
               >
                 {t('inviteUi.remove')}
               </Button>
-            ) : null}
+            </div>
           </article>
         ))}
       </div>
@@ -53,7 +54,8 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
   const { t } = useI18n();
   const api = useMemo(() => apiOverride ?? createRoomPairingApi(accessToken), [accessToken, apiOverride]);
   const [state, dispatch] = useReducer(pairingWizardReducer, initialPairingWizardState);
-  const [rows, setRows] = useState<PairingRow[]>([]);
+  const [rows, setRows] = useState<PairedPeer[]>([]);
+  const [notice, setNotice] = useState('');
   const [role, setRole] = useState<'host' | 'joining'>('host');
   const [input, setInput] = useState('');
   const [outgoing, setOutgoing] = useState('');
@@ -63,14 +65,13 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
   const [hidden, setHidden] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     const controller = new AbortController();
     setHidden(false);
     setLoading(true);
-    api.listPairings(controller.signal).then((next) => {
+    api.listPeers(controller.signal).then((next) => {
       if (!controller.signal.aborted) setRows(next);
     }).catch((error) => {
       if (controller.signal.aborted) return;
@@ -109,7 +110,7 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
   const start = () => run(async () => {
     const result = await api.createOffer();
     setRole('host');
-    dispatch({ type: 'start_offer', id: result.id, expiresAt: Date.parse(result.expires_at) });
+    dispatch({ type: 'start_offer', id: result.id, expiresAt: result.expires_at * 1000 });
     setOutgoing(result.code);
     setInput('');
     setSheetOpen(true);
@@ -118,7 +119,7 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
     const result = await api.importOffer(input.trim());
     setRole('joining');
     setPeer(`${result.identity.profile} · ${result.identity.installation_id}`);
-    dispatch({ type: 'import_offer', id: result.id, expiresAt: Date.parse(result.expires_at) });
+    dispatch({ type: 'import_offer', id: result.id, expiresAt: result.expires_at * 1000 });
     setOutgoing(result.code);
     setInput('');
     setSheetOpen(true);
@@ -139,13 +140,12 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
   });
   const confirm = () => run(async () => {
     if (!state.id || !canConfirmSas(typedSas) || remaining === 0) return;
-    const result = role === 'host'
-      ? await api.confirmOffer(state.id, typedSas)
-      : await api.confirmImport(state.id, typedSas);
+    if (role === 'host') await api.confirmOffer(state.id, typedSas);
+    else await api.confirmImport(state.id, typedSas);
     dispatch({ type: 'confirm' });
     setTypedSas('');
     setOutgoing('');
-    setRows((current) => [...current.filter((row) => row.id !== result.id), result]);
+    setRows(await api.listPeers());
   });
   const cancel = () => run(async () => {
     if (role === 'host' && state.id) await api.cancelOffer(state.id);
@@ -154,14 +154,10 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
     setOutgoing('');
     setTypedSas('');
   });
-  const copy = () => run(async () => {
-    await navigator.clipboard.writeText(outgoing);
-    setCopied(true);
-  });
 
   if (hidden) return null;
   const codeControl = outgoing ? (
-    <Button className="w-full" icon={<Copy size={16} />} onClick={() => { setCopied(false); setSheetOpen(true); }}>
+    <Button className="w-full" icon={<Copy size={16} />} onClick={() => setSheetOpen(true)}>
       {t('inviteUi.showCode')}
     </Button>
   ) : null;
@@ -189,8 +185,8 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
       <label className="grid gap-2 text-sm text-text-muted">
         {t('inviteUi.otherSas')}
         <input className="mc-input min-h-11 w-full font-mono text-xl tracking-widest" inputMode="numeric"
-          pattern="[0-9]{6}" maxLength={6} autoComplete="off" value={typedSas}
-          onChange={(event) => setTypedSas(event.target.value)} />
+          pattern="[0-9]*" maxLength={6} autoComplete="one-time-code" value={typedSas}
+          onChange={(event) => setTypedSas(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} />
       </label>
       <p className="invite-warning">{t('inviteUi.securityHint')}</p>
       <Button variant="primary" loading={busy} disabled={!canConfirmSas(typedSas)} onClick={() => void confirm()}>
@@ -205,7 +201,12 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
         <h2 id="pairing-title" className="mt-1 text-xl font-semibold text-text">{t('inviteUi.pairTitle')}</h2>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-text-muted">{t('inviteUi.pairLead')}</p>
       </header>
-      {state.error ? <p className="invite-error" role="alert">{t('inviteUi.error')} ({state.error})</p> : null}
+      {state.error ? (
+        <p className="invite-error" role="alert">
+          {state.error === 'pairing_cooldown' ? t('inviteUi.pairingCooldown') : `${t('inviteUi.error')} (${state.error})`}
+        </p>
+      ) : null}
+      {notice ? <p className="invite-notice" role="status">{notice}</p> : null}
       <div className="grid items-start gap-5 lg:grid-cols-2">
         <div className="invite-card">
           {state.step === 'start' ? (
@@ -244,19 +245,17 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
         </div>
         {loading ? <p role="status">{t('inviteUi.loading')}</p> : (
           <PeerList rows={rows} busy={busy} onRemove={(id) => void run(async () => {
-            await api.removePeer(id);
-            setRows((current) => current.filter((row) => row.peer?.peer_id !== id));
+            const result = await api.removePeer(id);
+            setNotice(result.notice);
+            setRows((current) => current.filter((row) => row.peer_id !== id));
           })} />
         )}
       </div>
       <BottomSheet open={sheetOpen} title={t('inviteUi.oneTimeCode')} onClose={() => setSheetOpen(false)}>
         <div className="grid gap-4">
           <p className="text-sm text-text-muted">{t('inviteUi.codeHint')}</p>
-          <code className="invite-code">{outgoing}</code>
           <p className="text-xs text-warning">{t('inviteUi.expires', { seconds: remaining })}</p>
-          <Button variant="primary" className="w-full" icon={<Copy size={18} />} onClick={() => void copy()}>
-            {t(copied ? 'inviteUi.copied' : 'inviteUi.copy')}
-          </Button>
+          <PairingCode key={outgoing} code={outgoing} />
         </div>
       </BottomSheet>
     </section>

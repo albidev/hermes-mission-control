@@ -63,10 +63,10 @@ try {
     await flush(() => root.render(React.createElement(I18nProvider, null, React.createElement(Component, props))));
   }
   const calls = [];
-  const expiry = new Date(Date.now() + 600000).toISOString();
+  const expiry = Math.floor(Date.now() / 1000) + 600;
   const row = { id: 'p', role: 'host', state: 'confirmed', expires_at: expiry };
   const pairingApi = {
-    listPairings: async () => [],
+    listPeers: async () => [],
     createOffer: async () => ({ id: 'p', code: 'offer-once', expires_at: expiry }),
     acceptOffer: async (...args) => { calls.push(['accept', ...args]); return { id: 'p', code: 'reveal-once', sas: '000123' }; },
     confirmOffer: async (...args) => { calls.push(['confirmHost', ...args]); return row; },
@@ -115,9 +115,9 @@ try {
   await click('Cancel');
   check(calls.at(-1), ['cancel', 'p'], 'cancel reaches API');
   check(document.body.textContent.includes('offer-once'), false, 'cancel clears code');
-  await mount(PairingSection, { api: { ...pairingApi, listPairings: async () => { throw { problem: { kind: 'unavailable' } }; } } });
+  await mount(PairingSection, { api: { ...pairingApi, listPeers: async () => { throw { problem: { kind: 'unavailable' } }; } } });
   check(document.querySelector('[aria-labelledby=pairing-title]'), null, '404 hides section');
-  await mount(PairingSection, { api: { ...pairingApi, listPairings: async () => { throw { problem: { kind: 'forbidden', code: 'denied' } }; } } });
+  await mount(PairingSection, { api: { ...pairingApi, listPeers: async () => { throw { problem: { kind: 'forbidden', code: 'denied' } }; } } });
   check(document.querySelector('[role=alert]').textContent.includes('denied'), true, '403 is visible generic error');
 
   const scope = { room_id: 'room', member_id: 'bot', permissions: ['build'], catalog: { tools: ['build'] } };
@@ -125,7 +125,9 @@ try {
   const joiningCalls = [];
   const joiningApi = {
     preview: async () => ({ id: 'i', status: 'preview', host: { profile: 'Albi', installation_id: 'paired' } }),
-    metadata: async () => ({ id: 'i', status: 'metadata', metadata: { name: 'Release', expires_at: expiry } }),
+    metadata: async () => ({
+      id: 'i', status: 'metadata', metadata: { name: 'Release', expires_at: new Date(expiry * 1000).toISOString() },
+    }),
     redeem: async () => { joiningCalls.push('redeem'); return { id: 'i', status: 'awaiting_host' }; },
     getImport: async () => consent ? { id: 'i', status: 'active', room_id: 'room' } : { id: 'i', status: 'scope', scope },
     confirmScope: async (_id, body) => { joiningCalls.push(body); return { id: 'i', status: 'consent' }; },

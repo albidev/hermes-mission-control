@@ -17,11 +17,12 @@ type GuestBotPanelProps = {
   room: GuestRoom;
   bot: GuestBot | null;
   busy: boolean;
+  approvalsUnsupported: boolean;
   onDecide: (id: string, choice: 'approve' | 'reject') => void;
   onLeave: () => void;
 };
 
-function GuestBotPanel({ room, bot, busy, onDecide, onLeave }: GuestBotPanelProps) {
+function GuestBotPanel({ room, bot, busy, approvalsUnsupported, onDecide, onLeave }: GuestBotPanelProps) {
   const { t } = useI18n();
   const status = bot?.status === 'online' ? 'online' : bot?.status === 'pending' ? 'pending' : 'offline';
   return (
@@ -32,23 +33,25 @@ function GuestBotPanel({ room, bot, busy, onDecide, onLeave }: GuestBotPanelProp
           <h3 className="text-lg font-semibold text-text">{t('inviteUi.myBot')}</h3>
           <p className="mt-1 flex items-center gap-2 text-xs text-text-muted" role="status">
             <span className={`guest-status-dot is-${status}`} aria-hidden="true" />
-            {t(bot ? `inviteUi.botStatus.${status}` : 'inviteUi.loading')}
+            {t(approvalsUnsupported ? 'inviteUi.botStatusUnavailable' : bot ? `inviteUi.botStatus.${status}` : 'inviteUi.loading')}
           </p>
         </div>
       </header>
       <section className="guest-panel-section">
         <h4>{t('inviteUi.approvals')}</h4>
         <div className="mt-3 grid gap-3">
-          {bot?.approvals.length ? bot.approvals.map((request) => (
+          {approvalsUnsupported ? (
+            <div className="invite-notice" role="note">{t('inviteUi.approvalsUnavailable')}</div>
+          ) : bot?.approvals.length ? bot.approvals.map((request) => (
             <article className="guest-approval" key={request.request_id}>
               <p className="font-semibold text-text">{request.title}</p>
               <p className="mt-2 text-xs leading-relaxed text-text-muted">{request.detail}</p>
-              <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="guest-approval-actions">
                 <Button size="sm" variant="primary" disabled={busy} icon={<Check size={15} />}
                   onClick={() => onDecide(request.request_id, 'approve')}>
                   {t('inviteUi.approve')}
                 </Button>
-                <Button size="sm" variant="danger" disabled={busy} icon={<X size={15} />}
+                <Button size="sm" variant="secondary" disabled={busy} icon={<X size={15} />}
                   onClick={() => onDecide(request.request_id, 'reject')}>
                   {t('inviteUi.reject')}
                 </Button>
@@ -73,11 +76,14 @@ function GuestBotPanel({ room, bot, busy, onDecide, onLeave }: GuestBotPanelProp
         <ul className="mt-3 grid gap-2 text-sm text-text">
           {room.members.map((member) => <li className="break-words" key={member.id}>{member.name}</li>)}
         </ul>
-        <p className="mt-3 text-xs leading-relaxed text-text-muted">{t('inviteUi.namesHint')}</p>
+
       </section>
       <Button className="mt-6 w-full" variant="danger" disabled={busy} icon={<LogOut size={15} />} onClick={onLeave}>
         {t('inviteUi.leave')}
       </Button>
+      <footer className="guest-disclaimer">
+        <p className="text-xs leading-relaxed text-text-muted">{t('inviteUi.namesHint')}</p>
+      </footer>
     </div>
   );
 }
@@ -115,6 +121,7 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
   const api = useMemo(() => apiOverride ?? createRoomGuestApi(accessToken), [accessToken, apiOverride]);
   const [tab, setTab] = useState<'bot' | 'chat'>(defaultGuestTab);
   const [bot, setBot] = useState<GuestBot | null>(null);
+  const [approvalsUnsupported, setApprovalsUnsupported] = useState(false);
   const [events, setEvents] = useState<GuestLogEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,24 +135,30 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
     lifecycle.current = controller;
     setEvents([]);
     setBot(null);
+    setApprovalsUnsupported(false);
     setError(null);
     setHidden(false);
     setTab(defaultGuestTab);
     sequence.current = 0;
-    Promise.all([
-      api.getMyBot(room.room_id, controller.signal),
-      api.getLog(room.room_id, { sinceSeq: 0, limit: 100 }, controller.signal),
-    ]).then(([nextBot, page]) => {
-      if (controller.signal.aborted) return;
-      setBot(nextBot);
-      setEvents(mergeGuestEvents([], page.events));
-      sequence.current = Math.max(0, ...page.events.map((event) => event.seq));
-      setHasMore(page.has_more);
-    }).catch((cause) => {
+    const fail = (cause: unknown) => {
       if (controller.signal.aborted) return;
       if (isInviteUnavailable(cause)) setHidden(true);
       else setError(inviteErrorCode(cause));
+    };
+    // A target-local approvals limitation must not discard the canonical log (or vice versa).
+    api.getMyBot(room.room_id, controller.signal).then((nextBot) => {
+      if (!controller.signal.aborted) setBot(nextBot);
+    }).catch((cause) => {
+      if (controller.signal.aborted) return;
+      if (inviteErrorCode(cause) === 'not_supported') setApprovalsUnsupported(true);
+      else fail(cause);
     });
+    api.getLog(room.room_id, { sinceSeq: 0, limit: 100 }, controller.signal).then((page) => {
+      if (controller.signal.aborted) return;
+      setEvents(mergeGuestEvents([], page.events));
+      sequence.current = Math.max(0, ...page.events.map((event) => event.seq));
+      setHasMore(page.has_more);
+    }).catch(fail);
     return () => controller.abort();
   }, [api, room.room_id]);
 
@@ -172,7 +185,17 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
     sequence.current = next;
   });
   const decide = (id: string, choice: 'approve' | 'reject') => run(async (signal) => {
-    await api.decideApproval(room.room_id, id, choice, signal);
+    if (approvalsUnsupported) return;
+    try {
+      await api.decideApproval(room.room_id, id, choice, signal);
+    } catch (cause) {
+      if (inviteErrorCode(cause) !== 'not_supported') throw cause;
+      if (!signal.aborted) {
+        setApprovalsUnsupported(true);
+        setBot(null);
+      }
+      return;
+    }
     if (!signal.aborted) setBot((current) => current ? {
       ...current, approvals: current.approvals.filter((request) => request.request_id !== id),
     } : null);
@@ -209,7 +232,7 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
       <div className="guest-room-layout" data-active-tab={tab}>
         <aside className="guest-bot-column" aria-label={t('inviteUi.myBot')}>
           <GuestBotPanel room={room} bot={bot} busy={busy} onDecide={(id, choice) => void decide(id, choice)}
-            onLeave={() => void leave()} />
+            approvalsUnsupported={approvalsUnsupported} onLeave={() => void leave()} />
         </aside>
         <div className="guest-chat-column">
           <GuestTranscript events={events} hasMore={hasMore} busy={busy} onLoadMore={() => void loadMore()} owner={room.owner} />

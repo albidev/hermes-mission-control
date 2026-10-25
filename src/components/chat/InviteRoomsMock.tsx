@@ -8,11 +8,13 @@ import type { GuestRoom, RoomGuestApi } from '../../lib/room-guest-api';
 import type { PairingRow, RoomPairingApi } from '../../lib/room-pairing-api';
 import type { JoiningImport, RoomJoiningApi } from '../../lib/room-joining-api';
 import { RoomPairingApiError } from '../../lib/room-pairing-api';
+import { RoomGuestApiError } from '../../lib/room-guest-api';
 
 // This module is dynamically imported only inside import.meta.env.DEV (see App).
 // All actions exercise the real screens; no screenshot-only initial step overrides.
-function createFixtures(t: (key: string) => string, offline: boolean, unavailable: boolean) {
+function createFixtures(t: (key: string) => string, offline: boolean, unavailable: boolean, populated: boolean) {
   const expiry = () => new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  const pairingExpiry = () => Math.floor(Date.now() / 1000) + 900;
   const room: GuestRoom = {
     room_id: 'mock-room', name: 'privacy-guard · release 1.4', owner: 'Albi',
     owner_online: !offline, owner_offline_since: '14:02',
@@ -20,29 +22,40 @@ function createFixtures(t: (key: string) => string, offline: boolean, unavailabl
     members: [{ id: 'albi', name: 'Albi' }, { id: 'basa', name: 'Basa' }],
   };
   const peer = { peer_id: 'peer-1', installation_id: 'thomas-win-desktop', profile: 'Basa' };
-  let rows: PairingRow[] = [{ id: 'previous-pair', role: 'host', state: 'acknowledged', expires_at: expiry(), peer }];
+  let rows: PairingRow[] = [{ id: 'previous-pair', role: 'host', state: 'acknowledged', expires_at: pairingExpiry(), peer }];
   const confirmed = (role: string): PairingRow => {
-    const row = { id: 'pair-1', role, state: 'confirmed', expires_at: expiry(), peer };
+    const row = { id: 'pair-1', role, state: 'confirmed', expires_at: pairingExpiry(), peer };
     rows = [...rows.filter((item) => item.id !== row.id), row];
     return row;
   };
   const pairingApi: RoomPairingApi = {
+    listPeers: async () => {
+      if (unavailable) throw new RoomPairingApiError({ kind: 'unavailable', code: 'http_404' });
+      return rows.flatMap((row) => row.peer ? [{ ...row.peer, role: row.role, state: row.state, generation: 1 }] : []);
+    },
     listPairings: async () => {
       if (unavailable) throw new RoomPairingApiError({ kind: 'unavailable', code: 'not_found' });
       return rows;
     },
-    createOffer: async () => ({ id: 'pair-1', code: 'mcpair1.offer.MOCK_PUBLIC_OFFER', expires_at: expiry() }),
+    createOffer: async () => ({ id: 'pair-1', code: 'mcpair1.offer.MOCK_PUBLIC_OFFER', expires_at: pairingExpiry() }),
     acceptOffer: async () => ({
-      id: 'pair-1', code: 'mcpair1.reveal.MOCK_PUBLIC_REVEAL', sas: '482913', expires_at: expiry(),
+      id: 'pair-1', code: 'mcpair1.reveal.MOCK_PUBLIC_REVEAL', sas: '482913', expires_at: pairingExpiry(),
     }),
     confirmOffer: async () => confirmed('host'),
     confirmImport: async () => confirmed('joining'),
     importOffer: async () => ({
-      id: 'pair-1', code: 'mcpair1.accept.MOCK_PUBLIC_ACCEPT', identity: peer, expires_at: expiry(),
+      id: 'pair-1', code: 'mcpair1.accept.MOCK_PUBLIC_ACCEPT', identity: peer, expires_at: pairingExpiry(),
     }),
-    revealImport: async () => ({ id: 'pair-1', sas: '482913', expires_at: expiry() }),
+    revealImport: async () => ({ id: 'pair-1', sas: '482913', expires_at: pairingExpiry() }),
     cancelOffer: async () => undefined,
-    removePeer: async (id) => { rows = rows.filter((row) => row.peer?.peer_id !== id); },
+    removePeer: async (id) => {
+      rows = rows.filter((row) => row.peer?.peer_id !== id);
+      // Verbatim server UNPAIR_NOTICE, intentionally not replaced by a UI translation.
+      const notice = 'Unpairing closes this link and bumps its generation, so no new operation is admitted on it. '
+        + 'It does NOT revoke native grants that were already minted, does NOT stop runs that were already '
+        + 'admitted, and the other side may keep a stale record of this pairing.';
+      return { unpaired: true, peer_id: id, generation: 2, notice };
+    },
   };
   const scope = {
     room_id: room.room_id, member_id: 'basa', permissions: room.permissions,
@@ -69,7 +82,10 @@ function createFixtures(t: (key: string) => string, offline: boolean, unavailabl
   let approvals = [{ request_id: 'approval-1', title: t('inviteUi.mockApproval'), detail: t('inviteUi.mockApprovalDetail') }];
   const guestApi: RoomGuestApi = {
     listRooms: async () => [room],
-    getMyBot: async () => ({ status: 'online', approvals, permissions: room.permissions }),
+    getMyBot: async () => {
+      if (!populated) throw new RoomGuestApiError({ kind: 'error', code: 'not_supported' });
+      return { status: 'online', approvals, permissions: room.permissions };
+    },
     getLog: async (_id, options) => ({
       events: options?.sinceSeq ? [events[1], event(3, 'Albi', t('inviteUi.mockMessage3'))] : events,
       cursor: null, latest_seq: 3, has_more: !options?.sinceSeq, authority: { gateway_id: 'mock', epoch: 1 },
@@ -90,7 +106,8 @@ export function InviteRoomsMock() {
   });
   const offline = params.get('offline') === '1';
   const unavailable = params.get('feature') === 'off';
-  const fixtures = useMemo(() => createFixtures(t, offline, unavailable), [t, offline, unavailable]);
+  const populated = params.get('approvals') === 'populated';
+  const fixtures = useMemo(() => createFixtures(t, offline, unavailable, populated), [t, offline, unavailable, populated]);
 
   return (
     <main className="invite-mock-page">

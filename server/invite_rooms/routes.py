@@ -75,6 +75,11 @@ def configure_guest_host_channel(factory=None) -> None:
     _HOST_CHANNEL_FACTORY = factory
 
 
+def _guest_approval_factory(config):
+    from invite_rooms.guest_approvals import GuestApprovalAdapter
+    return GuestApprovalAdapter(config.native_rpc)
+
+
 def _guest_rpc_factory(config):
     if config.native_rpc is None:
         return None
@@ -541,7 +546,8 @@ def _h_guest_bot(handler, service, ctx, config, args, params) -> None:
         result = service.my_bot(args[0])
     except GuestServiceError as exc:
         code = str(exc)
-        status = 501 if code == "not_supported" else 503 if code == "host_offline" else 403
+        status = (501 if code == "not_supported" else 409 if code == "request_expired" else
+                  503 if code in {"host_offline", "native_unavailable", "session_unavailable", "discovery_inconclusive"} else 403)
         handler._json(status, {"code": code if status != 403 else "forbidden"})
         return
     handler._json(200, result)
@@ -552,7 +558,9 @@ def _h_guest_approval(handler, service, ctx, config, args, params) -> None:
         handler._json(400, {"code": "invalid_request"})
         return
     body = _read_strict_body(handler, {"choice"})
-    if body is None or body.get("choice") not in {"approve", "reject"}:
+    if body is None:
+        return
+    if body.get("choice") not in {"approve", "reject"}:
         handler._json(400, {"code": "invalid_request"})
         return
     try:
@@ -563,8 +571,10 @@ def _h_guest_approval(handler, service, ctx, config, args, params) -> None:
             handler._json(400, {"code": "invalid_request"})
         elif code == "not_supported":
             handler._json(501, {"code": "not_supported"})
-        elif code == "host_offline":
-            handler._json(503, {"code": "host_offline"})
+        elif code == "request_expired":
+            handler._json(409, {"code": code})
+        elif code in {"host_offline", "native_unavailable", "session_unavailable", "discovery_inconclusive"}:
+            handler._json(503, {"code": code})
         else:
             handler._json(403, {"code": "forbidden"})
         return
@@ -775,10 +785,20 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized)
         handler._unauthorized()
         return True
 
+    if path[len(PREFIX):].split("/", 2)[1:2] == ["imports"]:
+        from invite_rooms.joining_routes import handle as handle_imports
+        try:
+            return handle_imports(handler, method, path, path[len(PREFIX):], params)
+        except Exception as exc:
+            _LOG.error("room-invites imports handler failed: %s", type(exc).__name__)
+            handler._json(500, {"error": "internal"})
+            return True
+
     is_guest_path = path[len(PREFIX):].startswith("/guest-rooms")
     if is_guest_path:
         guest = runtime_config.load_guest_service(
-            channel_factory=_HOST_CHANNEL_FACTORY, rpc_factory=_guest_rpc_factory)
+            channel_factory=_HOST_CHANNEL_FACTORY, rpc_factory=_guest_rpc_factory,
+            approval_factory=_guest_approval_factory)
         loaded = (guest, None, None) if guest is not None else None
     else:
         loaded = runtime_config.load_service(material_resolver=_MATERIAL_RESOLVER)

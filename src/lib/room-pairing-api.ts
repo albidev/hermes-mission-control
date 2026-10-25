@@ -24,10 +24,12 @@ export type PairingRow = {
   id: string;
   role: 'host' | 'joining' | string;
   state: string;
-  expires_at: string;
+  expires_at: number;
   peer?: PairingPeer | null;
 };
-export type PairingOffer = { id: string; code: string; expires_at: string };
+export type PairingOffer = { id: string; code: string; expires_at: number };
+export type PairedPeer = PairingPeer & { role: string; state: string; generation: number };
+export type UnpairResult = { unpaired: boolean; peer_id: string; generation: number; notice: string };
 export type PairingAccept = PairingOffer & { identity: PairingPeer };
 export type PairingReveal = PairingOffer & { sas: string };
 export type RoomPairingApi = {
@@ -36,10 +38,11 @@ export type RoomPairingApi = {
   confirmOffer(id: string, sas: string, signal?: AbortSignal): Promise<PairingRow>;
   cancelOffer(id: string, signal?: AbortSignal): Promise<void>;
   importOffer(code: string, signal?: AbortSignal): Promise<PairingAccept>;
-  revealImport(id: string, code: string, signal?: AbortSignal): Promise<{ id: string; sas: string; expires_at: string }>;
+  revealImport(id: string, code: string, signal?: AbortSignal): Promise<{ id: string; sas: string; expires_at: number }>;
   confirmImport(id: string, sas: string, signal?: AbortSignal): Promise<PairingRow>;
   listPairings(signal?: AbortSignal): Promise<PairingRow[]>;
-  removePeer(peerId: string, signal?: AbortSignal): Promise<void>;
+  listPeers(signal?: AbortSignal): Promise<PairedPeer[]>;
+  removePeer(peerId: string, signal?: AbortSignal): Promise<UnpairResult>;
 };
 
 export function createRoomPairingApi(accessToken?: string, fetcher: typeof fetch = fetch): RoomPairingApi {
@@ -66,9 +69,14 @@ export function createRoomPairingApi(accessToken?: string, fetcher: typeof fetch
       }
       return value.pairings;
     },
-    removePeer: async (peerId, signal) => {
-      await request(`/peers/${encodeURIComponent(peerId)}`, 'DELETE', undefined, signal);
+    listPeers: async (signal) => {
+      const value = await request<{ peers: PairedPeer[] }>('/peers', 'GET', undefined, signal);
+      if (!Array.isArray(value?.peers)) {
+        throw new RoomPairingApiError({ kind: 'error', code: 'invalid_response' });
+      }
+      return value.peers;
     },
+    removePeer: (peerId, signal) => request(`/peers/${encodeURIComponent(peerId)}`, 'DELETE', undefined, signal),
   };
 }
 
