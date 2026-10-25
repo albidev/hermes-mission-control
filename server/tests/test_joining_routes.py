@@ -86,7 +86,6 @@ class MockControlChannel:
             raise JoiningError("control_unavailable")
         return self.responses[op]
 
-@unittest.skip("P3b.2 joining runtime incomplete: /imports flow not wired to a real JoiningOwner (worker report); tracked as P3b.2-R")
 class JoiningRoutesHttpTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="joining-routes-")
@@ -216,6 +215,17 @@ class JoiningRoutesHttpTest(unittest.TestCase):
         runtime_joining.configure_joining_control(mock_factory)
 
 class NominalFlowTests(JoiningRoutesHttpTest):
+    # P3b.2-R: this one test is NOT passable without rewriting it, so it stays
+    # skipped on its own (the rest of the file runs).  Its recording stand-in
+    # never answers the ops the sequence requires -- no "preview" reply for the
+    # metadata step (line 230), no "redeem" reply (line 236), no "status" reply
+    # before the GET at line 240 -- while the assertions demand 200 for each, so
+    # metadata/redeem must fail with 503 control_unavailable by contract.  The
+    # scope it then fabricates (lines 246-262: endpoint-owner/o*64/c*64/p*64) can
+    # never equal the real six-field self-binding derived from the pairing
+    # accept, so the scope/consent steps must fail closed too.  Reported, not
+    # silently rewritten: see evidence/p3b2r/report.md.
+    @unittest.skip("fixture supplies no control replies for the ops it asserts; unpassable without rewriting the contract (P3b.2-R report)")
     def test_full_nominal_sequence(self):
         self._setup_mock_channel()
         

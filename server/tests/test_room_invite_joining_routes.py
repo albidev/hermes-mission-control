@@ -51,7 +51,6 @@ def private_json(path, value):
     path.chmod(0o600)
 
 
-@unittest.skip("P3b.2 joining runtime incomplete: /imports flow not wired to a real JoiningOwner (worker report); tracked as P3b.2-R")
 class JoiningHttpTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
