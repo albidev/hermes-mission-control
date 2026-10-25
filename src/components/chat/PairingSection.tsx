@@ -7,6 +7,7 @@ import { inviteErrorCode, isInviteUnavailable } from '../../lib/invite-ui-errors
 import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
 import { Stepper } from '../ui/Stepper';
+import { PairingCode } from './PairingCode';
 
 type PairingSectionProps = { accessToken?: string; api?: RoomPairingApi };
 
@@ -64,7 +65,6 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
   const [hidden, setHidden] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -154,14 +154,10 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
     setOutgoing('');
     setTypedSas('');
   });
-  const copy = () => run(async () => {
-    await navigator.clipboard.writeText(outgoing);
-    setCopied(true);
-  });
 
   if (hidden) return null;
   const codeControl = outgoing ? (
-    <Button className="w-full" icon={<Copy size={16} />} onClick={() => { setCopied(false); setSheetOpen(true); }}>
+    <Button className="w-full" icon={<Copy size={16} />} onClick={() => setSheetOpen(true)}>
       {t('inviteUi.showCode')}
     </Button>
   ) : null;
@@ -258,11 +254,8 @@ export function PairingSection({ accessToken, api: apiOverride }: PairingSection
       <BottomSheet open={sheetOpen} title={t('inviteUi.oneTimeCode')} onClose={() => setSheetOpen(false)}>
         <div className="grid gap-4">
           <p className="text-sm text-text-muted">{t('inviteUi.codeHint')}</p>
-          <code className="invite-code">{outgoing}</code>
           <p className="text-xs text-warning">{t('inviteUi.expires', { seconds: remaining })}</p>
-          <Button variant="primary" className="w-full" icon={<Copy size={18} />} onClick={() => void copy()}>
-            {t(copied ? 'inviteUi.copied' : 'inviteUi.copy')}
-          </Button>
+          <PairingCode key={outgoing} code={outgoing} />
         </div>
       </BottomSheet>
     </section>

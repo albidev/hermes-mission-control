@@ -41,7 +41,7 @@ function GuestBotPanel({ room, bot, busy, approvalsUnsupported, onDecide, onLeav
         <h4>{t('inviteUi.approvals')}</h4>
         <div className="mt-3 grid gap-3">
           {approvalsUnsupported ? (
-            <div className="invite-notice" role="note">{t('inviteUi.approvalsElsewhere')}</div>
+            <div className="invite-notice" role="note">{t('inviteUi.approvalsUnavailable')}</div>
           ) : bot?.approvals.length ? bot.approvals.map((request) => (
             <article className="guest-approval" key={request.request_id}>
               <p className="font-semibold text-text">{request.title}</p>

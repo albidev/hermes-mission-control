@@ -63,9 +63,9 @@ const pairingApi = {
   acceptOffer: async () => ({ id: 'p', code: 'public-reveal', sas: '001234', expires_at }),
 };
 try {
-  await test('501 shows honest normal-approvals guidance, no fake actions, no stuck loading, and preserves Chat', async () => {
+  await test('501 shows honest unavailable guidance, no fake actions, no stuck loading, and preserves Chat', async () => {
     await mount(GuestRoomView, { room, api: guestApi });
-    assert.match(document.body.textContent, /Requests from your bot appear in Mission Control.s normal approvals/);
+    assert.match(document.body.textContent, /Room approvals are currently unavailable in Mission Control\./);
     assert.equal(document.querySelector('.guest-approval button') === null, true);
     assert.equal(document.querySelector('[role=alert]'), null);
     assert.doesNotMatch(document.querySelector('.guest-bot-panel header').textContent, /Loading/);
@@ -94,7 +94,7 @@ try {
     } });
     await click('Reject');
     assert.equal(document.querySelector('.guest-approval button') === null, true);
-    assert.match(document.body.textContent, /Requests from your bot appear/);
+    assert.match(document.body.textContent, /Room approvals are currently unavailable in Mission Control\./);
   });
   await test('log failure is visible but does not discard independently loaded bot approvals', async () => {
     await mount(GuestRoomView, { room, api: {
@@ -171,7 +171,7 @@ try {
     for (const locale of ['en', 'it']) {
       const strings = JSON.parse(readFileSync(`src/locales/${locale}.json`, 'utf8'));
       assert.ok(strings['inviteUi.pairingCooldown']);
-      assert.ok(strings['inviteUi.approvalsElsewhere']);
+      assert.ok(strings['inviteUi.approvalsUnavailable']);
     }
   });
   await test('mobile CSS defines stacking, separation, safe area and clickable inactive tabs', () => {
