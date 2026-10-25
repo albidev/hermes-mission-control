@@ -26,11 +26,13 @@ from invite_rooms.service import InviteRoomsService, ServiceError
 from invite_rooms.material_receipts import MaterialReceiptStore
 from invite_rooms.consent import canonical
 try:
-    from server.tests.test_room_invite_operations import make_service, ROSTER, CATALOG, INSTALL_A, INSTALL_B, ADAPTER_URL, GRANT
+    from server.tests.test_room_invite_operations import make_service, ROSTER, CATALOG, INSTALL_A, INSTALL_B, ADAPTER_URL, GRANT, FINGERPRINT_B
     from server.tests.test_room_invite_routes import CA_PEM, CONSENT_PUBLIC, target_signed_envelope
+    from server.tests import test_room_invite_material_receipts as MR
 except ModuleNotFoundError:
-    from test_room_invite_operations import make_service, ROSTER, CATALOG, INSTALL_A, INSTALL_B, ADAPTER_URL, GRANT
+    from test_room_invite_operations import make_service, ROSTER, CATALOG, INSTALL_A, INSTALL_B, ADAPTER_URL, GRANT, FINGERPRINT_B
     from test_room_invite_routes import CA_PEM, CONSENT_PUBLIC, target_signed_envelope
+    import test_room_invite_material_receipts as MR
 
 # Frozen MVP.1 sources (byte-identical to the checkpoint commit); see fixtures/mvp1_baseline/README.md.
 BASE = Path(__file__).resolve().parent / 'fixtures' / 'mvp1_baseline'
@@ -135,6 +137,12 @@ class ActivationR2R4R5R6Tests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(tmp.cleanup)
         reg._receipt_store = MaterialReceiptStore(Path(tmp.name) / 'receipts')
         reg._route_provider = lambda _scope: 19001
+        # R3B-05: install the same authoritative source production installs, so the signed-material
+        # write path (and the R1-05 activation seam) re-read a real peers.json instead of memory.
+        reg._source = MR.authoritative_source(
+            Path(tmp.name) / 'registry-fixture', peer_id='owner-b', installation_id=INSTALL_B,
+            profile='default', fingerprint=FINGERPRINT_B, endpoint_id='endpoint-b', catalog=CATALOG,
+            consent_public_key=CONSENT_PUBLIC, tls_ca_pem=CA_PEM)
         rpc = RecordingRpc(authority)
         svc._rpc = rpc
         lobby = svc.create_lobby(ctx, name='Scoped activation', roster=copy.deepcopy(ROSTER))

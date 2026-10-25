@@ -445,7 +445,14 @@ class MaterialReceiptStore:
 
     @contextmanager
     def _operation(self, deadline=None):
-        """Process lock + flock, both bounded by min(LOCK_WAIT, request deadline, ``deadline``)."""
+        """Process lock + flock, both bounded by min(LOCK_WAIT, request deadline, ``deadline``).
+
+        ``deadline`` is an ADMISSION bound, not merely an acquisition-wait cap (R3B-02): expiry is
+        re-checked after the mutex acquire, after the flock acquire and before the caller's first
+        effect, so an already-expired request can never publish just because both locks were free.
+        This bounds ONE operation: it creates no durable claim, and expiry revokes nothing that a
+        previous operation already committed.
+        """
         limit = time.monotonic() + LOCK_WAIT
         for extra in (deadline, ADMISSION_DEADLINE.get()):
             if extra is not None:
@@ -453,9 +460,13 @@ class MaterialReceiptStore:
         if not self._lock.acquire(timeout=max(0.0, limit - time.monotonic())):
             raise MaterialReceiptError("receipt_busy")
         try:
+            if time.monotonic() >= limit:
+                raise MaterialReceiptError("receipt_busy")  # expired while queued for the mutex
             fd = self._open_regular(LOCK_NAME)
             try:
                 _flock_until(fd, limit)
+                if time.monotonic() >= limit:
+                    raise MaterialReceiptError("receipt_busy")  # expired between mutex and flock
                 yield
             finally:
                 os.close(fd)
@@ -483,11 +494,14 @@ class MaterialReceiptStore:
             return value
         except Exception: raise MaterialReceiptError("material_unavailable") from None
 
-    def admit_envelope(self, *, scope, envelope: dict, consent_public_key: bytes, expected_signed: dict, map_scope=None):
+    def admit_envelope(self, *, scope, envelope: dict, consent_public_key: bytes, expected_signed: dict, map_scope=None, guard=None):
         """Verify the signed envelope exactly as received, then map/validate it against the local scope.
 
-        Order: exact schema -> signature over the received bytes -> scope mapping -> grant -> catalog.
-        Nothing is encrypted or inserted unless every step passes."""
+        Order: exact schema -> signature over the received bytes -> scope mapping -> grant -> catalog
+        -> ``guard``.  Nothing is encrypted or inserted unless every step passes, and ``guard`` runs
+        immediately before the first effect so a caller can restate an authoritative precondition
+        (R3B-05) after all verification has completed.
+        """
         if (not isinstance(envelope, dict) or set(envelope) != {"scope", "grant", "catalog", "signature"}
                 or not isinstance(envelope["scope"], dict) or not isinstance(envelope["catalog"], dict)
                 or not isinstance(envelope["signature"], str)):
@@ -514,4 +528,6 @@ class MaterialReceiptStore:
             raise
         except Exception: raise MaterialReceiptError("invalid_catalog") from None
         material = {"binding": scope.binding, "catalog": copy.deepcopy(envelope["catalog"]), "grant": envelope["grant"]}
+        if guard is not None:
+            guard()  # last authoritative re-statement, with no effect yet (R3B-05)
         self.admit(scope, material)
