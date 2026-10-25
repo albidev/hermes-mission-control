@@ -117,7 +117,12 @@ class RecoveryNamespaceTests(M.TmpCase):
 
     def test_real_crash_after_link_recovers_key_and_receipt(self):
         server = Path(mr.__file__).resolve().parents[1]
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(server), str(server / 'tests'))))
+        # Extend, never replace: CI puts the pinned Hermes core on PYTHONPATH and
+        # the child needs it for `gateway` imports.
+        env = dict(os.environ)
+        env['PYTHONPATH'] = os.pathsep.join(
+            part for part in (str(server), str(server / 'tests'), env.get('PYTHONPATH')) if part
+        )
         for operation in ('key', 'receipt'):
             with self.subTest(operation=operation):
                 base = self.tmp / operation
