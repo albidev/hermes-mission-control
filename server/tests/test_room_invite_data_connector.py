@@ -24,6 +24,11 @@ from invite_rooms.control.dispatcher import LinkState
 from room_lobby_service import _validate_adapter
 from invite_rooms.peer_registry import MaterialScope, adapter_id_for
 
+try:  # test-only lab PKI; moved out of the product package on purpose
+    from server.tests import lab_pki
+except ModuleNotFoundError:
+    import lab_pki
+
 SCOPE = {"room_id": "r", "home_install_id": "install:" + "a" * 32, "authority_gateway_id": "g",
          "authority_epoch": 1, "member_id": "m", "target_install_id": "install:" + "b" * 32,
          "target_profile": "default"}
@@ -111,7 +116,7 @@ class DataConnectorTests(unittest.TestCase):
     @contextlib.contextmanager
     def link(self, *, max_inflight=4, timeout=2.0):
         c = self.product()
-        pki = importlib.import_module("invite_rooms.control.pki")
+        pki = lab_pki
         adapter_module = importlib.import_module("invite_rooms.control.adapter")
         with tempfile.TemporaryDirectory(prefix="data-connector-") as root:
             a = pki.init_owner(Path(root) / "a", "a")
@@ -192,7 +197,7 @@ class DataConnectorTests(unittest.TestCase):
 
     def test_wrong_ca_refused_without_native_call(self):
         with self.link() as (c, native, _, _, _, binding, identity, authority, _):
-            pki = importlib.import_module("invite_rooms.control.pki")
+            pki = lab_pki
             with tempfile.TemporaryDirectory() as root:
                 other = pki.init_owner(Path(root), "unrelated")
                 hop = c.make_link_connector(replace(binding, peer_ca_file=other["ca_file"]), identity, authority)

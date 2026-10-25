@@ -1,4 +1,8 @@
-"""Per-owner PKI for the inner mTLS channel (F1 cross-host lab).
+"""TEST-ONLY per-owner PKI for the inner mTLS channel (F1 cross-host lab).
+
+Lives under tests/ on purpose: it mints throwaway lab certificates and is
+imported exclusively by the data-connector tests. It is not product code and
+must never be imported by server/invite_rooms.
 
 Each owner generates a private mini-CA and one leaf certificate on their own
 machine. Only the CA certificate and the leaf fingerprint are handed to the
@@ -39,18 +43,22 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-from .framing import certificate_fingerprint
+from invite_rooms.control.framing import certificate_fingerprint
 
+# Counterexample generator for the spike labs (test_s2e uses it to forge an
+# unrelated CA). Product code never calls it; certificates above are built
+# in-process with `cryptography`.
 _QUIET = {"check": True, "stdout": subprocess.DEVNULL, "stderr": subprocess.PIPE}
-_KEY_BITS = 2048
-_BACKDATE = _dt.timedelta(minutes=5)
 
 
 def _openssl(*args: str) -> None:
-    """Legacy helper kept only for existing test counterexamples; pki itself never calls it."""
     if shutil.which("openssl") is None:
         raise RuntimeError("openssl is required")
     subprocess.run(["openssl", *args], **_QUIET)
+
+_KEY_BITS = 2048
+_BACKDATE = _dt.timedelta(minutes=5)
+
 
 
 def _private(path: Path) -> None:
