@@ -13,6 +13,10 @@ from invite_rooms.joining_store import JoiningStoreError
 _PATH = re.compile(r"^/imports/(?:(preview)|(import-[0-9a-f]{32})(?:/(metadata|redeem|scope|consent|resolve))?)$")
 _FIELDS = {"preview": {"code", "host_id"}, "metadata": set(), "redeem": set(),
            "scope": {"room_id", "member_id"}, "consent": {"approve"}, "resolve": set()}
+#: Actions that carry NO field at all: a bodiless POST (no Content-Type, no
+#: Content-Length) is the same request as ``{}`` for these.  Any body that IS
+#: sent is still parsed and validated against the (empty) field set below.
+_FIELDLESS = frozenset({"metadata", "redeem", "resolve"})
 _NOT_FOUND = {"import_unavailable", "invalid_import_id", "peer_binding_mismatch", "unknown_host"}
 _BAD = {"invalid_invitation", "invalid_invitation_origin", "invalid_owner_scope", "invalid_decision"}
 _CONFLICT = {"redeem_ambiguous", "import_state_conflict", "redeem_required", "owner_scope_required",
@@ -75,12 +79,15 @@ def handle(handler, method, path, suffix, params):
             return True
         body = {}
         if action != "get":
-            if not _content_type_is_json(handler):
-                handler._json(400, {"error": "bad_request", "code": "invalid_content_type"})
-                return True
-            body = _body(handler, _FIELDS[action])
-            if body is None:
-                return True
+            bodiless = (action in _FIELDLESS and handler.headers.get("Content-Length") in (None, "0")
+                        and not (handler.headers.get("Content-Type") or "").strip())
+            if not bodiless:
+                if not _content_type_is_json(handler):
+                    handler._json(400, {"error": "bad_request", "code": "invalid_content_type"})
+                    return True
+                body = _body(handler, _FIELDS[action])
+                if body is None:
+                    return True
             valid = True
             if action == "preview":
                 valid = isinstance(body.get("code"), str) and ("host_id" not in body or isinstance(body["host_id"], str))
@@ -104,10 +111,8 @@ def handle(handler, method, path, suffix, params):
             else:
                 handler._json(503, {"error": "unavailable", "code": "control_unavailable"})
             return True
-        except Exception as exc:
-            print(f"DEBUG: unexpected error in execute: {type(exc).__name__}: {exc}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            # Sanitized at the routes layer (type name only, no values, no traceback).
             raise
         handler._json(200, {"import": result})
         return True
