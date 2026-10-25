@@ -52,10 +52,7 @@ class GuestOperationsTests(unittest.TestCase):
         store = Store()
         self.addCleanup(store.tmp.cleanup)
         self.service = GuestRoomService(store, channel=self.channel, rpc=self.rpc)
-        # Retain every pre-existing approval mapping assertion as isolated
-        # contract tests. Production lookup is unsupported (HTTP tests cover
-        # 501); this explicit test-only identity is NOT joining metadata.
-        self.enterContext(patch.object(GuestRoomService, '_session_id', return_value='sid-b'))
+        # The old groups callable is never promoted to a canonical adapter.
 
     def test_log_is_verbatim_and_channel_only(self):
         page = self.service.log("invite-room-r", since_seq=2, limit=200)
@@ -63,24 +60,25 @@ class GuestOperationsTests(unittest.TestCase):
         self.assertEqual(self.channel.calls[0], {"op": "room_log", "room_id": "invite-room-r", "since_seq": 2, "limit": 200})
         self.assertNotIn("groups.create", [c["op"] for c in self.channel.calls])
 
-    def test_pending_reads_b_session(self):
-        result = self.service.my_bot("invite-room-r")
-        self.assertEqual(result["approvals"][0]["request_id"], "req-1")
-        self.assertEqual(self.rpc.calls[0], ("approval.pending", {"session_id": "sid-b"}))
+    def test_groups_callable_cannot_discover_native_pending(self):
+        with self.assertRaisesRegex(GuestServiceError, '^not_supported$'):
+            self.service.my_bot('invite-room-r')
+        self.assertEqual(self.rpc.calls, [])
 
-    def test_approve_maps_to_once_and_all_false(self):
-        self.service.decide_approval("invite-room-r", "req-1", "approve")
-        self.assertEqual(self.rpc.calls[-1], ("approval.respond", {"session_id": "sid-b", "request_id": "req-1", "choice": "once", "all": False}))
+    def test_groups_callable_cannot_approve(self):
+        with self.assertRaisesRegex(GuestServiceError, '^not_supported$'):
+            self.service.decide_approval('invite-room-r', 'req-1', 'approve')
+        self.assertEqual(self.rpc.calls, [])
 
-    def test_reject_maps_to_deny(self):
-        self.service.decide_approval("invite-room-r", "req-1", "reject")
-        self.assertEqual(self.rpc.calls[-1][1]["choice"], "deny")
+    def test_groups_callable_cannot_reject(self):
+        with self.assertRaisesRegex(GuestServiceError, '^not_supported$'):
+            self.service.decide_approval('invite-room-r', 'req-1', 'reject')
+        self.assertEqual(self.rpc.calls, [])
 
-    def test_other_session_request_is_forbidden_without_respond(self):
-        self.rpc.calls.clear()
-        with self.assertRaises(GuestServiceError):
-            self.service.decide_approval("invite-room-r", "other", "approve")
-        self.assertEqual([m for m, _ in self.rpc.calls], ["approval.pending"])
+    def test_other_session_request_has_no_native_respond(self):
+        with self.assertRaisesRegex(GuestServiceError, '^not_supported$'):
+            self.service.decide_approval('invite-room-r', 'other', 'approve')
+        self.assertEqual(self.rpc.calls, [])
 
     def test_invalid_choice_is_rejected(self):
         with self.assertRaisesRegex(GuestServiceError, "invalid_choice"):

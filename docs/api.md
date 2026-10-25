@@ -154,6 +154,106 @@ Details: [chat.md](chat.md), [bot-mode.md](bot-mode.md), [rooms.md](rooms.md).
 
 See [tldraw-feature-matrix.md](tldraw-feature-matrix.md).
 
+## Invite-room guest approvals
+
+All paths below start with `/api/local/room-invites`. They require the normal
+MC bearer token and exact configured Origin policy. The feature remains off
+unless its owner-private runtime configuration and joining store are valid.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/guest-rooms` | List locally consented joined rooms |
+| GET | `/guest-rooms/{room_id}/log?since_seq=0&limit=200` | Read the pinned host transcript verbatim; unchanged pagination and event identities |
+| GET | `/guest-rooms/{room_id}/my-bot` | Snapshot only the confirmed local bot's approvals |
+| POST | `/guest-rooms/{room_id}/approvals/{request_id}` | Body **only** `{"choice":"approve"}` or `{"choice":"reject"}` |
+| POST | `/guest-rooms/{room_id}/leave` | Empty object; revoke the local grant and persist terminal leave (unchanged) |
+
+Approval response shape:
+
+```json
+{
+  "status": "online",
+  "approvals": [{
+    "request_id": "approval-<opaque-handle>",
+    "title": "native redacted command",
+    "detail": "native redacted description",
+    "command": "native redacted command",
+    "description": "native redacted description",
+    "choices": ["once", "deny"],
+    "allow_permanent": false
+  }],
+  "permissions": []
+}
+```
+
+`request_id` is an opaque MC reference, **not** a native prompt/session ID. It
+maps internally to the exact confirmed scope, native endpoint/credential,
+`session_id`, `prompt_id`, and `execution_generation`. Handles expire after
+five minutes, on process restart, or bounded-cache eviction (2048 handles).
+Do not parse, synthesize, persist, or recycle them for a different prompt.
+The existing frontend `request_id`/`title`/`detail` contract can carry this
+without an API/schema change. A valid decision returns `200 {}` only after an
+exact native `resolved` or `already_resolved` result; the latter means the
+selected request settled concurrently, not that another request was approved.
+
+Discovery uses the fixed owner-configured local native socket/token, with the
+**confirmed binding's target profile**, not the launch profile or an HTTP
+parameter. The adapter requires `gateway.ready` to advertise canonical session
+authority, then requests `session.list {include_hidden:true,limit:200}` and
+filters exact `title == "Group: " + confirmed_room_id` and `source == "bot_room"`.
+It never uses the canonical title resolver, computes a room hash, trusts a
+receipt's `roomlink_*`, or accepts session/generation/profile/URL input.
+There is no persistent REST fallback in this implementation: a cold/missing
+live row is temporarily unavailable, and a full 200-row list is inconclusive
+even if it contains one apparent match. Multiple matches fail closed.
+
+Each snapshot/decision opens one authenticated connection and mounts with
+`session.resume`. A decision rediscovers and snapshots again, matches the
+**exact** saved tuple, and sends canonical `approval.respond` on that same
+subscribed socket (`approve -> once`, `reject -> deny`). `profile` is the
+canonical routing envelope stripped by the authority before method validation.
+Every network await is fenced by fresh confirmed consent/material/leave and
+peer-binding checks, including immediately before the response write. The existing
+target material validator rechecks grant claim scope/expiry and pinned catalog/policy
+digests; the stored consent receipt must exactly match the confirmed scope/purpose.
+Native stale-generation checks remain authoritative for races after that write.
+Snapshot polling is used; there is no event replay or cursor continuity claim.
+Cleanup detaches without `end_reason`, then closes only its socket; no turn is
+submitted, interrupted, stopped or steered. No generic RPC route is exposed.
+The existing bounded groups adapter and leave/transcript contracts are unchanged.
+
+| HTTP | `code` | Meaning |
+|------|--------|---------|
+| 401 | Normal MC auth error | Caller unauthenticated |
+| 403 | `forbidden` | Unconfirmed/left/changed consent or material, peer mismatch/unpair, profile/auth refusal |
+| 403 | `forbidden_origin` | Origin not explicitly allowed |
+| 404 | Normal unknown-route response | Feature off/misconfigured or unsupported guest control route |
+| 409 | `request_expired` | Unknown/expired handle, changed scope/endpoint/credential, vanished exact request or stale generation; resnapshot |
+| 501 | `not_supported` | No canonical adapter/authority or incompatible native session protocol; never legacy fallback on auth failure |
+| 503 | `session_unavailable` | No exact live room session yet; retry snapshot later |
+| 503 | `discovery_inconclusive` | Duplicate matches or saturated live listing; no ID guessing |
+| 503 | `native_unavailable` | Missing config/token, offline/closed socket, bounded timeout, malformed/ambiguous native reply |
+
+**Security restriction:** this is an authenticated-local-operator feature. It
+assumes the trusted core maintains a unique, unaltered canonical room namespace
+within the confirmed target profile. Public session projections do **not**
+include the private `state_meta` room identity; title-based discovery is **not a
+cryptographic grant-to-session binding** and does not independently attest the
+hidden home/member tuple. Local confirmed material/consent and peer state are
+re-read; there is no native grant-status introspection here. An operator who
+revokes directly outside this local state must also revoke local consent/material
+(or leave/unpair) to disable MC responses to an already-running waiter. Deployments
+requiring cryptographic scoped lookup or an independent native-grant revocation
+fence must keep this feature unavailable until a scoped core contract exists.
+Do not use title uniqueness to claim resistance to a malicious local operator
+or tampered native database. Ambiguity is always denied.
+
+**Frontend follow-up (not implemented here):** render temporary discovery/offline
+503 separately from genuine protocol 501, and handle 409 by dropping the selected
+handle and fetching a fresh snapshot. Do not silently retarget or auto-retry a
+decision on the next request. Polling can reuse the existing API fields. No UI
+files are changed in this backend packet.
+
 ## Browser terminal
 
 | Method | Path | Purpose |

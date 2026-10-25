@@ -27,13 +27,17 @@ class GuestServiceError(ValueError):
 
 class GuestRoomService:
     def __init__(self, store: JoiningStore, *, channel: HostChannel | None = None,
-                 rpc=None, host_label: str = "host", own_bot_id: str | None = None):
+                 rpc=None, approvals=None, peer_check=None, local_installation_id=None,
+                 host_label: str = "host", own_bot_id: str | None = None):
         if not isinstance(store, JoiningStore) or (channel is not None and
                 not callable(getattr(channel, "call", None))):
             raise GuestServiceError("invalid_guest_service")
         self.store = store
         self.channel = channel
         self.rpc = rpc
+        self.approvals = approvals
+        self.peer_check = peer_check
+        self.local_installation_id = local_installation_id
         self.host_label = host_label if isinstance(host_label, str) else "host"
         self.own_bot_id = own_bot_id
 
@@ -74,13 +78,10 @@ class GuestRoomService:
 
     @staticmethod
     def _session_id(scope: dict, envelope: dict | None = None) -> str:
-        """No native grant→target-session lookup exists in the current core.
+        """Legacy scope-only lookup remains unsupported: never guess an ID.
 
-        groups.peer.invite does not return a session. The hidden target session
-        is bound only during run dispatch, not minting; groups.replica_state
-        does not expose it either. Never derive its hash or trust scope keys.
-        See the P6-B.3 report for exact core locations. A future implementation
-        must consume a verified native binding before enabling approvals.
+        Canonical discovery belongs to the dedicated authenticated adapter;
+        neither this helper nor local scope keys prove a session identity.
         """
         raise GuestServiceError("not_supported")
 
@@ -120,52 +121,61 @@ class GuestRoomService:
             raise GuestServiceError("host_offline")
         return page
 
-    def _pending(self, room_id: str) -> tuple[dict, dict, list]:
+    def _approval_context(self, room_id):
+        from invite_rooms.peer_binding import validate_peer_binding
         record, scope = self._room_context(room_id)
-        # Resolve before opening any native connection: unsupported is not an
-        # empty approvals list, and arbitrary session-like keys grant nothing.
-        session_id = self._session_id(scope)
+        matches = [r for r in self.store.list_imports() if r['state'] == 'consent_given'
+                   and (self.store.confirmed_scope(r['import_id']) or {}).get('room_id') == room_id]
+        if len(matches) != 1:
+            raise GuestServiceError('forbidden')
         envelope = self._material(record, scope)
-        if self.rpc is None:
-            raise GuestServiceError("host_offline")
         try:
-            response = self._invoke(self.rpc, "approval.pending", {"session_id": session_id})
+            binding = validate_peer_binding(scope['binding'])
+            if binding['target_install_id'] != self.local_installation_id:
+                raise ValueError()
+            if not scope.get('member_id') or not scope.get('host_id') or self.peer_check is None:
+                raise ValueError()
+            peer = self.peer_check(record['host_peer_id'], scope['host_id'])
+            consent = self.store.get_consent(record['import_id'])
+            material_scope = dict(scope, invite_id=record['invite_id'])
+            if not consent or consent['receipt'] != dict(material_scope, purpose='joining-owner-consent-v1'):
+                raise ValueError()
+            from invite_rooms.joining_material import validate_material
+            # Reuse the target's existing hygiene/expiry/pinned-catalog validator;
+            # this does not pretend to verify the core's private grant authority.
+            validate_material(material_scope, envelope)
         except Exception:
-            raise GuestServiceError("host_offline") from None
-        self._room_context(room_id)
-        if not isinstance(response, dict) or not isinstance(response.get("approvals"), list):
-            raise GuestServiceError("host_offline")
-        return scope, envelope, response["approvals"]
+            raise GuestServiceError('forbidden') from None
+        return {'store': str(self.store.root), 'record': record, 'scope': scope,
+                'material': envelope, 'consent': consent, 'peer': peer,
+                'profile': binding['target_profile'], 'room_id': scope['room_id']}
+
+    def _approvals(self, room_id, **decision):
+        # Old/direct services without the dedicated adapter remain unsupported;
+        # never send session verbs through the groups callable.
+        if self.approvals is None:
+            self._room_context(room_id)
+            raise GuestServiceError('not_supported')
+        context = self._approval_context(room_id)
+        def validate():
+            if self._approval_context(room_id) != context:
+                raise GuestServiceError('forbidden')
+        result = self._invoke(lambda: self.approvals.run(context, validate, **decision))
+        validate()  # Also fence socket teardown awaits before projecting a result.
+        return result
 
     def my_bot(self, room_id: str) -> dict:
-        scope, envelope, approvals = self._pending(room_id)
-        raw_permissions = scope.get("permissions", [])
-        permissions = raw_permissions if isinstance(raw_permissions, list) else []
-        return {"status": "online" if self.rpc is not None else "offline",
-                "approvals": approvals, "permissions": permissions}
+        approvals = self._approvals(room_id)
+        _, scope = self._room_context(room_id)
+        permissions = scope.get('permissions', [])
+        return {'status': 'online', 'approvals': approvals,
+                'permissions': permissions if isinstance(permissions, list) else []}
 
     def decide_approval(self, room_id: str, request_id: str, choice: str) -> None:
-        if choice not in {"approve", "reject"}:
-            raise GuestServiceError("invalid_choice")
-        scope, envelope, pending = self._pending(room_id)
-        found = [item for item in pending if isinstance(item, dict) and item.get("request_id") == request_id]
-        if not found:
-            raise GuestServiceError("forbidden")
-        session_id = self._session_id(scope, envelope)
-        if any(item.get("session_id", session_id) != session_id for item in found):
-            raise GuestServiceError("forbidden")
-        if self.rpc is None:
-            raise GuestServiceError("host_offline")
-        self._room_context(room_id)
-        native_choice = "once" if choice == "approve" else "deny"
-        try:
-            result = self._invoke(self.rpc, "approval.respond", {
-                "session_id": session_id, "request_id": request_id,
-                "choice": native_choice, "all": False})
-        except Exception:
-            raise GuestServiceError("host_offline") from None
-        if not isinstance(result, dict):
-            raise GuestServiceError("host_offline")
+        if choice not in {'approve', 'reject'}:
+            raise GuestServiceError('invalid_choice')
+        self._approvals(room_id, request_id=request_id,
+                        choice='once' if choice == 'approve' else 'deny')
 
     def leave(self, room_id: str) -> None:
         record, scope = self._room_context(room_id, allow_left=True)
