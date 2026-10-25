@@ -20,14 +20,13 @@ import json
 import os
 import re
 import secrets as _secrets
-import stat
 import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from invite_rooms.anchored_sqlite import AnchoredSQLite
 
 
 class JoiningStoreError(ValueError):
@@ -99,90 +98,42 @@ _LOBBY_ID = r"lobby-[a-zA-Z0-9-]{1,64}"
 _INVITE_ID = r"invite-[a-zA-Z0-9-]{1,64}"
 
 
-def _require_private_dir(path: Path) -> None:
-    if stat.S_IMODE(os.stat(path).st_mode) != 0o700:
-        raise JoiningStoreError("private_storage_required")
-
-
-def _require_private_file(fd_or_path) -> None:
-    mode = os.fstat(fd_or_path).st_mode if isinstance(fd_or_path, int) else os.stat(fd_or_path).st_mode
-    if stat.S_IMODE(mode) != 0o600:
-        raise JoiningStoreError("private_storage_required")
-
-
 class JoiningStore:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, anchor: Path | None = None):
         self.root = Path(root)
-        if self.root.exists() and not self.root.is_dir():
-            raise JoiningStoreError("private_storage_required")
-        _existed = self.root.exists()
-        self.root.mkdir(parents=True, exist_ok=True)
-        if not _existed:
-            # 0700 only for a directory THIS code created; a pre-existing
-            # parent with a different mode is rejected, never silently
-            # relaxed (R6).
-            os.chmod(self.root, 0o700)
-        _require_private_dir(self.root)
-        self._cipher = self._load_or_create_key(self.root / "joining-secret.key")
         self.path = self.root / "joining.sqlite"
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        os.close(fd)
-        _require_private_file(self.path)
-        with self._connection() as conn:
-            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='schema_version'").fetchone()
-            if not exists:
-                # A non-empty database without a schema_version table is a
-                # foreign/unversioned layout: fail closed, never adopt it as
-                # a fresh version-1 store (R5).
-                other_tables = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-                ).fetchone()
-                if other_tables is not None:
-                    raise JoiningStoreError("schema_version_unsupported")
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='schema_version'").fetchone():
-                        for statement in _SCHEMA.split(";"):
-                            if statement.strip():
-                                conn.execute(statement)
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-            self._check_schema_version(conn)
-            conn.execute("PRAGMA journal_mode=WAL")
-
-    @staticmethod
-    def _load_or_create_key(keyfile: Path) -> AESGCM:
+        self._storage = AnchoredSQLite(root, "joining.sqlite", "joining-secret.key",
+                                       JoiningStoreError, anchor=anchor)
         try:
-            fd = os.open(keyfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
-        except FileExistsError:
-            pass
-        else:
-            with os.fdopen(fd, "wb") as out:
-                out.write(AESGCM.generate_key(bit_length=256))
-                out.flush()
-                os.fsync(out.fileno())
-        fd = os.open(keyfile, os.O_RDONLY | os.O_NOFOLLOW)
-        try:
-            _require_private_file(fd)
-            with os.fdopen(fd, "rb") as inp:
-                key = inp.read(33)
+            with self._storage.initialize(self._check_schema_version) as (fresh, cipher):
+                self._cipher = cipher
+                with self._connection() as conn:
+                    if fresh:
+                        conn.execute("BEGIN IMMEDIATE")
+                        try:
+                            for statement in _SCHEMA.split(";"):
+                                if statement.strip():
+                                    conn.execute(statement)
+                            conn.commit()
+                        except BaseException:
+                            conn.rollback()
+                            raise
+                    self._check_schema_version(conn)
+                    conn.execute("PRAGMA journal_mode=WAL")
         except BaseException:
+            self.close()
             raise
-        if len(key) != 32:
-            raise JoiningStoreError("private_storage_required")
-        return AESGCM(key)
+
+    def close(self):
+        if getattr(self, '_storage', None) is not None:
+            self._storage.close()
 
     @contextmanager
     def _connection(self):
-        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        try:
+        with self._storage.connection() as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
             yield conn
-        finally:
-            conn.close()
 
     @contextmanager
     def _read(self):

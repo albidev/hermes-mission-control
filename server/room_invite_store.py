@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import copy
+import fcntl
 import hashlib
 import json
 import math
@@ -117,9 +118,28 @@ class RoomInviteStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         os.close(fd)
+        # A WAL switch cannot run inside BEGIN IMMEDIATE. Use a separate stable
+        # inode: on macOS flock on the DB conflicts with SQLite's own locks.
+        # Keep the marker name distinct from the registry's cutover lock.
+        lockfd = os.open(str(self.path) + '.initialize',
+                         os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise InviteError('invite_unavailable') from None
+                    time.sleep(0.005)
+            self._initialize()
+        finally:
+            os.close(lockfd)
+
+    def _initialize(self):
         with self._connection() as conn:
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='schema_version'").fetchone()
-            initialized = False
             if not exists:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
@@ -127,7 +147,6 @@ class RoomInviteStore:
                         for statement in _SCHEMA.split(";"):
                             if statement.strip():
                                 conn.execute(statement)
-                        initialized = True
                     conn.commit()
                 except BaseException:
                     conn.rollback()
@@ -141,8 +160,24 @@ class RoomInviteStore:
                 # Do not write, infer ownership, or silently retrofit consent.
                 raise InviteError("legacy_schema_recovery_required")
             self.read_only = versions[0][0] > 2
-            if initialized:
-                conn.execute("PRAGMA journal_mode=WAL")
+            if not self.read_only:
+                self._enable_wal(conn)
+
+    @staticmethod
+    def _enable_wal(conn):
+        # journal_mode may return SQLITE_BUSY without waiting for busy_timeout.
+        # Retry this pragma only, never DDL, DML or a complete transaction.
+        for attempt in range(20):
+            try:
+                mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+                if mode != 'wal':
+                    raise InviteError('invite_unavailable')
+                return
+            except sqlite3.OperationalError as exc:
+                busy = getattr(exc, 'sqlite_errorcode', None) == sqlite3.SQLITE_BUSY
+                if not (busy or str(exc) == 'database is locked') or attempt == 19:
+                    raise
+                time.sleep(0.01)
 
     @contextmanager
     def _connection(self):
