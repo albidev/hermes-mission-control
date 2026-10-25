@@ -346,3 +346,28 @@ These are normative and override any looser wording above. Each is a gate of the
   encryption; AAD domain-separated over the full canonical scope and pairing generation. An existing DB with a
   missing key or invalid key/ciphertext fails closed and never regenerates the key. Encrypt before INSERT (WAL).
   Tests: tamper, AAD substitution, restart, concurrent init. `JoiningStore`'s schema is unchanged.
+
+## 9. Integration hardening before receipt-write wiring (P3b.3c-H)
+
+Normative for the admission/receipt seam. These close the `p3b0f3-review` INFO findings R3B-02, R3B-04 and R3B-05
+that had to be settled before any receipt-write callback is wired.
+
+- **R3B-02 deadline is an admission check.** A `MaterialReceiptStore` operation validates expiry AFTER the
+  process mutex, AFTER the `flock`, and before its first effect, so an already-expired request refuses even when
+  both locks are free. The deadline bounds one operation only: it creates no durable claim, and expiry never
+  revokes a previously committed receipt. Refusal code: `receipt_busy`.
+- **R3B-04 bounded admission executor.** One process-wide `AdmissionExecutor` (owner: `peer_registry`, created
+  once under a lock, shut down deterministically by `shutdown_admission_executor` + `atexit`) with `ADMISSION_WORKERS`
+  threads, a bounded submission queue (`ADMISSION_QUEUE_CAP`, refusal `admission_overloaded`), and
+  `ADMISSION_CALLBACK_RESERVED` worker(s) a `material` read may never occupy so receipt-write callbacks cannot
+  starve. The request deadline is enforced before submission and again BEFORE the result is consumed
+  (`admission_deadline_exceeded`): a material read still queued at its deadline is abandoned, a callback write is
+  never abandoned mid-flight but a write finishing late is never reported as a confirmed admit.
+  `resolve_scoped_material` never returns a value observed after its deadline.
+- **R3B-05 write path re-reads the authoritative generation.** `admit_signed_material` keeps the exact
+  signature/scope validation, then re-reads `peers.json` under the shared registry lock (so a generation cutover
+  cannot interleave with the persist), requires the exact generation and six-field binding the caller validated,
+  and restates it immediately before the first effect. A stale registry, a bumped on-disk generation or a missing
+  authoritative source is refused with `peer_binding_changed` / `admission_unavailable` and nothing is written.
+  The blocking body stays synchronous; loop callers MUST use `admit_signed_material_async`, which runs it on the
+  callback lane of the admission executor (off-loop). No DB transaction is ever held across network IO.

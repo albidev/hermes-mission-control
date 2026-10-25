@@ -262,8 +262,12 @@ class RoomInviteRoutesHttpTest(unittest.TestCase):
         def patched(path):
             registry = original_build(path)
             from invite_rooms.material_receipts import MaterialReceiptStore
+            from invite_rooms.peer_registry import RegistrySource
             registry._receipt_store = MaterialReceiptStore(self.store_path.parent / "material-receipts")
             registry._route_provider = lambda _scope: 19001
+            # R3B-05: the signed-material write path re-reads the authoritative peers.json, so this
+            # fixture must install the same source production does (load_service).
+            registry._source = RegistrySource(Path(path), original_build)
             envelope = target_signed_envelope(scoped.scope, scoped.material.grant, scoped.material.catalog)
             registry.admit_signed_material(scoped.scope, envelope)
             return registry

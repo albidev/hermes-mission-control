@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from invite_rooms.consent import canonical
 from invite_rooms.material_receipts import MaterialReceiptError, MaterialReceiptStore
 from invite_rooms.peer_registry import (
-    MaterialScope, PeerRegistry, PeerRegistryError, ScopedPeerMaterial, adapter_id_for,
+    MaterialScope, PeerRegistry, PeerRegistryError, RegistrySource, ScopedPeerMaterial, adapter_id_for,
 )
 from invite_rooms import runtime_config
 from invite_rooms.runtime_config import RuntimeConfigError, build_peer_registry, load_service
@@ -46,12 +46,37 @@ GRANT_B = "gB2h-Qx58MvY1uRt6KsD94eFjWn7"
 GENERIC_BINDING = "binding_mismatch"
 
 
+def authoritative_source(root, *, generation=1, peer_id=PEER_ID, installation_id=INSTALL_ID, profile="default",
+                         fingerprint=FINGERPRINT, endpoint_id="endpoint-b", catalog=None,
+                         consent_public_key=None, tls_ca_pem=CA_PEM):
+    """Write the authoritative ``peers.json`` for a fixture and return its ``RegistrySource`` (R3B-05).
+
+    ``runtime_config.load_service`` always installs one in production; a registry without it cannot
+    prove its own currency, so any test that exercises the signed-material write path needs one here.
+    """
+    directory = Path(root) / "registry"
+    directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    payload = [{
+        "peer_id": peer_id, "installation_id": installation_id, "profile": profile,
+        "fingerprint": fingerprint, "endpoint_id": endpoint_id,
+        "catalog": copy.deepcopy(CATALOG if catalog is None else catalog),
+        "consent_public_key_b64": base64.b64encode(
+            CONSENT_PUBLIC if consent_public_key is None else consent_public_key).decode(),
+        "tls_ca_pem": tls_ca_pem, "pairing_generation": generation,
+    }]
+    source = RegistrySource(directory / "peers.json", build_peer_registry)
+    source.replace(payload)
+    return source
+
+
 def new_registry(root, *, route_provider=None, generation=1):
     store = MaterialReceiptStore(Path(root) / "receipts")
     reg = PeerRegistry(receipt_store=store, route_provider=route_provider)
     reg.register(peer_id=PEER_ID, installation_id=INSTALL_ID, profile="default", fingerprint=FINGERPRINT,
                  endpoint_id="endpoint-b", catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBLIC,
                  tls_ca_pem=CA_PEM, pairing_generation=generation)
+    reg._source = authoritative_source(root, generation=generation)
     return reg, store
 
 

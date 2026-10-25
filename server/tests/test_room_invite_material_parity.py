@@ -24,11 +24,11 @@ from invite_rooms.peer_registry import MaterialScope, PeerRegistry, PeerRegistry
 try:
     import server.tests.test_room_invite_joining as J
     from server.tests.test_room_invite_routes import CA_PEM
-    from server.tests.test_room_invite_material_receipts import raw_rows
+    from server.tests import test_room_invite_material_receipts as MR
 except ModuleNotFoundError:
     import test_room_invite_joining as J
     from test_room_invite_routes import CA_PEM
-    from test_room_invite_material_receipts import raw_rows
+    import test_room_invite_material_receipts as MR
 
 PEER = "peer-host-b"
 
@@ -56,6 +56,11 @@ class RealMintParityTests(unittest.TestCase):
         self.reg.register(peer_id=PEER, installation_id=J.SELF_INSTALL, profile="default", fingerprint=J.FINGERPRINT,
                           endpoint_id="endpoint-b", catalog=copy.deepcopy(J.CATALOG),
                           consent_public_key=self.fx["consent_key"].public_bytes, tls_ca_pem=CA_PEM, pairing_generation=1)
+        # R3B-05: same authoritative source production installs; the write path re-reads it.
+        self.reg._source = MR.authoritative_source(
+            self.tmp / "host-side", peer_id=PEER, installation_id=J.SELF_INSTALL, profile="default",
+            fingerprint=J.FINGERPRINT, endpoint_id="endpoint-b", catalog=J.CATALOG,
+            consent_public_key=self.fx["consent_key"].public_bytes, tls_ca_pem=CA_PEM)
         self.assertEqual(self.reg.binding_for(PEER), J.SELF_BINDING)
         lobby = self.fx["lobby"]
         self.scope = MaterialScope(owner_installation_id=J.HOST_INSTALL, owner_profile="default",
@@ -77,19 +82,19 @@ class RealMintParityTests(unittest.TestCase):
 
     def test_real_envelope_is_admitted_and_resolves_to_the_exact_material(self):
         self.reg.admit_signed_material(self.scope, self.envelope)
-        self.assertEqual(len(raw_rows(self.store)), 1)
+        self.assertEqual(len(MR.raw_rows(self.store)), 1)
         material = asyncio.run(self.reg.resolve_scoped_material(self.scope))
         self.assertEqual(material.grant, self.envelope["grant"])
         self.assertEqual(material.binding, J.SELF_BINDING)
         # re-admitting the identical real envelope stays idempotent
         self.reg.admit_signed_material(self.scope, self.envelope)
-        self.assertEqual(len(raw_rows(self.store)), 1)
+        self.assertEqual(len(MR.raw_rows(self.store)), 1)
 
     def assert_rejected(self, envelope, code="material_scope_mismatch"):
         with self.assertRaises(PeerRegistryError) as cm:
             self.reg.admit_signed_material(self.scope, envelope)
         self.assertEqual(str(cm.exception), code)
-        self.assertEqual(raw_rows(self.store), [])
+        self.assertEqual(MR.raw_rows(self.store), [])
 
     def test_each_substituted_top_level_scope_field_is_rejected(self):
         for field in ("host_id", "room_id", "lobby_id", "member_id", "invite_id"):

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import copy
 import asyncio
+import atexit
 import contextvars
 import fcntl
-import functools
 import hashlib
 import json
 import os
@@ -42,23 +42,129 @@ _DIGEST = r"[0-9a-f]{64}"
 # Dedicated, bounded, named executor for admission/receipt IO so the loop's default executor is never
 # occupied by (possibly lock-waiting) registry and receipt work.
 ADMISSION_WORKERS = 4
-_executor: ThreadPoolExecutor | None = None
+ADMISSION_QUEUE_CAP = 8          # queued submissions beyond the workers; a full queue refuses (R3B-04)
+ADMISSION_CALLBACK_RESERVED = 1  # workers a `material` read may never occupy, so callbacks never starve
+LANE_MATERIAL = "material"       # scoped material reads: bounded, abandonable at the deadline
+LANE_CALLBACK = "callback"       # receipt writes: reserved capacity, never abandoned mid-flight
+MATERIAL_RESOLVE_TIMEOUT = 2.0   # outer cap for one scoped material read (R3B-04)
+
+
+class AdmissionExecutor:
+    """The process's admission thread pool: bounded submissions, a reserved lane, a deadline, an owner.
+
+    Owner: this module.  Exactly ONE instance exists (``admission_executor``), created under
+    ``_executor_lock`` and torn down deterministically by ``shutdown_admission_executor`` (also
+    registered with :mod:`atexit`), so no admission worker outlives the process or a test that asked
+    for the shutdown.  After a shutdown the next submission creates a fresh owner.
+
+    Capacity (R3B-04): at most ``workers + queue_cap`` submissions are in flight and at most
+    ``workers - reserved`` of them may be ``material`` reads, so a receipt-write callback always
+    finds a worker instead of queueing behind material reads.  Every refusal is a stable code
+    (``admission_overloaded`` / ``admission_deadline_exceeded`` / ``admission_unavailable``).
+
+    Deadline (R3B-04): the request deadline (``ADMISSION_DEADLINE`` or ``end_deadline``) is enforced
+    BEFORE submission and again BEFORE the caller consumes the result.  A ``material`` read that is
+    still queued at the deadline is abandoned (a read has no effect); a ``callback`` write is never
+    abandoned mid-flight, but a write that finishes after its deadline is reported as
+    ``admission_deadline_exceeded`` and must not be treated as a confirmed admit.
+    """
+
+    def __init__(self, *, workers: int = ADMISSION_WORKERS, queue_cap: int = ADMISSION_QUEUE_CAP,
+                 reserved: int = ADMISSION_CALLBACK_RESERVED):
+        self.workers = workers
+        self.queue_cap = queue_cap
+        self.reserved = max(0, min(reserved, workers - 1))  # at least one worker stays available to reads
+        self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="invite-admission")
+        self._slots = threading.BoundedSemaphore(workers + queue_cap)
+        self._material = threading.BoundedSemaphore(workers - self.reserved)
+        self._state = threading.Lock()
+        self._closed = False
+
+    # -- capacity ------------------------------------------------------------------------------
+    def _reserve(self, lane: str) -> None:
+        with self._state:
+            if self._closed:
+                raise PeerRegistryError("admission_unavailable")
+        if lane == LANE_MATERIAL and not self._material.acquire(blocking=False):
+            raise PeerRegistryError("admission_overloaded")  # reserved callback capacity is untouched
+        if not self._slots.acquire(blocking=False):
+            if lane == LANE_MATERIAL:
+                self._material.release()
+            raise PeerRegistryError("admission_overloaded")
+
+    def _release(self, lane: str) -> None:
+        self._slots.release()
+        if lane == LANE_MATERIAL:
+            self._material.release()
+
+    # -- submission ----------------------------------------------------------------------------
+    async def run(self, fn, *args, lane: str = LANE_MATERIAL, end_deadline: float | None = None, **kwargs):
+        """Submit ``fn`` and return its value, or refuse it with a stable code."""
+        if lane not in (LANE_MATERIAL, LANE_CALLBACK):
+            raise PeerRegistryError("admission_lane_invalid")
+        inherited = ADMISSION_DEADLINE.get()
+        limit = inherited if end_deadline is None else (end_deadline if inherited is None else min(inherited, end_deadline))
+        if limit is not None and time.monotonic() >= limit:
+            raise PeerRegistryError("admission_deadline_exceeded")
+        self._reserve(lane)
+        try:
+            context = contextvars.copy_context()
+            try:
+                future = self._pool.submit(context.run, fn, *args, **kwargs)
+            except RuntimeError:
+                raise PeerRegistryError("admission_unavailable") from None  # owner shut down mid-reserve
+            waiter = asyncio.wrap_future(future)
+            if limit is None or lane == LANE_CALLBACK:
+                result = await waiter  # a write is never abandoned: only its success is withheld
+            else:
+                try:
+                    result = await asyncio.wait_for(waiter, max(0.0, limit - time.monotonic()))
+                except asyncio.TimeoutError:
+                    raise PeerRegistryError("admission_deadline_exceeded") from None
+        finally:
+            self._release(lane)
+        if limit is not None and time.monotonic() >= limit:
+            raise PeerRegistryError("admission_deadline_exceeded")  # BEFORE the result is consumed
+        return result
+
+    # -- owner lifecycle -----------------------------------------------------------------------
+    def shutdown(self, *, wait: bool = True) -> None:
+        """Refuse every new submission and join the workers (idempotent)."""
+        with self._state:
+            if self._closed:
+                return
+            self._closed = True
+        self._pool.shutdown(wait=wait)
+
+
+_executor: AdmissionExecutor | None = None
 _executor_lock = threading.Lock()
 
 
-def admission_executor() -> ThreadPoolExecutor:
+def admission_executor() -> AdmissionExecutor:
+    """The ONE process-wide admission executor (created on first use, re-created after a shutdown)."""
     global _executor
     with _executor_lock:
         if _executor is None:
-            _executor = ThreadPoolExecutor(max_workers=ADMISSION_WORKERS, thread_name_prefix="invite-admission")
+            _executor = AdmissionExecutor()
         return _executor
 
 
-async def run_admission(fn, *args, **kwargs):
-    """Run ``fn`` in the admission executor with the caller's contextvars (incl. the request deadline)."""
-    ctx = contextvars.copy_context()
-    return await asyncio.get_running_loop().run_in_executor(
-        admission_executor(), functools.partial(ctx.run, fn, *args, **kwargs))
+def shutdown_admission_executor(*, wait: bool = True) -> None:
+    """Deterministic owner shutdown: no further work, joined workers, and a fresh owner on demand."""
+    global _executor
+    with _executor_lock:
+        executor, _executor = _executor, None
+    if executor is not None:
+        executor.shutdown(wait=wait)
+
+
+atexit.register(shutdown_admission_executor)
+
+
+async def run_admission(fn, *args, lane: str = LANE_MATERIAL, end_deadline: float | None = None, **kwargs):
+    """Run ``fn`` on the admission executor with the caller's contextvars (incl. the request deadline)."""
+    return await admission_executor().run(fn, *args, lane=lane, end_deadline=end_deadline, **kwargs)
 
 
 def _check(value: str, pattern: str, label: str) -> None:
@@ -221,13 +327,33 @@ class RegistrySource:
 
     def read_current(self) -> "PeerRegistry":
         """A fresh registry parsed from the file as it is NOW, under the shared lock."""
-        deadline = ADMISSION_DEADLINE.get()
+        with self.locked_current() as fresh:
+            return fresh
+
+    @contextmanager
+    def locked_current(self, *, deadline=None):
+        """Yield a fresh registry parsed from the file while HOLDING the shared lock (R3B-05).
+
+        A generation cutover (``write_lock``, exclusive) cannot slip between this read and the
+        caller's first effect, so a write may use the yielded registry to authorize itself.  The
+        lock is held only for the file read plus the caller's bounded local write -- never across
+        network IO.  ``deadline`` defaults to the propagated request deadline.
+        """
+        if deadline is None:
+            deadline = ADMISSION_DEADLINE.get()
         if deadline is not None and time.monotonic() >= deadline:
             raise PeerRegistryError("registry_source_busy")
         with self._lock(exclusive=False, deadline=deadline):
             if deadline is not None and time.monotonic() >= deadline:
                 raise PeerRegistryError("registry_source_busy")
-            return self._loader(self.path)
+            try:
+                fresh = self._loader(self.path)
+            except PeerRegistryError:
+                raise
+            except Exception:
+                raise PeerRegistryError("registry_source_unavailable") from None
+            # Yield OUTSIDE the try: an exception from the caller's own body must never be remapped.
+            yield fresh
 
     def version(self):
         st = os.stat(self.path, follow_symlinks=False)
@@ -289,6 +415,47 @@ class PeerRegistry:
     def has_source(self) -> bool:
         return self._source is not None
 
+    @staticmethod
+    def _matches(fresh: "PeerRegistry", peer_id: str, generation, binding: dict) -> bool:
+        """Does the freshly parsed authoritative registry still carry this exact generation/binding?"""
+        try:
+            record = fresh.lookup(peer_id)
+            return record.pairing_generation == generation and fresh.binding_for(peer_id) == binding
+        except Exception:
+            return False
+
+    def _authoritative(self, peer_id: str, generation, binding: dict):
+        """``(version, fresh)`` only if the AUTHORITATIVE file still matches; any doubt fails closed.
+
+        Never consults this instance's memory.  A busy/unreadable/replaced file is
+        ``peer_binding_changed`` (the caller cannot prove its own currency); no installed source is
+        ``admission_unavailable``.
+        """
+        source = self._source
+        if source is None:
+            raise PeerRegistryError("admission_unavailable")
+        try:
+            version = source.version()
+            fresh = source.read_current()
+            if source.version() != version:
+                raise PeerRegistryError("peer_binding_changed")
+        except Exception:
+            # Same fail-closed mapping as before: busy, unreadable or already-replaced is one code.
+            raise PeerRegistryError("peer_binding_changed") from None
+        if not self._matches(fresh, peer_id, generation, binding):
+            raise PeerRegistryError("peer_binding_changed")
+        return version, fresh
+
+    @staticmethod
+    def _require_unchanged(source: "RegistrySource", version) -> None:
+        """Re-stat the authoritative file immediately before the first effect (R3B-05)."""
+        try:
+            current = source.version()
+        except OSError:
+            raise PeerRegistryError("peer_binding_changed") from None
+        if current != version:
+            raise PeerRegistryError("peer_binding_changed")
+
     def check_admission(self, peer_id: str, generation, binding: dict) -> Callable[[], None]:
         """R1-05 admission check against the AUTHORITATIVE on-disk registry (never this instance's memory).
 
@@ -298,18 +465,8 @@ class PeerRegistry:
         """
         if self._source is None:
             raise PeerRegistryError("admission_unavailable")
-        try:
-            source = self._source
-            version = source.version()
-            fresh = source.read_current()
-            if source.version() != version:
-                raise PeerRegistryError("peer_binding_changed")
-            current = fresh.lookup(peer_id)
-            ok = current.pairing_generation == generation and fresh.binding_for(peer_id) == binding
-        except Exception:
-            raise PeerRegistryError("peer_binding_changed") from None
-        if not ok:
-            raise PeerRegistryError("peer_binding_changed")
+        source = self._source
+        version, fresh = self._authoritative(peer_id, generation, binding)
 
         def final_check():
             # Called on-loop AFTER the worker await. No polling or parsing here: a busy writer fails closed.
@@ -389,30 +546,68 @@ class PeerRegistry:
     async def resolve_scoped_material(self, scope: MaterialScope, resolver=None) -> PeerMaterial:
         self._validate_scope(scope)
         if self._receipt_store is None: raise PeerRegistryError("material_scope_unapproved")
-        limit = time.monotonic() + 2.0
+        limit = time.monotonic() + MATERIAL_RESOLVE_TIMEOUT
         inherited = ADMISSION_DEADLINE.get()
         if inherited is not None:
             limit = min(limit, inherited)
-        try: record = await run_admission(self._receipt_store.load, scope, deadline=limit)
+        try:
+            record = await run_admission(self._receipt_store.load, scope, deadline=limit,
+                                         end_deadline=limit, lane=LANE_MATERIAL)
+        except PeerRegistryError as exc:
+            # Capacity and deadline refusals (R3B-04) are never reported as a resolved material.
+            code = str(exc)
+            raise PeerRegistryError(code if code == "admission_overloaded" else "material_unavailable") from None
         except Exception as exc:
             code = str(exc)
             raise PeerRegistryError(code if code in {"material_scope_unapproved", "material_unavailable", "material_scope_conflict"} else "material_unavailable") from None
+        if time.monotonic() >= limit:
+            raise PeerRegistryError("material_unavailable")  # post-worker expiry, BEFORE the value is used
         return self._material_from_record(scope, record)
 
     def admit_signed_material(self, scope: MaterialScope, envelope: dict) -> None:
-        """Host admission boundary: verify pinned peer consent, then persist once."""
+        """Host admission boundary: verify pinned peer consent, re-check the AUTHORITATIVE generation, persist.
+
+        R3B-05: the in-memory registry is only a pre-check.  The write re-reads ``peers.json`` under the
+        shared registry lock (so a generation cutover cannot interleave with the persist), requires the
+        exact generation and binding the caller validated, and restates that requirement immediately
+        before the first effect.  A stale registry therefore cannot persist a receipt -- it is refused
+        with ``peer_binding_changed`` and nothing is written.
+
+        Blocking (registry + receipt IO): callers on the event loop MUST use
+        :meth:`admit_signed_material_async` (or ``run_admission`` with ``lane=LANE_CALLBACK``), which
+        runs this on the admission executor with the capacity reserved for callbacks.
+        """
         if self._receipt_store is None: raise PeerRegistryError("material_unavailable")
-        entry = self._validate_scope(scope)
+        self._validate_scope(scope)  # exact signature/scope pre-check; unchanged in-memory validation
+        source = self._source
+        if source is None:
+            raise PeerRegistryError("admission_unavailable")  # no authoritative registry: cannot prove currency
         try:
-            self._receipt_store.admit_envelope(
-                scope=scope, envelope=envelope, consent_public_key=entry.consent_public_key,
-                expected_signed={"scope": envelope["scope"], "grant": envelope["grant"],
-                                 "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"},
-                map_scope=lambda received, expected: self._assert_envelope_scope(received, expected),
-            )
+            with source.locked_current() as fresh:
+                version = source.version()
+                if not self._matches(fresh, scope.peer_id, scope.pairing_generation, scope.binding):
+                    raise PeerRegistryError("peer_binding_changed")
+                entry = fresh.lookup(scope.peer_id)  # current generation's consent key, not a stale copy
+                self._receipt_store.admit_envelope(
+                    scope=scope, envelope=envelope, consent_public_key=entry.consent_public_key,
+                    expected_signed={"scope": envelope["scope"], "grant": envelope["grant"],
+                                     "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"},
+                    map_scope=lambda received, expected: self._assert_envelope_scope(received, expected),
+                    guard=lambda: self._require_unchanged(source, version),
+                )
         except Exception as exc:
             code = str(exc)
-            raise PeerRegistryError(code if code in {"invalid_consent", "invalid_catalog", "invalid_material", "material_scope_conflict", "material_unavailable", "material_scope_mismatch"} else "material_unavailable") from None
+            raise PeerRegistryError(code if code in {"invalid_consent", "invalid_catalog", "invalid_material", "material_scope_conflict", "material_unavailable", "material_scope_mismatch", "peer_binding_changed", "admission_unavailable"} else "material_unavailable") from None
+
+    async def admit_signed_material_async(self, scope: MaterialScope, envelope: dict) -> None:
+        """The off-loop receipt-write entry point: :meth:`admit_signed_material` on the callback lane.
+
+        Runs on the dedicated admission executor (never the loop's default executor) with the capacity
+        reserved for callbacks, so a write cannot starve behind material reads (R3B-04).  A write that
+        finishes after its deadline is refused with ``admission_deadline_exceeded`` -- the caller must
+        treat it as an unconfirmed admit, never as success (the write may still be idempotently retried).
+        """
+        await run_admission(self.admit_signed_material, scope, envelope, lane=LANE_CALLBACK)
 
     _WIRE_SCOPE_FIELDS = frozenset({"host_id", "room_id", "lobby_id", "member_id", "invite_id", "binding"})
 
