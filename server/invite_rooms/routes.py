@@ -785,6 +785,15 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized)
         handler._unauthorized()
         return True
 
+    if path[len(PREFIX):].split("/", 2)[1:2] == ["imports"]:
+        from invite_rooms.joining_routes import handle as handle_imports
+        try:
+            return handle_imports(handler, method, path, path[len(PREFIX):], params)
+        except Exception as exc:
+            _LOG.error("room-invites imports handler failed: %s", type(exc).__name__)
+            handler._json(500, {"error": "internal"})
+            return True
+
     is_guest_path = path[len(PREFIX):].startswith("/guest-rooms")
     if is_guest_path:
         guest = runtime_config.load_guest_service(
