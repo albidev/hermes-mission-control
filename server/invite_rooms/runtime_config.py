@@ -271,7 +271,8 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
     return service, ctx, config
 
 
-def load_guest_service(env: Optional[dict] = None, *, channel_factory=None, rpc_factory=None):
+def load_guest_service(env: Optional[dict] = None, *, channel_factory=None, rpc_factory=None,
+                       approval_factory=None):
     """Build per request from validated config, without stale transport globals.
 
     The sidecar supplies the factories. No host connector yet means an offline
@@ -288,7 +289,18 @@ def load_guest_service(env: Optional[dict] = None, *, channel_factory=None, rpc_
         joining = JoiningStore(config.joining_store_dir)
         channel = channel_factory(config) if channel_factory is not None else None
         rpc = rpc_factory(config) if rpc_factory is not None else None
-        return GuestRoomService(joining, channel=channel, rpc=rpc,
+        approvals = approval_factory(config) if approval_factory is not None else None
+        def peer_check(peer_id, host_id):
+            # Reload the authoritative private registry after every native await.
+            from dataclasses import asdict
+            peer = build_peer_registry(config.peer_registry_path).lookup(peer_id)
+            if peer.installation_id != host_id:
+                raise ValueError('peer_binding_mismatch')
+            value = asdict(peer)
+            value['consent_public_key'] = peer.consent_public_key.hex()
+            return value
+        return GuestRoomService(joining, channel=channel, rpc=rpc, approvals=approvals,
+                                peer_check=peer_check, local_installation_id=config.installation_id,
                                 host_label=config.joining_host_label, own_bot_id=config.joining_own_bot_id)
     except Exception:
         _warn_once("joining", "guest joining configuration is unavailable")

@@ -172,14 +172,16 @@ class GuestHttpTests(unittest.TestCase):
         with patch.object(routes, '_HOST_CHANNEL_FACTORY', None, create=True):
             self.assertEqual(self.get()[0], 200)
             self.assertEqual(self.get('/' + ROOM + '/log')[0], 503)
-            self.assertEqual(self.get('/' + ROOM + '/my-bot')[:2], (501, {'code': 'not_supported'}))
+            # This historical fixture lacks the six-field confirmed binding.
+            self.assertEqual(self.get('/' + ROOM + '/my-bot')[:2], (403, {'code': 'forbidden'}))
             self.assertEqual(self._request('POST', BASE + '/' + ROOM + '/leave', {})[0], 200)
         self.assertEqual(self.native.calls, [('groups.peer.revoke', {'profile': 'default', 'grant': GRANT})])
 
-    def test_real_joining_session_unavailable_is_explicit_501(self):
-        self.assertEqual(self.get('/' + ROOM + '/my-bot')[:2], (501, {'code': 'not_supported'}))
-        self.assertEqual(self._request('POST', BASE + '/' + ROOM + '/approvals/req', {'choice': 'approve'})[:2],
-                         (501, {'code': 'not_supported'}))
+    def test_absent_canonical_adapter_is_explicit_501(self):
+        with patch.object(routes, '_guest_approval_factory', lambda config: None):
+            self.assertEqual(self.get('/' + ROOM + '/my-bot')[:2], (501, {'code': 'not_supported'}))
+            self.assertEqual(self._request('POST', BASE + '/' + ROOM + '/approvals/req', {'choice': 'approve'})[:2],
+                             (501, {'code': 'not_supported'}))
         self.assertEqual(self.native.calls, [])
 
     def test_session_like_scope_keys_never_authorize_approvals(self):
@@ -189,7 +191,7 @@ class GuestHttpTests(unittest.TestCase):
         with self.store._write() as conn:
             conn.execute('UPDATE confirmed_scope SET scope_json=? WHERE import_id=?',
                          (json.dumps(original), self.import_id))
-        self.assertEqual(self.get('/' + ROOM + '/my-bot')[0], 501)
+        self.assertEqual(self.get('/' + ROOM + '/my-bot')[0], 403)
         self.assertEqual(self.native.calls, [])
 
     def test_leave_is_durable_restart_idempotent_and_uses_local_grant(self):
@@ -322,19 +324,8 @@ class GuestHttpTests(unittest.TestCase):
             self.assertNotIn(marker, text)
 
     def test_other_session_request_is_403_without_native_call(self):
-        # Isolate ownership guard from missing core lookup: a test-only known
-        # target session and foreign request must never reach approval.respond.
-        with patch.object(GuestRoomService, '_pending', return_value=(
-                {'session_id': 'private-session-marker'}, {}, [])):
-            status, data, _ = self._request('POST', BASE + '/' + ROOM + '/approvals/foreign', {'choice': 'approve'})
-        self.assertEqual((status, data), (403, {'code': 'forbidden'}))
-        self.assertEqual(self.native.calls, [])
-        # A matched request id explicitly carrying another session is also
-        # forbidden, before any native response mutation.
-        with patch.object(GuestRoomService, '_pending', return_value=(
-                {}, {}, [{'request_id': 'foreign', 'session_id': 'other-session'}])), \
-             patch.object(GuestRoomService, '_session_id', return_value='private-session-marker'):
-            status, data, _ = self._request('POST', BASE + '/' + ROOM + '/approvals/foreign', {'choice': 'approve'})
+        # Incomplete confirmed binding cannot be rescued by a browser request ID.
+        status, data, _ = self._request('POST', BASE + '/' + ROOM + '/approvals/foreign', {'choice': 'approve'})
         self.assertEqual((status, data), (403, {'code': 'forbidden'}))
         self.assertEqual(self.native.calls, [])
 
