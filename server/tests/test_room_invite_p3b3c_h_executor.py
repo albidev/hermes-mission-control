@@ -1,15 +1,11 @@
-"""P3b.3c-H: R3B-04 capacity/lane/off-loop guarantees and the executor's deterministic owner shutdown.
-
-These tests exercise capacity that does not exist on the pre-fix snapshot (bounded submissions, a
-reserved callback lane, an owner shutdown), so they cannot be RED there by design; the pre-fix
-behavioural RED lives in ``test_room_invite_p3b3c_h.py``.
-"""
+"""P3b.3c-H: R3B-04 capacity/lane/off-loop guarantees and executor owner shutdown."""
 from __future__ import annotations
 
 import asyncio
 import threading
 import time
 import unittest
+import contextvars
 from unittest.mock import patch
 
 try:
@@ -17,7 +13,6 @@ try:
 except ModuleNotFoundError:
     import test_room_invite_material_receipts as M
 
-from invite_rooms import peer_registry as pr
 from invite_rooms.material_receipts import ADMISSION_DEADLINE
 from invite_rooms.peer_registry import (
     LANE_CALLBACK, LANE_MATERIAL, PeerRegistryError, admission_executor, run_admission,
@@ -52,6 +47,73 @@ class BlockingJobs:
 
 
 class ExecutorCapacityTests(M.TmpCase, unittest.IsolatedAsyncioTestCase):
+    async def test_material_deadline_churn_retains_reserved_callback_capacity(self):
+        executor = admission_executor()
+        entered = [threading.Event() for _ in range(executor.workers)]
+        release = threading.Event()
+
+        def material(index):
+            entered[index].set()
+            release.wait(5.0)
+
+        material_capacity = executor.workers - executor.reserved
+        try:
+            # Each awaiter expires before the next submission; its physical worker stays busy.
+            for index in range(material_capacity):
+                with self.assertRaises(PeerRegistryError) as cm:
+                    await run_admission(material, index, lane=LANE_MATERIAL,
+                                        end_deadline=time.monotonic() + 0.05)
+                self.assertEqual(str(cm.exception), "admission_deadline_exceeded")
+                self.assertTrue(entered[index].is_set())
+            with self.assertRaises(PeerRegistryError) as cm:
+                await run_admission(material, material_capacity, lane=LANE_MATERIAL,
+                                    end_deadline=time.monotonic() + 0.05)
+            self.assertEqual(str(cm.exception), "admission_overloaded")
+            self.assertEqual(sum(event.is_set() for event in entered), material_capacity)
+            self.assertEqual(await asyncio.wait_for(
+                run_admission(lambda: "callback", lane=LANE_CALLBACK), 0.5), "callback")
+            self.assertFalse(entered[material_capacity].is_set())
+        finally:
+            release.set()
+            shutdown_admission_executor()
+
+
+    async def test_cancelled_callback_keeps_running_until_worker_completion(self):
+        started, release, finished = (threading.Event() for _ in range(3))
+
+        def callback():
+            started.set()
+            release.wait(5.0)
+            finished.set()
+            return "written"
+
+        task = asyncio.create_task(run_admission(callback, lane=LANE_CALLBACK))
+        self.assertTrue(await asyncio.to_thread(started.wait, 2.0))
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertFalse(finished.is_set())
+        release.set()
+        self.assertTrue(await asyncio.to_thread(finished.wait, 2.0))
+        self.assertEqual(await run_admission(lambda: "after", lane=LANE_CALLBACK), "after")
+
+    async def test_worker_exception_propagates_and_releases_capacity(self):
+        def broken():
+            raise RuntimeError("worker failure")
+
+        with self.assertRaisesRegex(RuntimeError, "worker failure"):
+            await run_admission(broken, lane=LANE_CALLBACK)
+        self.assertEqual(await run_admission(lambda: "recovered", lane=LANE_CALLBACK), "recovered")
+
+    async def test_admission_preserves_contextvars_for_worker_and_cleanup(self):
+        marker: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+            "executor_test_marker", default=None)
+        token = marker.set("inherited")
+        try:
+            self.assertEqual(await run_admission(marker.get, lane=LANE_CALLBACK), "inherited")
+        finally:
+            marker.reset(token)
+
     async def test_all_workers_busy_returns_a_refusal_not_a_late_success(self):
         reg, store = M.new_registry(self.tmp, route_provider=lambda _: 19001)
         scope = M.make_scope(reg)

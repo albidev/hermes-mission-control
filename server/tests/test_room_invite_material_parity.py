@@ -52,7 +52,8 @@ class RealMintParityTests(unittest.TestCase):
         self.envelope = copy.deepcopy(self.fx["channel"].material)  # exactly what the real mint emitted
         self.assertIsNotNone(self.envelope)
         self.store = MaterialReceiptStore(self.tmp / "host-side" / "receipts")
-        self.reg = PeerRegistry(receipt_store=self.store, route_provider=lambda _s: 19001)
+        self.reg = PeerRegistry(receipt_store=self.store, route_provider=lambda _s: 19001,
+                                authority=MR.FixtureAdmissionAuthority())
         self.reg.register(peer_id=PEER, installation_id=J.SELF_INSTALL, profile="default", fingerprint=J.FINGERPRINT,
                           endpoint_id="endpoint-b", catalog=copy.deepcopy(J.CATALOG),
                           consent_public_key=self.fx["consent_key"].public_bytes, tls_ca_pem=CA_PEM, pairing_generation=1)

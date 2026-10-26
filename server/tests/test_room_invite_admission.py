@@ -33,10 +33,12 @@ try:
     from server.tests.test_room_invite_operations import ROSTER, CATALOG, INSTALL_A, GRANT
     from server.tests.test_room_invite_routes import _peer_registry_payload, target_signed_envelope
     from server.tests.test_room_invite_final_regressions import RecordingRpc
+    from server.tests.test_room_invite_material_receipts import FixtureAdmissionAuthority
 except ModuleNotFoundError:
     from test_room_invite_operations import ROSTER, CATALOG, INSTALL_A, GRANT
     from test_room_invite_routes import _peer_registry_payload, target_signed_envelope
     from test_room_invite_final_regressions import RecordingRpc
+    from test_room_invite_material_receipts import FixtureAdmissionAuthority
 
 
 class MemorySocket:
@@ -76,6 +78,9 @@ class Harness:
         case.assertIsNotNone(loaded)
         self.svc, self.ctx, self.config = loaded
         self.reg, self.store = self.svc.registry, self.svc.store
+        # This legacy activation fixture has no pairing journal; make that absence explicit rather
+        # than accidentally treating JSON projection as production authority.
+        self.reg._authority = FixtureAdmissionAuthority()
         lobby = self.svc.create_lobby(self.ctx, name="Admission", roster=copy.deepcopy(ROSTER))
         self.lobby_id = lobby["lobby_id"]
         inv = self.svc.issue_invite(self.ctx, self.lobby_id, "peer-b", invitee_label="B")

@@ -421,7 +421,7 @@ class MaterialReceiptStore:
         plaintext = canonical(material)
         digest = hashlib.sha256(plaintext).digest(); nonce = secrets.token_bytes(12)
         encrypted = self._aes.encrypt(nonce, plaintext, self._aad(scope))
-        with self._operation(deadline):
+        with self._operation(deadline) as operation_deadline:
             self._check_store()
             try:
                 row = self._read_receipt(scope)
@@ -434,8 +434,15 @@ class MaterialReceiptStore:
                 return
             data = canonical(dict(scope_key=key, generation=scope.pairing_generation,
                                   nonce=nonce.hex(), ciphertext=encrypted.hex(), digest=digest.hex()))
+            # This is the first durable effect. All validation and receipt lookup are complete,
+            # so the effective operation deadline must be checked here. An existing identical
+            # receipt returned above remains idempotent even if its retry deadline elapsed during
+            # verification.
+            receipt_name = self.receipt_name(scope)
+            if operation_deadline is not None and time.monotonic() >= operation_deadline:
+                raise MaterialReceiptError("receipt_busy")
             try:
-                self._publish(self.receipt_name(scope), data)
+                self._publish(receipt_name, data)
             except FileExistsError:
                 # Exclusive publication is the first-receipt-wins boundary. Never overwrite.
                 self._check_identical(scope, self._read_receipt(scope), plaintext)
@@ -467,7 +474,7 @@ class MaterialReceiptStore:
                 _flock_until(fd, limit)
                 if time.monotonic() >= limit:
                     raise MaterialReceiptError("receipt_busy")  # expired between mutex and flock
-                yield
+                yield limit
             finally:
                 os.close(fd)
         finally:
@@ -494,7 +501,8 @@ class MaterialReceiptStore:
             return value
         except Exception: raise MaterialReceiptError("material_unavailable") from None
 
-    def admit_envelope(self, *, scope, envelope: dict, consent_public_key: bytes, expected_signed: dict, map_scope=None, guard=None):
+    def admit_envelope(self, *, scope, envelope: dict, consent_public_key: bytes, expected_signed: dict,
+                       map_scope=None, guard=None, deadline=None):
         """Verify the signed envelope exactly as received, then map/validate it against the local scope.
 
         Order: exact schema -> signature over the received bytes -> scope mapping -> grant -> catalog
@@ -530,4 +538,4 @@ class MaterialReceiptStore:
         material = {"binding": scope.binding, "catalog": copy.deepcopy(envelope["catalog"]), "grant": envelope["grant"]}
         if guard is not None:
             guard()  # last authoritative re-statement, with no effect yet (R3B-05)
-        self.admit(scope, material)
+        self.admit(scope, material, deadline=deadline)

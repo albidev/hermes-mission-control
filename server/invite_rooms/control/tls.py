@@ -11,8 +11,14 @@ from .framing import TLSIdentityError, certificate_fingerprint
 _PIN = re.compile(r"[0-9a-f]{64}\Z")
 
 
-def _context(*, purpose: ssl.Purpose, ca_file: str, cert_file: str, key_file: str) -> ssl.SSLContext:
-    context = ssl.create_default_context(purpose=purpose, cafile=ca_file)
+def _context(*, purpose: ssl.Purpose, ca_file: str | None, ca_data: str | None, cert_file: str,
+             key_file: str) -> ssl.SSLContext:
+    # Exactly one trust source: a path (spike/tests) or in-memory PEM text (product; never written to disk).
+    if (ca_file is None) == (ca_data is None):
+        raise ValueError("exactly one of ca_file or ca_data is required")
+    if ca_data is not None and (not isinstance(ca_data, str) or not ca_data.strip()):
+        raise ValueError("invalid in-memory CA")
+    context = ssl.create_default_context(purpose=purpose, cafile=ca_file, cadata=ca_data)
     context.minimum_version = ssl.TLSVersion.TLSv1_3
     context.maximum_version = ssl.TLSVersion.TLSv1_3
     context.check_hostname = False
@@ -21,13 +27,15 @@ def _context(*, purpose: ssl.Purpose, ca_file: str, cert_file: str, key_file: st
     return context
 
 
-def client_context(*, ca_file: str, cert_file: str, key_file: str) -> ssl.SSLContext:
-    return _context(purpose=ssl.Purpose.SERVER_AUTH, ca_file=ca_file,
+def client_context(*, ca_file: str | None = None, ca_data: str | None = None, cert_file: str,
+                   key_file: str) -> ssl.SSLContext:
+    return _context(purpose=ssl.Purpose.SERVER_AUTH, ca_file=ca_file, ca_data=ca_data,
                     cert_file=cert_file, key_file=key_file)
 
 
-def server_context(*, ca_file: str, cert_file: str, key_file: str) -> ssl.SSLContext:
-    return _context(purpose=ssl.Purpose.CLIENT_AUTH, ca_file=ca_file,
+def server_context(*, ca_file: str | None = None, ca_data: str | None = None, cert_file: str,
+                   key_file: str) -> ssl.SSLContext:
+    return _context(purpose=ssl.Purpose.CLIENT_AUTH, ca_file=ca_file, ca_data=ca_data,
                     cert_file=cert_file, key_file=key_file)
 
 

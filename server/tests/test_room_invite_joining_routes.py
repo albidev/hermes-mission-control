@@ -442,6 +442,55 @@ class JoiningHttpTest(unittest.TestCase):
         self.assertEqual(self.action("get")[0], 409)
         self.assertEqual(self.action("scope", {"room_id": "invite-room-approved", "member_id": "joining-b"})[0], 409)
 
+    def _persisted_scope(self):
+        s = JoiningStore(self.joinroot)
+        try:
+            return copy.deepcopy(s.confirmed_scope(self.id))
+        finally:
+            s.close()
+
+    def test_sol04_reconfirm_changed_host_scope_rejected(self):
+        self.confirmed()
+        before = self._persisted_scope()
+        self.assertEqual(before["room_id"], "invite-room-approved")
+        # Host later returns another otherwise-valid scope.
+        self.bad_scope = lambda s: s.update(room_id="invite-room-changed")
+        status, value, _ = self.action("scope", {"room_id": "invite-room-changed", "member_id": "joining-b"})
+        self.assertEqual(status, 409, value)
+        self.assertNotIn("invite-room-changed", json.dumps(value))
+        self.assertNotEqual(value.get("import", {}).get("scope_confirmed"), True)
+        self.assertEqual(self._persisted_scope(), before)
+        # An explicit consent attempt after the mismatch must fail with the stable conflict and neither sign nor send.
+        consent_status, consent_value, _ = self.action("consent", {"approve": True})
+        self.assertEqual(consent_status, 409, consent_value)
+        self.assertEqual(consent_value.get("code"), "consent_scope_conflict")
+        self.assertEqual(self.receipts, [])
+        self.assertEqual([c for c in self.calls if c["op"] == "joining_consent"], [])
+        self.assertEqual(self._persisted_scope(), before)
+        self.assertNotEqual(self.state(), "consent_given")
+
+    def test_sol04_reconfirm_same_scope_idempotent(self):
+        self.confirmed()
+        before = self._persisted_scope()
+        status, value, _ = self.action("scope", {"room_id": "invite-room-approved", "member_id": "joining-b"})
+        self.assertEqual(status, 200, value)
+        self.assertEqual((value["import"]["status"], value["import"]["scope_confirmed"]), ("consent", True))
+        self.assertEqual(value["import"]["scope"]["room_id"], "invite-room-approved")
+        self.assertEqual(self._persisted_scope(), before)
+        self.assertEqual(self.receipts, [])
+
+    def test_sol04_reconfirm_fails_closed_on_denial_offline_and_bad_fields(self):
+        self.confirmed()
+        before = self._persisted_scope()
+        self.assertEqual(self.action("scope", {"room_id": 1, "member_id": "joining-b"})[0], 400)
+        self.remote_status = {"status": "denied", "scope": self.scope()}
+        self.assertEqual(self.action("scope", {"room_id": "invite-room-approved", "member_id": "joining-b"})[0], 409)
+        self.remote_status = None
+        self.offline = True
+        self.assertEqual(self.action("scope", {"room_id": "invite-room-approved", "member_id": "joining-b"})[0], 503)
+        self.assertEqual(self._persisted_scope(), before)
+        self.assertEqual(self.receipts, [])
+
     def test_scope_other_invite_rejected(self):
         self.redeem()
         self.approved = True

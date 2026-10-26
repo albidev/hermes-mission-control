@@ -16,6 +16,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,6 +47,14 @@ GRANT_B = "gB2h-Qx58MvY1uRt6KsD94eFjWn7"
 GENERIC_BINDING = "binding_mismatch"
 
 
+class FixtureAdmissionAuthority:
+    """Explicit legacy-fixture authority; production always uses JournalLinkAuthority."""
+
+    @contextmanager
+    def receipt_admission(self, source, **_identity):
+        yield None
+
+
 def authoritative_source(root, *, generation=1, peer_id=PEER_ID, installation_id=INSTALL_ID, profile="default",
                          fingerprint=FINGERPRINT, endpoint_id="endpoint-b", catalog=None,
                          consent_public_key=None, tls_ca_pem=CA_PEM):
@@ -72,7 +81,7 @@ def authoritative_source(root, *, generation=1, peer_id=PEER_ID, installation_id
 
 def new_registry(root, *, route_provider=None, generation=1):
     store = MaterialReceiptStore(Path(root) / "receipts")
-    reg = PeerRegistry(receipt_store=store, route_provider=route_provider)
+    reg = PeerRegistry(receipt_store=store, route_provider=route_provider, authority=FixtureAdmissionAuthority())
     reg.register(peer_id=PEER_ID, installation_id=INSTALL_ID, profile="default", fingerprint=FINGERPRINT,
                  endpoint_id="endpoint-b", catalog=copy.deepcopy(CATALOG), consent_public_key=CONSENT_PUBLIC,
                  tls_ca_pem=CA_PEM, pairing_generation=generation)

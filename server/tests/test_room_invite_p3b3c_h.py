@@ -103,6 +103,99 @@ class ExpiredDeadlineIsAnAdmissionCheckTests(M.TmpCase):
             store.load(scope, deadline=time.monotonic() - 1.0)
         self.assertEqual(str(cm.exception), "receipt_busy")
 
+    def test_expiry_after_missing_receipt_lookup_refuses_before_publication(self):
+        reg, store = M.new_registry(self.tmp)
+        scope = M.make_scope(reg)
+        real_read = store._read_receipt
+
+        def delayed_missing(receipt_scope):
+            try:
+                return real_read(receipt_scope)
+            except MaterialReceiptError as exc:
+                if str(exc) == "material_scope_unapproved":
+                    time.sleep(0.05)
+                raise
+
+        with patch.object(store, "_read_receipt", delayed_missing):
+            with self.assertRaises(MaterialReceiptError) as cm:
+                store.admit(scope, M.material_for(scope, M.GRANT_A), deadline=time.monotonic() + 0.02)
+        self.assertEqual(str(cm.exception), "receipt_busy")
+        self.assert_nothing_written(store, scope)
+
+    def test_expiry_during_final_receipt_name_computation_refuses_before_publication(self):
+        reg, store = M.new_registry(self.tmp)
+        scope = M.make_scope(reg)
+        expected_name = store.receipt_name(scope)
+        real_name = store.receipt_name
+        real_publish = store._publish
+        name_calls = []
+        publish_entries = []
+
+        def delayed_final_name(receipt_scope):
+            name_calls.append(time.monotonic())
+            if len(name_calls) == 2:  # the real missing lookup already computed the name once
+                time.sleep(0.05)
+            return real_name(receipt_scope)
+
+        def recording_publish(name, data):
+            publish_entries.append(time.monotonic())
+            return real_publish(name, data)
+
+        with patch.object(store, "receipt_name", delayed_final_name), patch.object(store, "_publish", recording_publish):
+            with self.assertRaises(MaterialReceiptError) as cm:
+                store.admit(scope, M.material_for(scope, M.GRANT_A), deadline=time.monotonic() + 0.02)
+        self.assertEqual(str(cm.exception), "receipt_busy")
+        self.assertGreaterEqual(len(name_calls), 2)
+        self.assertEqual(publish_entries, [])
+        self.assertFalse((store.root / expected_name).exists())
+        self.assertEqual(list(store.root.glob("*.receipt")), [])
+        self.assertEqual(list(store.root.glob("*.tmp-*")), [])
+
+    def test_identical_existing_receipt_remains_idempotent_after_deadline_during_lookup(self):
+        reg, store = M.new_registry(self.tmp)
+        scope = M.make_scope(reg)
+        material = M.material_for(scope, M.GRANT_A)
+        store.admit(scope, material)
+        receipt_path = store.root / store.receipt_name(scope)
+        before = receipt_path.read_bytes()
+        real_read = store._read_receipt
+
+        def delayed_existing(receipt_scope):
+            row = real_read(receipt_scope)
+            time.sleep(0.05)
+            return row
+
+        with patch.object(store, "_read_receipt", delayed_existing):
+            store.admit(scope, material, deadline=time.monotonic() + 0.02)
+        self.assertEqual(receipt_path.read_bytes(), before)
+
+    def test_inherited_deadline_reaches_envelope_publication_boundary(self):
+        reg, store = M.new_registry(self.tmp)
+        scope = M.make_scope(reg)
+        envelope = M.envelope_for(scope, M.GRANT_A)
+        expected = {"scope": envelope["scope"], "grant": envelope["grant"],
+                    "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"}
+        real_read = store._read_receipt
+
+        def delayed_missing(receipt_scope):
+            try:
+                return real_read(receipt_scope)
+            except MaterialReceiptError as exc:
+                if str(exc) == "material_scope_unapproved":
+                    time.sleep(0.05)
+                raise
+
+        token = ADMISSION_DEADLINE.set(time.monotonic() + 0.02)
+        try:
+            with patch.object(store, "_read_receipt", delayed_missing):
+                with self.assertRaises(MaterialReceiptError) as cm:
+                    store.admit_envelope(scope=scope, envelope=envelope,
+                                         consent_public_key=M.CONSENT_PUBLIC, expected_signed=expected)
+        finally:
+            ADMISSION_DEADLINE.reset(token)
+        self.assertEqual(str(cm.exception), "receipt_busy")
+        self.assert_nothing_written(store, scope)
+
 
 class StaleRegistryWriteTests(M.TmpCase):
     """R3B-05: the signed-material write re-reads the authoritative generation before any effect."""

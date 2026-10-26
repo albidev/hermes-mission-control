@@ -57,9 +57,11 @@ class AdmissionExecutor:
     registered with :mod:`atexit`), so no admission worker outlives the process or a test that asked
     for the shutdown.  After a shutdown the next submission creates a fresh owner.
 
-    Capacity (R3B-04): at most ``workers + queue_cap`` submissions are in flight and at most
+    Capacity (R3B-04): at most ``workers + queue_cap`` physical work items are retained and at most
     ``workers - reserved`` of them may be ``material`` reads, so a receipt-write callback always
-    finds a worker instead of queueing behind material reads.  Every refusal is a stable code
+    finds a worker instead of queueing behind material reads.  Capacity is released by the executor
+    future's completion callback, not by the caller's awaiter: cancellation cannot abandon retained
+    work or make the physical queue exceed the advertised bound.  Every refusal is a stable code
     (``admission_overloaded`` / ``admission_deadline_exceeded`` / ``admission_unavailable``).
 
     Deadline (R3B-04): the request deadline (``ADMISSION_DEADLINE`` or ``end_deadline``) is enforced
@@ -107,22 +109,41 @@ class AdmissionExecutor:
         if limit is not None and time.monotonic() >= limit:
             raise PeerRegistryError("admission_deadline_exceeded")
         self._reserve(lane)
+        context = contextvars.copy_context()
         try:
-            context = contextvars.copy_context()
-            try:
+            # The reservation belongs to this physical Future.  Do not release it from the
+            # coroutine: wait_for()/caller cancellation only stops waiting, never a running
+            # ThreadPoolExecutor work item.
+            with self._state:
+                if self._closed:
+                    raise RuntimeError("executor closed")
                 future = self._pool.submit(context.run, fn, *args, **kwargs)
-            except RuntimeError:
-                raise PeerRegistryError("admission_unavailable") from None  # owner shut down mid-reserve
-            waiter = asyncio.wrap_future(future)
-            if limit is None or lane == LANE_CALLBACK:
-                result = await waiter  # a write is never abandoned: only its success is withheld
-            else:
-                try:
-                    result = await asyncio.wait_for(waiter, max(0.0, limit - time.monotonic()))
-                except asyncio.TimeoutError:
-                    raise PeerRegistryError("admission_deadline_exceeded") from None
-        finally:
+        except RuntimeError:
             self._release(lane)
+            raise PeerRegistryError("admission_unavailable") from None  # owner shut down mid-reserve
+        future.add_done_callback(lambda _future: self._release(lane))
+        waiter = asyncio.wrap_future(future)
+
+        def observe_waiter(done):
+            # A timed-out/cancelled caller may never await the wrapper again.  Retrieve the
+            # terminal exception so loop teardown does not turn an already-reported admission
+            # deadline/cancellation into an unhandled-future warning; a live awaiter still receives
+            # the same exception normally.
+            if not done.cancelled():
+                done.exception()
+
+        waiter.add_done_callback(observe_waiter)
+        if limit is None or lane == LANE_CALLBACK:
+            result = await asyncio.shield(waiter)  # physical work survives caller cancellation
+        else:
+            try:
+                # Shield is essential: wait_for otherwise cancels the asyncio wrapper and
+                # propagates cancellation to the concurrent Future, while the worker remains
+                # retained in ThreadPoolExecutor's queue.
+                result = await asyncio.wait_for(
+                    asyncio.shield(waiter), max(0.0, limit - time.monotonic()))
+            except asyncio.TimeoutError:
+                raise PeerRegistryError("admission_deadline_exceeded") from None
         if limit is not None and time.monotonic() >= limit:
             raise PeerRegistryError("admission_deadline_exceeded")  # BEFORE the result is consumed
         return result
@@ -402,11 +423,12 @@ class _PeerEntry:
 
 class PeerRegistry:
     def __init__(self, *, receipt_store=None, route_provider: Optional[Callable] = None,
-                 source: Optional[RegistrySource] = None):
+                 source: Optional[RegistrySource] = None, authority=None):
         self._peers: dict[str, _PeerEntry] = {}
         self._receipt_store = receipt_store
         self._route_provider = route_provider
         self._source = source
+        self._authority = authority
 
     def material_capability(self) -> bool:
         """Explicit capability seam for activation: a receipt store AND a route provider are installed."""
@@ -583,21 +605,48 @@ class PeerRegistry:
         if source is None:
             raise PeerRegistryError("admission_unavailable")  # no authoritative registry: cannot prove currency
         try:
-            with source.locked_current() as fresh:
-                version = source.version()
-                if not self._matches(fresh, scope.peer_id, scope.pairing_generation, scope.binding):
-                    raise PeerRegistryError("peer_binding_changed")
-                entry = fresh.lookup(scope.peer_id)  # current generation's consent key, not a stale copy
-                self._receipt_store.admit_envelope(
-                    scope=scope, envelope=envelope, consent_public_key=entry.consent_public_key,
-                    expected_signed={"scope": envelope["scope"], "grant": envelope["grant"],
-                                     "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"},
-                    map_scope=lambda received, expected: self._assert_envelope_scope(received, expected),
-                    guard=lambda: self._require_unchanged(source, version),
-                )
+            authority = self._authority
+            if authority is None or not callable(getattr(authority, "receipt_admission", None)):
+                raise PeerRegistryError("admission_unavailable")
+            # The authority takes the journal lock first.  Never move source.locked_current outside
+            # this context: unpair uses the same journal -> registry order.
+            with authority.receipt_admission(source, endpoint_id=scope.binding["endpoint_id"],
+                                             generation=scope.pairing_generation,
+                                             binding=scope.binding,
+                                             deadline=ADMISSION_DEADLINE.get()) as journal_peer:
+                with source.locked_current() as fresh:
+                    version = source.version()
+                    journal_peer_id = getattr(journal_peer, "peer_id", None)
+                    journal_key = getattr(journal_peer, "consent_public_key", None)
+                    if journal_peer_id is not None:
+                        if not self._matches(fresh, scope.peer_id, scope.pairing_generation, scope.binding):
+                            raise PeerRegistryError("peer_binding_changed")
+                        if scope.peer_id != journal_peer_id or not isinstance(journal_key, bytes):
+                            raise PeerRegistryError("peer_binding_changed")
+                        try:
+                            entry = fresh.lookup(journal_peer_id)
+                        except Exception:
+                            raise PeerRegistryError("peer_binding_changed") from None
+                        if entry.peer_id != journal_peer_id or entry.consent_public_key != journal_key:
+                            raise PeerRegistryError("peer_binding_changed")
+                        consent_key = journal_key
+                    else:
+                        if not self._matches(fresh, scope.peer_id, scope.pairing_generation, scope.binding):
+                            raise PeerRegistryError("peer_binding_changed")
+                        entry = fresh.lookup(scope.peer_id)
+                        consent_key = entry.consent_public_key
+                    self._receipt_store.admit_envelope(
+                        scope=scope, envelope=envelope, consent_public_key=consent_key,
+                        expected_signed={"scope": envelope["scope"], "grant": envelope["grant"],
+                                         "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"},
+                        map_scope=lambda received, expected: self._assert_envelope_scope(received, expected),
+                        guard=lambda: self._require_unchanged(source, version),
+                    )
         except Exception as exc:
             code = str(exc)
-            raise PeerRegistryError(code if code in {"invalid_consent", "invalid_catalog", "invalid_material", "material_scope_conflict", "material_unavailable", "material_scope_mismatch", "peer_binding_changed", "admission_unavailable"} else "material_unavailable") from None
+            if code == "unknown_peer":
+                code = "peer_binding_changed"
+            raise PeerRegistryError(code if code in {"invalid_consent", "invalid_catalog", "invalid_material", "material_scope_conflict", "material_unavailable", "material_scope_mismatch", "peer_binding_changed", "admission_unavailable", "journal_busy", "journal_corrupt", "journal_storage_unavailable", "registry_source_busy", "admission_deadline_exceeded"} else "material_unavailable") from None
 
     async def admit_signed_material_async(self, scope: MaterialScope, envelope: dict) -> None:
         """The off-loop receipt-write entry point: :meth:`admit_signed_material` on the callback lane.

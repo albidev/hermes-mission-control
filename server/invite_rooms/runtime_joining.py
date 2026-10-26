@@ -59,12 +59,14 @@ from urllib.parse import urlsplit
 from invite_rooms import identity as identity_module
 from invite_rooms import pairing_codec, private_fs
 from invite_rooms.consent import ConsentKey, Encoding, PublicFormat
+from invite_rooms import runtime_config
+from invite_rooms.control.connector import LinkBinding, LinkIdentity, make_link_connector
 from invite_rooms.control.dispatcher import ControlDispatcher, ControlError
 from invite_rooms.control.firewall import FirewallDenied, ForwardedRequest, UpstreamAmbiguous, UpstreamResponse
 from invite_rooms.invitation import ApprovedHostRegistry, InvitationError
 from invite_rooms.joining import JoiningError, JoiningOwnerService
 from invite_rooms.joining_store import JoiningStore, JoiningStoreError
-from invite_rooms.pairing_journal import Journal, JournalError
+from invite_rooms.pairing_journal import Journal, JournalError, JournalLinkAuthority
 from invite_rooms.pairing_journal import binding_for as link_binding
 from invite_rooms.peer_binding import PeerBindingError, validate_peer_binding
 from invite_rooms.peer_registry import PeerRegistryError, _native_catalog
@@ -499,14 +501,77 @@ def _refuse_constant(_name):
     raise ValueError("constant")
 
 
+def _config_connector_factory(config) -> Callable:
+    """Per-config pinned transport: ``factory(link, remaining) -> HostConnector`` (loopback mTLS, in-memory CA).
+
+    Everything that decides trust is re-read at CALL time from authoritative state, never from the caller's link
+    snapshot, the peer-registry projection or request data:
+
+    * the peer record (leaf pin, CA PEM, binding, generation, state) comes from the pairing journal;
+    * the local certificate/key come from the verified local identity bundle;
+    * the destination comes ONLY from the owner-private ``joining.control_endpoints`` entry for that journal peer.
+
+    The peer CA PEM is handed to ``ssl`` as in-memory ``cadata``; no CA file is ever created or read.  Any failure
+    raises (the channel maps it to ``control_unavailable``) before a socket is opened.
+    """
+    def factory(link: Mapping, remaining: float):
+        settings = _joining_settings(config)
+        endpoint_id, generation = link["endpoint_id"], link["generation"]
+        if not isinstance(endpoint_id, str) or type(generation) is not int:
+            raise ControlError("control_unavailable")
+        journal = Journal(config.pairing.journal_dir, anchor=config.pairing.journal_anchor)
+        authority = JournalLinkAuthority(journal)
+        # Runs on the event-loop thread: exactly ONE non-waiting shared-lock read of the verified journal (busy /
+        # corrupt / missing / revoked / wrong role / changed generation => immediate refusal, no socket, no effect).
+        # The lock is released before the identity-file, TLS and socket work below.
+        trust = authority.peer_trust(endpoint_id, generation, role="joining", states=tuple(sorted(_ACTIVE_STATES)))
+        if trust is None:
+            raise ControlError("control_unavailable")
+        peer_id, ca_pem = trust.peer_id, trust.ca_pem
+        link_peer = link.get("peer")
+        if isinstance(link_peer, Mapping) and link_peer.get("peer_id") not in (None, peer_id):
+            raise ControlError("control_unavailable")
+        try:
+            endpoints = runtime_config.parse_control_endpoints(settings["control_endpoints"])
+            host, port = endpoints[peer_id]
+        except (runtime_config.RuntimeConfigError, KeyError, TypeError):
+            raise ControlError("control_unavailable") from None
+        bundle = identity_module.load_identity(settings["identity_dir"], installation_id=config.installation_id,
+                                               profile=config.profile)
+        expected = trust.binding_dict()
+        binding = LinkBinding(endpoint_id=endpoint_id, generation=generation, address=(host, port),
+                              peer_ca_file=None, peer_ca_data=ca_pem, peer_fingerprint=trust.fingerprint,
+                              expected_binding=expected, timeout=float(remaining))
+        identity = LinkIdentity(cert_file=str(bundle.leaf_cert_file), key_file=str(bundle.leaf_key_file))
+        return make_link_connector(binding, identity, authority)
+    return factory
+
+
 def default_joining_control(config, link) -> PinnedControlChannel:
     """Process-wiring factory for the REAL channel.
 
-    Install with ``configure_joining_control(default_joining_control)`` together
-    with ``configure_joining_transport(...)``.  It performs no IO: the connector
-    is resolved per call, and without a pinned transport every call fails closed.
+    Install with ``configure_joining_control(default_joining_control)`` (see :func:`install_joining_wiring`).  It
+    performs no IO: the pinned connector is built per call from THIS config, so nothing leaks between configs, and
+    without an owner endpoint / current journal link every call fails closed.
     """
-    return PinnedControlChannel(link)
+    if config is None:
+        return PinnedControlChannel(link)
+    return PinnedControlChannel(link, connector_factory=_config_connector_factory(config))
+
+
+def install_joining_wiring() -> None:
+    """Sidecar lifecycle: install the config-scoped joining channel factory (idempotent).
+
+    The process-wide transport hook is deliberately left cleared: the pinned transport is bound to each config by
+    :func:`default_joining_control`, so no ambient transport can be shared across configs/profiles.
+    """
+    configure_joining_control(default_joining_control)
+    configure_joining_transport()
+
+
+def clear_joining_wiring() -> None:
+    configure_joining_control()
+    configure_joining_transport()
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -737,10 +802,11 @@ class JoiningOwner:
         if room_id != scope["room_id"] or member_id != scope["member_id"]:
             # The owner must confirm the EXACT host-approved scope, never a guess.
             raise JoiningError("consent_scope_conflict")
-        if self.store.confirmed_scope(import_id) is None:
-            self.admit()  # re-check admission AFTER the status round-trip, before the local decision
-            self.service(record).confirm_scope(import_id, room_id=scope["room_id"],
-                                               member_id=scope["member_id"])
+        self.admit()  # re-check admission AFTER the status round-trip, before the local decision
+        # Always through the equality-enforcing service/store: idempotent for the exact same scope,
+        # consent_scope_conflict if the host now presents a different one.
+        self.service(record).confirm_scope(import_id, room_id=scope["room_id"],
+                                           member_id=scope["member_id"])
         return self.view(self.record(import_id), status="consent", scope=scope)
 
     def _consent(self, record: Mapping, body: Mapping) -> dict:
@@ -932,7 +998,7 @@ def _joining_settings(config) -> dict:
     if hosts_path == Path(os.path.abspath(pairing.peers_path)) or hosts_path == Path(os.path.abspath(pairing.journal_dir)):
         raise JoiningError("unknown_host")
     return {"store_dir": store_dir, "identity_dir": identity_dir, "hosts_path": hosts_path,
-            "origins": dict(origins)}
+            "origins": dict(origins), "control_endpoints": raw.get("control_endpoints")}
 
 
 def load_owner(config, *, deadline: Optional[float] = None) -> Optional[JoiningOwner]:

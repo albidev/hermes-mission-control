@@ -14,22 +14,27 @@ The journal is the single source of truth (design section 1, R1-02/R1-03); ``pee
 """
 from __future__ import annotations
 
+import base64
 import fcntl
 import hashlib
 import json
 import os
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, NoReturn, Optional
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from invite_rooms import private_fs as fs
-from invite_rooms.control.dispatcher import LinkState
+from invite_rooms.control.dispatcher import _ALLOWED as _CONTROL_ALLOWED, LinkState
 from invite_rooms.peer_registry import PeerRegistryError, RegistrySource
 
 E_CORRUPT = "journal_corrupt"
 E_STORAGE = "journal_storage_unavailable"
 E_BUSY = "journal_busy"
+E_DEADLINE = "admission_deadline_exceeded"
 E_REFUSED = "journal_transition_refused"
 E_PROJECTION = "journal_projection_mismatch"
 
@@ -388,7 +393,7 @@ class Journal:
         self.clock = clock
 
     @contextmanager
-    def _locked(self, *, exclusive: bool):
+    def _locked(self, *, exclusive: bool, deadline: float | None = None, nonblocking: bool = False):
         dfd = lockfd = jfd = None
         try:
             try:
@@ -397,13 +402,27 @@ class Journal:
             except (fs.PrivateStorageError, OSError):
                 raise JournalError(E_STORAGE) from None
             mode = (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB
-            deadline = time.monotonic() + self.lock_wait
-            while True:
+            if nonblocking:
+                # Exactly one non-waiting attempt: contention is an immediate fail-closed refusal (no poll loop,
+                # no sleep), so a caller on a shared event-loop thread is never parked behind a foreign holder.
+                try:
+                    fcntl.flock(lockfd, mode)
+                except OSError:
+                    raise JournalError(E_BUSY) from None
+            lock_deadline = time.monotonic() + self.lock_wait
+            if deadline is not None:
+                lock_deadline = min(lock_deadline, deadline)
+                if time.monotonic() >= deadline:
+                    raise JournalError(E_DEADLINE) from None
+            while not nonblocking:
                 try:
                     fcntl.flock(lockfd, mode)
                     break
                 except OSError:
-                    if time.monotonic() >= deadline:
+                    now = time.monotonic()
+                    if deadline is not None and now >= deadline:
+                        raise JournalError(E_DEADLINE) from None
+                    if now >= lock_deadline:
                         raise JournalError(E_BUSY) from None
                     time.sleep(0.005)
             try:
@@ -412,6 +431,8 @@ class Journal:
             except (fs.PrivateStorageError, OSError):
                 raise JournalError(E_STORAGE) from None
             state = _verify(raw)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise JournalError(E_DEADLINE) from None
             if not raw:
                 try:
                     fs.fsync(dfd)  # the (new) journal entry itself must be durable
@@ -488,21 +509,149 @@ def binding_for(link: Mapping) -> dict:
             "target_profile": p["profile"], "catalog_digest": p["catalog_digest"], "policy_digest": p["policy_digest"]}
 
 
+@dataclass(frozen=True)
+class JournalPeerAuthority:
+    peer_id: str
+    consent_public_key: bytes
+
+
+@dataclass(frozen=True)
+class PeerTrust:
+    """Immutable copy of the verified peer/trust record for ONE exact current link (see ``peer_trust``)."""
+    endpoint_id: str
+    generation: int
+    role: str
+    protocol_state: str
+    peer_id: str
+    ca_pem: Any
+    fingerprint: str
+    binding: tuple  # ``binding_for`` items as a sorted tuple of pairs: immutable, no shared mutable state
+
+    def binding_dict(self) -> dict:
+        return dict(self.binding)
+
+
+# Operation labels ``authority.admit`` accepts.  The control set is derived from the dispatcher allowlist (never a
+# second copy): the dispatcher admits the wire op ``consent`` under the handler label ``joining_consent``.  The
+# two data labels are the ones HostConnector / TargetConnector pass to ``_Admission.admit``.
+_ADMIT_OPERATIONS = frozenset((_CONTROL_ALLOWED - {"consent"}) | {"joining_consent", "data_send", "data_native"})
+# A confirmed link may only complete activation (mirrors ``ControlDispatcher._allowed``).
+_CONFIRMED_OPERATIONS = frozenset({"pair_ack"})
+# ``admit`` runs synchronously on the caller's thread (the dispatcher calls it inline on the event loop), so it never
+# waits for the journal lock: one non-blocking shared ``flock`` attempt, busy => refused (fail closed).
+
+
 class JournalLinkAuthority:
     """Real ``LinkAuthority``: every call re-reads the verified journal (no cache to go stale after unpair)."""
 
     def __init__(self, journal: Journal):
         self.journal = journal
 
+    @contextmanager
+    def receipt_admission(self, source: RegistrySource, *, endpoint_id: str, generation: int,
+                          binding: Mapping[str, Any], deadline: float | None = None):
+        """Hold the authoritative cutover lock while a receipt admission is decided.
+
+        The lock order is deliberately **journal shared lock -> registry shared lock -> receipt
+        effect**.  ``PairingService.unpair`` takes the journal exclusive lock before projecting
+        the durable revocation, so a receipt that starts after the journal fsync cannot pass on a
+        stale ``peers.json`` projection.  The caller must acquire ``source.locked_current`` only
+        inside this context; it must not acquire the registry lock before entering here.
+        """
+        if not isinstance(endpoint_id, str) or type(generation) is not int or not isinstance(binding, dict):
+            raise PeerRegistryError("peer_binding_changed")
+        try:
+            with self.journal._locked(exclusive=False, deadline=deadline) as (_jfd, state):
+                link = state.links.get(endpoint_id)
+                if (link is None or link.get("role") != "host" or link.get("protocol_state") != "acknowledged"
+                        or state.link_generation(link) != generation
+                        or binding_for(link) != binding):
+                    raise PeerRegistryError("peer_binding_changed")
+                try:
+                    peer = link["peer"]
+                    peer_id = peer["peer_id"]
+                    if not isinstance(peer_id, str):
+                        raise ValueError()
+                    key_bytes = base64.b64decode(peer["consent_public_key_b64"], validate=True)
+                    if len(key_bytes) != 32:
+                        raise ValueError()
+                    Ed25519PublicKey.from_public_bytes(key_bytes)
+                except (KeyError, TypeError, ValueError):
+                    raise PeerRegistryError("peer_binding_changed") from None
+                yield JournalPeerAuthority(peer_id=peer_id, consent_public_key=key_bytes)
+        except JournalError:
+            raise
+
     def current(self, endpoint_id: str) -> Optional[LinkState]:
         if not isinstance(endpoint_id, str):
             return None
         try:
-            state = self.journal.snapshot()
+            # One non-waiting shared-lock attempt (same primitive as ``admit``): current() runs on the caller's
+            # event-loop thread, so a busy (foreign-held) journal is a transient fail-closed ``None``, never a wait.
+            with self.journal._locked(exclusive=False, nonblocking=True) as (_jfd, state):
+                link = state.links.get(endpoint_id)
+                if link is None:
+                    return None
+                return LinkState(binding=binding_for(link), generation=state.link_generation(link),
+                                 protocol_state=link["protocol_state"])
         except Exception:
-            return None  # corrupt/unavailable journal: no link is operational
-        link = state.links.get(endpoint_id)
-        if link is None:
+            return None  # corrupt/unavailable/busy journal: no link is operational
+
+    def peer_trust(self, endpoint_id: str, generation: int, *, role: str,
+                   states: tuple = ("confirmed", "acknowledged")) -> Optional[PeerTrust]:
+        """The full peer/trust record for one exact current link, from ONE non-waiting shared-lock read.
+
+        Same primitive as ``current()``/``admit()`` (never waits, safe on an event-loop thread) but returns the
+        validated, copied peer data a client connector needs (peer id, CA PEM, leaf pin, binding).  The journal is
+        read and verified under the lock, which is released before this returns, i.e. before any identity-file,
+        TLS, socket or other I/O.  Every refusal (bad types, busy/corrupt/unavailable journal, missing link, wrong
+        role/state, changed generation, malformed peer record) is a plain ``None``.  No cache, no caller fields.
+        """
+        if (not isinstance(endpoint_id, str) or type(generation) is not int or not isinstance(role, str)
+                or not isinstance(states, tuple)):
             return None
-        return LinkState(binding=binding_for(link), generation=state.link_generation(link),
-                         protocol_state=link["protocol_state"])
+        try:
+            with self.journal._locked(exclusive=False, nonblocking=True) as (_jfd, state):
+                link = state.links.get(endpoint_id)
+                if (link is None or link.get("role") != role or link.get("protocol_state") not in states
+                        or state.link_generation(link) != generation):
+                    return None
+                peer = link["peer"]
+                peer_id, ca_pem, fingerprint = peer["peer_id"], peer["ca_pem"], peer["fingerprint"]
+                if (not isinstance(peer_id, str) or not peer_id or not isinstance(fingerprint, str)
+                        or not isinstance(ca_pem, (str, bytes)) or not ca_pem):
+                    return None
+                binding = binding_for(link)
+                return PeerTrust(endpoint_id=endpoint_id, generation=generation, role=role,
+                                 protocol_state=link["protocol_state"], peer_id=peer_id, ca_pem=ca_pem,
+                                 fingerprint=fingerprint, binding=tuple(sorted(binding.items())))
+        except Exception:
+            return None  # corrupt/unavailable/busy journal: no trust record
+
+    def admit(self, endpoint_id: str, generation: int, operation: str) -> bool:
+        """Authoritative per-effect admission (R1-05).  ``True`` only for an exact, currently valid link.
+
+        Re-reads the verified journal under its *shared* lock (serialised with ``unpair``'s exclusive lock) and
+        releases that lock before returning: the caller starts its handler / native / network effect only
+        afterwards, so no journal lock is ever held across I/O.  An effect admitted before the durable unpair
+        cutover may therefore still finish; unpair is not physical cancellation.  Callers must invoke this after
+        their bounded queue/slot wait, immediately before the first effect, with no ``await`` in between.
+        Every refusal path (bad types, unknown operation, missing/revoked/stale link, corrupt, busy or
+        unavailable journal) is a plain ``False``.  The lock is attempted exactly once without waiting: a busy journal
+        (e.g. a writer mid-transaction in another process) refuses immediately rather than polling on the caller's
+        (event-loop) thread.  Filesystem open/read/verify cost is not bounded by this contract.
+        """
+        if (not isinstance(endpoint_id, str) or type(generation) is not int or not isinstance(operation, str)
+                or operation not in _ADMIT_OPERATIONS):
+            return False
+        try:
+            with self.journal._locked(exclusive=False, nonblocking=True) as (_jfd, state):
+                link = state.links.get(endpoint_id)
+                if link is None or state.link_generation(link) != generation:
+                    return False
+                protocol_state = link.get("protocol_state")
+                if protocol_state == "acknowledged":
+                    return True
+                return protocol_state == "confirmed" and operation in _CONFIRMED_OPERATIONS
+        except Exception:
+            return False  # corrupt/unavailable/busy journal: nothing is admitted

@@ -17,6 +17,7 @@ per distinct cause. No path, secret, or raw config value is ever logged.
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import logging
 import os
@@ -32,13 +33,16 @@ from invite_rooms.joining_store import JoiningStore
 from invite_rooms import private_fs
 from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError, RegistrySource
 from invite_rooms.material_receipts import MaterialReceiptStore, MaterialReceiptError
+from invite_rooms.pairing_journal import Journal, JournalLinkAuthority
 from invite_rooms.service import InviteRoomsService, OwnerContext, ServiceError, _INSTALL_PATTERN, _PROFILE_PATTERN
 from invite_rooms.consent import ConsentKey
 from room_invite_store import InviteError, RoomInviteStore
 
 _CONFIG_ENV = "MISSION_CONTROL_ROOM_INVITES_CONFIG"
 _TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing"}
-_JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id", "identity_dir", "hosts_path", "origins"}
+_JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id", "identity_dir", "hosts_path", "origins", "control_endpoints"}
+_CONTROL_ENDPOINT_FIELDS = {"host", "port"}
+_CONTROL_ENDPOINT_HOSTS = frozenset({"127.0.0.1", "::1"})
 _PAIRING_FIELDS = {"identity_dir", "journal_dir", "peers_path"}
 _PEER_FIELDS = {"peer_id", "installation_id", "profile", "fingerprint", "endpoint_id", "catalog", "consent_public_key_b64", "tls_ca_pem", "pairing_generation"}
 _NATIVE_RPC_FIELDS = {"endpoint", "token_path"}
@@ -59,6 +63,45 @@ def _warn_once(key: str, message: str) -> None:
 
 class RuntimeConfigError(ValueError):
     """Machine code only: never interpolates remote values, paths or secrets."""
+
+
+def parse_control_endpoints(raw) -> dict:
+    """Validate ``joining.control_endpoints``: ``{peer_id: {"host": literal loopback IP, "port": 1..65535}}``.
+
+    Owner-private DESTINATION only.  It never carries identity, fingerprint, generation, CA or authorization, and it
+    is deliberately independent of ``joining.origins`` (the HTTPS invitation-origin pin).  Raises
+    ``RuntimeConfigError`` with a machine code on any deviation; returns ``{peer_id: (host, port)}``.
+    """
+    if not isinstance(raw, dict) or not raw:
+        raise RuntimeConfigError("invalid_control_endpoints")
+    result = {}
+    for peer_id, entry in raw.items():
+        if not isinstance(peer_id, str) or not peer_id or not isinstance(entry, dict) or set(entry) != _CONTROL_ENDPOINT_FIELDS:
+            raise RuntimeConfigError("invalid_control_endpoints")
+        host, port = entry["host"], entry["port"]
+        if not isinstance(host, str) or type(port) is not int or not 0 < port <= 65535:
+            raise RuntimeConfigError("invalid_control_endpoints")
+        # Exact string membership BEFORE any address normalisation: only the two approved loopback literals (no
+        # other 127/8 address, scope id, alternate/padded/mapped spelling, hostname or non-loopback address).
+        if host not in _CONTROL_ENDPOINT_HOSTS:
+            raise RuntimeConfigError("invalid_control_endpoints")
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            raise RuntimeConfigError("invalid_control_endpoints") from None
+        if not address.is_loopback or str(address) != host:
+            raise RuntimeConfigError("invalid_control_endpoints")
+        result[peer_id] = (host, port)
+    return result
+
+
+def _no_duplicate_keys(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError("duplicate")
+        out[key] = value
+    return out
 
 
 def _is_private_file(path: Path) -> bool:
@@ -93,6 +136,7 @@ class RuntimeConfig:
 class PairingConfig:
     identity_dir: Path
     journal_dir: Path
+    journal_anchor: Path
     peers_path: Path
 
 
@@ -122,7 +166,19 @@ def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
                 os.close(private_fs.open_private_dir(directory, None, create=False))
             except private_fs.PrivateStorageError:
                 return None
-    return PairingConfig(identity_dir=identity_dir, journal_dir=journal_dir, peers_path=peers_path)
+    # The journal and invite store are deliberately allowed to be siblings.  Validate the
+    # journal's nearest existing owner-private parent here, then retain that exact anchor for
+    # runtime construction.  Passing the store parent would reject the documented sibling layout;
+    # falling back to a broad ancestor would weaken private_fs confinement.
+    journal_anchor = private_fs.nearest_existing_parent(journal_dir)
+    try:
+        # The selected anchor is the trust boundary.  Validate that directory itself without
+        # implicitly validating its parent (which may be a shared, non-private directory).
+        os.close(private_fs.open_private_dir(journal_anchor, journal_anchor, create=False))
+    except private_fs.PrivateStorageError:
+        return None
+    return PairingConfig(identity_dir=identity_dir, journal_dir=journal_dir,
+                         journal_anchor=journal_anchor, peers_path=peers_path)
 
 
 def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
@@ -181,6 +237,13 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
                 raise RuntimeConfigError("invalid_joining")
             joining_host_label = joining_raw.get("host_label", "host")
             joining_own_bot_id = joining_raw.get("own_bot_id")
+            if "control_endpoints" in joining_raw:
+                parse_control_endpoints(joining_raw["control_endpoints"])
+                try:
+                    # A duplicate/conflicting peer entry is silently collapsed by json.loads: re-parse strictly.
+                    json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
+                except (OSError, UnicodeDecodeError, ValueError):
+                    raise RuntimeConfigError("invalid_control_endpoints") from None
         if not _is_private_file(peer_registry_path):
             _warn_once("peer-registry-perm", "peer registry path missing or not mode 0600 with a 0700 parent directory")
             return None
@@ -261,6 +324,12 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
         registry._receipt_store = receipts
         # Authoritative source for the R1-05 admission seam; the loader is resolved at call time.
         registry._source = RegistrySource(config.peer_registry_path, lambda path: build_peer_registry(path))
+        # Receipt admission is enabled only when the owner has supplied the validated pairing
+        # configuration.  The journal is authoritative; a JSON-only registry is never a production
+        # fallback because it cannot serialize a post-fsync unpair cutover.
+        if config.pairing is not None:
+            journal = Journal(config.pairing.journal_dir, anchor=config.pairing.journal_anchor)
+            registry._authority = JournalLinkAuthority(journal)
         ctx = OwnerContext(installation_id=config.installation_id, profile=config.profile)
         service = InviteRoomsService(store, registry, trusted_owner=ctx, material_resolver=material_resolver)
     except (RuntimeConfigError, InviteError, ServiceError, PeerRegistryError, MaterialReceiptError, sqlite3.Error, OSError):

@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.x509.oid import NameOID
 import datetime
+from contextlib import contextmanager
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -43,6 +44,14 @@ INSTALL_B = "install:" + "b" * 32
 INSTALL_C = "install:" + "c" * 32
 FINGERPRINT_B = "b" * 64
 ADAPTER_URL = "http://127.0.0.1:19001/links/unit-link"
+
+
+class FixtureAdmissionAuthority:
+    """Explicit JSON-only test fixture; production uses the pairing journal authority."""
+
+    @contextmanager
+    def receipt_admission(self, source, **_identity):
+        yield None
 GRANT = "unit-fixture-grant-secret-value"
 _CONSENT_SIGNER = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
 CONSENT_PUBLIC = _CONSENT_SIGNER.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -268,6 +277,7 @@ class RoomInviteRoutesHttpTest(unittest.TestCase):
             # R3B-05: the signed-material write path re-reads the authoritative peers.json, so this
             # fixture must install the same source production does (load_service).
             registry._source = RegistrySource(Path(path), original_build)
+            registry._authority = FixtureAdmissionAuthority()
             envelope = target_signed_envelope(scoped.scope, scoped.material.grant, scoped.material.catalog)
             registry.admit_signed_material(scoped.scope, envelope)
             return registry

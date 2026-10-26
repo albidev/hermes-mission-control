@@ -3211,9 +3211,14 @@ def main() -> None:
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     print(f"[mission-control-local-telemetry] listening on http://{host}:{port}", flush=True)
+    # Joining control channel: config-scoped factory, owned by this sidecar's lifecycle (cleared on exit).
+    # Feature-off/invalid owner config never reaches it: the routes layer returns 404 first.
+    from invite_rooms import runtime_joining as _runtime_joining
+    _runtime_joining.install_joining_wiring()
     try:
         server.serve_forever()
     finally:
+        _runtime_joining.clear_joining_wiring()
         shutdown_terminal_sessions()
         terminal_thread.stop()  # type: ignore[attr-defined]
         terminal_thread.join(timeout=2)

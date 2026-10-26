@@ -168,14 +168,18 @@ class LinkBinding:
     endpoint_id: str
     generation: int
     address: tuple[str, int]
-    peer_ca_file: str
+    peer_ca_file: str | None
     peer_fingerprint: str
     expected_binding: Mapping[str, Any]
     timeout: float = 10.0
     max_inflight: int = 8
+    #: In-memory peer CA PEM (product path).  Mutually exclusive with ``peer_ca_file``; never written to disk.
+    peer_ca_data: str | None = None
 
     def __post_init__(self):
         _loopback(self.address[0])
+        if (self.peer_ca_file is None) == (self.peer_ca_data is None):
+            raise ValueError("invalid link binding")
         if (type(self.address[1]) is not int or not 0 < self.address[1] <= 65535
                 or type(self.generation) is not int or self.generation < 1
                 or not isinstance(self.endpoint_id, str) or not self.endpoint_id
@@ -226,7 +230,7 @@ class HostConnector:
             self.admission = _Admission(binding, authority)
             self.binding = binding
             self.client = _DirectClient(binding.address)
-            self.context = client_context(ca_file=binding.peer_ca_file,
+            self.context = client_context(ca_file=binding.peer_ca_file, ca_data=binding.peer_ca_data,
                 cert_file=identity.cert_file, key_file=identity.key_file)
             self.peer_fingerprint = binding.peer_fingerprint
             self.timeout = binding.timeout
@@ -365,7 +369,7 @@ class TargetConnector:
         self.admission = None
         if binding is not None:
             self.admission = _Admission(binding, authority)
-            self.context = server_context(ca_file=binding.peer_ca_file,
+            self.context = server_context(ca_file=binding.peer_ca_file, ca_data=binding.peer_ca_data,
                 cert_file=identity.cert_file, key_file=identity.key_file)
             self.peer_fingerprint = binding.peer_fingerprint
             self.timeout = binding.timeout

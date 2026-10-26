@@ -143,6 +143,7 @@ class ActivationR2R4R5R6Tests(unittest.IsolatedAsyncioTestCase):
             Path(tmp.name) / 'registry-fixture', peer_id='owner-b', installation_id=INSTALL_B,
             profile='default', fingerprint=FINGERPRINT_B, endpoint_id='endpoint-b', catalog=CATALOG,
             consent_public_key=CONSENT_PUBLIC, tls_ca_pem=CA_PEM)
+        reg._authority = MR.FixtureAdmissionAuthority()
         rpc = RecordingRpc(authority)
         svc._rpc = rpc
         lobby = svc.create_lobby(ctx, name='Scoped activation', roster=copy.deepcopy(ROSTER))
