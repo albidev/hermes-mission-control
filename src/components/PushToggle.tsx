@@ -5,10 +5,10 @@ import { useI18n } from '../lib/i18n';
 import { getPushState, pushSupported, subscribeToPush, unsubscribeFromPush, type PushSubscriptionState } from '../lib/push-client';
 
 /**
- * Push notifications toggle. Shows an on/off switch for Web Push on this
- * device. When enabled, requests permission and registers the subscription
- * with the backend so Hermes responses can arrive as system notifications
- * while the app is in the background or closed.
+ * Push notifications control. Expanded rows offer two options; the compact
+ * sidebar uses a single icon toggle. Enabling requests permission and
+ * registers the subscription with the backend so Hermes responses can arrive as
+ * system notifications while the app is in the background or closed.
  */
 export function PushToggle() {
   const { t } = useI18n();
@@ -28,14 +28,14 @@ export function PushToggle() {
   const subscribed = state?.status === 'subscribed';
   const disabled = busy || !state || unsupported || state.status === 'denied';
 
-  const toggle = async () => {
-    if (disabled) return;
+  const activate = async (next: boolean) => {
+    if (disabled || next === subscribed) return;
     setBusy(true);
     try {
-      const next = subscribed
-        ? await unsubscribeFromPush(storedToken)
-        : await subscribeToPush(storedToken);
-      setState(next);
+      const result = next
+        ? await subscribeToPush(storedToken)
+        : await unsubscribeFromPush(storedToken);
+      setState(result);
     } finally {
       setBusy(false);
     }
@@ -48,24 +48,53 @@ export function PushToggle() {
       : t('push.enable');
 
   return (
-    <button
-      className="pill pill-subtle pill-button side-action-button push-toggle"
-      type="button"
-      onClick={() => void toggle()}
-      disabled={disabled}
-      aria-label={title}
-      title={title}
-      aria-pressed={subscribed}
-    >
-      {busy ? (
-        <Loader2 size={16} className="chat-spin" />
-      ) : subscribed ? (
-        <Bell size={16} />
-      ) : (
-        <BellOff size={16} />
-      )}
-      <span className="push-toggle-label">{t('push.label')}</span>
-      <span className="push-toggle-state" aria-hidden="true" />
-    </button>
+    <div className="push-toggle side-action-button" role="group" aria-label={title} title={title}>
+      <button
+        type="button"
+        className={`sidebar-preference-compact ${subscribed ? 'is-active' : ''}`.trim()}
+        onClick={() => void activate(!subscribed)}
+        disabled={disabled}
+        aria-pressed={subscribed}
+        aria-label={title}
+        title={title}
+      >
+        {busy ? <Loader2 size={16} className="chat-spin" aria-hidden />
+          : subscribed ? <Bell size={16} aria-hidden /> : <BellOff size={16} aria-hidden />}
+      </button>
+      <span className="push-toggle-label">
+        {busy ? (
+          <Loader2 size={16} className="chat-spin" aria-hidden />
+        ) : subscribed ? (
+          <Bell size={16} className="sidebar-preference-icon" aria-hidden />
+        ) : (
+          <BellOff size={16} className="sidebar-preference-icon" aria-hidden />
+        )}
+        {t('push.label')}
+      </span>
+      <div className="push-toggle-track">
+        <button
+          type="button"
+          className={`push-toggle-option ${subscribed ? '' : 'is-active'}`.trim()}
+          onClick={() => void activate(false)}
+          disabled={disabled}
+          aria-pressed={!subscribed}
+          aria-label={t('push.off')}
+          title={t('push.off')}
+        >
+          {t('push.off')}
+        </button>
+        <button
+          type="button"
+          className={`push-toggle-option ${subscribed ? 'is-active' : ''}`.trim()}
+          onClick={() => void activate(true)}
+          disabled={disabled}
+          aria-pressed={subscribed}
+          aria-label={t('push.on')}
+          title={t('push.on')}
+        >
+          {t('push.on')}
+        </button>
+      </div>
+    </div>
   );
 }

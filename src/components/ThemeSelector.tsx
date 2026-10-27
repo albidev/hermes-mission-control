@@ -31,6 +31,16 @@ export function ThemeSelector({ showLabel = true, className = '' }: { showLabel?
 
   return (
     <div className={`theme-toggle ${className}`.trim()} role="group" aria-label="Theme mode">
+      <button
+        type="button"
+        className="sidebar-preference-compact"
+        title={t(resolvedTheme === 'dark' ? 'theme.enableLight' : 'theme.enableDark')}
+        aria-label={t('theme.darkTitle')}
+        aria-pressed={resolvedTheme === 'dark'}
+        onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+      >
+        {resolvedTheme === 'dark' ? <MoonIcon /> : <SunIcon />}
+      </button>
       {showLabel ? (
         <span className="theme-toggle-label">
           <Sun size={16} className="sidebar-preference-icon" aria-hidden />

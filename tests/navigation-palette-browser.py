@@ -87,13 +87,21 @@ def main():
             port = int((runtime / 'port').read_text())
             ports.append(port)
             base = f'http://127.0.0.1:{port}'
+            # Verify HTTP readiness before launching the browser.
+            with HTTP.open(base + '/', timeout=30) as response:
+                response.read()
             profile = runtime / 'chrome-profile'
-            browser = subprocess.Popen([str(CHROME), '--headless=new', '--no-first-run', '--no-default-browser-check',
-                '--disable-extensions', '--disable-background-networking', '--disable-sync',
+            # A Chrome started detached (new session, fresh profile) cannot
+            # resolve a default keychain on macOS, so its cookie-encryption
+            # lookup fails with -25307 and the system raises a keychain prompt.
+            # The mock keystore keeps the disposable profile keychain-free; it
+            # never touches the user's login keychain.
+            browser = subprocess.Popen([str(CHROME), '--headless=new', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
+                '--disable-extensions', '--disable-background-networking', '--disable-sync', '--use-mock-keychain',
                 '--disable-component-update', '--disable-default-apps', '--no-service-autorun',
                 '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1',
                 '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
-                '--user-data-dir=' + str(profile), 'about:blank'], stdout=log, stderr=log, start_new_session=True)
+                '--user-data-dir=' + str(profile), base + '/'], stdout=log, stderr=log, start_new_session=True)
             launched.append((browser, psutil.Process(browser.pid).create_time()))
             deadline = time.monotonic() + 20
             while not (profile / 'DevToolsActivePort').exists():
@@ -103,7 +111,8 @@ def main():
             debug_port = int((profile / 'DevToolsActivePort').read_text().splitlines()[0])
             ports.append(debug_port)
 
-            with driver_module.Driver(debug_port, timeout=45) as driver:
+            with driver_module.Driver(debug_port, timeout=20) as driver:
+                driver.call('Page.enable')
                 def evaluate(expression):
                     return driver.evaluate(expression)
 
@@ -207,10 +216,139 @@ def main():
                 # extraction ambiguous).
                 plugin_items = [{'to': '/reports', 'label': 'Plugin reports', 'icon': 'FileText', 'order': 25}]
 
-                driver.call('Emulation.setDeviceMetricsOverride', width=1280, height=1000, deviceScaleFactor=1, mobile=False)
-                driver.call('Page.navigate', url=base)
                 wait("!!document.querySelector('.workspace-bar')", 'Shell failed to mount')
                 wait("!!document.querySelector('.side-menu-actions > .palette-open-button:first-child')", 'the palette opener must be the first row of the sidebar actions')
+
+                wait("!!document.querySelector('[title=\"Primary Agent\"]')", 'primary identity must settle before chrome measurements')
+                evaluate("document.documentElement.dataset.theme = 'dark'; window.__mcFixtureStore.resolvedTheme = 'dark'")
+                report['shell_chrome'] = evaluate('''(() => {
+                    const head = document.querySelector('.side-menu-head');
+                    const version = document.querySelector('.sidebar-version');
+                    return { headText: head.innerText.trim(), headHeight: head.getBoundingClientRect().height,
+                        versionInFooter: !!version.closest('.side-menu-footer'),
+                        versionCount: document.querySelectorAll('.sidebar-version').length };
+                })()''')
+                screenshot('shell-chrome-before-check')
+                assert report['shell_chrome']['headText'] == 'Mission Control', report['shell_chrome']
+                assert report['shell_chrome']['versionInFooter'] and report['shell_chrome']['versionCount'] == 1, report['shell_chrome']
+                assert report['shell_chrome']['headHeight'] <= 72, report['shell_chrome']
+                check('sidebar header contains only Mission Control and collapse; one version lives in the footer')
+
+                report['mobile_status'] = []
+                for width in (320, 390, 639):
+                    driver.call('Emulation.setDeviceMetricsOverride', width=width, height=800, deviceScaleFactor=1, mobile=True)
+                    driver.call('Emulation.setTouchEmulationEnabled', enabled=True)
+                    for name in ('Primary Agent', 'Primary Agent with a deliberately long display name'):
+                        evaluate(f'window.__mcPrimaryName = {json.dumps(name)}; window.dispatchEvent(new Event("focus"))')
+                        wait(f'!!document.querySelector("[title=" + CSS.escape({json.dumps(name)}) + "]")', 'identity refresh must settle')
+                        geometry = evaluate('''(() => {
+                            const identity = [...document.querySelectorAll('[title]')].find(el => el.title === window.__mcPrimaryName);
+                            const model = [...document.querySelectorAll('code')].find(el => el.title === window.__mcFixtureStore.snapshot.activeModel);
+                            const status = [...document.querySelectorAll('span.rounded-full')].find(el => el.textContent.trim() === 'Thinking');
+                            const count = [...document.querySelectorAll('span')].find(el => el.textContent.trim() === '1 agent');
+                            const box = el => { const r = el.getBoundingClientRect(); return { x:r.x, y:r.y, right:r.right, bottom:r.bottom, width:r.width, height:r.height }; };
+                            return { width: innerWidth, identity:box(identity), model:box(model), status:box(status), count:box(count),
+                                scroll: document.documentElement.scrollWidth, name: identity.textContent, modelText:model.textContent };
+                        })()''')
+                        report['mobile_status'].append(geometry)
+                        first = geometry['identity']; status = geometry['status']; model = geometry['model']; count = geometry['count']
+                        assert abs(first['y'] + first['height']/2 - status['y'] - status['height']/2) < 3, geometry
+                        assert first['right'] <= status['x'] and model['y'] >= first['bottom'], geometry
+                        assert abs(model['y'] + model['height']/2 - count['y'] - count['height']/2) < 3, geometry
+                        assert model['right'] <= count['x'] and model['width'] > 170 and geometry['scroll'] <= width, geometry
+                        screenshot(f'overview-mobile-{width}-' + ('long' if len(name) > 20 else 'normal'))
+                    check(f'{width}px: identity/status and model/count occupy two deliberate rows, including long names')
+
+                # The mobile boundary is 640px inclusive, so the desktop flex row
+                # must already be in place at exactly 640px: same line for every
+                # item, visible separators and the agent count pinned to the end.
+                report['breakpoint_status'] = []
+                driver.call('Emulation.setDeviceMetricsOverride', width=640, height=800, deviceScaleFactor=1, mobile=True)
+                driver.call('Emulation.setTouchEmulationEnabled', enabled=True)
+
+                def row_center(box):
+                    return box['y'] + box['height'] / 2
+
+                for name, single_row in (('Primary Agent', True),
+                                         ('Primary Agent with a deliberately long display name', False)):
+                    evaluate(f'window.__mcPrimaryName = {json.dumps(name)}; window.dispatchEvent(new Event("focus"))')
+                    wait(f'!!document.querySelector("[title=" + CSS.escape({json.dumps(name)}) + "]")', 'identity refresh must settle')
+                    desktop = evaluate('''(() => {
+                        const layout = document.querySelector('.agent-status-layout');
+                        const identity = [...document.querySelectorAll('[title]')].find(el => el.title === window.__mcPrimaryName);
+                        const model = [...document.querySelectorAll('code')].find(el => el.title === window.__mcFixtureStore.snapshot.activeModel);
+                        const status = [...document.querySelectorAll('span.rounded-full')].find(el => el.textContent.trim() === 'Thinking');
+                        const count = [...document.querySelectorAll('span')].find(el => el.textContent.trim() === '1 agent');
+                        const box = el => { const r = el.getBoundingClientRect(); return { x:r.x, y:r.y, right:r.right, bottom:r.bottom, width:r.width, height:r.height }; };
+                        const separators = [...document.querySelectorAll('.agent-status-separator')]
+                            .filter(el => el.getClientRects().length > 0).map(box);
+                        return { width: innerWidth, display: getComputedStyle(layout).display, layout: box(layout),
+                            identity: box(identity), model: box(model), status: box(status), count: box(count),
+                            separators, scroll: document.documentElement.scrollWidth, name: identity.textContent };
+                    })()''')
+                    report['breakpoint_status'].append(desktop)
+                    assert desktop['display'] == 'flex', desktop
+                    assert len(desktop['separators']) == 2, desktop
+                    assert all(abs(separator['width'] - 1) < 0.6 for separator in desktop['separators']), desktop
+                    assert desktop['identity']['right'] <= desktop['model']['x'], desktop
+                    assert desktop['status']['right'] <= desktop['count']['x'], desktop
+                    assert abs(desktop['count']['right'] - desktop['layout']['right']) <= 1, desktop
+                    assert desktop['model']['width'] > 170, desktop
+                    assert desktop['scroll'] <= 640, desktop
+                    if single_row:
+                        # The short identity fits next to the uncapped model, so the
+                        # desktop toolbar stays on one line instead of wrapping.
+                        assert all(abs(row_center(desktop[left]) - row_center(desktop[right])) < 3
+                                   for left, right in (('identity', 'model'), ('model', 'status'), ('status', 'count'))), desktop
+                    else:
+                        # A long identity legitimately wraps the desktop toolbar onto a
+                        # second line; the wrap must stay inside the layout, keep the
+                        # model uncapped and leave the agent count pinned to the right.
+                        assert desktop['count']['y'] >= desktop['model']['bottom'] - 1, desktop
+                        assert abs(row_center(desktop['status']) - row_center(desktop['count'])) < 3, desktop
+                        assert desktop['model']['right'] <= desktop['layout']['right'] + 0.5, desktop
+                        assert desktop['status']['x'] >= desktop['layout']['x'] - 0.5, desktop
+                    screenshot('overview-breakpoint-640-' + ('long' if not single_row else 'normal'))
+                check('640px: desktop flex row with visible separators and the agent count pinned to the end, wrapping safely on a long name')
+
+                driver.call('Emulation.setTouchEmulationEnabled', enabled=False)
+                driver.call('Emulation.setDeviceMetricsOverride', width=1280, height=1000, deviceScaleFactor=1, mobile=False)
+                evaluate('window.__mcPrimaryName = "Primary Agent"; window.dispatchEvent(new Event("focus"))')
+
+                # The sidebar remains usable at a short desktop height and in a
+                # phone drawer, with its single footer reachable by scrolling.
+                for width, height in ((1024, 720), (390, 800)):
+                    driver.call('Emulation.setDeviceMetricsOverride', width=width, height=height, deviceScaleFactor=1, mobile=width < 981)
+                    driver.call('Emulation.setTouchEmulationEnabled', enabled=width < 981)
+                    if width < 981:
+                        time.sleep(0.3)  # Let the desktop-to-drawer slide finish before measuring a click target.
+                        click_selector('.mobile-sidebar-toggle')
+                        wait("document.querySelector('.layout-frame').classList.contains('is-open')", 'drawer must open')
+                        time.sleep(0.3)
+                    evaluate("document.querySelector('.side-nav').scrollTop = document.querySelector('.side-nav').scrollHeight")
+                    geometry = evaluate('''(() => {
+                        const aside = document.querySelector('.side-menu').getBoundingClientRect();
+                        const footer = document.querySelector('.side-menu-footer').getBoundingClientRect();
+                        const lock = document.querySelector('.lock-button').getBoundingClientRect();
+                        return {width: innerWidth, height:innerHeight, footerBottom:footer.bottom,
+                            lockVisible:lock.top >= aside.top && lock.bottom <= innerHeight,
+                            visible:footer.top >= aside.top && footer.bottom <= innerHeight && footer.right <= innerWidth};
+                    })()''')
+                    assert geometry['visible'] and geometry['lockVisible'], geometry
+                    report.setdefault('sidebar_footer', []).append(geometry)
+                    screenshot(f'sidebar-footer-{width}-{height}')
+                    evaluate("document.querySelector('.side-nav').scrollTop = 0")
+                    if width < 981:
+                        screenshot('sidebar-drawer-mobile')
+                        # The backdrop's center is underneath the drawer; click
+                        # its exposed strip, not the sidebar covering it.
+                        point = evaluate("({x:(document.querySelector('.side-menu').getBoundingClientRect().right + innerWidth)/2,y:innerHeight/2})")
+                        driver.call('Input.dispatchMouseEvent', type='mousePressed', button='left', buttons=1, clickCount=1, **point)
+                        driver.call('Input.dispatchMouseEvent', type='mouseReleased', button='left', buttons=0, clickCount=1, **point)
+                        wait("!document.querySelector('.layout-frame').classList.contains('is-open')", 'drawer must close')
+                    check(f'{width}x{height}: footer version remains reachable; drawer behavior preserved')
+                driver.call('Emulation.setTouchEmulationEnabled', enabled=False)
+                driver.call('Emulation.setDeviceMetricsOverride', width=1280, height=1000, deviceScaleFactor=1, mobile=False)
 
                 # Hold the real getPushState at the browser boundary, not a mocked component.
                 evaluate('''(() => {
@@ -228,22 +366,29 @@ def main():
                     assert evaluate('''(() => {
                         const card = document.querySelector('.side-menu-preferences');
                         const push = card?.querySelector('.push-toggle');
-                        return card?.children.length === 3 && !!push?.disabled
-                            && push.getAttribute('aria-pressed') === 'false'
+                        const options = push ? [...push.querySelectorAll('.push-toggle-option')] : [];
+                        return card?.children.length === 3 && options.length === 2 && options.every(option => option.disabled)
+                            && options[0].getAttribute('aria-pressed') === 'true' && options[1].getAttribute('aria-pressed') === 'false'
                             && push.querySelector('svg') && push.querySelector('.push-toggle-label')?.textContent === 'Push'
-                            && !!push.querySelector('.push-toggle-state')
-                            && getComputedStyle(push).cursor === 'not-allowed'
-                            && parseFloat(getComputedStyle(push).opacity) < 1;
+                            && push.getAttribute('role') === 'group' && push.getAttribute('aria-label') === push.title
+                            && getComputedStyle(options[0]).cursor === 'not-allowed'
+                            && parseFloat(getComputedStyle(options[0]).opacity) < 1;
                     })()'''), f'{mode}: three preference rows and a visibly disabled off Push control required'
-                    evaluate("document.querySelector('.push-toggle').click()")
+                    evaluate("document.querySelectorAll('.push-toggle-option')[1].click()")
                     assert evaluate('window.__pushRegisterCalls') == 1, 'disabled Push must not start a subscription'
                     screenshot(f'sidebar-push-{mode}')
-                    check(f'{mode}: preference card retains three rows; Push is off, disabled and non-interactive')
+                    check(f'{mode}: preferences retain three rows; Push is off, disabled and non-interactive')
+                    click_selector('.desktop-sidebar-toggle')
+                    assert evaluate("document.querySelector('.push-toggle .sidebar-preference-compact')?.disabled === true && document.querySelector('.push-toggle').getBoundingClientRect().height === 44"), f'{mode}: collapsed Push must remain a disabled single icon'
+                    evaluate("document.querySelector('.push-toggle .sidebar-preference-compact').click()")
+                    assert evaluate('window.__pushRegisterCalls') == 1, f'{mode}: disabled compact Push must not subscribe'
+                    click_selector('.desktop-sidebar-toggle')
+                    check(f'{mode}: collapsed Push is a disabled icon and cannot subscribe')
 
                 assert_disabled_push('loading')
                 loading_height = evaluate("document.querySelector('.side-menu-preferences').getBoundingClientRect().height")
                 evaluate('window.__resolvePushRegister({pushManager: {getSubscription: async () => null}})')
-                wait("document.querySelector('.push-toggle')?.disabled === false", 'loaded idle Push must become interactive')
+                wait("[...document.querySelectorAll('.push-toggle-option')].every(option => !option.disabled)", 'loaded idle Push must become interactive')
                 assert evaluate("document.querySelector('.side-menu-preferences').getBoundingClientRect().height") == loading_height, 'loading completion must not resize the preference card'
                 evaluate('''(() => {
                     navigator.serviceWorker.register = window.__originalPushRegister;
@@ -256,17 +401,19 @@ def main():
                 assert evaluate("document.querySelector('.side-menu-preferences').getBoundingClientRect().height") == loading_height, 'unsupported Push must preserve card height'
                 evaluate('window.PushManager = window.__originalPushManager; delete window.__originalPushManager; delete window.__originalPushRegister')
                 remount([])
-                wait("document.querySelector('.push-toggle')?.disabled === false", 'supported idle Push must be restored')
+                wait("[...document.querySelectorAll('.push-toggle-option')].every(option => !option.disabled)", 'supported idle Push must be restored')
 
                 # Phase 2 intent groups and uniform rows, exercised on the mounted shell.
                 wait("!!document.querySelector('.push-toggle')", 'Push row must render on the supported fixture browser')
-                assert evaluate("!!document.querySelector('.side-menu-head-top .sidebar-version') && !document.querySelector('.side-menu-actions .sidebar-version')"), 'version must move to the sidebar head beside collapse'
+                assert evaluate("!!document.querySelector('.side-menu-footer .sidebar-version') && !document.querySelector('.side-menu-head .sidebar-version')"), 'version must stay in the sidebar footer, not compete with the product title'
                 assert evaluate("document.querySelector('.side-menu-preferences')?.querySelectorAll('.push-toggle, .theme-toggle, .lang-toggle').length === 3 && !!document.querySelector('.side-menu-action-group > .lock-button')"), 'preferences and Lock must have separate intent groups'
 
                 # Reused by the real surface check and CSS mutation probes below.
                 evaluate('''window.__noPreferenceDividers = () => {
                     const card = document.querySelector('.side-menu-preferences');
-                    const elements = [card, document.querySelector('.side-menu-action-group'), ...card.children];
+                    const elements = [card, document.querySelector('.side-menu-action-group'),
+                        document.querySelector('.side-menu-actions .palette-open-button'),
+                        document.querySelector('.side-menu-actions .lock-button'), ...card.children];
                     const noBorders = s => ['Top', 'Right', 'Bottom', 'Left'].every(side => parseFloat(s['border' + side + 'Width']) === 0);
                     const noVisiblePseudo = (el, pseudo) => {
                         const s = getComputedStyle(el, pseudo);
@@ -281,7 +428,7 @@ def main():
                     return elements.every(el => noBorders(getComputedStyle(el))
                         && noVisiblePseudo(el, '::before') && noVisiblePseudo(el, '::after'));
                 }''')
-                for selector in ('.side-menu-preferences', '.side-menu-action-group', '.push-toggle', '.theme-toggle', '.lang-toggle'):
+                for selector in ('.side-menu-preferences', '.side-menu-action-group', '.push-toggle', '.theme-toggle', '.lang-toggle', '.side-menu-actions .palette-open-button', '.side-menu-actions .lock-button'):
                     for side in ('top', 'right', 'bottom', 'left'):
                         evaluate(f'''(() => {{ const s = document.createElement('style'); s.id = 'divider-probe';
                             s.textContent = {json.dumps(selector + ' { border-' + side + ': 1px solid red !important; }')};
@@ -295,8 +442,8 @@ def main():
                                 document.head.appendChild(s); }})()''')
                             assert not evaluate('window.__noPreferenceDividers()'), (selector, pseudo, rule)
                             evaluate("document.getElementById('divider-probe').remove()")
-                assert evaluate('window.__noPreferenceDividers()'), 'removing synthetic dividers must restore the clean card'
-                check('divider guard rejects all four borders and before/after height, border and content separators on card, group and every row')
+                assert evaluate('window.__noPreferenceDividers()'), 'removing synthetic dividers must restore clean pills and wrappers'
+                check('divider guard rejects all four borders and before/after height, border and content separators on wrappers and every pill')
 
                 def assert_action_surfaces(mode):
                     surfaces = evaluate('''(() => {
@@ -314,21 +461,67 @@ def main():
                         const card = style('.side-menu-preferences');
                         const lock = style('.lock-button');
                         const rows = [...find('.side-menu-preferences').children];
-                        const segments = [...find('.side-menu-preferences').querySelectorAll('.theme-toggle-option, .lang-toggle-option')];
+                        const segments = [...find('.side-menu-preferences').querySelectorAll('.theme-toggle-option, .lang-toggle-option, .push-toggle-option')];
+                        const pills = [find('.palette-open-button'), ...rows, find('.lock-button')];
+                        const measurements = pills.map(el => {
+                            const s = getComputedStyle(el), r = el.getBoundingClientRect();
+                            return {height: r.height, left: r.left, right: r.right, top: r.top, bottom: r.bottom,
+                                radius: s.borderRadius, background: s.backgroundColor};
+                        });
+                        const gaps = rows.slice(1).map((el, i) => el.getBoundingClientRect().top - rows[i].getBoundingClientRect().bottom);
+                        // Uniform rhythm: the opener above the block is spaced like the rows inside it.
+                        const rhythm = measurements.slice(1).map((m, i) => m.top - measurements[i].bottom);
+                        window.__actionMeasurements = {pills: measurements, gaps, rhythm,
+                            wrapperBackground: card.backgroundColor,
+                            surfaceRaised: token('--color-surface-raised', 'backgroundColor'),
+                            accent: lock.color, accentSubtle: lock.backgroundColor};
                         return {
-                            searchPill: parseFloat(search.borderRadius) >= 22 && parseFloat(search.borderTopWidth) === 0 && search.backgroundColor !== style('.side-menu').backgroundColor && search.backgroundColor !== 'rgba(0, 0, 0, 0)',
-                            cardSurface: parseFloat(card.borderRadius) >= 12 && card.backgroundColor !== style('.side-menu').backgroundColor && card.backgroundColor !== 'rgba(0, 0, 0, 0)',
+                            searchPill: search.backgroundColor === token('--color-surface-raised', 'backgroundColor') && parseFloat(search.borderTopWidth) === 0 && search.backgroundColor !== style('.side-menu').backgroundColor && search.backgroundColor !== 'rgba(0, 0, 0, 0)',
+                            transparentContainer: card.backgroundColor === 'rgba(0, 0, 0, 0)' && card.borderRadius === '0px' && ['Top', 'Right', 'Bottom', 'Left'].every(side => parseFloat(card['padding' + side]) === 0),
+                            independentPills: rows.every(el => getComputedStyle(el).backgroundColor === search.backgroundColor && getComputedStyle(el).borderRadius === '999px'),
+                            uniformPills: measurements.length === 5 && measurements.every(r => r.height === 44 && r.radius === '999px' && r.left === measurements[0].left && r.right === measurements[0].right),
                             noDividers: window.__noPreferenceDividers(),
-                            contiguous: rows.every((el, i) => i === 0 || Math.abs(el.getBoundingClientRect().top - rows[i-1].getBoundingClientRect().bottom) < 1),
-                            spacing: rect('.side-menu-preferences').top - rect('.palette-open-button').bottom >= 12 && rect('.lock-button').top - rect('.side-menu-preferences').bottom >= 8,
+                            separated: gaps.every(gap => gap >= 4),
+                            uniformRhythm: rhythm.length === 4 && (() => { const rowGap = parseFloat(getComputedStyle(find('.side-menu-actions')).rowGap); return rowGap > 0 && rhythm.every(gap => Math.abs(gap - rowGap) < 1); })(),
+                            noPointerCursor: [...find('.side-menu-actions').querySelectorAll('*')].every(el => getComputedStyle(el).cursor !== 'pointer'),
                             lockAccent: lock.color === token('--color-accent', 'color') && lock.color !== token('--color-negative', 'color') && lock.backgroundColor === token('--color-accent-subtle', 'backgroundColor') && parseFloat(lock.borderRadius) >= 22,
-                            segments: segments.length === 4 && segments.every(el => el.getBoundingClientRect().width === 44 && el.getBoundingClientRect().height === 44 && getComputedStyle(el).backgroundClip === 'padding-box' && parseFloat(getComputedStyle(el).borderLeftWidth) === 5 && getComputedStyle(el).backgroundColor === token(el.classList.contains('is-active') ? '--color-accent-subtle' : '--color-surface-sunken', 'backgroundColor')),
-                            pushAligned: rect('.push-toggle-label').right <= rect('.push-toggle-state').left && Math.abs(rect('.push-toggle-label').top + rect('.push-toggle-label').height / 2 - rect('.push-toggle-state').top - rect('.push-toggle-state').height / 2) < 3,
+                            segments: segments.length === 6 && segments.every(el => el.getBoundingClientRect().width === 44 && el.getBoundingClientRect().height === 44 && getComputedStyle(el).backgroundClip === 'padding-box' && parseFloat(getComputedStyle(el).borderLeftWidth) === 5 && getComputedStyle(el).backgroundColor === token(el.classList.contains('is-active') ? '--color-accent-subtle' : '--color-surface-sunken', 'backgroundColor')),
+                            pushAligned: rect('.push-toggle-label').right <= rect('.push-toggle-track').left && Math.abs(rect('.push-toggle-label').top + rect('.push-toggle-label').height / 2 - rect('.push-toggle-track').top - rect('.push-toggle-track').height / 2) < 3,
                         };
                     })()''')
                     report.setdefault('action_surfaces', {})[mode] = surfaces
-                    report.setdefault('segment_styles', {})[mode] = evaluate("[...document.querySelectorAll('.side-menu-actions .theme-toggle-option, .side-menu-actions .lang-toggle-option')].map(el => ({clip: getComputedStyle(el).backgroundClip, border: getComputedStyle(el).borderLeftWidth, background: getComputedStyle(el).backgroundColor}))")
+                    report.setdefault('segment_styles', {})[mode] = evaluate("[...document.querySelectorAll('.side-menu-actions .theme-toggle-option, .side-menu-actions .lang-toggle-option, .side-menu-actions .push-toggle-option')].map(el => ({clip: getComputedStyle(el).backgroundClip, border: getComputedStyle(el).borderLeftWidth, background: getComputedStyle(el).backgroundColor}))")
+                    report.setdefault('action_measurements', {})[mode] = evaluate('window.__actionMeasurements')
+                    report['browser_errors'] = evaluate('window.failures || []')
                     assert all(surfaces.values()), (mode, surfaces, report['segment_styles'][mode])
+                    opener = '.side-menu-actions .palette-open-button'
+                    before = evaluate(f'getComputedStyle(document.querySelector({json.dumps(opener)})).backgroundColor')
+                    point = evaluate(f'''(() => {{ const r = document.querySelector({json.dumps(opener)}).getBoundingClientRect();
+                        return {{x: r.x + r.width / 2, y: r.y + r.height / 2}}; }})()''')
+                    driver.call('Input.dispatchMouseEvent', type='mouseMoved', **point)
+                    wait(f'''(() => {{
+                        const probe = document.createElement('span');
+                        probe.style.backgroundColor = 'color-mix(in srgb, var(--color-text) 5%, var(--color-surface-raised))';
+                        document.querySelector('.side-menu-actions').appendChild(probe);
+                        const expected = getComputedStyle(probe).backgroundColor;
+                        probe.remove();
+                        const actual = getComputedStyle(document.querySelector({json.dumps(opener)})).backgroundColor;
+                        return actual === expected && actual !== {json.dumps(before)};
+                    }})()''', f'{mode}: the opener, an action of its own, must react on hover')
+                    report.setdefault('opener_hover', {}).setdefault(mode, {})[opener] = evaluate(f'getComputedStyle(document.querySelector({json.dumps(opener)})).backgroundColor')
+                    driver.call('Input.dispatchMouseEvent', type='mouseMoved', x=500, y=100)
+                    wait(f'getComputedStyle(document.querySelector({json.dumps(opener)})).backgroundColor === {json.dumps(before)}', 'opener hover surface must reset')
+                    # A row hosting a control does not react as a whole: its switch or its segments are the target.
+                    for selector in ('.side-menu-actions .push-toggle', '.side-menu-actions .theme-toggle', '.side-menu-actions .lang-toggle'):
+                        resting = evaluate(f'getComputedStyle(document.querySelector({json.dumps(selector)})).backgroundColor')
+                        point = evaluate(f'''(() => {{ const r = document.querySelector({json.dumps(selector)}).getBoundingClientRect();
+                            return {{x: r.x + r.width / 2, y: r.y + r.height / 2}}; }})()''')
+                        driver.call('Input.dispatchMouseEvent', type='mouseMoved', **point)
+                        time.sleep(0.35)  # Let any hover transition settle before sampling.
+                        hovered = evaluate(f'getComputedStyle(document.querySelector({json.dumps(selector)})).backgroundColor')
+                        assert hovered == resting, (mode, selector, 'a row hosting a control must not react on hover', resting, hovered)
+                        report.setdefault('row_hover', {}).setdefault(mode, {})[selector] = hovered
+                        driver.call('Input.dispatchMouseEvent', type='mouseMoved', x=500, y=100)
                     before_hover = evaluate("getComputedStyle(document.querySelector('.lock-button')).backgroundColor")
                     point = evaluate("(() => { const r = document.querySelector('.lock-button').getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; })()")
                     driver.call('Input.dispatchMouseEvent', type='mouseMoved', **point)
@@ -336,7 +529,7 @@ def main():
                     assert evaluate("document.querySelector('.lock-button').querySelectorAll('svg').length === 1 && !document.querySelector('.lock-button kbd, .lock-button input, .lock-button [role=switch]')"), 'Lock remains a single action without a trailing control'
                     driver.call('Input.dispatchMouseEvent', type='mouseMoved', x=500, y=100)
                     wait(f"getComputedStyle(document.querySelector('.lock-button')).backgroundColor === {json.dumps(before_hover)}", 'Lock hover surface must reset')
-                    check(f'{mode}: computed search pill, contiguous preference card, isolated accent Lock, aligned Push and 44px segments')
+                    check(f'{mode}: independent neutral pills on one rhythm with the opener, transparent spaced preferences, uniform 44px geometry, no pointer cursor, hosting rows that do not react on hover, isolated accent Lock, aligned Push and 44px segments')
 
                 evaluate("document.documentElement.dataset.theme = 'dark'")
                 time.sleep(0.3)  # Let token-dependent control transitions settle before sampling.
@@ -371,7 +564,7 @@ def main():
                         return {fullWidth: Math.abs(row.width - actions.width) <= 2,
                             uniform: rows.length === 5 && rows.every(el => Math.abs(el.getBoundingClientRect().width - actions.width) <= 2 && el.getBoundingClientRect().height >= 44),
                             preferences,
-                            headAligned: version.right <= collapse.left && Math.abs(version.y + version.height / 2 - collapse.y - collapse.height / 2) < 3,
+                            headAligned: !!document.querySelector('.side-menu-footer') && version.y > document.querySelector('.side-menu-actions').getBoundingClientRect().bottom && collapse.height >= 44,
                             chipVisible: button.querySelector('kbd').getBoundingClientRect().width > 0,
                             named: button.getAttribute('aria-label') === button.title && !!button.title,
                             aligned: title.right <= chat.left && Math.abs(title.y + title.height / 2 - chat.y - chat.height / 2) < 3};
@@ -379,12 +572,12 @@ def main():
                     assert all(geometry.values()), (width, geometry)
                     screenshot(f'sidebar-palette-expanded-{width}')
                     check(f'{width}px: first sidebar action is full-width, named, with shortcut chip; header title and Chat align')
-                    check(f'{width}px: all five actions have uniform full-width 44px rows; preference labels sit left of segments; version aligns beside collapse')
+                    check(f'{width}px: all five actions have uniform full-width 44px rows; preference labels sit left of segments; version sits below actions')
                 click_selector('.lang-toggle-option:last-child')
-                wait("document.querySelector('.push-toggle-label').textContent === 'Push' && document.querySelector('.push-toggle').getAttribute('aria-pressed') === 'false'", 'Italian idle Push must have a stable label and accessible off state')
+                wait("document.querySelector('.push-toggle-label').textContent === 'Push' && document.querySelectorAll('.push-toggle-option')[1].getAttribute('aria-pressed') === 'false'", 'Italian idle Push must have a stable label and accessible off state')
                 assert evaluate("document.querySelector('.push-toggle').title === 'Attiva le notifiche push per le risposte di Hermes'"), 'Push tooltip must be localized too'
                 click_selector('.lang-toggle-option:first-child')
-                wait("document.querySelector('.push-toggle-label').textContent === 'Push' && document.querySelector('.push-toggle').getAttribute('aria-pressed') === 'false'", 'English idle Push must keep its label and accessible off state')
+                wait("document.querySelector('.push-toggle-label').textContent === 'Push' && document.querySelectorAll('.push-toggle-option')[1].getAttribute('aria-pressed') === 'false'", 'English idle Push must keep its label and accessible off state')
                 check('Language segments change locale; Push label and tooltip use existing translations')
                 # Simulate only the browser subscription boundary: mount the real
                 # PushToggle/getPushState without requesting permission or sending push.
@@ -393,20 +586,34 @@ def main():
                     navigator.serviceWorker.register = async () => ({pushManager: {getSubscription: async () => ({})}});
                 })()''')
                 remount([])
-                wait("document.querySelector('.push-toggle-label')?.textContent === 'Push' && document.querySelector('.push-toggle').getAttribute('aria-pressed') === 'true'", 'English subscribed Push must retain its label and accessible on state')
+                wait("document.querySelector('.push-toggle-label')?.textContent === 'Push' && document.querySelectorAll('.push-toggle-option')[1].getAttribute('aria-pressed') === 'true'", 'English subscribed Push must retain its label and accessible on state')
                 assert evaluate("document.querySelector('.push-toggle').title === 'Push notifications are on' && document.querySelector('.push-toggle').getAttribute('aria-label') === document.querySelector('.push-toggle').title"), 'English on state remains accessible'
-                on_switch = evaluate("({background: getComputedStyle(document.querySelector('.push-toggle-state')).backgroundColor, thumb: getComputedStyle(document.querySelector('.push-toggle-state'), '::after').transform})")
+                on_options = evaluate("[...document.querySelectorAll('.push-toggle-option')].map(option => ({pressed: option.getAttribute('aria-pressed'), active: option.classList.contains('is-active'), background: getComputedStyle(option).backgroundColor}))")
+                for theme in ('dark', 'light'):
+                    evaluate(f'document.documentElement.dataset.theme = {json.dumps(theme)}')
+                    wait('''(() => {
+                        const on = document.querySelectorAll('.push-toggle-option')[1];
+                        const probe = document.createElement('span');
+                        probe.style.backgroundColor = 'var(--color-accent-subtle)';
+                        document.querySelector('.side-menu-actions').appendChild(probe);
+                        const expected = getComputedStyle(probe).backgroundColor;
+                        probe.remove();
+                        return getComputedStyle(on).backgroundColor === expected;
+                    })()''', f'{theme}: the active On option must keep its accent-subtle surface')
+                    report.setdefault('push_on_background', {})[theme] = evaluate("getComputedStyle(document.querySelectorAll('.push-toggle-option')[1]).backgroundColor")
                 click_selector('.lang-toggle-option:last-child')
-                wait("document.querySelector('.push-toggle-label').textContent === 'Push' && document.querySelector('.push-toggle').getAttribute('aria-pressed') === 'true'", 'Italian subscribed Push must retain its label and accessible on state')
-                assert evaluate("document.querySelector('.push-toggle').title === 'Le notifiche push sono attive' && document.querySelector('.push-toggle').getAttribute('aria-pressed') === 'true'"), 'subscribed Push must retain pressed state and localized tooltip'
+                wait("document.querySelector('.push-toggle-label').textContent === 'Push' && document.querySelectorAll('.push-toggle-option')[1].getAttribute('aria-pressed') === 'true'", 'Italian subscribed Push must retain its label and accessible on state')
+                assert evaluate("document.querySelector('.push-toggle').title === 'Le notifiche push sono attive' && document.querySelectorAll('.push-toggle-option')[1].getAttribute('aria-pressed') === 'true'"), 'subscribed Push must retain pressed state and localized tooltip'
                 click_selector('.lang-toggle-option:first-child')
-                wait("document.querySelector('.push-toggle-label').textContent === 'Push' && document.querySelector('.push-toggle').getAttribute('aria-pressed') === 'true'", 'English subscribed Push state must be restored')
+                wait("document.querySelector('.push-toggle-label').textContent === 'Push' && document.querySelectorAll('.push-toggle-option')[1].getAttribute('aria-pressed') === 'true'", 'English subscribed Push state must be restored')
                 evaluate('navigator.serviceWorker.register = window.__originalSWRegister; delete window.__originalSWRegister')
                 remount([])
-                wait("document.querySelector('.push-toggle-label')?.textContent === 'Push' && document.querySelector('.push-toggle').getAttribute('aria-pressed') === 'false'", 'real idle Push fixture must be restored')
-                off_switch = evaluate("({background: getComputedStyle(document.querySelector('.push-toggle-state')).backgroundColor, thumb: getComputedStyle(document.querySelector('.push-toggle-state'), '::after').transform})")
-                assert on_switch['background'] != off_switch['background'] and on_switch['thumb'] != off_switch['thumb'], 'Only the switch must visually reflect the changed Push state'
-                check('Push label stays stable in EN/IT and on/off states; accessible state and localized tooltips follow the real component')
+                wait("document.querySelector('.push-toggle-label')?.textContent === 'Push' && document.querySelectorAll('.push-toggle-option')[1].getAttribute('aria-pressed') === 'false'", 'real idle Push fixture must be restored')
+                off_options = evaluate("[...document.querySelectorAll('.push-toggle-option')].map(option => ({pressed: option.getAttribute('aria-pressed'), active: option.classList.contains('is-active'), background: getComputedStyle(option).backgroundColor}))")
+                assert on_options[1]['pressed'] == 'true' and on_options[0]['pressed'] == 'false' and on_options[1]['active'] and not on_options[0]['active'], 'subscribed Push must move the active option to On'
+                assert off_options[0]['pressed'] == 'true' and off_options[1]['pressed'] == 'false' and off_options[0]['active'] and not off_options[1]['active'], 'idle Push must move the active option back to Off'
+                assert on_options[1]['background'] != off_options[1]['background'], 'the On option must change surface with the subscription state'
+                check('Push keeps its label in EN/IT and moves the active option between Off and On; accessible state and localized tooltips follow the real component')
                 click_selector('.desktop-sidebar-toggle')
                 wait("document.querySelector('.layout-frame').classList.contains('is-collapsed')", 'sidebar did not collapse')
                 assert evaluate('''(() => {
@@ -417,13 +624,118 @@ def main():
                         && [...b.querySelectorAll('.palette-open-label, kbd')].every(el => el.getBoundingClientRect().width === 0);
                 })()'''), 'collapsed opener must be a named 44x44 icon-only control'
                 assert evaluate('''(() => {
-                    const controls = [...document.querySelectorAll('.side-menu-actions button')];
-                    return controls.length === 7 && controls.every(el => {
+                    const controls = [...document.querySelectorAll('.side-menu-actions button')].filter(el => el.getClientRects().length);
+                    return controls.length === 5 && controls.every(el => {
                         const r = el.getBoundingClientRect();
-                        return r.width === 44 && r.height === 44 && !!el.getAttribute('aria-label');
+                        return r.width === 44 && r.height === 44 && !!el.getAttribute('aria-label')
+                            && el.innerText.trim() === '' && el.querySelector('svg')?.getBoundingClientRect().width > 0;
                     }) && document.querySelector('.sidebar-version').getBoundingClientRect().width === 0
-                        && [...document.querySelectorAll('.theme-toggle-label, .lang-toggle-label, .push-toggle-label, .push-toggle-state, .lock-label')].every(el => el.getBoundingClientRect().width === 0);
-                })()'''), 'collapsed actions must preserve separate named 44x44 controls with labels, state and version hidden'
+                        && [...document.querySelectorAll('.side-menu-preferences > div')].every(el => el.getBoundingClientRect().height === 44)
+                        && [...document.querySelectorAll('.theme-toggle-label, .lang-toggle-label, .push-toggle-label, .lock-label')].every(el => el.getBoundingClientRect().width === 0);
+                })()'''), 'collapsed actions must expose five named 44x44 icon-only buttons: one per function, not stacked options'
+                check('collapsed sidebar exposes exactly one icon-only 44x44 button per action, not stacked options')
+                # The production selectors call the fixture store; record and render
+                # its updates so the second click exercises the newly selected state.
+                evaluate('''(() => {
+                    window.__originalSetTheme = window.__mcFixtureStore.setTheme;
+                    window.__compactThemes = [];
+                    window.__mcFixtureStore.setTheme = theme => {
+                        window.__compactThemes.push(theme);
+                        window.__mcFixtureStore.resolvedTheme = theme;
+                        document.documentElement.dataset.theme = theme;
+                        window.mountShell(window.__mcShellOptions);
+                    };
+                    window.__mcFixtureStore.setTheme('dark');
+                    window.__compactThemes = [];
+                })()''')
+                wait("document.querySelector('.theme-toggle .sidebar-preference-compact').getAttribute('aria-pressed') === 'true'", 'compact theme probe must start in dark mode')
+                click_selector('.theme-toggle .sidebar-preference-compact')
+                wait("document.querySelector('.theme-toggle .sidebar-preference-compact').getAttribute('aria-pressed') === 'false'", 'compact theme icon must switch to light')
+                driver.call('Input.dispatchMouseEvent', type='mouseMoved', x=500, y=100)
+                time.sleep(0.35)  # Measure settled light-theme colors, not the dark-to-light transition.
+                contrast = evaluate('''(() => {
+                    const style = getComputedStyle(document.querySelector('.theme-toggle .sidebar-preference-compact'));
+                    const luminance = color => {
+                        const channels = color.match(/[0-9.]+/g).slice(0, 3).map(value => {
+                            const c = Number(value) / 255;
+                            return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+                        });
+                        return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+                    };
+                    const a = luminance(style.color), b = luminance(style.backgroundColor);
+                    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+                })()''')
+                assert contrast >= 3, f'compact light-theme icon contrast must be at least 3:1, got {contrast:.2f}:1'
+                report['compact_light_icon_contrast'] = contrast
+                check('compact icon contrast in light theme is at least 3:1')
+                assert evaluate("document.querySelector('.theme-toggle .sidebar-preference-compact').getAttribute('aria-label') === 'Dark theme'"), 'compact theme toggle must have a stable state label, not an inverse action paired with pressed'
+                click_selector('.theme-toggle .sidebar-preference-compact')
+                wait("document.querySelector('.theme-toggle .sidebar-preference-compact').getAttribute('aria-pressed') === 'true'", 'compact theme icon must switch back to dark')
+                assert evaluate('window.__compactThemes') == ['light', 'dark'], 'one compact theme click must request exactly one opposite theme'
+                evaluate('window.__mcFixtureStore.setTheme = window.__originalSetTheme; delete window.__originalSetTheme')
+                check('compact theme icon alternates light/dark once per click and reflects the current state')
+                click_selector('.lang-toggle .sidebar-preference-compact')
+                wait('document.querySelector(".lang-toggle .sidebar-preference-compact").title === "Passa all\'inglese"', 'compact language must switch to Italian')
+                assert evaluate("document.querySelector('.lang-toggle-option:last-child').getAttribute('aria-pressed') === 'true'"), 'expanded language options must share compact state'
+                click_selector('.lang-toggle .sidebar-preference-compact')
+                wait("document.querySelector('.lang-toggle-option:first-child').getAttribute('aria-pressed') === 'true'", 'compact language must switch back to English')
+                check('compact language icon alternates EN/IT and shares state with the expanded segments')
+                # Stub only browser permission/subscription boundaries. Requests go
+                # to this fixture's synthetic API, with cross-origin fetch forbidden.
+                evaluate('''(() => {
+                    window.__compactPushRegister = navigator.serviceWorker.register;
+                    window.__compactPermission = Notification.requestPermission;
+                    window.__compactPushCalls = {subscribe: 0, unsubscribe: 0};
+                    window.__compactSubscription = null;
+                    Notification.requestPermission = async () => 'granted';
+                    navigator.serviceWorker.register = async () => ({pushManager: {
+                        getSubscription: async () => window.__compactSubscription,
+                        subscribe: () => {
+                            window.__compactPushCalls.subscribe++;
+                            return new Promise(resolve => { window.__resolveCompactSubscribe = () => {
+                                window.__compactSubscription = {
+                                    endpoint: 'https://push.invalid/synthetic',
+                                    toJSON: () => ({endpoint: 'https://push.invalid/synthetic', keys: {}}),
+                                    unsubscribe: async () => { window.__compactPushCalls.unsubscribe++; window.__compactSubscription = null; return true; },
+                                };
+                                resolve(window.__compactSubscription);
+                            }; });
+                        },
+                    }});
+                })()''')
+                click_selector('.push-toggle .sidebar-preference-compact')
+                wait('!!window.__resolveCompactSubscribe', 'compact Push must start one browser subscription')
+                assert evaluate("document.querySelector('.push-toggle .sidebar-preference-compact').disabled && !!document.querySelector('.push-toggle .sidebar-preference-compact .chat-spin')"), 'busy compact Push must disable its icon and show its spinner'
+                evaluate("document.querySelector('.push-toggle .sidebar-preference-compact').click()")
+                assert evaluate('window.__compactPushCalls.subscribe') == 1, 'busy compact Push must reject duplicate clicks'
+                evaluate('window.__resolveCompactSubscribe()')
+                wait("document.querySelector('.push-toggle .sidebar-preference-compact').getAttribute('aria-pressed') === 'true' && !document.querySelector('.push-toggle .sidebar-preference-compact').disabled", 'compact Push icon must become subscribed')
+                assert evaluate("document.querySelectorAll('.push-toggle-option')[1].getAttribute('aria-pressed') === 'true'"), 'expanded Push options must share compact state'
+                click_selector('.push-toggle .sidebar-preference-compact')
+                wait("document.querySelector('.push-toggle .sidebar-preference-compact').getAttribute('aria-pressed') === 'false' && !document.querySelector('.push-toggle .sidebar-preference-compact').disabled", 'compact Push icon must unsubscribe')
+                assert evaluate('window.__compactPushCalls') == {'subscribe': 1, 'unsubscribe': 1}, 'one compact click per direction must perform exactly one operation'
+                evaluate('navigator.serviceWorker.register = window.__compactPushRegister; Notification.requestPermission = window.__compactPermission')
+                check('compact Push icon subscribes/unsubscribes once per click, shares expanded state and blocks busy duplicates')
+                # Keyboard activation must reach the same compact action.
+                evaluate("document.querySelector('.lang-toggle .sidebar-preference-compact').focus()")
+                driver.call('Input.dispatchKeyEvent', type='keyDown', key='Enter', code='Enter', text='\r')
+                driver.call('Input.dispatchKeyEvent', type='keyUp', key='Enter', code='Enter')
+                wait("document.querySelector('.lang-toggle-option:last-child').getAttribute('aria-pressed') === 'true'", 'Enter must activate the focused compact icon')
+                click_selector('.lang-toggle .sidebar-preference-compact')
+                wait("document.querySelector('.lang-toggle-option:first-child').getAttribute('aria-pressed') === 'true'", 'restore English after keyboard probe')
+                check('compact icon buttons are reachable through native keyboard activation')
+                evaluate('window.__mcFixtureStore.authRequired = true; window.mountShell(window.__mcShellOptions)')
+                wait("!!document.querySelector('.auth-overlay .auth-theme-toggle')", 'locked fixture must render the shared theme selector')
+                assert evaluate('''(() => {
+                    const theme = document.querySelector('.auth-theme-toggle');
+                    return document.querySelector('.layout-frame').classList.contains('is-collapsed')
+                        && [...theme.querySelectorAll('.theme-toggle-option')].every(el => el.getClientRects().length > 0)
+                        && theme.querySelector('.sidebar-preference-compact').getClientRects().length === 0;
+                })()'''), 'collapsed sidebar must not hide the theme options in the independent auth overlay'
+                screenshot('auth-theme-with-collapsed-sidebar')
+                evaluate('window.__mcFixtureStore.authRequired = false; window.mountShell(window.__mcShellOptions)')
+                wait("!document.querySelector('.auth-overlay')", 'locked fixture must be reset without submitting credentials')
+                check('collapsed sidebar leaves the auth overlay theme options visible and its compact button hidden')
                 click_selector('.palette-open-button')
                 wait("!!document.querySelector('.navigation-palette')", 'collapsed opener did not open palette')
                 press_escape()

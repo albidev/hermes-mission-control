@@ -1,4 +1,5 @@
 import { useI18n } from '../lib/i18n';
+import { runComposerSubmit } from '../lib/chat-composer-submit';
 import {
   Component,
   Fragment,
@@ -190,6 +191,12 @@ type CanonicalChatDrawerProps = Omit<ChatDrawerProps, 'chatMode'> & { chatMode?:
 const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToken, initialSessionId, freshSessionId, resumeRequestKey, chatMode = 'general', botProfile, onClose, onStartTaskChat, onNewChat, onOpenRooms, onResumeSession }: CanonicalChatDrawerProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState('');
+  const composerDraftRef = useRef(draft);
+  composerDraftRef.current = draft;
+  // Navigation identity, not runtime id: first send can create/resume a runtime.
+  const composerScope = JSON.stringify([initialSessionId, freshSessionId, resumeRequestKey, botProfile]);
+  const composerScopeRef = useRef(composerScope);
+  composerScopeRef.current = composerScope;
   const [runtimeChanging, setRuntimeChanging] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -1503,38 +1510,46 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
       return;
     }
 
-    try {
-      const uploads: ChatAttachmentUpload[] = [];
-      for (const attachment of pendingAttachments) {
-        const dataUrl = await readFileAsDataUrl(attachment.file);
-        uploads.push({
-          id: attachment.id,
-          kind: attachment.kind,
-          name: attachment.name,
-          size: attachment.size,
-          mimeType: attachment.mimeType,
-          dataUrl,
-        });
-      }
-      const sent = await submitPrompt(running && !uploads.length
-        ? `/steer ${text}`
-        : text.trim().startsWith('/')
-          ? canonicalChatCommand(chatMode, text.trim().slice(1))
-          : text, uploads);
-      if (!sent) return;
-      setDraft('');
-      // Sending a message always snaps back to the bottom, even if the user
-      // had scrolled up to read earlier content. Reset the near-bottom flag so
-      // the messages effect also follows once the new message lands.
+    const submitScope = composerScopeRef.current;
+    const outcome = await runComposerSubmit<PendingAttachment, ChatAttachmentUpload>({
+      text,
+      sessionId: submitScope,
+      attachments: pendingAttachments,
+      readDraft: () => composerDraftRef.current,
+      readSessionId: () => composerScopeRef.current,
+      setDraft: (value) => { composerDraftRef.current = value; setDraft(value); },
+      readUploads: async (attachments) => {
+        const uploads: ChatAttachmentUpload[] = [];
+        for (const attachment of attachments) {
+          const dataUrl = await readFileAsDataUrl(attachment.file);
+          uploads.push({ id: attachment.id, kind: attachment.kind, name: attachment.name,
+            size: attachment.size, mimeType: attachment.mimeType, dataUrl });
+        }
+        return uploads;
+      },
+      submit: (submittedText, uploads) => submitPrompt(running && !uploads.length
+        ? `/steer ${submittedText}`
+        : submittedText.trim().startsWith('/')
+          ? canonicalChatCommand(chatMode, submittedText.trim().slice(1))
+          : submittedText, uploads),
+      clearComposerAttachments: (attachments) => {
+        if (composerScopeRef.current !== submitScope) return;
+        const submittedIds = new Set(attachments.map((attachment) => attachment.id));
+        for (const attachment of attachments) {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        }
+        setPendingAttachments((current) => current.filter((attachment) => !submittedIds.has(attachment.id)));
+      },
+      onError: (err) => {
+        if (composerScopeRef.current === submitScope) {
+          setAttachmentNotice(err instanceof Error ? err.message : 'Could not send the message.');
+        }
+      },
+    });
+    if (outcome.sent && composerScopeRef.current === submitScope) {
       nearBottomRef.current = true;
       setNearBottom(true);
       scrollToBottom('auto');
-      for (const attachment of pendingAttachments) {
-        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-      }
-      setPendingAttachments([]);
-    } catch (err) {
-      setAttachmentNotice(err instanceof Error ? err.message : 'Could not read the attachment.');
     }
   };
 

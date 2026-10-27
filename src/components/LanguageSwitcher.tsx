@@ -1,11 +1,13 @@
+import { useId } from 'react';
 import { useI18n } from '../lib/i18n';
 import { Languages } from 'lucide-react';
 
 function BritishFlag() {
+  const clipId = useId();
   return (
     <svg viewBox="0 0 24 24" className="lang-icon" aria-hidden>
-      <clipPath id="union-jack-clip"><rect x="2" y="5" width="20" height="14" rx="1.5" /></clipPath>
-      <g clipPath="url(#union-jack-clip)">
+      <clipPath id={clipId}><rect x="2" y="5" width="20" height="14" rx="1.5" /></clipPath>
+      <g clipPath={`url(#${clipId})`}>
         <rect x="2" y="5" width="20" height="14" fill="#012169" />
         <path d="M2 5l20 14M22 5L2 19" stroke="#fff" strokeWidth="4" />
         <path d="M2 5l20 14M22 5L2 19" stroke="#c8102e" strokeWidth="2" />
@@ -32,6 +34,15 @@ export function LanguageSwitcher({ showLabel = true, className = '' }: { showLab
 
   return (
     <div className={`lang-toggle ${className}`.trim()} role="group" aria-label={t('lang.label')}>
+      <button
+        type="button"
+        className="sidebar-preference-compact"
+        title={t(locale === 'en' ? 'lang.italianTitle' : 'lang.englishTitle')}
+        aria-label={t(locale === 'en' ? 'lang.italianTitle' : 'lang.englishTitle')}
+        onClick={() => setLocale(locale === 'en' ? 'it' : 'en')}
+      >
+        {locale === 'en' ? <BritishFlag /> : <ItalianFlag />}
+      </button>
       {showLabel ? (
         <span className="lang-toggle-label">
           <Languages size={16} className="sidebar-preference-icon" aria-hidden />
