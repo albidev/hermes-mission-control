@@ -235,6 +235,11 @@ const internalContextRows = normalizeTranscript([
   { canonical_id: 'db:real-user', role: 'user', content: 'A normal user message' },
 ]);
 assertDeepEqual(internalContextRows.map((message) => message.text), ['A normal user message']);
+const pagedCanonicalRows = normalizeTranscript([
+  { id: 'db:8', canonical_id: 'db:8', canonical_order: 8, role: 'user', content: 'repeat', timestamp: 100 },
+  { id: 'db:9', canonical_id: 'db:9', canonical_order: 9, role: 'assistant', content: 'repeat', timestamp: 100 },
+]);
+assertDeepEqual(pagedCanonicalRows.map((message) => message.canonicalOrder), [8, 9]);
 const restored = normalizeTranscript([
   { role: 'user', text: '[IMPORTANT: Background process proc_123 matched watch pattern "ready in"].' },
   { role: 'user', text: 'Question' },

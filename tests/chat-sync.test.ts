@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import type { ChatMessage, GatewayEvent } from '../src/lib/chat-protocol.ts';
-import { applySyncedChatMessage, applySyncedUserMessage, mergeDurableChatMessages, replaceWithCanonicalChatMessages, shouldApplySequencedEvent } from '../src/lib/chat-sync.ts';
+import { applySyncedChatMessage, applySyncedUserMessage, fetchChatTranscript, mergeCanonicalChatMessages, mergeDurableChatMessages, replaceWithCanonicalChatMessages, shouldApplySequencedEvent } from '../src/lib/chat-sync.ts';
 
 const message = (partial: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'role' | 'text'>): ChatMessage => ({
   createdAt: 1,
@@ -124,5 +124,54 @@ assert.equal(shouldApplySequencedEvent(watermarks, event(1)), true);
 watermarks.set('session-1', 1);
 assert.equal(shouldApplySequencedEvent(watermarks, event(1)), false);
 assert.equal(shouldApplySequencedEvent(watermarks, event(2)), true);
+
+const pageState = [
+  message({ id: 'db:10', canonicalId: 'db:10', canonicalOrder: 10, source: 'canonical', role: 'user', text: 'repeat' }),
+  message({ id: 'db:11', canonicalId: 'db:11', canonicalOrder: 11, source: 'canonical', role: 'assistant', text: 'answer' }),
+  message({ id: 'live:12', source: 'live', role: 'assistant', text: 'new live tail' }),
+];
+const earlierPage = [
+  message({ id: 'db:8', canonicalId: 'db:8', canonicalOrder: 8, source: 'canonical', role: 'user', text: 'repeat' }),
+  message({ id: 'db:9', canonicalId: 'db:9', canonicalOrder: 9, source: 'canonical', role: 'assistant', text: 'older answer' }),
+];
+const pagedUnion = mergeCanonicalChatMessages(pageState, earlierPage);
+assert.deepEqual(pagedUnion.map((entry) => entry.id), ['db:8', 'db:9', 'db:10', 'db:11', 'live:12']);
+assert.equal(pagedUnion.filter((entry) => entry.text === 'repeat').length, 2);
+const refreshedPage = mergeCanonicalChatMessages(pagedUnion, [
+  message({ id: 'db:11', canonicalId: 'db:11', canonicalOrder: 11, source: 'canonical', role: 'assistant', text: 'updated answer' }),
+  message({ id: 'db:12', canonicalId: 'db:12', canonicalOrder: 12, source: 'canonical', role: 'user', text: 'new persisted turn' }),
+]);
+assert.deepEqual(refreshedPage.map((entry) => entry.id), ['db:8', 'db:9', 'db:10', 'db:11', 'db:12', 'live:12']);
+assert.equal(refreshedPage.find((entry) => entry.id === 'db:11')?.text, 'updated answer');
+
+const originalFetch = globalThis.fetch;
+let transcriptRequestUrl = '';
+globalThis.fetch = async (input) => {
+  transcriptRequestUrl = String(input);
+  return new Response(JSON.stringify({
+    sessionId: 'session-1',
+    sessionKey: 'session-1',
+    messages: [{ id: 'db:7', canonical_id: 'db:7', role: 'user', content: 'older', canonical_order: 7 }],
+    complete: true,
+    count: 1,
+    totalCount: 11,
+    hasMore: true,
+    nextCursor: 'db:7',
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+};
+try {
+  const transcriptPage = await fetchChatTranscript('', 'session-1', 'session-key', 'default', {
+    limit: 120,
+    beforeId: 'db:8',
+  });
+  const pageUrl = new URL(transcriptRequestUrl, 'http://localhost');
+  assert.equal(pageUrl.searchParams.get('limit'), '120');
+  assert.equal(pageUrl.searchParams.get('before_id'), 'db:8');
+  assert.equal(transcriptPage?.totalCount, 11);
+  assert.equal(transcriptPage?.hasMore, true);
+  assert.equal(transcriptPage?.nextCursor, 'db:7');
+} finally {
+  globalThis.fetch = originalFetch;
+}
 
 console.log('chat sync tests passed');

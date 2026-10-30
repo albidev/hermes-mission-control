@@ -47,7 +47,7 @@ import { createChatPersistenceScheduler, dropUnchangedCachedMessages, fetchServe
 import { canClaimLastChatPointer, createChatBootstrapGuard, serverPointerMatchesRequestedSession, shouldAdoptServerPointer, type LastChatClaimAction, type ServerLastChat } from './chat-bootstrap';
 import { clearPendingChatSubmit, persistPendingChatSubmit, readPendingChatSubmit, type PendingChatSubmit } from './chat-outbox';
 import { createChatSyncRelay } from './chat-sync-stream';
-import { applySyncedAssistantMessage, applySyncedChatMessage, applySyncedUserMessage, eventRequiresCanonicalReconcile, fetchChatTranscript, publishChatSync, replaceWithCanonicalChatMessages, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
+import { applySyncedAssistantMessage, applySyncedChatMessage, applySyncedUserMessage, eventRequiresCanonicalReconcile, fetchChatTranscript, mergeCanonicalChatMessages, publishChatSync, replaceWithCanonicalChatMessages, shouldApplySequencedEvent, type ChatSyncEnvelope } from './chat-sync';
 import { getWebSocketUrl, MAX_RECONNECTS, mintWsCredential, nextReconnectDelay, RPC_TIMEOUT_MS } from './chat-transport';
 import { canReuseLiveRuntime, isStaleRuntimeError } from './chat-live-runtime';
 import { commandOutput, executeReasoningSlashCommand, resultText } from './chat-commands';
@@ -96,6 +96,7 @@ export type PendingAttachment = Omit<ChatAttachmentSummary, 'id'> & {
 
 export const MAX_ATTACHMENTS = 5;
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+export const CHAT_TRANSCRIPT_PAGE_SIZE = 120;
 export { classifyAttachment } from './chat-protocol';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,13 +128,26 @@ async function loadCanonicalTranscript(
   sessionId: string | null,
   sessionKey: string | null,
   profile?: string | null,
-): Promise<{ messages: ChatMessage[]; sessionTitle: string | null; count: number } | null> {
-  const payload = await fetchChatTranscript(accessToken, sessionId, sessionKey, profile);
+  options?: { limit?: number; beforeId?: string | null },
+): Promise<{
+  messages: ChatMessage[];
+  rawMessages: ReturnType<typeof extractTranscript>;
+  sessionTitle: string | null;
+  count: number;
+  totalCount: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+} | null> {
+  const payload = await fetchChatTranscript(accessToken, sessionId, sessionKey, profile, options);
   if (!payload?.complete) return null;
   return {
     messages: normalizeTranscript(payload.messages),
+    rawMessages: payload.messages,
     sessionTitle: payload.sessionTitle ?? null,
     count: payload.count,
+    totalCount: payload.totalCount,
+    hasMore: payload.hasMore,
+    nextCursor: payload.nextCursor,
   };
 }
 
@@ -246,6 +260,10 @@ export function useGatewayChat(
   const pendingPromptRef = useRef<PendingPrompt | null>(readPendingChatSubmit());
   const durableTranscriptRef = useRef<ReturnType<typeof extractTranscript>>([]);
   const transcriptReadyRef = useRef(false);
+  const olderTranscriptCursorRef = useRef<string | null>(null);
+  const olderTranscriptLoadingRef = useRef(false);
+  const [hasOlderTranscript, setHasOlderTranscript] = useState(false);
+  const [olderTranscriptLoading, setOlderTranscriptLoading] = useState(false);
   // The socket the current runtime session id was resumed (or created) over. A runtime
   // id is only valid on that socket; see canReuseLiveRuntime.
   const liveRuntimeSocketRef = useRef<WebSocket | null>(null);
@@ -361,6 +379,10 @@ export function useGatewayChat(
     setTodoPlan(null);
     transcriptReadyRef.current = false;
     canonicalFingerprintRef.current = null;
+    olderTranscriptCursorRef.current = null;
+    olderTranscriptLoadingRef.current = false;
+    setHasOlderTranscript(false);
+    setOlderTranscriptLoading(false);
     setModelIdentity(null);
     setModelPickerOpen(false);
     setModelPickerRefresh(false);
@@ -407,6 +429,10 @@ export function useGatewayChat(
       transcriptReadyRef.current = false;
       durableTranscriptRef.current = [];
       canonicalFingerprintRef.current = null;
+      olderTranscriptCursorRef.current = null;
+      olderTranscriptLoadingRef.current = false;
+      setHasOlderTranscript(false);
+      setOlderTranscriptLoading(false);
       setTodoPlan(null);
       setInteraction(null);
       setActivity(null);
@@ -616,15 +642,26 @@ export function useGatewayChat(
     const resolvedSessionKey = activeSessionKey ?? extractSessionKey(resumed) ?? resolvedSessionId;
     // Hydration loader window: from here until the canonical transcript lands.
     if (!transcriptReadyRef.current) setHydrating(true);
-    const canonicalTranscript = await loadCanonicalTranscript(storedToken, resolvedSessionId, resolvedSessionKey, sessionProfileRef.current);
+    const canonicalTranscript = await loadCanonicalTranscript(
+      storedToken,
+      resolvedSessionId,
+      resolvedSessionKey,
+      sessionProfileRef.current,
+      { limit: CHAT_TRANSCRIPT_PAGE_SIZE },
+    );
     if (
       lifecycleGeneration !== sessionLifecycleGenerationRef.current
       || (resolvedSessionId && sessionIdRef.current !== resolvedSessionId)
     ) {
       return { transcript: [], inflight: null };
     }
+    const hadCanonicalTranscript = transcriptReadyRef.current;
     const transcript = canonicalTranscript?.messages ?? [];
     if (canonicalTranscript?.sessionTitle) setSessionTitle(canonicalTranscript.sessionTitle);
+    if (canonicalTranscript && !hadCanonicalTranscript) {
+      olderTranscriptCursorRef.current = canonicalTranscript.nextCursor;
+      setHasOlderTranscript(canonicalTranscript.hasMore && Boolean(canonicalTranscript.nextCursor));
+    }
     const inflight = extractInflightAssistant(resumed);
     const inflightMessage: ChatMessage | null = inflight
       ? {
@@ -638,8 +675,8 @@ export function useGatewayChat(
       }
       : null;
 
-    durableTranscriptRef.current = rawTranscript;
-    transcriptReadyRef.current = canonicalTranscript !== null;
+    durableTranscriptRef.current = canonicalTranscript?.rawMessages ?? rawTranscript;
+    transcriptReadyRef.current = canonicalTranscript !== null || hadCanonicalTranscript;
     setHydrating(false);
     // Compare actual content, not row counts. Equal-size snapshots can contain
     // edited tool output/status. Never skip todo/open_requests reconciliation.
@@ -650,14 +687,17 @@ export function useGatewayChat(
         const cachedEntries = cachedMessagesRef.current;
         cachedMessagesRef.current = [];
         setMessages((current) => {
-          const next = replaceWithCanonicalChatMessages(dropUnchangedCachedMessages(current, cachedEntries), transcript);
+          const base = dropUnchangedCachedMessages(current, cachedEntries);
+          const next = hadCanonicalTranscript
+            ? mergeCanonicalChatMessages(base, transcript)
+            : replaceWithCanonicalChatMessages(base, transcript);
           return inflightMessage ? [...next, inflightMessage] : next;
         });
       }
     }
     const resumedTodoPlan = normalizeTodoPlanSnapshot(isRecord(resumed) ? resumed.todo_state : undefined);
     if (resumedTodoPlan) setTodoPlan(resumedTodoPlan);
-    else if (transcript.length > 0) setTodoPlan(deriveTodoPlan(transcript));
+    else if (transcript.length > 0 && !canonicalTranscript?.hasMore) setTodoPlan(deriveTodoPlan(transcript));
     // Re-deliver still-open server→client requests (`session.resume` / `session.events.since`
     // carry them in `open_requests`) so an unanswered question survives a dropped socket.
     // The shared channel normally does this before the caller sees the result; MC's direct
@@ -686,6 +726,43 @@ export function useGatewayChat(
     return { transcript, inflight };
   }, [storedToken]);
 
+  const loadOlderTranscript = useCallback(async () => {
+    const activeSessionId = sessionIdRef.current;
+    const cursor = olderTranscriptCursorRef.current;
+    if (!activeSessionId || !cursor || !transcriptReadyRef.current || olderTranscriptLoadingRef.current) return;
+    const generation = sessionLifecycleGenerationRef.current;
+    const activeSessionKey = sessionKeyRef.current ?? activeSessionId;
+    olderTranscriptLoadingRef.current = true;
+    setOlderTranscriptLoading(true);
+    setError(null);
+    try {
+      const page = await loadCanonicalTranscript(
+        storedToken,
+        activeSessionId,
+        activeSessionKey,
+        sessionProfileRef.current,
+        { limit: CHAT_TRANSCRIPT_PAGE_SIZE, beforeId: cursor },
+      );
+      if (generation !== sessionLifecycleGenerationRef.current || activeSessionId !== sessionIdRef.current) return;
+      if (!page) {
+        setError('Could not load earlier messages.');
+        return;
+      }
+      olderTranscriptCursorRef.current = page.nextCursor;
+      setHasOlderTranscript(page.hasMore && Boolean(page.nextCursor));
+      setMessages((current) => mergeCanonicalChatMessages(current, page.messages));
+    } catch {
+      if (generation === sessionLifecycleGenerationRef.current && activeSessionId === sessionIdRef.current) {
+        setError('Could not load earlier messages.');
+      }
+    } finally {
+      if (generation === sessionLifecycleGenerationRef.current) {
+        olderTranscriptLoadingRef.current = false;
+        setOlderTranscriptLoading(false);
+      }
+    }
+  }, [storedToken]);
+
   const reconcileSessionSnapshot = useCallback(async (activeSessionId: string) => {
     const generation = sessionLifecycleGenerationRef.current;
     const key = sessionKeyRef.current ?? activeSessionId;
@@ -695,6 +772,7 @@ export function useGatewayChat(
         session_id: activeSessionId,
         cols: 80,
         eager_build: true,
+        omit_messages: true,
         source: 'mission-control',
       }, profile));
       if (generation !== sessionLifecycleGenerationRef.current || activeSessionId !== sessionIdRef.current) return;
@@ -972,6 +1050,7 @@ export function useGatewayChat(
           session_id: resumableId ?? existingKey,
           cols: 80,
           eager_build: true,
+          omit_messages: true,
           source: 'mission-control',
         }, sessionProfileRef.current));
         if (lifecycleGeneration !== sessionLifecycleGenerationRef.current) return '';
@@ -1026,6 +1105,10 @@ export function useGatewayChat(
     canonicalFingerprintRef.current = null;
     durableTranscriptRef.current = [];
     transcriptReadyRef.current = false;
+    olderTranscriptCursorRef.current = null;
+    olderTranscriptLoadingRef.current = false;
+    setHasOlderTranscript(false);
+    setOlderTranscriptLoading(false);
     setMessages([]);
     setTodoPlan(null);
     setSessionId(createdSessionId);
@@ -2012,6 +2095,10 @@ export function useGatewayChat(
     setTodoPlan(null);
     transcriptReadyRef.current = false;
     canonicalFingerprintRef.current = null;
+    olderTranscriptCursorRef.current = null;
+    olderTranscriptLoadingRef.current = false;
+    setHasOlderTranscript(false);
+    setOlderTranscriptLoading(false);
     setSessionId(null);
     setSessionKey(null);
     requestedSessionIdRef.current = null;
@@ -2052,6 +2139,9 @@ export function useGatewayChat(
     submitting,
     running,
     hydrating,
+    hasOlderTranscript,
+    olderTranscriptLoading,
+    loadOlderTranscript,
     activity,
     interaction,
     previewMode,

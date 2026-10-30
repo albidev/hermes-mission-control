@@ -2307,10 +2307,20 @@ class Handler(BaseHTTPRequestHandler):
             session_id = ((params.get('session_id') or params.get('sessionId') or [''])[0]).strip() or None
             session_key = ((params.get('session_key') or params.get('sessionKey') or [''])[0]).strip() or None
             profile = ((params.get('profile') or [''])[0]).strip() or None
+            limit_value = ((params.get('limit') or [''])[0]).strip()
+            try:
+                limit = int(limit_value) if limit_value else None
+            except ValueError:
+                self._json(400, {'error': 'bad_request', 'detail': 'Invalid transcript page limit.'})
+                return
+            if limit is not None and limit < 1:
+                self._json(400, {'error': 'bad_request', 'detail': 'Transcript page limit must be positive.'})
+                return
+            before_id = ((params.get('before_id') or params.get('beforeId') or [''])[0]).strip() or None
             if not session_id and not session_key:
                 self._json(400, {'error': 'bad_request', 'detail': 'Missing session_id or session_key.'})
                 return
-            self._json(200, load_chat_transcript(session_id, session_key, profile))
+            self._json(200, load_chat_transcript(session_id, session_key, profile, limit=limit, before_id=before_id))
             return
         if parsed.path in ('/api/local/chat/timestamps', '/api/local/chat/message-timestamps'):
             if not _is_authorized(self):
