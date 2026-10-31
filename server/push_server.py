@@ -85,6 +85,19 @@ _PUSH_DEPENDENCIES = ("pywebpush",)
 
 
 def _missing_push_dependencies() -> List[str]:
+    # This sidecar is long-running and shares its venv's site-packages dir
+    # with other install/maintenance activity (e.g. lazy installs, storage
+    # cleanup). importlib's path-based finders cache a directory's listing
+    # and only invalidate it on the next lookup after the directory's mtime
+    # changes; a once-missed scan can leave a stale "not found" entry for a
+    # package that is actually present on disk (observed: pywebpush reported
+    # missing here while importable from a fresh interpreter in the same
+    # venv). invalidate_caches() forces finders to re-scan before each
+    # check, which is the documented fix for this exact class of staleness
+    # (see importlib docs: "call this function if you are dynamically
+    # creating or installing a module"). This runs only on health/push-status
+    # requests, not on any hot path, so the cost is negligible.
+    importlib.invalidate_caches()
     return [name for name in _PUSH_DEPENDENCIES if importlib.util.find_spec(name) is None]
 
 

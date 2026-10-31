@@ -69,6 +69,11 @@ assertIncludes(chatGateway, "'session.events.since'", 'chat gateway replays miss
 assertIncludes(chatGateway, 'shouldApplySequencedEvent', 'chat gateway deduplicates sequenced events');
 assertIncludes(chatSync, 'mergeDurableChatMessages', 'chat sync merges remote snapshots without dropping local streaming state');
 assertIncludes(chatGateway, 'fetchChatTranscript', 'chat gateway hydrates from the canonical sidecar transcript');
+assertIncludes(chatGateway, 'omit_messages: true', 'chat resume keeps bulky history out of the WebSocket response');
+assertIncludes(chatGateway, 'loadOlderTranscript', 'chat gateway fetches older canonical pages on demand');
+assertIncludes(component, 'hasOlderTranscript', 'chat drawer exposes server-side transcript pagination');
+assertIncludes(component, 'olderTranscriptLoading', 'chat drawer indicates when an older page is loading');
+assertIncludes(component, 'await loadOlderTranscript()', 'chat drawer loads a server page from the earlier-history control');
 assertIncludes(chatGateway, 'visibilitychange', 'chat gateway refreshes canonical transcript when mobile returns foreground');
 assertIncludes(chatGateway, "window.addEventListener('pageshow'", 'chat gateway refreshes canonical transcript after pageshow');
 assertIncludes(chatSync, 'replaceWithCanonicalChatMessages', 'canonical transcript replacement is separate from partial resume merging');

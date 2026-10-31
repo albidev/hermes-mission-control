@@ -57,6 +57,7 @@ import { ChatMessageCard } from './chat-messages';
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
+  CHAT_TRANSCRIPT_PAGE_SIZE,
   classifyAttachment,
   interactionTitle,
   readFileAsDataUrl,
@@ -250,10 +251,10 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   const [activeAddon, setActiveAddon] = useState<CanvasAddonId | null>(null);
   const [isCanvasLoading, setIsCanvasLoading] = useState(false);
   const [expandedToolRuns, setExpandedToolRuns] = useState<Set<string>>(new Set());
-  // Long-chat windowing: render only the LAST N timeline entries; older history
-  // loads in chunks on demand ("load earlier"). Full messages stay in state for
-  // todo derivation, handoff context, and search — only the render is windowed.
-  const CHAT_WINDOW_CHUNK = 120;
+  // Long-chat windowing: render only the LAST N timeline entries. The gateway
+  // fetches older canonical pages on demand; the render window grows alongside
+  // each page so the newly fetched history is immediately visible.
+  const CHAT_WINDOW_CHUNK = CHAT_TRANSCRIPT_PAGE_SIZE;
   const [chatWindowCount, setChatWindowCount] = useState(CHAT_WINDOW_CHUNK);
   const toggleToolRun = useCallback((runId: string) => {
     setExpandedToolRuns((current) => {
@@ -296,6 +297,9 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
     submitting,
     running,
     hydrating,
+    hasOlderTranscript,
+    olderTranscriptLoading,
+    loadOlderTranscript,
     interaction,
     previewMode,
     modelIdentity,
@@ -793,26 +797,37 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
 
     return (
       <>
-        {hiddenEarlierCount > 0 ? (
+        {hiddenEarlierCount > 0 || hasOlderTranscript ? (
           <button
             type="button"
             className="chat-load-earlier"
+            disabled={olderTranscriptLoading}
+            aria-busy={olderTranscriptLoading}
             onClick={() => {
-              // Keep the viewport anchored while older cards mount above:
-              // record the distance from the bottom, then restore it after
-              // the new cards push the content down.
-              const el = scrollRef.current;
-              const anchorBottom = el ? el.scrollHeight - el.scrollTop : 0;
-              setChatWindowCount((current) => current + CHAT_WINDOW_CHUNK);
-              window.requestAnimationFrame(() => {
-                const target = scrollRef.current;
-                if (!target) return;
-                target.scrollTop = target.scrollHeight - anchorBottom;
-              });
+              void (async () => {
+                // Keep the viewport anchored while older cards mount above.
+                const el = scrollRef.current;
+                const anchorBottom = el ? el.scrollHeight - el.scrollTop : 0;
+                if (hasOlderTranscript) {
+                  await loadOlderTranscript();
+                  setChatWindowCount((current) => current + CHAT_WINDOW_CHUNK);
+                } else if (hiddenEarlierCount > 0) {
+                  setChatWindowCount((current) => current + CHAT_WINDOW_CHUNK);
+                }
+                window.requestAnimationFrame(() => {
+                  const target = scrollRef.current;
+                  if (!target) return;
+                  target.scrollTop = target.scrollHeight - anchorBottom;
+                });
+              })();
             }}
           >
-            <ChevronUp size={14} aria-hidden />
-            Load earlier messages ({hiddenEarlierCount} hidden)
+            {olderTranscriptLoading ? <Loader2 size={14} className="chat-spin" aria-hidden /> : <ChevronUp size={14} aria-hidden />}
+            {olderTranscriptLoading
+              ? 'Loading earlier messages…'
+              : hiddenEarlierCount > 0
+                ? `Load earlier messages (${hiddenEarlierCount} hidden)`
+                : 'Load earlier messages'}
           </button>
         ) : null}
         {displayGroups.map((item, index) => {

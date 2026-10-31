@@ -84,7 +84,7 @@ class ProviderUsageCollectorTests(unittest.TestCase):
         calls = [call.args[0] for call in run.call_args_list]
         self.assertCountEqual(calls, [
             ["/test/codexbar", "usage", "--provider", "deepseek", "--json", "--no-color"],
-            ["/test/codexbar", "usage", "--provider", "ollama", "--source", "web", "--json", "--no-color"],
+            ["/test/codexbar", "usage", "--provider", "ollama", "--json", "--no-color"],
         ])
         self.assertNotIn("must-not-leak", repr(results))
 

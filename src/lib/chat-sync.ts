@@ -7,6 +7,9 @@ export type CanonicalChatTranscript = {
   messages: GatewayTranscriptMessage[];
   complete: boolean;
   count: number;
+  totalCount: number;
+  hasMore: boolean;
+  nextCursor: string | null;
 };
 
 export type ChatSyncEnvelope = {
@@ -122,11 +125,16 @@ export async function fetchChatTranscript(
   sessionId: string | null,
   sessionKey: string | null,
   profile?: string | null,
+  options?: { limit?: number; beforeId?: string | null },
 ): Promise<CanonicalChatTranscript | null> {
   const params = new URLSearchParams();
   if (sessionId?.trim()) params.set('session_id', sessionId.trim());
   if (sessionKey?.trim()) params.set('session_key', sessionKey.trim());
   if (profile?.trim()) params.set('profile', profile.trim());
+  if (typeof options?.limit === 'number' && Number.isFinite(options.limit)) {
+    params.set('limit', String(Math.max(1, Math.floor(options.limit))));
+  }
+  if (options?.beforeId?.trim()) params.set('before_id', options.beforeId.trim());
   if (!params.toString()) return null;
   try {
     const response = await fetch(`/api/local/chat/transcript?${params.toString()}`, {
@@ -152,6 +160,11 @@ export async function fetchChatTranscript(
       messages: rawMessages.filter((item): item is GatewayTranscriptMessage => Boolean(item) && typeof item === 'object') as GatewayTranscriptMessage[],
       complete,
       count,
+      totalCount: typeof payload.totalCount === 'number' && Number.isFinite(payload.totalCount)
+        ? Math.max(count, Math.floor(payload.totalCount))
+        : count,
+      hasMore: payload.hasMore === true,
+      nextCursor: typeof payload.nextCursor === 'string' && payload.nextCursor.trim() ? payload.nextCursor.trim() : null,
     };
   } catch {
     // Canonical hydration retries on the next resume/visibility/reconnect pass.
@@ -251,7 +264,59 @@ export function mergeDurableChatMessages(local: ChatMessage[], durable: ChatMess
     .map(({ message }) => message);
 }
 
-/** Replace the durable view with a complete canonical projection.
+function sortCanonicalTranscript(messages: ChatMessage[]): ChatMessage[] {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const leftOrder = typeof left.message.canonicalOrder === 'number' && Number.isFinite(left.message.canonicalOrder)
+        ? left.message.canonicalOrder
+        : null;
+      const rightOrder = typeof right.message.canonicalOrder === 'number' && Number.isFinite(right.message.canonicalOrder)
+        ? right.message.canonicalOrder
+        : null;
+      if (leftOrder !== null && rightOrder !== null && leftOrder !== rightOrder) return leftOrder - rightOrder;
+      if (leftOrder !== null && rightOrder === null) return -1;
+      if (rightOrder !== null && leftOrder === null) return 1;
+      const leftTime = typeof left.message.createdAt === 'number' && Number.isFinite(left.message.createdAt)
+        ? left.message.createdAt
+        : Number.POSITIVE_INFINITY;
+      const rightTime = typeof right.message.createdAt === 'number' && Number.isFinite(right.message.createdAt)
+        ? right.message.createdAt
+        : Number.POSITIVE_INFINITY;
+      return leftTime - rightTime || left.index - right.index;
+    })
+    .map(({ message }) => message);
+}
+
+/** Merge canonical transcript pages by durable DB ID and absolute display order. */
+export function mergeCanonicalChatMessages(local: ChatMessage[], page: ChatMessage[]): ChatMessage[] {
+  if (page.length === 0) return local;
+  const canonicalById = new Map<string, ChatMessage>();
+  for (const message of local) {
+    if (message.source === 'canonical') canonicalById.set(message.id, { ...message });
+  }
+  for (const pageMessage of page) {
+    const canonicalMessage = { ...pageMessage, source: 'canonical' as const };
+    const existing = canonicalById.get(canonicalMessage.id);
+    canonicalById.set(
+      canonicalMessage.id,
+      existing ? mergeMessagePair(canonicalMessage, existing) : canonicalMessage,
+    );
+  }
+  const merged = [...canonicalById.values()];
+  const live = local.filter((message) => message.source === 'live' || message.status === 'streaming');
+  for (const liveMessage of live) {
+    const match = merged.findIndex((message) => semanticallyMatchesCanonicalMessage(message, liveMessage));
+    if (match >= 0) {
+      merged[match] = mergeMessagePair(merged[match], liveMessage);
+    } else if (!canonicalById.has(liveMessage.id)) {
+      merged.push({ ...liveMessage, source: 'live' });
+    }
+  }
+  return sortCanonicalTranscript(merged);
+}
+
+/** Replace the durable view with a canonical projection.
  *
  * Only explicitly live rows survive outside the projection. Matching prefers the
  * SessionDB-derived id, with a narrow canonical/live timestamp+content fallback
@@ -270,18 +335,7 @@ export function replaceWithCanonicalChatMessages(local: ChatMessage[], canonical
       merged.push({ ...liveMessage, source: 'live' });
     }
   }
-  return merged
-    .map((message, index) => ({ message, index }))
-    .sort((left, right) => {
-      const leftTime = typeof left.message.createdAt === 'number' && Number.isFinite(left.message.createdAt)
-        ? left.message.createdAt
-        : Number.POSITIVE_INFINITY;
-      const rightTime = typeof right.message.createdAt === 'number' && Number.isFinite(right.message.createdAt)
-        ? right.message.createdAt
-        : Number.POSITIVE_INFINITY;
-      return leftTime - rightTime || left.index - right.index;
-    })
-    .map(({ message }) => message);
+  return sortCanonicalTranscript(merged);
 }
 
 /** Reconcile durable IDs once a turn settles, never once per token or tool. */

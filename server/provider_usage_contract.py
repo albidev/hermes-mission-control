@@ -50,7 +50,7 @@ _WARNING_CODES = {
 _COMMON_USAGE_KEYS = {
     "primary", "secondary", "tertiary", "extraRateWindows", "providerCost", "details",
     "subscriptionRenewsAt", "subscriptionExpiresAt", "updatedAt", "dataConfidence",
-    "codexResetCredits", "rateWindowLabels",
+    "codexResetCredits", "rateWindowLabels", "planObservation",
 }
 _PRIVATE_USAGE_KEYS = {"identity", "accountEmail", "accountOrganization", "loginMethod", "pace"}
 
@@ -395,6 +395,15 @@ def normalize_codexbar_entry(provider: str, payload: Any) -> Dict[str, Any]:
     warnings: set[str] = set()
     if any(key not in _COMMON_USAGE_KEYS | _PRIVATE_USAGE_KEYS for key in usage):
         warnings.add("unsupported_extension")
+    plan_observation = usage.get("planObservation")
+    if isinstance(plan_observation, dict) and "rawPlan" in plan_observation:
+        plan = _safe_text(plan_observation.get("rawPlan"))
+        if plan:
+            result["plan"] = plan
+        else:
+            warnings.add("invalid_field")
+    elif plan_observation is not None:
+        warnings.add("invalid_field")
     result["windows"] = _normalize_windows(item, usage, warnings)
 
     cost_windows, balances, metrics = _normalize_cost(usage.get("providerCost"), warnings)
