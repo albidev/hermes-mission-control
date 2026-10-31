@@ -193,6 +193,9 @@ class LinkBinding:
 
 
 class _Admission:
+    #: Operation label handed to ``authority.admit`` immediately before the first application frame.
+    operation = "data_send"
+
     def __init__(self, binding: LinkBinding, authority):
         if not callable(getattr(authority, "current", None)) or not callable(getattr(authority, "admit", None)):
             raise ValueError("durable link authority required")
@@ -209,6 +212,37 @@ class _Admission:
         self.check()
         if self.authority.admit(self.binding.endpoint_id, self.binding.generation, operation) is not True:
             raise FirewallDenied("room request denied")
+
+
+class _PairAckAdmission(_Admission):
+    """Admission for the ONE operation a ``confirmed`` host link may perform: ``pair_ack``.
+
+    Every check re-reads the journal peer record (one non-waiting shared read, released before returning) and
+    requires: local role ``host``, state ``confirmed`` or ``acknowledged``, the exact generation, and the exact
+    binding / leaf pin / CA the connector was built with.  A different operation label is never admitted.
+    """
+    operation = "pair_ack"
+
+    def __init__(self, binding: LinkBinding, authority):
+        super().__init__(binding, authority)
+        if not callable(getattr(authority, "peer_trust", None)):
+            raise ValueError("durable link authority required")
+
+    def check(self):
+        trust = self.authority.peer_trust(self.binding.endpoint_id, self.binding.generation, role="host",
+                                          states=("confirmed", "acknowledged"))
+        ca = self.binding.peer_ca_data
+        if (trust is None or trust.generation != self.binding.generation or trust.role != "host"
+                or trust.protocol_state not in ("confirmed", "acknowledged")
+                or trust.fingerprint != self.binding.peer_fingerprint
+                or (trust.ca_pem.decode("ascii") if isinstance(trust.ca_pem, bytes) else trust.ca_pem) != ca
+                or trust.binding_dict() != dict(self.binding.expected_binding)):
+            raise FirewallDenied("room request denied")
+
+    def admit(self, operation):
+        if operation != self.operation:
+            raise FirewallDenied("room request denied")
+        super().admit(operation)
 
 
 class _DirectClient:
@@ -249,7 +283,11 @@ class HostConnector:
 
     def _check(self, callback=None):
         if callback is not None:
-            callback()
+            # Legacy callbacks may raise on denial or return None.  A material
+            # request predicate may also return a literal False, which is an
+            # explicit denial and must never be discarded before send().
+            if callback() is False:
+                raise FirewallDenied("room request denied")
         admission = getattr(self, "admission", None)
         if admission is not None:
             admission.check()
@@ -258,18 +296,33 @@ class HostConnector:
                  send=send_message, receive=recv_message, frames_factory=SequencedTLS):
         """One stream, one reader/writer, one send, no retry (also used by spike)."""
         self._check(admit)
+        if time.monotonic() >= deadline:
+            raise UpstreamAmbiguous("room link outcome unknown")
         sock = tls = None
         try:
-            sock = self.client.open_stream(timeout=max(.001, deadline - time.monotonic()))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise UpstreamAmbiguous("room link outcome unknown")
+            sock = self.client.open_stream(timeout=remaining)
             self._check(admit)
-            sock.settimeout(max(.001, deadline - time.monotonic()))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise UpstreamAmbiguous("room link outcome unknown")
+            sock.settimeout(remaining)
             tls = wrap(sock, self.context, expected_fingerprint=self.peer_fingerprint)
             self._check(admit)
             frames = frames_factory(tls, deadline=deadline)
             admission = getattr(self, "admission", None)
             if admission is not None:
-                admission.admit("data_send")
-            # The durable decision is adjacent to the first application frame.
+                admission.admit(admission.operation)
+            # Final request-local gate: after durable admission succeeds, deny a
+            # withdrawn request or expired budget before the first application
+            # frame. Keep this check directly adjacent to send(); a post-send
+            # check cannot revoke a receipt that may already be durable.
+            if admit is not None and admit() is False:
+                raise FirewallDenied("room request denied")
+            if time.monotonic() >= deadline:
+                raise UpstreamAmbiguous("room link outcome unknown")
             send(frames, payload)
             self._check(admit)
             response = decode_response(receive(frames))
@@ -279,7 +332,7 @@ class HostConnector:
             if tls is not None or sock is not None:
                 (tls if tls is not None else sock).close()
 
-    def forward(self, request: ForwardedRequest, admit=None) -> UpstreamResponse:
+    def forward(self, request: ForwardedRequest, admit=None, *, deadline=None) -> UpstreamResponse:
         payload = encode_request(request)
         if self.admission is not None:
             payload = json.dumps({"endpoint_id": self.binding.endpoint_id,
@@ -287,12 +340,19 @@ class HostConnector:
                                   "request": _json(payload)}, separators=(",", ":")).encode()
             if len(payload) > MAX_MESSAGE:
                 raise FirewallDenied("room request denied")
-        deadline = time.monotonic() + self.timeout
+        if deadline is None:
+            deadline = time.monotonic() + self.timeout
+        if time.monotonic() >= deadline:
+            raise UpstreamAmbiguous("room link outcome unknown")
         self._check(admit)
         if not self._slots.acquire(blocking=False):
             raise UpstreamAmbiguous("room link unavailable")
-        with self._lock:
-            self.active += 1
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not self._lock.acquire(timeout=remaining):
+            self._slots.release()
+            raise UpstreamAmbiguous("room link unavailable")
+        self.active += 1
+        self._lock.release()
         try:
             # Generation is re-read after capacity acquisition and every I/O wait.
             return self.exchange(payload, deadline, admit=admit, wrap=wrap_client)
@@ -304,8 +364,8 @@ class HostConnector:
                 self.active -= 1
             self._slots.release()
 
-    def __call__(self, request, admit=None):
-        return self.forward(request, admit)
+    def __call__(self, request, admit=None, *, deadline=None):
+        return self.forward(request, admit, deadline=deadline)
 
 
 def make_link_connector(binding: LinkBinding, identity: LinkIdentity, authority) -> HostConnector:
@@ -313,6 +373,46 @@ def make_link_connector(binding: LinkBinding, identity: LinkIdentity, authority)
     if not isinstance(binding, LinkBinding) or not isinstance(identity, LinkIdentity):
         raise TypeError("fixed link binding and identity required")
     connector = HostConnector(binding=binding, identity=identity, authority=authority)
+    connector.admission.check()
+    return connector
+
+
+PAIR_ACK_PATH = "/control/joining"  # the fixed control path (same constant the W1 client and W2a listener use)
+
+
+class PairAckConnector(HostConnector):
+    """Host A -> peer B, ``pair_ack`` ONLY, over the same bounded pinned one-request exchange.
+
+    The operation is fixed by construction (``_PairAckAdmission``): preflight/current and final admission accept a
+    ``confirmed`` link for ``pair_ack`` alone, and the generic ``forward`` (data) entry point is closed, so this object
+    can never carry a data/preview/redeem/status/material request on a confirmed link.
+    """
+    def __init__(self, *, binding: LinkBinding, identity: LinkIdentity, authority):
+        super().__init__(binding=binding, identity=identity, authority=authority)
+        self.admission = _PairAckAdmission(binding, authority)
+
+    def forward(self, request, admit=None, *, deadline=None):
+        raise FirewallDenied("room request denied")
+
+    def forward_pair_ack(self, body: Mapping[str, Any], admit=None) -> UpstreamResponse:
+        ack = body.get("ack") if isinstance(body, dict) else None
+        if (not isinstance(body, dict) or set(body) != {"op", "ack"} or body["op"] != "pair_ack"
+                or not isinstance(ack, dict) or ack.get("endpoint_id") != self.binding.endpoint_id):
+            raise FirewallDenied("room request denied")
+        try:
+            payload = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        except (TypeError, ValueError):
+            raise FirewallDenied("room request denied") from None
+        return HostConnector.forward(self, ForwardedRequest("POST", PAIR_ACK_PATH, (), payload), admit)
+
+
+def make_pair_ack_connector(binding: LinkBinding, identity: LinkIdentity, authority) -> PairAckConnector:
+    """Build the host pair_ack connector for exactly one confirmed/acknowledged endpoint/generation."""
+    if not isinstance(binding, LinkBinding) or not isinstance(identity, LinkIdentity):
+        raise TypeError("fixed link binding and identity required")
+    if binding.peer_ca_data is None:
+        raise ValueError("in-memory peer CA required")
+    connector = PairAckConnector(binding=binding, identity=identity, authority=authority)
     connector.admission.check()
     return connector
 

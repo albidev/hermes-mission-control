@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import copy
 import fcntl
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -291,18 +292,131 @@ class RoomInviteStore:
         """Compatibility validator for the spike's private control adapter."""
         RoomInviteStore._normalize_binding(binding)
 
-    def redeem(self, lobby_id: str, invite_id: str, secret: str, *, binding: dict) -> dict:
+    # ---- peer-scoped (control lane) helpers ------------------------------------------------------------------------
+    # Peer-aware calls (``peer_id`` supplied) fail closed unless their required ``before_effect``/``before_return``
+    # callback is a journal-context ``readmit``. Callback-free compatibility is reserved for legacy owner/spike
+    # mutation callers that omit peer_id. Callbacks run while at most this store's SQLite transaction is held (never a
+    # journal lock) and must be one nonblocking check.
+    @staticmethod
+    def _unavailable():
+        return InviteError("invite_unavailable")
+
+    @classmethod
+    def _admit(cls, callback):
+        """Run a re-admission callback; anything but an exact ``True`` (including an exception) is a generic refusal."""
+        if callback is None:
+            return
+        try:
+            admitted = callback()
+        except Exception:
+            raise cls._unavailable() from None
+        if admitted is not True:
+            raise cls._unavailable()
+
+    @classmethod
+    def _require_callback(cls, callback):
+        if not callable(callback):
+            raise cls._unavailable()
+
+    @classmethod
+    def _peer_binding(cls, binding):
+        try:
+            binding = cls._normalize_binding(binding)
+        except InviteError:
+            raise cls._unavailable() from None
+        if binding["catalog_digest"] is None or binding["policy_digest"] is None:
+            raise cls._unavailable()
+        return binding
+
+    @staticmethod
+    def _target_matches(target, peer_id, binding):
+        return (isinstance(peer_id, str) and target.get("peer_id") == peer_id
+                and target.get("installation_id") == binding["target_install_id"]
+                and target.get("profile") == binding["target_profile"]
+                and target.get("capability_digest", binding["catalog_digest"]) == binding["catalog_digest"])
+
+    def _peer_snapshot(self, lobby_id, invite_id, peer_id, binding, *, states, invite_state, redemption):
+        """One consistent read snapshot; every failure is the same generic ``invite_unavailable``."""
+        binding = self._peer_binding(binding)
+        if not all(isinstance(v, str) and v for v in (lobby_id, invite_id, peer_id)):
+            raise self._unavailable()
+        with self._connection() as conn:
+            conn.execute("BEGIN")
+            try:
+                owners = conn.execute("SELECT installation_id,profile FROM owner_scope").fetchall()
+                lobby = conn.execute("SELECT * FROM lobbies WHERE lobby_id=?", (lobby_id,)).fetchone()
+                invite = conn.execute("SELECT * FROM invitations WHERE lobby_id=? AND invite_id=?", (lobby_id, invite_id)).fetchone()
+                stored = conn.execute("SELECT * FROM redemptions WHERE invite_id=?", (invite_id,)).fetchone() if redemption else None
+            finally:
+                conn.rollback()
+        if len(owners) != 1 or lobby is None or invite is None or lobby["state"] not in states or invite["state"] != invite_state:
+            raise self._unavailable()
+        if owners[0]["installation_id"] == binding["target_install_id"]:
+            raise self._unavailable()
+        member = next((m for m in json.loads(lobby["roster_json"]) if m["member_id"] == invite["member_id"] and m.get("target")), None)
+        if member is None or not self._target_matches(member["target"], peer_id, binding):
+            raise self._unavailable()
+        if redemption and (stored is None or any(stored[key] != binding[key] for key in binding)):
+            raise self._unavailable()
+        return {"owner": dict(owners[0]), "lobby": lobby, "invite": invite, "redemption": stored, "binding": binding}
+
+    def peer_preview(self, lobby_id: str, invite_id: str, *, peer_id: str, binding: dict, before_return=None) -> dict:
+        """Secretless, non-consuming W2b metadata preview for ONE exact invitation of the authenticated peer.
+
+        Never reads or accepts a secret, never writes, never enumerates.  ``peer_id``/``binding`` come from the
+        journal-issued context, never from the request.  ``before_return`` (re-admission) runs after the snapshot and
+        after every SQLite resource is released.  Distinct from the secret-backed ``preview``, which is unchanged."""
+        self._require_callback(before_return)
+        snap = self._peer_snapshot(lobby_id, invite_id, peer_id, binding, states={"open"}, invite_state="open", redemption=False)
+        if not snap["invite"]["expires_at"] > self.clock():
+            raise self._unavailable()
+        result = {"name": snap["lobby"]["name"], "expires_at": snap["invite"]["expires_at"]}
+        self._admit(before_return)
+        return result
+
+    def peer_scope_status(self, lobby_id: str, invite_id: str, *, peer_id: str, binding: dict, before_return=None) -> dict:
+        """Host scope + store consent status of the authenticated peer's ONE exact redemption: ``{status, scope}``.
+
+        ``status`` is the existing store vocabulary; ``ready`` means both consents only (never room active/created).
+        ``room_id`` is ``planned_room_id``; ``host_id`` is the bound owner installation.  Valid on open/sealed/created."""
+        self._require_callback(before_return)
+        snap = self._peer_snapshot(lobby_id, invite_id, peer_id, binding, states={"open", "sealed", "created"},
+                                   invite_state="redeemed", redemption=True)
+        stored, binding = snap["redemption"], snap["binding"]
+        result = {"status": self._consent_status(dict(stored)),
+                  "scope": {"host_id": snap["owner"]["installation_id"], "room_id": snap["lobby"]["planned_room_id"],
+                            "member_id": snap["invite"]["member_id"], "lobby_id": lobby_id, "invite_id": invite_id,
+                            "binding": {key: stored[key] for key in binding}}}
+        self._admit(before_return)
+        return result
+
+    def redeem(self, lobby_id: str, invite_id: str, secret: str, *, binding: dict, peer_id: str | None = None,
+               before_effect=None) -> dict:
+        """``peer_id`` (journal-authenticated) additionally binds the exact roster peer and requires the six-field
+        binding; ``before_effect`` is the final re-admission, called once after every validation and immediately before
+        the first write (``False``/exception => generic ``invite_unavailable``, nothing written).  Both default to None
+        for legacy owner/spike callers.  The production control lane must always pass both."""
+        if peer_id is not None:
+            self._require_callback(before_effect)
         binding = self._normalize_binding(binding)
+        if peer_id is not None:
+            binding = self._peer_binding(binding)
         if not isinstance(secret, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", secret):
             raise InviteError("invite_unavailable")
         with self._write() as conn:
             lobby = self._open_lobby(conn, lobby_id)
-            invite = conn.execute("SELECT member_id FROM invitations WHERE lobby_id=? AND invite_id=?", (lobby_id, invite_id)).fetchone()
+            invite = conn.execute("SELECT member_id,state,expires_at,secret_sha256 FROM invitations WHERE lobby_id=? AND invite_id=?", (lobby_id, invite_id)).fetchone()
             if invite is None:
                 raise InviteError("invite_unavailable")
             target = self._peer_member(lobby, invite["member_id"])["target"]
             if (binding["target_install_id"], binding["target_profile"]) != (target["installation_id"], target["profile"]):
                 raise InviteError("invite_unavailable")
+            if peer_id is not None and not self._target_matches(target, peer_id, binding):
+                raise InviteError("invite_unavailable")
+            digest = hashlib.sha256(secret.encode()).hexdigest()
+            if invite["state"] != "open" or not invite["expires_at"] > self.clock() or not hmac.compare_digest(invite["secret_sha256"], digest):
+                raise InviteError("invite_unavailable")
+            self._admit(before_effect)          # final admission: after every validation, immediately before the first write
             result = conn.execute(
                 "UPDATE invitations SET state='redeemed',redeemed_at=?,redeemed_by_endpoint=?,pinned_fingerprint=?,version=version+1 "
                 "WHERE lobby_id=? AND invite_id=? AND state='open' AND expires_at>? AND secret_sha256=?",
@@ -368,22 +482,41 @@ class RoomInviteStore:
             raise InviteError("invalid_decision")
         return self._decision(lobby_id, invite_id, binding, "host_decision", "approved" if approved else "denied")
 
-    def consent_joining(self, lobby_id: str, invite_id: str, *, binding: dict, consented: bool) -> dict:
+    def consent_joining(self, lobby_id: str, invite_id: str, *, binding: dict, consented: bool,
+                        peer_id: str | None = None, before_effect=None) -> dict:
+        """``peer_id`` binds the exact roster peer (journal-authenticated).  ``before_effect`` is the final
+        re-admission, called once after binding/host-approval/final-state validation and immediately before the first
+        UPDATE; an already-given identical consent is read-only and does not call it (the caller re-admits before
+        replying).  The production control lane must always pass both."""
         if type(consented) is not bool:
             raise InviteError("invalid_decision")
-        return self._decision(lobby_id, invite_id, binding, "joining_consent", "given" if consented else "refused")
+        return self._decision(lobby_id, invite_id, binding, "joining_consent", "given" if consented else "refused",
+                              peer_id=peer_id, before_effect=before_effect)
 
-    def _decision(self, lobby_id, invite_id, binding, column, value):
+    def _decision(self, lobby_id, invite_id, binding, column, value, *, peer_id=None, before_effect=None):
+        if peer_id is not None:
+            self._require_callback(before_effect)
         binding = self._normalize_binding(binding)
+        if peer_id is not None:
+            if binding["catalog_digest"] is None or binding["policy_digest"] is None:
+                raise InviteError("invalid_peer_binding")
         with self._write() as conn:
-            self._open_lobby(conn, lobby_id)
-            row = conn.execute("SELECT r.* FROM invitations i JOIN redemptions r USING(invite_id) WHERE i.lobby_id=? AND i.invite_id=?", (lobby_id, invite_id)).fetchone()
+            lobby = self._open_lobby(conn, lobby_id)
+            row = conn.execute("SELECT r.*,i.member_id FROM invitations i JOIN redemptions r USING(invite_id) WHERE i.lobby_id=? AND i.invite_id=?", (lobby_id, invite_id)).fetchone()
             if row is None or any(row[key] != binding[key] for key in binding):
                 raise InviteError("fingerprint_mismatch")
+            if peer_id is not None:
+                member = next((m for m in json.loads(lobby["roster_json"]) if m["member_id"] == row["member_id"] and m.get("target")), None)
+                if member is None or not self._target_matches(member["target"], peer_id, binding):
+                    raise InviteError("fingerprint_mismatch")
             if column == "joining_consent" and row["host_decision"] != "approved":
                 raise InviteError("host_approval_required")
             if row[column] not in {"pending", value}:
                 raise InviteError("decision_final")
+            if before_effect is not None and column == "joining_consent":
+                if row[column] == value:
+                    return self.get_redemption(lobby_id, invite_id)      # exact consent already stored: read-only
+                self._admit(before_effect)
             conn.execute(f"UPDATE redemptions SET {column}=?,decided_at=? WHERE invite_id=?", (value, self.clock(), invite_id))
         return self.get_redemption(lobby_id, invite_id)
 
@@ -468,3 +601,17 @@ class RoomInviteStore:
                 conn.execute("INSERT INTO owner_scope VALUES(?,?)", (installation_id, profile))
             elif row["installation_id"] != installation_id or row["profile"] != profile:
                 raise InviteError("owner_scope_mismatch")
+
+    def is_owner_scope_bound(self, installation_id: str, profile: str) -> bool:
+        """Return whether this store is already bound to exactly this local owner.
+
+        This is deliberately a read-only check.  Handler construction must validate
+        an already-owned database, never adopt an unbound database or rebind one
+        belonging to another installation/profile.
+        """
+        if not isinstance(installation_id, str) or not isinstance(profile, str):
+            return False
+        with self._connection() as conn:
+            rows = conn.execute("SELECT installation_id,profile FROM owner_scope").fetchall()
+        return (len(rows) == 1 and rows[0]["installation_id"] == installation_id
+                and rows[0]["profile"] == profile)

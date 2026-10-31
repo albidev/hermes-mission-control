@@ -12,6 +12,7 @@ import asyncio
 import inspect
 import ipaddress
 import json
+import socket
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,7 +24,7 @@ from .state import FixedLinkStore
 
 
 class _IPv6Server(ThreadingHTTPServer):
-    address_family = 10
+    address_family = socket.AF_INET6
 
 
 _GENERIC_404 = b'{"error":"unavailable"}'
@@ -47,6 +48,7 @@ class _Link:
     generation: int
     firewall: RoomFirewall
     connector: Callable[..., Any]
+    ownership_token: object | None = None
     closed: bool = False
 
     def admit(self) -> None:
@@ -165,7 +167,8 @@ class LoopbackAdapter:
 
     def register(self, endpoint_id: str, generation: int, *,
                  firewall: RoomFirewall, connector: Callable[..., Any],
-                 adapter_id: str | None = None) -> str:
+                 adapter_id: str | None = None,
+                 ownership_token: object | None = None) -> str:
         if not isinstance(endpoint_id, str) or not endpoint_id or "/" in endpoint_id or "\\" in endpoint_id:
             raise ValueError("endpoint id must be path-safe")
         if type(generation) is not int or generation < 1:
@@ -211,7 +214,7 @@ class LoopbackAdapter:
                 raise ValueError("scoped route already registered")
             if old is not None:
                 old.closed = True
-            link = _Link(endpoint_id, generation, firewall, connector)
+            link = _Link(endpoint_id, generation, firewall, connector, ownership_token)
             link_ref.append(link)
             self._routes[route_id] = link
             return self.url(route_id)
@@ -222,7 +225,8 @@ class LoopbackAdapter:
                       connector: Callable[..., Any] | None = None,
                       binding=None, identity=None, authority=None, material_scope=None,
                       backend_timeout_seconds: float = 30.0,
-                      on_admitted: Callable[[str, Mapping[str, Any]], Any] | None = None) -> str:
+                      on_admitted: Callable[[str, Mapping[str, Any]], Any] | None = None,
+                      ownership_token: object | None = None) -> str:
         """Register a real fixed link, or an explicit transport fixture connector.
 
         Product callers supply binding/identity/authority. No network destination
@@ -257,7 +261,7 @@ class LoopbackAdapter:
                                 backend_timeout_seconds=backend_timeout_seconds,
                                 on_admitted=on_admitted)
         return self.register(endpoint_id, generation, firewall=firewall, connector=connector,
-                             adapter_id=adapter_id)
+                             adapter_id=adapter_id, ownership_token=ownership_token)
 
     def bind(self, endpoint_id: str, firewall: RoomFirewall, *, target_url: str | None = None,
              scope: Mapping[str, Any] | None = None, generation: int = 1,
@@ -299,6 +303,46 @@ class LoopbackAdapter:
                 if link.endpoint_id == endpoint_id and (generation is None or link.generation == generation):
                     link.closed = True
                     self._routes.pop(route_id, None)
+
+    def deregister_route(self, route_id: str, *, endpoint_id: str,
+                         generation: int, ownership_token: object | None = None) -> None:
+        """Remove one exact scoped route without affecting sibling scopes."""
+        with self._lock:
+            link = self._routes.get(route_id)
+            if (link is not None and link.endpoint_id == endpoint_id
+                    and link.generation == generation
+                    and (ownership_token is None or link.ownership_token is ownership_token)):
+                link.closed = True
+                self._routes.pop(route_id, None)
+
+    def owned_route_descriptor(self, route_id: str, *, endpoint_id: str,
+                               generation: int, ownership_token: object):
+        """Atomically describe one exact native route owned by one attempt."""
+        with self._lock:
+            link = self._routes.get(route_id)
+            if (link is None or link.closed or self._server is None
+                    or link.endpoint_id != endpoint_id
+                    or link.generation != generation
+                    or link.ownership_token is not ownership_token):
+                return None
+            host, port = self._server.server_address[:2]
+            rendered = f"[{host}]" if ":" in str(host) else str(host)
+            return str(host), int(port), f"http://{rendered}:{port}/links/{route_id}"
+
+    def is_running(self) -> bool:
+        """Return whether this adapter still owns a live listener."""
+        with self._lock:
+            return self._server is not None and self._thread is not None and self._thread.is_alive()
+
+    def route_descriptor(self, route_id: str):
+        """Return ``(host, port, url)`` only for an exact live native route."""
+        with self._lock:
+            link = self._routes.get(route_id)
+            if link is None or link.closed or self._server is None:
+                return None
+            host, port = self._server.server_address[:2]
+            rendered = f"[{host}]" if ":" in str(host) else str(host)
+            return str(host), int(port), f"http://{rendered}:{port}/links/{route_id}"
 
     def observe_generation(self, endpoint_id: str, generation: int) -> None:
         with self._lock:

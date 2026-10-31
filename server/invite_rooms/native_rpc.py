@@ -67,16 +67,36 @@ def _unique(pairs):
 
 
 class BoundedNativeRpc:
-    def __init__(self, ws, *, timeout: float = 10, require_register_admission: bool = False):
+    def __init__(self, ws, *, timeout: float = 10, require_register_admission: bool = False,
+                 invite_admission=None):
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 10:
             raise NativeRpcDenied()
         self.ws = ws
         # Production transports set this: a groups.peer.register with no admission seam is never sent.
         self._require_register_admission = bool(require_register_admission)
+        self._invite_admission = invite_admission
         self.timeout = timeout
         self._lock = asyncio.Lock()
         self._poisoned = False
         self.drained_notifications = 0
+
+    def bind_request(self, *, invite_admission, deadline):
+        """Return a capability-bound call for one material request.
+
+        The returned callable has no optional admission escape hatch: callers
+        can only use the exact admission predicate and absolute deadline bound
+        here.  This is the capability TargetMaterialMint requires before an
+        invite effect is attempted.
+        """
+        if not callable(invite_admission) or type(deadline) not in (int, float) \
+                or not math.isfinite(deadline):
+            raise NativeRpcDenied()
+
+        async def request(method, params):
+            return await self(method, params, invite_admission=invite_admission, deadline=deadline)
+
+        request._request_bound_native_rpc = True
+        return request
 
     @staticmethod
     def _notification(message):
@@ -116,13 +136,15 @@ class BoundedNativeRpc:
             if frames % _DRAIN_YIELD_EVERY == 0:
                 await asyncio.sleep(0)
 
-    async def __call__(self, method, params):
+    async def __call__(self, method, params, *, invite_admission=None, deadline=None):
         if not isinstance(method, str) or method not in _FIELDS or not isinstance(params, dict):
             raise NativeRpcDenied()
         required, allowed = _FIELDS[method]
         if not required <= set(params) <= allowed:
             raise NativeRpcDenied()
         admission = REGISTER_ADMISSION.get() if method == 'groups.peer.register' else None
+        invite_admission = (self._invite_admission if invite_admission is None else invite_admission) \
+            if method == 'groups.peer.invite' else None
         if method == 'groups.peer.register' and admission is None and self._require_register_admission:
             raise NativeRpcDenied()
         rid = uuid.uuid4().hex
@@ -135,14 +157,27 @@ class BoundedNativeRpc:
             raise NativeRpcDenied() from None
         acquired = False
         sent = False
-        deadline = time.monotonic() + self.timeout
+        deadline = deadline if deadline is not None else time.monotonic() + self.timeout
+        remaining = max(0.0, deadline - time.monotonic())
+        if remaining <= 0:
+            raise AdmissionDenied() if invite_admission is not None else TimeoutError()
         try:
-            async with asyncio.timeout(self.timeout):
+            async with asyncio.timeout(remaining):
                 await self._lock.acquire()
                 acquired = True
                 if self._poisoned:
                     raise NativeRpcAmbiguous()
                 await self._drain_idle(deadline)
+                if invite_admission is not None:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError()
+                    check = invite_admission()
+                    if asyncio.iscoroutine(check):
+                        check = await check
+                    if check is not True:
+                        raise AdmissionDenied()
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError()
                 if admission is not None:
                     # Waiting/reading/parsing is off-loop and bounded by this request's deadline.
                     # The returned final validator runs AFTER the await, never before it.
@@ -195,7 +230,7 @@ class BoundedNativeRpc:
         except Exception as exc:
             if sent:
                 self._poisoned = True
-            elif admission is not None and isinstance(exc, TimeoutError) and not self._poisoned:
+            elif (admission is not None or invite_admission is not None) and isinstance(exc, TimeoutError) and not self._poisoned:
                 # Expired before the frame was written (admission wait/final check): nothing was sent
                 # and the stream is intact, so this is a denial, not an ambiguous outcome.
                 raise AdmissionDenied() from None

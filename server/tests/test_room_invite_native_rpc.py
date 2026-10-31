@@ -28,6 +28,7 @@ from invite_rooms.native_rpc import (
     MAX_RESPONSE,
     _FIELDS,
 )
+from room_lobby_service import AdmissionDenied
 
 
 class CanonicalImportTests(unittest.TestCase):
@@ -302,6 +303,70 @@ class IdleBacklogTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(NativeRpcAmbiguous, "^native_rpc_ambiguous$"):
                     await rpc("groups.capabilities", {})
                 self.assertEqual(self.calls, [])
+
+
+class InviteAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invite_gate_runs_after_idle_drain_and_blocks_frame(self):
+        sent = []
+        class WS:
+            async def receive(self, timeout=None):
+                raise TimeoutError()
+            async def send_str(self, value):
+                sent.append(value)
+            async def close(self):
+                return None
+        rpc = BoundedNativeRpc(WS(), timeout=1, invite_admission=lambda: False)
+        from room_lobby_service import AdmissionDenied
+        with self.assertRaises(AdmissionDenied):
+            await rpc("groups.peer.invite", {"profile": "p", "room_id": "r",
+                                              "home_install_id": "h", "authority_gateway_id": "h",
+                                              "authority_epoch": 1, "member_id": "m",
+                                              "grant_id": "g", "ttl_seconds": 1})
+        self.assertEqual(sent, [])
+
+
+class LiveSocketCutoverTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_websocket_lock_drain_cutover_sends_no_invite(self):
+        observed = []
+        app = web.Application()
+
+        async def handler(request):
+            ws = web.WebSocketResponse()
+            await ws.prepare(request)
+            async for message in ws:
+                observed.append(message.data)
+                await ws.send_json({"jsonrpc": "2.0", "id": json.loads(message.data)["id"],
+                                    "result": {"ok": True}})
+            return ws
+
+        app.router.add_get("/api/ws", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        try:
+            async with aiohttp.ClientSession(trust_env=False) as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/api/ws") as ws:
+                    admitted = True
+                    rpc = BoundedNativeRpc(ws, timeout=1, invite_admission=lambda: admitted)
+                    await rpc._lock.acquire()
+                    pending = asyncio.create_task(rpc("groups.peer.invite", {
+                        "room_id": "r", "home_install_id": "h",
+                        "authority_gateway_id": "h", "authority_epoch": 1,
+                        "member_id": "m", "grant_id": "g", "ttl_seconds": 1,
+                    }))
+                    await asyncio.sleep(0)
+                    # Cutover occurs while the real client is queued on its lock;
+                    # the final admission is checked after lock/idle-drain and
+                    # before the websocket frame is emitted.
+                    admitted = False
+                    rpc._lock.release()
+                    with self.assertRaises(AdmissionDenied):
+                        await pending
+                    self.assertEqual(observed, [])
+        finally:
+            await runner.cleanup()
 
 
 if __name__ == "__main__":

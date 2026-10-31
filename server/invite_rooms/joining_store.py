@@ -129,33 +129,70 @@ class JoiningStore:
             self._storage.close()
 
     @contextmanager
-    def _connection(self):
-        with self._storage.connection() as conn:
+    def _connection(self, *, deadline=None):
+        # SQLite's busy timeout is not interruptible: a connection opened with
+        # the remaining budget can still return long after that budget under
+        # contention.  Use non-blocking lock attempts for deadline-bound work;
+        # _read/_write reopen and retry between attempts.
+        timeout = 10.0 if deadline is None else 0.0
+        with self._storage.connection(timeout=timeout) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys=ON")
             yield conn
 
     @contextmanager
-    def _read(self):
-        with self._connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+    def _read(self, *, deadline=None):
+        while True:
+            entered = False
             try:
-                self._check_schema_version(conn)
-                yield conn
-            finally:
-                conn.rollback()
+                with self._connection(deadline=deadline) as conn:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise JoiningStoreError("material_unavailable")
+                    conn.execute("BEGIN IMMEDIATE")
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise JoiningStoreError("material_unavailable")
+                    entered = True
+                    try:
+                        self._check_schema_version(conn)
+                        yield conn
+                    finally:
+                        conn.rollback()
+                return
+            except JoiningStoreError:
+                # AnchoredSQLite maps SQLITE_BUSY to its fail-closed storage
+                # error.  Only retry errors raised before the transaction was
+                # entered; logical/query errors from the body are never
+                # replayed.  Every retry is a fresh, zero-timeout connection.
+                if entered or deadline is None or time.monotonic() >= deadline:
+                    raise
+                time.sleep(min(0.001, max(0.0, deadline - time.monotonic())))
 
     @contextmanager
-    def _write(self):
-        with self._connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+    def _write(self, *, deadline=None):
+        while True:
+            entered = False
             try:
-                self._check_schema_version(conn)
-                yield conn
-                conn.commit()
-            except BaseException:
-                conn.rollback()
-                raise
+                with self._connection(deadline=deadline) as conn:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise JoiningStoreError("material_unavailable")
+                    conn.execute("BEGIN IMMEDIATE")
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise JoiningStoreError("material_unavailable")
+                    entered = True
+                    try:
+                        self._check_schema_version(conn)
+                        yield conn
+                        if deadline is not None and time.monotonic() >= deadline:
+                            raise JoiningStoreError("material_unavailable")
+                        conn.commit()
+                    except BaseException:
+                        conn.rollback()
+                        raise
+                return
+            except JoiningStoreError:
+                if entered or deadline is None or time.monotonic() >= deadline:
+                    raise
+                time.sleep(min(0.001, max(0.0, deadline - time.monotonic())))
 
     @staticmethod
     def _check_schema_version(conn) -> None:
@@ -241,11 +278,11 @@ class JoiningStore:
             rows = conn.execute("SELECT * FROM imports ORDER BY created_at, import_id").fetchall()
         return [dict(row) for row in rows]
 
-    def find_import(self, lobby_id: str, invite_id: str):
+    def find_import(self, lobby_id: str, invite_id: str, *, deadline=None):
         """Read-only lookup by (lobby_id, invite_id). Returns None if unknown
         rather than raising, so handlers can map an inbound payload without
         an existence oracle leaking through an exception message."""
-        with self._read() as conn:
+        with self._read(deadline=deadline) as conn:
             row = conn.execute(
                 "SELECT * FROM imports WHERE lobby_id=? AND invite_id=?", (lobby_id, invite_id)
             ).fetchone()
@@ -360,9 +397,9 @@ class JoiningStore:
             elif row["scope_json"] != encoded:
                 raise JoiningStoreError("consent_scope_conflict")
 
-    def confirmed_scope(self, import_id: str):
+    def confirmed_scope(self, import_id: str, *, deadline=None):
         _check_import_id(import_id)
-        with self._read() as conn:
+        with self._read(deadline=deadline) as conn:
             row = conn.execute("SELECT scope_json FROM confirmed_scope WHERE import_id=?", (import_id,)).fetchone()
         return json.loads(row["scope_json"]) if row is not None else None
 
@@ -429,9 +466,9 @@ class JoiningStore:
                 conn.execute("UPDATE imports SET state='left',updated_at=? WHERE import_id=?",
                              (time.time(), import_id))
 
-    def get_consent(self, import_id: str):
+    def get_consent(self, import_id: str, *, deadline=None):
         _check_import_id(import_id)
-        with self._read() as conn:
+        with self._read(deadline=deadline) as conn:
             row = conn.execute(
                 "SELECT receipt_json,signature FROM consents WHERE import_id=?", (import_id,)
             ).fetchone()
@@ -442,30 +479,40 @@ class JoiningStore:
     # --- target-side mint journal (durable, encrypted; never re-mints with
     # new IDs — ambiguity stays visible) ---
 
-    def mint_state(self, scope_key: str):
-        with self._read() as conn:
+    def mint_state(self, scope_key: str, *, deadline=None):
+        with self._read(deadline=deadline) as conn:
             row = conn.execute("SELECT state FROM material WHERE scope_key=?", (scope_key,)).fetchone()
         return row["state"] if row else None
 
-    def mint_grant_id(self, scope_key: str):
-        with self._read() as conn:
+    def mint_grant_id(self, scope_key: str, *, deadline=None):
+        with self._read(deadline=deadline) as conn:
             row = conn.execute("SELECT grant_id FROM material WHERE scope_key=?", (scope_key,)).fetchone()
         return row["grant_id"] if row else None
 
-    def mint_begin(self, scope_key: str) -> str:
+    def mint_begin(self, scope_key: str, *, final_admission=None, deadline: float | None = None) -> str:
         """Durable exclusive intent BEFORE any native call. Returns a fresh
         grant_id the first time; a scope that already has a journal entry is
         ambiguous and is never silently retried with a new grant_id."""
         grant_id = "grant-" + _secrets.token_hex(16)
-        with self._write() as conn:
+        with self._write(deadline=deadline) as conn:
             if conn.execute("SELECT 1 FROM material WHERE scope_key=?", (scope_key,)).fetchone() is not None:
                 raise JoiningStoreError("mint_ambiguous")
+            if deadline is not None and time.monotonic() >= deadline:
+                raise JoiningStoreError("material_unavailable")
+            if final_admission is not None:
+                try:
+                    if final_admission() is not True:
+                        raise JoiningStoreError("material_unavailable")
+                except JoiningStoreError:
+                    raise
+                except Exception:
+                    raise JoiningStoreError("material_unavailable") from None
             conn.execute("INSERT INTO material VALUES(?,?,?,?,?)", (scope_key, grant_id, "intent", None, None))
         return grant_id
 
-    def mint_complete(self, scope_key: str, value: bytes) -> None:
+    def mint_complete(self, scope_key: str, value: bytes, *, deadline=None) -> None:
         nonce, ct = self._seal(scope_key, value)
-        with self._write() as conn:
+        with self._write(deadline=deadline) as conn:
             updated = conn.execute(
                 "UPDATE material SET state='ready',nonce=?,ciphertext=? WHERE scope_key=? AND state='intent'",
                 (nonce, ct, scope_key),
@@ -473,8 +520,8 @@ class JoiningStore:
             if updated != 1:
                 raise JoiningStoreError("material_unavailable")
 
-    def mint_load(self, scope_key: str) -> bytes:
-        with self._read() as conn:
+    def mint_load(self, scope_key: str, *, deadline=None) -> bytes:
+        with self._read(deadline=deadline) as conn:
             row = conn.execute(
                 "SELECT nonce,ciphertext FROM material WHERE scope_key=? AND state='ready'", (scope_key,)
             ).fetchone()

@@ -21,12 +21,15 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import sqlite3
 import stat
 import threading
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from types import MappingProxyType
+from typing import Mapping, Optional
 
 from invite_rooms.guest import GuestRoomService
 from invite_rooms.joining_store import JoiningStore
@@ -39,11 +42,14 @@ from invite_rooms.consent import ConsentKey
 from room_invite_store import InviteError, RoomInviteStore
 
 _CONFIG_ENV = "MISSION_CONTROL_ROOM_INVITES_CONFIG"
-_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing"}
+_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing", "target_http"}
+_TARGET_HTTP_FIELDS = {"base_url", "profile"}
 _JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id", "identity_dir", "hosts_path", "origins", "control_endpoints"}
 _CONTROL_ENDPOINT_FIELDS = {"host", "port"}
 _CONTROL_ENDPOINT_HOSTS = frozenset({"127.0.0.1", "::1"})
 _PAIRING_FIELDS = {"identity_dir", "journal_dir", "peers_path"}
+_PAIRING_OPTIONAL_FIELDS = {"control_listen", "control_endpoints"}
+_PEER_ID_KEY = re.compile(r"peer-[0-9a-f]{32}\Z")
 _PEER_FIELDS = {"peer_id", "installation_id", "profile", "fingerprint", "endpoint_id", "catalog", "consent_public_key_b64", "tls_ca_pem", "pairing_generation"}
 _NATIVE_RPC_FIELDS = {"endpoint", "token_path"}
 
@@ -63,6 +69,52 @@ def _warn_once(key: str, message: str) -> None:
 
 class RuntimeConfigError(ValueError):
     """Machine code only: never interpolates remote values, paths or secrets."""
+
+
+@dataclass(frozen=True)
+class TargetHttpConfig:
+    """Validated, owner-private destination for the MC run client."""
+    base_url: str
+    profile: str
+
+    def __post_init__(self) -> None:
+        _validate_target_values(self.base_url, self.profile)
+
+
+def _validate_target_values(base_url: str, profile: str) -> str:
+    if not isinstance(base_url, str) or not isinstance(profile, str) or not _PROFILE_PATTERN.fullmatch(profile):
+        raise RuntimeConfigError("invalid_target_http")
+    if any(ord(char) < 0x20 or ord(char) == 0x7f for char in base_url) or "?" in base_url or "#" in base_url:
+        raise RuntimeConfigError("invalid_target_http")
+    try:
+        parsed = urlsplit(base_url)
+        if parsed.scheme != "http" or parsed.username is not None or parsed.password is not None:
+            raise ValueError
+        if parsed.path or parsed.query or parsed.fragment or not parsed.netloc:
+            raise ValueError
+        if parsed.hostname not in {"127.0.0.1", "::1"}:
+            raise ValueError
+        if parsed.port is None or type(parsed.port) is not int or not 1 <= parsed.port <= 65535:
+            raise ValueError
+        expected = f"http://127.0.0.1:{parsed.port}" if parsed.hostname == "127.0.0.1" else f"http://[::1]:{parsed.port}"
+        if base_url != expected:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise RuntimeConfigError("invalid_target_http") from None
+    return base_url
+
+
+def parse_target_http(raw) -> Optional[TargetHttpConfig]:
+    """Parse the exact target block; invalid input raises a sanitized error.
+
+    Only explicit-port HTTP loopback authorities are accepted.  The returned URL
+    is canonicalized from the already-validated authority and can never carry a
+    request-selected path, query, fragment, userinfo or alternate host spelling.
+    """
+    if not isinstance(raw, dict) or set(raw) != _TARGET_HTTP_FIELDS:
+        raise RuntimeConfigError("invalid_target_http")
+    base_url, profile = raw["base_url"], raw["profile"]
+    return TargetHttpConfig(base_url=_validate_target_values(base_url, profile), profile=profile)
 
 
 def parse_control_endpoints(raw) -> dict:
@@ -95,6 +147,36 @@ def parse_control_endpoints(raw) -> dict:
     return result
 
 
+def parse_control_listen(raw) -> tuple:
+    """Validate ``pairing.control_listen``: ``{"host": "127.0.0.1" | "::1", "port": 1..65535}`` -> ``(host, port)``.
+
+    Owner-private LOCAL BIND only (distinct from the remote client map ``joining.control_endpoints``).  Same exact
+    literal-loopback rules as the client map: no hostname, wildcard, other 127/8 spelling, bool/float/string/zero port.
+    """
+    if not isinstance(raw, dict):
+        raise RuntimeConfigError("invalid_control_listen")
+    try:
+        return parse_control_endpoints({"listen": raw})["listen"]
+    except RuntimeConfigError:
+        raise RuntimeConfigError("invalid_control_listen") from None
+
+
+def parse_pairing_control_endpoints(raw) -> Mapping:
+    """Validate ``pairing.control_endpoints``: ``{peer_id: {"host": literal loopback, "port": 1..65535}}``.
+
+    Owner-private OUTBOUND destination map of THIS process (where it dials each journal peer's control listener).  It
+    is never a bind (``pairing.control_listen``), never carries identity/credential/trust fields, and its keys must be
+    journal-shaped peer ids.  Returns a read-only ``{peer_id: (host, port)}``.
+    """
+    try:
+        parsed = parse_control_endpoints(raw)
+    except RuntimeConfigError:
+        raise RuntimeConfigError("invalid_pairing_control_endpoints") from None
+    if not all(_PEER_ID_KEY.fullmatch(peer_id) for peer_id in parsed):
+        raise RuntimeConfigError("invalid_pairing_control_endpoints")
+    return MappingProxyType(dict(parsed))
+
+
 def _no_duplicate_keys(pairs):
     out = {}
     for key, value in pairs:
@@ -125,6 +207,7 @@ class RuntimeConfig:
     profile: str
     peer_registry_path: Path
     native_rpc: Optional[dict]  # {"endpoint": str, "token_path": Path} or None
+    target_http: Optional[TargetHttpConfig] = None
     joining_store_dir: Optional[Path] = None
     joining_host_label: str = "host"
     joining_own_bot_id: Optional[str] = None
@@ -138,6 +221,8 @@ class PairingConfig:
     journal_dir: Path
     journal_anchor: Path
     peers_path: Path
+    control_listen: Optional[tuple] = None  # (host, port) owner-private bind for the W2 control listener, or None
+    control_endpoints: Optional[Mapping] = None  # {peer_id: (host, port)} owner-private OUTBOUND destinations, or None
 
 
 def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
@@ -147,7 +232,7 @@ def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
     existing ancestor); ones that do not exist yet are created 0700 on first use.  ``peers_path`` must be the very
     registry file the sidecar reads (``peer_registry_path``): the journal is its only writer.
     """
-    if not isinstance(raw, dict) or set(raw) != _PAIRING_FIELDS:
+    if not isinstance(raw, dict) or not _PAIRING_FIELDS <= set(raw) or set(raw) - _PAIRING_FIELDS - _PAIRING_OPTIONAL_FIELDS:
         return None
     values = []
     for key in ("identity_dir", "journal_dir", "peers_path"):
@@ -156,6 +241,9 @@ def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
             return None
         values.append(Path(os.path.abspath(value)))
     identity_dir, journal_dir, peers_path = values
+    control_listen = parse_control_listen(raw["control_listen"]) if "control_listen" in raw else None
+    control_endpoints = (parse_pairing_control_endpoints(raw["control_endpoints"])
+                         if "control_endpoints" in raw else None)
     if peers_path != Path(os.path.abspath(peer_registry_path)):
         return None
     if identity_dir == journal_dir or peers_path.parent in (identity_dir, journal_dir):
@@ -178,7 +266,8 @@ def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
     except private_fs.PrivateStorageError:
         return None
     return PairingConfig(identity_dir=identity_dir, journal_dir=journal_dir,
-                         journal_anchor=journal_anchor, peers_path=peers_path)
+                         journal_anchor=journal_anchor, peers_path=peers_path, control_listen=control_listen,
+                         control_endpoints=control_endpoints)
 
 
 def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
@@ -187,7 +276,7 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
         _warn_once("perm", "config path missing or not mode 0600 with a 0700 parent directory")
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
     except (OSError, UnicodeDecodeError, ValueError):
         _warn_once("parse", "config file is unreadable or not valid JSON")
         return None
@@ -221,6 +310,7 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
             if not _is_private_file(token_path):
                 raise RuntimeConfigError("invalid_native_rpc_token_permissions")
             native_rpc = {"endpoint": endpoint, "token_path": token_path}
+        target_http = parse_target_http(data["target_http"]) if "target_http" in data else None
         joining_raw = data.get("joining")
         joining_store_dir = None
         joining_host_label = "host"
@@ -239,22 +329,27 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
             joining_own_bot_id = joining_raw.get("own_bot_id")
             if "control_endpoints" in joining_raw:
                 parse_control_endpoints(joining_raw["control_endpoints"])
-                try:
-                    # A duplicate/conflicting peer entry is silently collapsed by json.loads: re-parse strictly.
-                    json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
-                except (OSError, UnicodeDecodeError, ValueError):
-                    raise RuntimeConfigError("invalid_control_endpoints") from None
+
         if not _is_private_file(peer_registry_path):
             _warn_once("peer-registry-perm", "peer registry path missing or not mode 0600 with a 0700 parent directory")
             return None
         pairing = None
+        if isinstance(data.get("pairing"), dict) and ("control_listen" in data["pairing"]
+                                                      or "control_endpoints" in data["pairing"]):
+            # Bind / destination field present: strict. Bad value or duplicate keys anywhere reject the WHOLE
+            # config (never a half-enabled listener or sender).
+            if "control_listen" in data["pairing"]:
+                parse_control_listen(data["pairing"]["control_listen"])
+            if "control_endpoints" in data["pairing"]:
+                parse_pairing_control_endpoints(data["pairing"]["control_endpoints"])
+
         if "pairing" in data:
             pairing = _parse_pairing(data["pairing"], peer_registry_path)
             if pairing is None:
                 _warn_once("pairing", "pairing block is invalid; pairing routes are disabled")
         joining_owner_config = data.get("joining")
         return RuntimeConfig(store_path=store_path, installation_id=installation_id, profile=profile,
-                              peer_registry_path=peer_registry_path, native_rpc=native_rpc,
+                              peer_registry_path=peer_registry_path, native_rpc=native_rpc, target_http=target_http,
                               joining_store_dir=joining_store_dir, joining_host_label=joining_host_label,
                               joining_own_bot_id=joining_own_bot_id, pairing=pairing, joining_owner=joining_owner_config)
     except RuntimeConfigError:
@@ -289,7 +384,25 @@ def build_peer_registry(peer_registry_path: Path) -> PeerRegistry:
     return registry
 
 
-def load_service(env: Optional[dict] = None, *, material_resolver=None):
+def _scoped_route_provider(scoped_adapter_registry):
+    """Return the IPv4 route lookup for one caller-owned A1 registry.
+
+    The registry is deliberately validated by concrete type here, before any
+    method on the supplied object can run.  The loader never constructs,
+    starts, joins, or closes this caller-owned resource.
+    """
+    from invite_rooms.control.scoped_registry import ScopedAdapterRegistry
+
+    if type(scoped_adapter_registry) is not ScopedAdapterRegistry:
+        raise RuntimeConfigError("invalid_scoped_adapter_registry")
+
+    def route_provider(scope):
+        return scoped_adapter_registry.port_for(scope)
+
+    return route_provider
+
+
+def load_service(env: Optional[dict] = None, *, material_resolver=None, scoped_adapter_registry=None):
     """Resolve the full owner-private configuration into a ready InviteRoomsService.
 
     Returns ``(service, ctx, config)`` or ``None`` if the feature is disabled or
@@ -298,6 +411,12 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
     error. ``service`` is always built with ``rpc=None``; the (optional) native
     RPC connection is established per-activation by the routes layer so a
     construction-time singleton never leaks across concurrent requests.
+
+    ``scoped_adapter_registry`` is an optional explicit injection of one
+    already-running, concrete A1 registry owned by the caller.  It is used
+    only as the PeerRegistry route provider; this loader never constructs,
+    starts, joins, or closes it.  Invalid injected objects fail closed before
+    any provider method is invoked.
 
     ``material_resolver`` is the explicit seam for the joining-owner material
     channel (P2b): this module never invents a config-file format for it and
@@ -308,6 +427,14 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
     only place allowed to pass a real resolver callable through.
     """
     import os
+
+    route_provider = None
+    if scoped_adapter_registry is not None:
+        try:
+            route_provider = _scoped_route_provider(scoped_adapter_registry)
+        except RuntimeConfigError:
+            _warn_once("scoped-registry", "scoped adapter registry injection is invalid")
+            return None
 
     source = env if env is not None else os.environ
     raw_path = (source.get(_CONFIG_ENV) or "").strip()
@@ -324,6 +451,12 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None):
         registry._receipt_store = receipts
         # Authoritative source for the R1-05 admission seam; the loader is resolved at call time.
         registry._source = RegistrySource(config.peer_registry_path, lambda path: build_peer_registry(path))
+        # An absent injection must preserve the registry's construction-time
+        # provider.  The explicit A1 injection is the only authority allowed
+        # to replace it; ``None`` means keep the default fail-closed state (or
+        # a caller-installed builder provider), not erase it.
+        if route_provider is not None:
+            registry._route_provider = route_provider
         # Receipt admission is enabled only when the owner has supplied the validated pairing
         # configuration.  The journal is authoritative; a JSON-only registry is never a production
         # fallback because it cannot serialize a post-fsync unpair cutover.

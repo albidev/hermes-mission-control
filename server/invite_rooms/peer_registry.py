@@ -24,6 +24,7 @@ from room_lobby_service import PeerMaterial, _validate_adapter
 from invite_rooms.consent import canonical
 from invite_rooms.material_receipts import ADMISSION_DEADLINE, valid_grant
 from invite_rooms.peer_binding import PeerBindingError, validate_peer_binding
+from invite_rooms.material_validators import validate_scope_dict
 
 
 class PeerRegistryError(ValueError):
@@ -244,16 +245,10 @@ class MaterialScope:
     pairing_generation: int = 1
 
     def __post_init__(self):
-        for name in ("owner_installation_id", "target_install_id"):
-            _check(getattr(self, name), _INSTALL, "material_scope")
-        for name in ("owner_profile", "target_profile"):
-            _check(getattr(self, name), _PROFILE, "material_scope")
-        for name in ("lobby_id", "planned_room_id", "member_id", "invite_id", "peer_id", "endpoint_id"):
-            _check(getattr(self, name), _TOKEN, "material_scope")
-        for name in ("fingerprint", "catalog_digest", "policy_digest"):
-            _check(getattr(self, name), _DIGEST, "material_scope")
-        if isinstance(self.pairing_generation, bool) or not isinstance(self.pairing_generation, int) or self.pairing_generation < 1:
-            raise PeerRegistryError("invalid_pairing_generation")
+        try:
+            validate_scope_dict(self.as_dict())
+        except ValueError:
+            raise PeerRegistryError("invalid_material_scope") from None
         try:
             validate_peer_binding(self.binding)
         except PeerBindingError:
@@ -635,10 +630,16 @@ class PeerRegistry:
                             raise PeerRegistryError("peer_binding_changed")
                         entry = fresh.lookup(scope.peer_id)
                         consent_key = entry.consent_public_key
+                    if isinstance(envelope, dict) and envelope.get("v") == 2:
+                        expected_signed = {"v": 2, "scope": envelope["scope"], "grant": envelope["grant"],
+                                           "catalog": envelope["catalog"], "operation": envelope["operation"],
+                                           "purpose": "joining-owner-material-v2"}
+                    else:
+                        expected_signed = {"scope": envelope["scope"], "grant": envelope["grant"],
+                                           "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"}
                     self._receipt_store.admit_envelope(
                         scope=scope, envelope=envelope, consent_public_key=consent_key,
-                        expected_signed={"scope": envelope["scope"], "grant": envelope["grant"],
-                                         "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"},
+                        expected_signed=expected_signed,
                         map_scope=lambda received, expected: self._assert_envelope_scope(received, expected),
                         guard=lambda: self._require_unchanged(source, version),
                     )
@@ -656,7 +657,9 @@ class PeerRegistry:
         finishes after its deadline is refused with ``admission_deadline_exceeded`` -- the caller must
         treat it as an unconfirmed admit, never as success (the write may still be idempotently retried).
         """
-        await run_admission(self.admit_signed_material, scope, envelope, lane=LANE_CALLBACK)
+        deadline = ADMISSION_DEADLINE.get()
+        await run_admission(self.admit_signed_material, scope, envelope,
+                            end_deadline=deadline, lane=LANE_CALLBACK)
 
     _WIRE_SCOPE_FIELDS = frozenset({"host_id", "room_id", "lobby_id", "member_id", "invite_id", "binding"})
 

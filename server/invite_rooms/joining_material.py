@@ -17,10 +17,10 @@ import json
 import time
 import os
 import sqlite3
+import inspect
 from contextlib import contextmanager
 from pathlib import Path
 from invite_rooms.anchored_sqlite import AnchoredSQLite
-
 from invite_rooms.consent import canonical
 
 # Six-field self-binding only: the product service never accepts the lab's
@@ -150,7 +150,25 @@ def validate_material(scope: dict, envelope: dict) -> None:
     signature authority. Rejects anything that does not describe exactly
     this scope's room/member/installation/profile/policy."""
     try:
-        if not isinstance(envelope, dict) or set(envelope) != {"scope", "grant", "catalog", "signature"}:
+        if not isinstance(envelope, dict):
+            raise ValueError()
+        version = envelope.get("v", 1)
+        if version == 1:
+            if set(envelope) != {"scope", "grant", "catalog", "signature"}:
+                raise ValueError()
+        elif version == 2:
+            if (set(envelope) != {"v", "scope", "grant", "catalog", "operation", "signature"}
+                    or envelope["v"] != 2 or not isinstance(envelope.get("operation"), dict)
+                    or set(envelope["operation"]) != {"endpoint_id", "generation", "lobby_id", "invite_id",
+                                                       "request_id", "expires_at_utc_ms"}):
+                raise ValueError()
+            if (envelope["operation"]["lobby_id"] != scope["lobby_id"]
+                    or envelope["operation"]["invite_id"] != scope["invite_id"]
+                    or type(envelope["operation"]["generation"]) is not int
+                    or type(envelope["operation"]["expires_at_utc_ms"]) is not int
+                    or not isinstance(envelope["operation"]["request_id"], str)):
+                raise ValueError()
+        else:
             raise ValueError()
         if envelope["scope"] != scope:
             raise ValueError()
@@ -197,6 +215,19 @@ def validate_material(scope: dict, envelope: dict) -> None:
         raise MaterialError("material_unavailable") from None
 
 
+def _store_call(method, *args, deadline=None, **kwargs):
+    """Call old lab stores and deadline-aware product stores alike."""
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if "deadline" in parameters:
+        kwargs["deadline"] = deadline
+    if "final_admission" not in parameters:
+        kwargs.pop("final_admission", None)
+    return method(*args, **kwargs)
+
+
 class TargetMaterialMint:
     """B-local-owner only: never accepts RPC parameters or URLs from a message."""
 
@@ -207,12 +238,22 @@ class TargetMaterialMint:
         self._rpc = rpc
         self._host_peer_id = host_peer_id
 
-    def _resolve_import(self, payload: dict) -> str:
+    def _resolve_import(self, payload: dict, *, peer_context=None, deadline=None) -> str:
         if (set(payload) != {"lobby_id", "invite_id"} or not isinstance(payload["lobby_id"], str)
                 or not isinstance(payload["invite_id"], str)):
             raise MaterialError("invalid_owner_scope")
-        record = self._store.find_import(payload["lobby_id"], payload["invite_id"])
-        if record is None or record["host_peer_id"] != self._host_peer_id:
+        record = _store_call(self._store.find_import, payload["lobby_id"], payload["invite_id"],
+                             deadline=deadline)
+        expected_peer = self._host_peer_id
+        if peer_context is not None:
+            endpoint_id = getattr(peer_context, "endpoint_id", None)
+            generation = getattr(peer_context, "generation", None)
+            if not isinstance(endpoint_id, str) or type(generation) is not int:
+                raise MaterialError("invalid_owner_scope")
+            expected_peer = f"{endpoint_id}:{generation}"
+        if record is None:
+            raise MaterialError("invalid_owner_scope")
+        if record["host_peer_id"] != expected_peer:
             raise MaterialError("invalid_owner_scope")
         return record["import_id"]
 
@@ -233,26 +274,112 @@ class TargetMaterialMint:
             raise MaterialError("both_consents_required")
         return scope
 
-    async def mint(self, payload: dict) -> dict:
-        scope = await asyncio.to_thread(self.approved_scope, payload)
+    async def approved_scope_async(self, payload: dict, *, deadline: float | None = None, peer_context=None) -> dict:
+        """Async counterpart used by the real pinned control channel.
+
+        The old synchronous method is retained for the lab adapter; production
+        material minting must not manufacture a coroutine in ``to_thread``.
+        """
+        import asyncio
+        import time as _time
+        import math as _math
+        if deadline is not None and (type(deadline) not in (int, float) or not _math.isfinite(deadline)
+                                     or _time.monotonic() >= deadline):
+            raise MaterialError("control_unavailable")
+        import_id = await asyncio.to_thread(self._resolve_import, payload, peer_context=peer_context,
+                                            deadline=deadline)
+        if deadline is not None and _time.monotonic() >= deadline:
+            raise MaterialError("control_unavailable")
+        confirmed = await asyncio.to_thread(_store_call, self._store.confirmed_scope, import_id,
+                                            deadline=deadline)
+        if deadline is not None and _time.monotonic() >= deadline:
+            raise MaterialError("control_unavailable")
+        consent = await asyncio.to_thread(_store_call, self._store.get_consent, import_id,
+                                          deadline=deadline)
+        if deadline is not None and _time.monotonic() >= deadline:
+            raise MaterialError("control_unavailable")
+        if confirmed is None or consent is None:
+            raise MaterialError("both_consents_required")
+        scope = dict(confirmed, invite_id=payload["invite_id"])
+        if consent["receipt"] != dict(scope, purpose="joining-owner-consent-v1"):
+            raise MaterialError("both_consents_required")
+        call = getattr(self._channel, "call_async", None)
+        # Authenticated request-bound status must stay on the audited channel;
+        # falling back to sync ``call`` would drop the inherited authority.
+        from invite_rooms.material_control import MaterialControlChannel
+        request_bound = peer_context is not None or deadline is not None
+        if request_bound:
+            if not isinstance(self._channel, MaterialControlChannel) or not callable(call):
+                raise MaterialError("control_unavailable")
+        if request_bound and callable(call):
+            status = await call({"op": "status", "invite_id": payload["invite_id"]},
+                                deadline=deadline,
+                                admit=peer_context.readmit if peer_context is not None else None)
+        else:
+            status = await asyncio.to_thread(self._channel.call, {"op": "status", "invite_id": payload["invite_id"]})
+        if deadline is not None and _time.monotonic() >= deadline:
+            raise MaterialError("control_unavailable")
+        if status != {"status": "ready", "scope": scope}:
+            raise MaterialError("both_consents_required")
+        return scope
+
+    async def mint(self, payload: dict, *, deadline: float | None = None, final_admission=None,
+                   peer_context=None, request_meta=None) -> dict:
+        # Authentication is carried by the peer context, not by optional
+        # request metadata.  A dispatcher/receipt path that has a peer context
+        # is therefore request-bound even when a caller drops request_meta;
+        # refuse before any journal/store mutation or connector invocation.
+        if peer_context is not None and not isinstance(request_meta, dict):
+            raise MaterialError("control_unavailable")
+        if request_meta is not None and peer_context is None:
+            raise MaterialError("control_unavailable")
+        if peer_context is not None or request_meta is not None:
+            from invite_rooms.material_control import MaterialControlChannel
+            if not isinstance(self._channel, MaterialControlChannel):
+                raise MaterialError("control_unavailable")
+        if deadline is not None and (type(deadline) not in (int, float) or time.monotonic() >= deadline):
+            raise MaterialError("control_unavailable")
+        scope = await self.approved_scope_async(payload, deadline=deadline, peer_context=peer_context)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise MaterialError("control_unavailable")
         scope_key = canonical(scope).decode()
-        state = self._store.mint_state(scope_key)
+        state = await asyncio.to_thread(_store_call, self._store.mint_state, scope_key, deadline=deadline)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise MaterialError("control_unavailable")
         if state == "ready":
-            envelope = self._load_envelope(scope_key, scope)
+            envelope = await asyncio.to_thread(self._load_envelope, scope_key, scope, deadline=deadline)
         else:
             if state is not None:
                 # 'intent' with no completion left over from a prior crash:
                 # the mint stays blocked, it is never silently retried.
                 raise MintAmbiguous()
-            grant_id = self._store.mint_begin(scope_key)  # durable exclusive intent BEFORE the call
+            grant_id = await asyncio.to_thread(_store_call, self._store.mint_begin, scope_key,
+                                               final_admission=final_admission,
+                                               deadline=deadline)  # durable exclusive intent BEFORE the call
             try:
                 binding = scope["binding"]
-                result = await self._rpc("groups.peer.invite", {
-                    "profile": binding["target_profile"], "room_id": scope["room_id"],
-                    "home_install_id": scope["host_id"], "authority_gateway_id": scope["host_id"],
-                    "authority_epoch": 1, "member_id": scope["member_id"],
-                    "grant_id": grant_id, "ttl_seconds": 600,
-                })
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise MaterialError("control_unavailable")
+                if final_admission is None and deadline is None:
+                    # The synchronous/lab adapter has an intentionally narrow
+                    # two-argument callback contract.  The real request path
+                    # always supplies admission and deadline capabilities below.
+                    native_rpc = self._rpc
+                else:
+                    binder = getattr(self._rpc, "bind_request", None)
+                    if not callable(binder):
+                        raise MaterialError("control_unavailable")
+                    native_rpc = binder(invite_admission=final_admission, deadline=deadline)
+                    if not callable(native_rpc) or not getattr(native_rpc, "_request_bound_native_rpc", False):
+                        raise MaterialError("control_unavailable")
+                result = await native_rpc("groups.peer.invite", {
+                        "profile": binding["target_profile"], "room_id": scope["room_id"],
+                        "home_install_id": scope["host_id"], "authority_gateway_id": scope["host_id"],
+                        "authority_epoch": 1, "member_id": scope["member_id"],
+                        "grant_id": grant_id, "ttl_seconds": 600,
+                    })
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise MaterialError("control_unavailable")
                 # The native groups.peer.invite contract returns 'endpoint'
                 # as the SAME mapping that appears at catalog['endpoint']
                 # (tui_gateway/methods_groups.py: `"endpoint": catalog["endpoint"]`),
@@ -266,27 +393,63 @@ class TargetMaterialMint:
                         or not isinstance(result["endpoint"], dict)
                         or result["endpoint"] != result_catalog["endpoint"]):
                     raise ValueError()
-                envelope = {"scope": scope, "grant": result["grant"], "catalog": result["catalog"], "signature": ""}
-                validate_material(scope, envelope)
-                unsigned = {k: v for k, v in envelope.items() if k != "signature"}
-                signed = dict(unsigned, purpose="joining-owner-material-v1")
-                envelope["signature"] = self._consent_key.sign(signed)
-                self._store.mint_complete(scope_key, canonical(envelope))
+                if request_meta is not None:
+                    operation = {"endpoint_id": peer_context.endpoint_id, "generation": peer_context.generation,
+                                 "lobby_id": scope["lobby_id"], "invite_id": scope["invite_id"],
+                                 "request_id": request_meta["request_id"],
+                                 "expires_at_utc_ms": request_meta["expires_at_utc_ms"]}
+                    envelope = {"v": 2, "scope": scope, "grant": result["grant"],
+                                "catalog": result["catalog"], "operation": operation, "signature": ""}
+                    validate_material(scope, envelope)
+                    signed = dict(envelope, purpose="joining-owner-material-v2")
+                    signed.pop("signature")
+                    envelope["signature"] = self._consent_key.sign(signed)
+                else:
+                    envelope = {"scope": scope, "grant": result["grant"], "catalog": result["catalog"], "signature": ""}
+                    validate_material(scope, envelope)
+                    unsigned = {k: v for k, v in envelope.items() if k != "signature"}
+                    envelope["signature"] = self._consent_key.sign(dict(unsigned, purpose="joining-owner-material-v1"))
+                await asyncio.to_thread(_store_call, self._store.mint_complete, scope_key,
+                                        canonical(envelope), deadline=deadline)
             except asyncio.CancelledError:
                 raise  # Intent remains durably blocked, never replayed.
             except Exception:
                 raise MintAmbiguous() from None
         validate_material(scope, envelope)
         try:
-            return await asyncio.to_thread(
-                self._channel.call, {"op": "material", "invite_id": scope["invite_id"], "envelope": envelope}
-            )
+            if request_meta is None:
+                command = {"op": "material", "invite_id": scope["invite_id"], "envelope": envelope}
+                result = await asyncio.to_thread(self._channel.call, command)
+            else:
+                if peer_context is None:
+                    raise MaterialError("control_unavailable")
+                operation = {"endpoint_id": peer_context.endpoint_id, "generation": peer_context.generation,
+                             "lobby_id": scope["lobby_id"], "invite_id": scope["invite_id"],
+                             "request_id": request_meta["request_id"],
+                             "expires_at_utc_ms": request_meta["expires_at_utc_ms"]}
+                if envelope.get("v") != 2 or envelope.get("operation") != operation:
+                    raise MaterialError("control_unavailable")
+                command = {"op": "material", "invite_id": scope["invite_id"], "envelope": envelope,
+                           "request_id": request_meta["request_id"], "expires_at_utc_ms": request_meta["expires_at_utc_ms"],
+                           "probe": request_meta["probe"], "operation": operation,
+                           "operation_signature": self._consent_key.sign({"purpose": "joining-owner-material-v2",
+                                                                           "operation": operation})}
+                call_async = getattr(self._channel, "call_async", None)
+                from invite_rooms.material_control import MaterialControlChannel
+                if (not isinstance(self._channel, MaterialControlChannel) or not callable(call_async)):
+                    raise MaterialError("control_unavailable")
+                result = await call_async(command, deadline=deadline, admit=final_admission)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise MaterialError("control_unavailable")
+            if final_admission is not None and final_admission() is not True:
+                raise MaterialError("control_unavailable")
+            return result
         except Exception:
             raise MaterialError("control_unavailable") from None
 
-    def _load_envelope(self, scope_key: str, scope: dict) -> dict:
+    def _load_envelope(self, scope_key: str, scope: dict, *, deadline=None) -> dict:
         import json as _json
-        raw = self._store.mint_load(scope_key)
+        raw = _store_call(self._store.mint_load, scope_key, deadline=deadline)
         envelope = _json.loads(raw)
         if envelope.get("scope") != scope:
             raise MaterialError("material_unavailable")

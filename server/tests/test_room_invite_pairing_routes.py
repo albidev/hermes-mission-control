@@ -267,7 +267,9 @@ class PairingRoutesTest(PairingRoutesBase):
         self.assertEqual(set(listing["pairings"][0]["peer"]),
                          {"peer_id", "installation_id", "profile", "fingerprint", "policy_digest", "catalog_digest"})
         status, data, _ = self.req("POST", f"/pairing/offers/{offer['id']}/confirm", {"sas": b_sas["sas"]})
-        self.assertEqual(status, 200, data)
+        self.assertEqual(status, 202, data)
+        self.assertEqual(set(data), {"pairing", "ack", "code"})
+        self.assertEqual((data["ack"], data["code"]), ("pending", "pairing_ack_pending"))
         self.assertEqual(data["pairing"]["state"], "confirmed")
         self.b.confirm_import(accepted["id"], reveal["sas"])
         self.assertEqual(self.req("POST", f"/pairing/offers/{offer['id']}/cancel", {})[0], 409)   # decided

@@ -54,6 +54,14 @@ class PairingError(ValueError):
         super().__init__(code)
 
 
+class PeerAckInvalid(PairingError):
+    """The REMOTE ``pair_ack`` reply could not be verified (wrong shape/signature/mismatch).  Raised only from the
+    remote-reply verification in ``complete_ack``: an uncertain peer outcome, never a local fault.  Text-free."""
+
+    def __init__(self):
+        super().__init__(UNAVAILABLE)
+
+
 @dataclass(frozen=True)
 class AckRequest:
     endpoint_id: str
@@ -447,10 +455,13 @@ class PairingService:
             link = txn.state.links[sess["endpoint_id"]]
             if link["protocol_state"] == "revoked":
                 raise PairingError(UNAVAILABLE)
-            self._verify_ack(reply, sess, "joining")
+            try:
+                self._verify_ack(reply, sess, "joining")        # the REMOTE reply: failure is a typed peer outcome
+            except PairingError:
+                raise PeerAckInvalid() from None
             if sess["state"] == "acknowledged":
                 if sess["ack_recv"] != reply:
-                    raise PairingError(UNAVAILABLE)
+                    raise PeerAckInvalid()
             else:
                 txn.append("acknowledged", {"id": sess["id"], "ack_recv": reply, "ack_sent": None})
             return self._row(txn.state, txn.state.sessions[sess["id"]], self._now())

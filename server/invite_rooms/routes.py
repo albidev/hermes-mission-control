@@ -37,10 +37,11 @@ from typing import Optional
 from invite_rooms import runtime_config
 from invite_rooms import pairing_codec
 from invite_rooms.pairing_journal import E_BUSY, JournalError
-from invite_rooms.pairing_service import PairingError, PairingService
+from invite_rooms.pairing_service import PairingError, PairingService, PeerAckInvalid
 from invite_rooms.peer_registry import PeerRegistryError
 from invite_rooms.service import InviteRoomsService, ServiceError, _valid_expected_binding
 from invite_rooms.guest import GuestRoomService, GuestServiceError
+from invite_rooms.pair_ack_sender import PairAckUnavailable, pair_ack_sender
 from room_invite_store import InviteError
 
 PREFIX = "/api/local/room-invites"
@@ -653,6 +654,8 @@ def _pairing_call(handler, ctx, config, fn, *, status=200):
         runtime_config._warn_once("pairing-" + exc.code, "pairing journal unavailable (" + exc.code + ")")
         handler._json(404, {"error": "not_found", "path": handler.path.split("?", 1)[0]})
         return
+    if isinstance(result, _Reply):
+        status, result = result
     handler._json(status, result)
 
 
@@ -699,7 +702,39 @@ def _h_pairing_accept(handler, service, ctx, config, args, params) -> None:
 def _h_pairing_confirm_offer(handler, service, ctx, config, args, params) -> None:
     sas = _body_sas(handler)
     if sas is not None:
-        _pairing_call(handler, ctx, config, lambda s: {"pairing": s.confirm_offer(args[0], sas)})
+        _pairing_call(handler, ctx, config, lambda s: _confirm_offer_and_ack(s, config, args[0], sas))
+
+
+class _Reply(tuple):
+    """``(status, body)`` for a pairing handler that must choose its own success status."""
+
+
+def _confirm_offer_and_ack(service, config, session_id, sas):
+    """Durably confirm FIRST, then send the already-journaled ``pair_ack`` through the pinned client.
+
+    The ack bytes are minted once by the journal (``ack_request``); an unreachable/unverified peer leaves the link
+    durably ``confirmed`` with the same stored ack and yields a sanitized stable ``pairing_ack_pending`` (202).  An
+    exact same-SAS retry re-enters here: ``confirm_offer`` is idempotent for the durable decision (wrong SAS is
+    refused before any send) and resends the identical stored ack.  No rollback, fallback transport or new ack.
+    """
+    row = service.confirm_offer(session_id, sas)
+    if row.get("state") != "confirmed":
+        return {"pairing": row}
+    # Local durable work: errors propagate to ``_pairing_call`` unchanged (established PairingError/JournalError
+    # mapping).  The exact ack is journaled once even when no sender is configured.
+    req = service.ack_request(session_id)
+    pending = _Reply((202, {"pairing": row, "ack": "pending", "code": "pairing_ack_pending"}))
+    sender = pair_ack_sender(config)
+    if sender is None:
+        return pending
+    try:
+        reply = sender(req.endpoint_id, req.generation, req.request)
+    except PairAckUnavailable:  # peer/transport outcome only; a local JournalError from the sender propagates
+        return pending
+    try:
+        return {"pairing": service.complete_ack(session_id, reply)}
+    except PeerAckInvalid:      # unverifiable REMOTE reply only: uncertain peer outcome; local errors propagate
+        return pending
 
 
 def _h_pairing_cancel(handler, service, ctx, config, args, params) -> None:
@@ -768,7 +803,7 @@ _PAIRING_ROUTES = (
 )
 
 
-def handle_request(handler, method: str, path: str, params: dict, is_authorized) -> bool:
+def handle_request(handler, method: str, path: str, params: dict, is_authorized, *, scoped_adapter_registry=None) -> bool:
     """Entry point called from local_telemetry_server's thin dispatch.
 
     Returns False only when ``path`` is not under :data:`PREFIX` at all (the
@@ -801,7 +836,15 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized)
             approval_factory=_guest_approval_factory)
         loaded = (guest, None, None) if guest is not None else None
     else:
-        loaded = runtime_config.load_service(material_resolver=_MATERIAL_RESOLVER)
+        if scoped_adapter_registry is None:
+            # Preserve the legacy call shape for existing sidecar test fakes
+            # and for the feature-off/default path.
+            loaded = runtime_config.load_service(material_resolver=_MATERIAL_RESOLVER)
+        else:
+            loaded = runtime_config.load_service(
+                material_resolver=_MATERIAL_RESOLVER,
+                scoped_adapter_registry=scoped_adapter_registry,
+            )
     if loaded is None:
         # Disabled or misconfigured: identical to an unknown path.
         handler._json(404, {"error": "not_found", "path": path})

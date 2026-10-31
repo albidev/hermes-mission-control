@@ -327,12 +327,17 @@ class MaterialReceiptStore:
         if self._identity(st) != self._identity(os.fstat(fd)):
             _refuse()
 
-    def _publish(self, name, data):
-        """Exclusive publication; keep the written fd alive through link/unlink/verification/fsync.
+    @staticmethod
+    def _open_before(deadline):
+        return deadline is None or time.monotonic() < deadline
 
-        link never follows the source symlink and never replaces the destination. A staging-name
-        swap during link is caught by comparing the actual published file with the written fd.
-        No writes are made through either of these interchangeable names.
+    def _publish(self, name, data, *, deadline=None):
+        """Exclusive publication with a hard pre-publication expiry gate.
+
+        Staging/fsync may block in a worker after the caller's coroutine has timed out;
+        therefore the callback lane owns the cutoff and checks it after fsync and again
+        immediately before the irreversible final-name link.  An expired operation never
+        leaves a final receipt, and an unlinked staging inode is cleaned in ``finally``.
         """
         dirfd = self._dirfd()
         staging = name + ".tmp-" + secrets.token_hex(16)
@@ -347,7 +352,13 @@ class MaterialReceiptStore:
                     raise OSError("storage_write_failed")
                 view = view[written:]
             os.fsync(fd)
+            if not self._open_before(deadline):
+                raise MaterialReceiptError("admission_deadline_exceeded")
             self._check_name(staging, fd)
+            # This check is intentionally adjacent to os.link: cancellation of the
+            # awaiting coroutine cannot cancel this blocking callback lane.
+            if not self._open_before(deadline):
+                raise MaterialReceiptError("admission_deadline_exceeded")
             os.link(staging, name, src_dir_fd=dirfd, dst_dir_fd=dirfd, follow_symlinks=False)
             self._check_name(name, fd)
             os.unlink(staging, dir_fd=dirfd)
@@ -442,7 +453,7 @@ class MaterialReceiptStore:
             if operation_deadline is not None and time.monotonic() >= operation_deadline:
                 raise MaterialReceiptError("receipt_busy")
             try:
-                self._publish(receipt_name, data)
+                self._publish(receipt_name, data, deadline=operation_deadline)
             except FileExistsError:
                 # Exclusive publication is the first-receipt-wins boundary. Never overwrite.
                 self._check_identical(scope, self._read_receipt(scope), plaintext)
@@ -510,11 +521,31 @@ class MaterialReceiptStore:
         immediately before the first effect so a caller can restate an authoritative precondition
         (R3B-05) after all verification has completed.
         """
-        if (not isinstance(envelope, dict) or set(envelope) != {"scope", "grant", "catalog", "signature"}
-                or not isinstance(envelope["scope"], dict) or not isinstance(envelope["catalog"], dict)
-                or not isinstance(envelope["signature"], str)):
+        if (not isinstance(envelope, dict)
+                or not isinstance(envelope.get("scope"), dict)
+                or not isinstance(envelope.get("catalog"), dict)
+                or not isinstance(envelope.get("signature"), str)):
             raise MaterialReceiptError("invalid_consent")
-        signed = {"scope": envelope["scope"], "grant": envelope["grant"], "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"}
+        version = envelope.get("v", 1)
+        if version == 1:
+            if set(envelope) != {"scope", "grant", "catalog", "signature"}:
+                raise MaterialReceiptError("invalid_consent")
+            signed = {"scope": envelope["scope"], "grant": envelope["grant"],
+                      "catalog": envelope["catalog"], "purpose": "joining-owner-material-v1"}
+        elif version == 2:
+            if (set(envelope) != {"v", "scope", "grant", "catalog", "operation", "signature"}
+                    or envelope["v"] != 2 or not isinstance(envelope["operation"], dict)
+                    or set(envelope["operation"]) != {"endpoint_id", "generation", "lobby_id",
+                                                       "invite_id", "request_id", "expires_at_utc_ms"}
+                    or type(envelope["operation"]["generation"]) is not int
+                    or type(envelope["operation"]["expires_at_utc_ms"]) is not int
+                    or not isinstance(envelope["operation"]["request_id"], str)):
+                raise MaterialReceiptError("invalid_consent")
+            signed = {"v": 2, "scope": envelope["scope"], "grant": envelope["grant"],
+                      "catalog": envelope["catalog"], "operation": envelope["operation"],
+                      "purpose": "joining-owner-material-v2"}
+        else:
+            raise MaterialReceiptError("invalid_consent")
         if expected_signed != signed:
             raise MaterialReceiptError("invalid_consent")
         try: verify_consent(consent_public_key, signed, envelope["signature"], signed)
