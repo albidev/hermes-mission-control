@@ -20,6 +20,8 @@ export type ChatMessage = {
   id: string;
   /** Stable SessionDB identity for canonical rows; absent on ephemeral live rows. */
   canonicalId?: string;
+  /** Absolute position in the SessionDB display projection; stable across pages. */
+  canonicalOrder?: number;
   source?: 'canonical' | 'resume' | 'live';
   role: ChatRole;
   kind?: ChatMessageKind;
@@ -67,6 +69,7 @@ export type GatewayTranscriptMessage = {
   codex_reasoning_items?: unknown;
   display_kind?: unknown;
   display_metadata?: unknown;
+  canonical_order?: unknown;
 };
 
 export type ChatModelProviderOption = {
@@ -367,6 +370,10 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
     const displayKind = stringValue(message.display_kind);
     const createdAt = parseChatTimestamp(message.timestamp);
     const canonicalId = stringValue(message.canonical_id);
+    const canonicalOrder = typeof message.canonical_order === 'number' && Number.isFinite(message.canonical_order)
+      ? Math.floor(message.canonical_order)
+      : undefined;
+    const canonicalOrderField = canonicalOrder === undefined ? {} : { canonicalOrder };
     const source = canonicalId ? 'canonical' as const : 'resume' as const;
     const messageId = (suffix: string): string => canonicalId
       ? (suffix === 'message' ? canonicalId : `${canonicalId}:${suffix}`)
@@ -382,6 +389,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
       normalized.push({
         id: messageId('event'),
         ...(canonicalId ? { canonicalId } : {}),
+        ...canonicalOrderField,
         source,
         role: 'system',
         kind: 'event',
@@ -404,6 +412,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
       normalized.push({
         id: messageId('tool'),
         ...(canonicalId ? { canonicalId } : {}),
+        ...canonicalOrderField,
         source,
         role: 'tool',
         kind: 'tool',
@@ -425,6 +434,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
       normalized.push({
         id: messageId('reasoning'),
         ...(canonicalId ? { canonicalId } : {}),
+        ...canonicalOrderField,
         source,
         role: 'tool',
         kind: 'reasoning',
@@ -438,6 +448,7 @@ export function normalizeTranscript(messages: GatewayTranscriptMessage[], _now =
     normalized.push({
       id: messageId('message'),
       ...(canonicalId ? { canonicalId } : {}),
+      ...canonicalOrderField,
       source,
       role,
       kind: role === 'assistant' || role === 'user' || role === 'system' ? role : undefined,

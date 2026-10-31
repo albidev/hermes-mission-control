@@ -53,10 +53,9 @@ def collect_codexbar_provider(provider: str, catalog_ids: set[str]) -> dict[str,
         return unavailable_provider(provider, "cli", "Unknown provider.")
 
     executable = shutil.which("codexbar") or _CODEXBAR_FALLBACK
-    source_args = ["--source", "web"] if provider == "ollama" else []
     try:
         completed = subprocess.run(
-            [executable, "usage", "--provider", provider, *source_args, "--json", "--no-color"],
+            [executable, "usage", "--provider", provider, "--json", "--no-color"],
             capture_output=True,
             text=True,
             timeout=30,

@@ -455,16 +455,22 @@ def load_chat_transcript(
     session_id: str | None = None,
     session_key: str | None = None,
     profile: str | None = None,
+    limit: int | None = None,
+    before_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return the complete, canonical Mission Control display transcript.
+    """Return a canonical Mission Control transcript page (or the full transcript).
 
     This deliberately uses Hermes' own SessionDB display projection rather than
-    the gateway's bounded resume payload.  ``_row_id`` is the durable identity;
-    clients must never infer identity from repeated content.
+    the gateway's bounded resume payload. ``_row_id`` is the durable identity;
+    clients must never infer identity from repeated content. ``limit`` and
+    ``before_id`` page by that stable identity and preserve absolute display order.
     """
     reference = str(session_key or session_id or "").strip()
     if not reference:
-        return {"sessionId": "", "sessionKey": "", "messages": [], "complete": True, "count": 0}
+        return {
+            "sessionId": "", "sessionKey": "", "messages": [], "complete": True,
+            "count": 0, "totalCount": 0, "hasMore": False, "nextCursor": None,
+        }
 
     db = _try_get_session_db(profile)
     try:
@@ -525,13 +531,47 @@ def load_chat_transcript(
                 if row.get(key) is not None:
                     message[key] = row[key]
             messages.append(message)
+        total_count = len(messages)
+        page_limit = max(1, min(int(limit), 500)) if limit is not None else None
+        cursor = str(before_id or "").strip()
+        if cursor and page_limit is None:
+            page_limit = 120
+        start_index = 0
+        page_messages = messages
+        if page_limit is not None:
+            end_index = total_count
+            if cursor:
+                cursor_index = next((index for index, message in enumerate(messages) if message["id"] == cursor), -1)
+                if cursor_index < 0:
+                    return {
+                        "sessionId": resolved_id,
+                        "sessionKey": resolved_key,
+                        "sessionTitle": session_title,
+                        "messages": [],
+                        "complete": False,
+                        "count": 0,
+                        "totalCount": total_count,
+                        "hasMore": False,
+                        "nextCursor": None,
+                        "error": "cursor_not_found",
+                    }
+                end_index = cursor_index
+            start_index = max(0, end_index - page_limit)
+            page_messages = messages[start_index:end_index]
+        for display_index, message in enumerate(page_messages, start=start_index):
+            message["canonical_order"] = display_index
+        has_more = start_index > 0
+        next_cursor = page_messages[0]["id"] if has_more and page_messages else None
         return {
             "sessionId": resolved_id,
             "sessionKey": resolved_key,
             "sessionTitle": session_title,
-            "messages": messages,
+            "messages": page_messages,
             "complete": True,
-            "count": len(messages),
+            "count": len(page_messages),
+            "totalCount": total_count,
+            "hasMore": has_more,
+            "nextCursor": next_cursor,
         }
     except Exception:
         _log.debug("Failed to load canonical chat transcript for %s", reference, exc_info=True)
@@ -541,6 +581,9 @@ def load_chat_transcript(
             "messages": [],
             "complete": False,
             "count": 0,
+            "totalCount": 0,
+            "hasMore": False,
+            "nextCursor": None,
         }
     finally:
         _close_session_db(db)
