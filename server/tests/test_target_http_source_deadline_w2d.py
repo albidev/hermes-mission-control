@@ -1942,7 +1942,125 @@ class SourceDeadlinePrimitiveTests(unittest.TestCase):
 
 
     def test_no_receipt_remote_replay_remains_ambiguous(self):
-        self.assertTrue(hasattr(TargetHttpClient, "_admit_source_worker"))
+        # M11-F01: a remote replay without a durable local receipt is not proof of
+        # admission. Attempt 1 really reaches the loopback owner (verified native
+        # effect) and loses its reply -> ambiguous, one pending reservation, zero
+        # receipts. Attempt 2 is an explicit retry the owner answers as replayed=True;
+        # the existing no-prior guard refuses it (invalid_new_admission) and publishes
+        # nothing. A real stored receipt plus the same exact replay is accepted as a
+        # control. Public source lane (TargetHttpClient.admit_run), genuine source
+        # fixture, scratch AdmissionReceiptStores, scratch loopback only.
+        from invite_rooms import target_http_io
+
+        real_post = target_http_io.post_loopback
+        final_name = "admission_receipts.json.enc"
+        pending_name = "admission_pending.json.enc"
+
+        def sha(data):
+            return hashlib.sha256(data).hexdigest()
+
+        def lose_reply(url, headers, payload, *, deadline=None):
+            # Real loopback effect first; its response is then discarded (test-only).
+            real_post(url, headers, payload, deadline=deadline)
+            raise TimeoutError("test-only reply lost after a verified loopback effect")
+
+        with genuine_source_fixture() as fx, _managed_loopback() as http, \
+                tempfile.TemporaryDirectory() as directory:
+            source = _source_for(fx, http.config)
+            path = Path(directory) / "admissions"
+            store = AdmissionReceiptStore(path)
+            client = TargetHttpClient(http.config)
+            with closing(store):
+                new_run = http.response["run_id"]
+                first_args, _ = _args(fx, source, store, "no-receipt", http.config, budget=30)
+                key = first_args["idempotency_key"]
+                lookup = _lookup(fx, http, first_args)
+                before = _producer_snapshot(fx)
+
+                # Attempt 1: real verified effect, reply lost -> ambiguous.
+                with mock.patch.object(store, "find", wraps=store.find) as find1, \
+                        mock.patch.object(store, "reserve", wraps=store.reserve) as reserve1, \
+                        mock.patch.object(store, "put", wraps=store.put) as put1, \
+                        mock.patch.object(target_http_io, "post_loopback", side_effect=lose_reply) as post1:
+                    with self.assertRaises(TargetHttpError) as lost:
+                        client.admit_run(**first_args)
+                self.assertEqual(str(lost.exception), "target_admission_ambiguous")
+                self.assertEqual((find1.call_count, reserve1.call_count, put1.call_count), (1, 1, 0))
+                self.assertEqual((post1.call_count, http.raw_ingress, http.verified_native_effect), (1, 1, 1))
+                capture = http.native_capture
+                self.assertIsNotNone(capture)
+                assert capture is not None
+                self.assertTrue(http.posts[0][0] == capture["raw"] == first_args["forwarded_body"],
+                                "attempt 1 POST bytes differ from the native-captured request")
+                self.assertTrue(http.posts[0][1]["Idempotency-Key"] == capture["key"] == key,
+                                "attempt 1 Idempotency-Key differs from the derived key")
+                self.assertEqual(store.count(), 0, "lost reply must not publish a committed receipt")
+                pending = _pending(store)
+                self.assertEqual(len(pending), 1, "attempt 1 must leave exactly one pending reservation")
+                self.assertTrue(pending[0]["idempotency_key"] == key, "pending reservation key changed")
+                pending_sha = sha((path / pending_name).read_bytes())
+                self.assertTrue(_producer_snapshot(fx) == before,
+                                "attempt 1 changed source producer or native-mint state")
+
+                # Attempt 2: explicit retry, same body and key; owner says replayed=True
+                # but no local receipt exists. Must refuse, not succeed or publish.
+                http.response = {"run_id": new_run, "status": "running", "replayed": True}
+                second_args = dict(first_args, deadline=time.monotonic() + 30)
+                with self.subTest(stage="remote_replay_without_local_receipt"):
+                    with mock.patch.object(store, "find", wraps=store.find) as find2, \
+                            mock.patch.object(store, "reserve", wraps=store.reserve) as reserve2, \
+                            mock.patch.object(store, "put", wraps=store.put) as put2, \
+                            mock.patch.object(target_http_io, "post_loopback", wraps=real_post) as post2:
+                        with self.assertRaises(TargetHttpError) as refused:
+                            client.admit_run(**second_args)
+                    self.assertEqual(str(refused.exception), "invalid_new_admission")
+                    self.assertEqual((find2.call_count, reserve2.call_count, put2.call_count), (1, 1, 0),
+                                     "retry must not publish or remint a receipt")
+                    self.assertEqual(post2.call_count, 1)
+                    self.assertEqual(len(http.posts), 2, "exactly one public POST per explicit attempt")
+                    self.assertTrue(http.posts[1][0] == http.posts[0][0] == capture["raw"],
+                                    "retry POST body is not byte-identical to attempt 1")
+                    self.assertTrue(http.posts[1][1]["Idempotency-Key"] == http.posts[0][1]["Idempotency-Key"] == key,
+                                    "retry Idempotency-Key is not identical to attempt 1")
+                    self.assertTrue(http.posts[1][1]["Authorization"] == capture["authorization"],
+                                    "retry Authorization differs from the native-captured grant")
+                    self.assertEqual(http.paths, [capture["route"], capture["route"]])
+                    self.assertEqual((http.raw_ingress, http.verified_native_effect), (2, 2))
+                    self.assertTrue(sha((path / pending_name).read_bytes()) == pending_sha,
+                                    "retry changed the pending reservation bytes")
+                    self.assertEqual(store.count(), 0, "remote replay without a receipt published a receipt")
+                    self.assertTrue(_producer_snapshot(fx) == before,
+                                    "retry changed source producer or native-mint state")
+                    with closing(AdmissionReceiptStore(path)) as reopened:
+                        self.assertEqual(reopened.count(), 0, "fresh reopen found a committed receipt")
+                        self.assertIsNone(reopened.find(**lookup), "fresh reopen found a receipt for the key")
+
+            # Positive control (independent scratch store/task): a real stored receipt
+            # plus an exact replay is accepted with no second put.
+            with self.subTest(stage="receipt_backed_replay_control"):
+                control_store = AdmissionReceiptStore(Path(directory) / "control")
+                with closing(control_store):
+                    control_args, _ = _args(fx, source, control_store, "control", http.config, budget=30)
+                    control_lookup = _lookup(fx, http, control_args)
+                    http.response = {"run_id": new_run, "status": "started", "replayed": False}
+                    seeded = client.admit_run(**control_args)
+                    self.assertEqual((seeded["run_id"], seeded["replayed"]), (new_run, False))
+                    receipt = control_store.find(**control_lookup)
+                    self.assertIsNotNone(receipt)
+                    assert receipt is not None
+                    self.assertEqual((receipt["run_id"], receipt["replayed"]), (new_run, False))
+                    self.assertEqual(control_store.count(), 1)
+                    http.response = {"run_id": new_run, "status": "running", "replayed": True}
+                    with mock.patch.object(control_store, "put", wraps=control_store.put) as put_c, \
+                            mock.patch.object(control_store, "find", wraps=control_store.find) as find_c:
+                        replay = client.admit_run(**dict(control_args, deadline=time.monotonic() + 30))
+                    self.assertEqual((replay["status"], replay["replayed"], replay["run_id"]),
+                                     ("running", True, new_run))
+                    self.assertEqual((find_c.call_count, put_c.call_count), (1, 0),
+                                     "receipt-backed replay must not write a second receipt")
+                    self.assertEqual(control_store.count(), 1)
+                    self.assertTrue(control_store.find(**control_lookup) == receipt)
+                    self.assertEqual(_pending(control_store), [])
 
     def test_pending_retirement_expiry_skips_new_effect_but_keeps_integrity_checks(self):
         import sys
