@@ -1,13 +1,14 @@
 # Invite-only Rooms — P3b: peer pairing, joining side, two-instance e2e (v2)
 
-**Status:** design frozen after P3b-R0 (REJECT) and P3b-R1 (ACCEPT_WITH_CHANGES, amendments in §8). Nothing
-implemented, deployed or wired into the live sidecar.
-**Baseline:** `99866cb` on `feat/invite-rooms` (PR #127).
+**Status:** design frozen after P3b-R0 (REJECT) and P3b-R1 (ACCEPT_WITH_CHANGES, amendments in §8); partial product implementation now exists in PR #127. Pairing/joining modules, route handlers, and browser panels are present, but the control-listener lifecycle, complete two-installation E2E, and overall A2b2a acceptance remain open. The feature is configuration-gated and not deployed.
+**Baseline:** `99866cb` on `feat/invite-rooms` (PR #127) is the historical design-review baseline, not the current implementation inventory.
 **Goal:** two owners pair their Mission Control installations without hand-editing registry files; the joining
 owner receives, inspects, redeems and consents to an invitation from their own MC; the whole flow runs between
 two isolated Hermes instances on one Mac before anything touches the VPS lab.
 
-## 0. Verified state of the code (`99866cb`, confirmed by P3b-R0)
+## 0. Historical baseline at `99866cb` (confirmed by P3b-R0)
+
+The table below records the code state at the design-review baseline only. It is intentionally retained for the design rationale and is **not** a current implementation inventory; see the current candidate snapshot in `docs/plans/invite-rooms-mc-mvp.md` and the route matrix in `docs/api.md`.
 
 | Fact | Where | Consequence |
 | --- | --- | --- |
