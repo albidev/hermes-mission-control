@@ -322,6 +322,9 @@ class TargetHttpClient:
         try:
             response = target_http_io.post_loopback(
                 self.config.base_url + _route(self.config), headers, forwarded_body, deadline=deadline)
+        except TimeoutError:
+            # Once the bounded POST was entered, a timeout does not prove non-admission.
+            raise TargetHttpError("target_admission_ambiguous") from None
         except Exception:
             raise TargetHttpError("target_unavailable") from None
         status_code, result = _validate_response(response)
