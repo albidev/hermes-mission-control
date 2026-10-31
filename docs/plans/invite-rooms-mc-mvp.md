@@ -1,7 +1,8 @@
 # Invite-only Rooms in Mission Control — MVP scope and integration strategy
 
-**Status:** proposal, not implemented or deployed. The transport/control lab is accepted; product integration is not.
-**Baseline:** `dc028f5` on `feat/invite-rooms`. No push or production rollout is authorized by this document.
+**Status:** implementation in progress; not release-ready or deployed. The candidate tree now contains host/joining/pairing route handlers and browser panels, and several bounded implementation slices have scoped acceptance. Overall A2b2a acceptance remains open: durable-method coverage, complete store/I/O integration, two-installation E2E, and final independent review are still required.
+**Runtime boundary:** the owner-only route dispatcher is mounted in the telemetry sidecar but remains disabled unless valid owner-private configuration is supplied. The control-listener lifecycle and complete two-owner flow are not yet accepted. This plan is a technical scope document, not a user guide.
+**Baseline:** `dc028f5` on `feat/invite-rooms` is the historical design baseline. Incremental PR updates have been owner-authorized; this document does not authorize a merge, live restart, production rollout, or deployment.
 **Goal:** allow two owners of an already paired Hermes installation to explicitly approve one fixed-roster, text-only Room, then use the existing canonical Rooms UI.
 
 ## Recommended architecture
@@ -41,7 +42,16 @@ The current VPS B has a headless gateway, not a deployed Mission Control/owner-c
 - Production imports from `spikes/`, core changes, live MC restart, automatic merge/push/deploy.
 - Unrelated upstream PRs and previously denied deletion targets.
 
-## What exists versus what must be built
+## Current candidate snapshot
+
+- The candidate tree contains the product-owned invite, pairing, joining, guest, and target-HTTP modules, plus owner-only HTTP dispatch and browser panels. The sidecar mounts the route dispatcher in `server/local_telemetry_server.py`.
+- The feature remains off by default and returns 404 when its owner-private runtime configuration is absent or invalid. Pairing and joining have their own configuration/store requirements.
+- Control-listener/connector primitives exist, but the sidecar-owned lifecycle and complete two-installation journey are not yet accepted. The default material resolver still fails closed; activation is not a verified end-to-end path.
+- Remaining feature gates: the residual durable-method proof bundle, complete store/I/O integration, same-Mac two-instance E2E with recovery, overall independent review/acceptance, and owner-authorized rollout. Cross-host/VPS transport is a later gate, not an MVP claim.
+
+## Design-time source inventory
+
+The table below records the original proposal baseline at `dc028f5`; it explains why the architecture was chosen and is not a current implementation-status table. For the present API surface, see [api.md](../api.md#invite-only-rooms).
 
 | Existing source | Reuse / missing boundary |
 | --- | --- |
@@ -58,7 +68,7 @@ The current VPS B has a headless gateway, not a deployed Mission Control/owner-c
 
 New product package: `server/invite_rooms/` (operation service, peer registry, RPC adapter and redacted view models). Keep the existing store/coordinator as the starting point; moving them is an implementation decision, not permission to duplicate them. All secret material stays in owner-private files with 0700 parent/0600 files; the SQLite invitation store holds hashes, not native grants/admin tokens.
 
-Proposed browser routes below are **not present yet**. Mount under `/api/local/room-invites`, gated off by default and protected by MC's existing owner auth plus explicit Origin/CSRF rules. GET cannot mutate. Unauthenticated callers receive no invitation existence oracle.
+The routes in this proposal have since gained candidate handlers and sidecar dispatch. They are still feature-gated by owner-private configuration and are not a release-readiness claim. The exact current path set is documented in [`docs/api.md`](../api.md#invite-only-rooms); use it when comparing the frozen design contract below with the implementation.
 
 | Route | Owner operation / restrictions |
 | --- | --- |
@@ -74,11 +84,11 @@ Proposed browser routes below are **not present yet**. Mount under `/api/local/r
 
 The headless joining-owner adapter invokes the same methods without reusing an MC bearer token from another installation. It must present the same scope/policy and require an explicit local owner decision. Invitation hashes, membership consent and transport authentication are distinct credentials; possession of one must not imply the others.
 
-## Serial implementation packets
+## Original serial implementation packets
 
-Every packet follows RED -> GREEN -> independent review. Run tests against disposable stores/configs; do not mutate production `state.db*`. Commits require approval and push remains forbidden.
+Each packet was planned as RED → GREEN → independent review. The sequence remains useful for acceptance; do not infer current progress from this list. PR updates are allowed only when explicitly authorized by the owner; merge, live restart, and production rollout require separate approval.
 
-### P1 — product operation boundary, no live routes
+### P1 — product operation boundary (original no-live-routes scope)
 
 1. Add `server/tests/test_room_invite_operations.py` with behavior tests for redacted views, identity mismatch, immutable roster and separate approvals. Run the test first and retain the failure.
 2. Implement `server/invite_rooms/service.py` and explicit owner context with injected RPC/private registry; no HTTP or global production paths.
@@ -93,9 +103,9 @@ PATH=/Users/albi/.hermes/hermes-agent/venv/bin:$PATH pnpm test:server
 /Users/albi/.hermes/hermes-agent/venv/bin/python -B -m unittest discover -s spikes/invite-rooms/tests
 ```
 
-Acceptance: no imports into live telemetry yet; no tools/grants/native actions from merely inspecting a lobby.
+Original P1 acceptance criterion: no imports into live telemetry at that stage, and no tools/grants/native actions from merely inspecting a lobby. The later candidate mounts the feature-gated dispatcher; see the current snapshot above.
 
-### P2 — authenticated local API and headless joining-owner adapter
+### P2 — authenticated local API and headless joining-owner adapter (original packet)
 
 1. Write real HTTP tests in `server/tests/test_room_invite_routes.py`: no auth, foreign Origin, invalid body/duplicate keys, redaction, IDOR/cross-profile denial and feature disabled.
 2. Implement `server/invite_rooms/routes.py`; add a thin explicit dispatch in `server/local_telemetry_server.py`. Do not turn the sidecar into an arbitrary owner-operation forwarder.
@@ -104,7 +114,7 @@ Acceptance: no imports into live telemetry yet; no tools/grants/native actions f
 
 Verify using the same Python server suite; include listener/auth tests that make actual requests, not source-string assertions. All runtimes remain isolated; no live restart.
 
-### P3 — browser lobby UI and canonical Room handoff
+### P3 — browser lobby UI and canonical Room handoff (original packet)
 
 1. Add `src/lib/room-invite-api.ts` with redacted typed contracts and AbortController-owned requests; tests in `tests/room-invite-api.test.ts`.
 2. Add `src/lib/use-room-invite.ts` for the lobby UI only, not the native state machine. Test reload/resume, stale response cancellation, unavailable vs empty and explicit ambiguity states.
@@ -127,6 +137,15 @@ Run isolated browser QA at desktop and mobile sizes: invite copy/import, pending
 2. Verify no native mint/create/register/send before the corresponding approvals, no secret leakage, unchanged policy, one native receipt per duplicate, exact transcript parity and recovery after an ambiguous operation.
 3. Re-run native s2g/s2e/F1 only if touched transport/control behavior requires it; keep suites/gates serial, sources hashed and cleanup authorized/preserving evidence.
 4. Independently review the complete delta, record limitations and obtain separate approval for any rollout, push or second-host owner-service deployment.
+
+## Documentation deliverables before calling the feature ready
+
+The API and design documents are technical references, not operating instructions. Two separate guides remain required **after** the two-installation E2E and overall acceptance stabilize the behavior:
+
+- [ ] **User guide** (for the host and joining owner): prerequisites, explicit pairing and invitation steps, what each approval means, how to verify activation and open the canonical Room, recovery/ambiguity handling, and clear supported/unsupported network scope.
+- [ ] **Agent/bot runbook** (for an authorized operator agent): an upfront authorization gate; ordered, executable steps with exact commands/config locations, expected results and stop conditions; explicit separation of agent-safe reads from owner-only SAS comparison, approval, consent, unpair and reconciliation; secret-handling rules; and fail-closed instructions for missing config, stale pairing or ambiguous native effects.
+
+Do not write either as a claim of availability before the real E2E, recovery cases, and independent feature acceptance pass. Cross-host/VPS setup is not part of the MVP guide unless a later gate accepts it.
 
 ## Risks and release blockers
 

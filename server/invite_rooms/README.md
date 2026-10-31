@@ -1,6 +1,9 @@
 # Invite rooms MVP.1 — private integration boundaries
 
-No live HTTP routes, native listener, deployment, or automatic activation is wired here.
+The owner-only `/api/local/room-invites/*` HTTP dispatcher is mounted by `server/local_telemetry_server.py`; its handlers live in `routes.py` and `joining_routes.py`. It remains **off by default**: a valid owner-private `MISSION_CONTROL_ROOM_INVITES_CONFIG` is required, and missing or invalid configuration is indistinguishable from a 404. Pairing endpoints additionally require a valid `pairing` block.
+
+The product tree contains control-listener and connector primitives, but the sidecar does not yet own a verified start/stop lifecycle for the complete two-installation flow. There is no accepted two-instance E2E or production deployment. The route module's `_MATERIAL_RESOLVER` is `None` by default, so remote material activation fails closed until the integration seam is wired. This README describes candidate implementation boundaries, not release readiness.
+
 The product service supports exactly one local owner profile and one remote member
 on a distinct installation. The owner identity is trusted construction configuration,
 not a browser field and not whatever a connected gateway reports.

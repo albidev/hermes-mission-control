@@ -154,11 +154,57 @@ Details: [chat.md](chat.md), [bot-mode.md](bot-mode.md), [rooms.md](rooms.md).
 
 See [tldraw-feature-matrix.md](tldraw-feature-matrix.md).
 
-## Invite-room guest approvals
+## Invite-only rooms
 
-All paths below start with `/api/local/room-invites`. They require the normal
-MC bearer token and exact configured Origin policy. The feature remains off
-unless its owner-private runtime configuration and joining store are valid.
+All suffixes below are under `/api/local/room-invites`. The route dispatcher is mounted by the telemetry sidecar, but the feature is disabled by default: it requires valid owner-private `MISSION_CONTROL_ROOM_INVITES_CONFIG`; pairing routes additionally require a valid `pairing` block, and joining routes need a valid joining store. Missing or invalid configuration is intentionally reported as 404. These tables describe the candidate code, not production availability: process-lifecycle wiring for the control listener, two-installation end-to-end acceptance, and deployment are still open.
+
+All routes require the normal MC bearer token and exact configured Origin policy whenever an `Origin` header is supplied. Responses are `no-store`; request/response bodies containing invitation or pairing material are not logged. See the [MVP implementation plan](plans/invite-rooms-mc-mvp.md) and the [P3b pairing design](plans/invite-rooms-p3b-pairing.md) for safety boundaries and remaining gates.
+
+### Host lobby and activation
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| GET | `/paired-peers` | List redacted paired peers for roster selection |
+| POST | `/lobbies` | Create a fixed-roster lobby |
+| GET | `/lobbies/{lobby_id}` | Read the redacted lobby projection |
+| POST | `/lobbies/{lobby_id}/invites` | Issue an invitation; this explicit response is the only host-lobby operation that returns the invite code |
+| POST | `/lobbies/{lobby_id}/invites/{invite_id}/revoke` | Revoke an unused invitation |
+| POST | `/lobbies/{lobby_id}/invites/{invite_id}/decision` | Host's explicit approval or rejection, bound to the displayed peer/policy binding |
+| GET | `/lobbies/{lobby_id}/activation` | Read activation readiness and per-peer registration projection |
+| POST | `/lobbies/{lobby_id}/activate` | Owner-explicit activation; ambiguous or incomplete native effects are not reported as success |
+
+### Pairing
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| GET | `/pairing` | Read redacted pairing-journal rows |
+| POST | `/pairing/offers` | Create a host offer code |
+| POST | `/pairing/offers/{pairing_id}/accept` | Accept an offer and return the next public code/SAS step |
+| POST | `/pairing/offers/{pairing_id}/confirm` | Confirm the host-side SAS read over the independent channel |
+| POST | `/pairing/offers/{pairing_id}/cancel` | Cancel an undecided host offer |
+| POST | `/pairing/imports` | Import a joining-side offer and return the next public code |
+| POST | `/pairing/imports/{pairing_id}/reveal` | Reveal the joining-side SAS step |
+| POST | `/pairing/imports/{pairing_id}/confirm` | Confirm the joining-side SAS read over the independent channel |
+| GET | `/peers` | List redacted paired peers |
+| DELETE | `/peers/{peer_id}` | Unpair and advance the durable pairing generation |
+
+Pairing codes are public transcript material, not credentials; owners must compare the SAS out of band. Never automate confirmation or treat a copied code alone as trust.
+
+### Joining-owner imports
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| POST | `/imports/preview` | Parse an invitation locally (`code`, optional `host_id`); no navigation or URL fetch |
+| GET | `/imports/{import_id}` | Read the redacted joining state |
+| POST | `/imports/{import_id}/metadata` | Refresh sanitized invitation metadata over the pinned host channel |
+| POST | `/imports/{import_id}/redeem` | Explicitly redeem the imported invitation |
+| POST | `/imports/{import_id}/scope` | Confirm the exact room/member scope shown to the joining owner |
+| POST | `/imports/{import_id}/consent` | Record the joining owner's explicit consent (`approve` boolean) |
+| POST | `/imports/{import_id}/resolve` | Owner-directed resolution of an ambiguous redemption |
+
+### Guest-room approvals
+
+The guest routes below use the same base path, bearer authentication, Origin policy, and feature gate. Guest approvals remain a separate operation from pairing, invite issuance, and joining-owner consent.
 
 | Method | Path | Purpose |
 |--------|------|---------|
