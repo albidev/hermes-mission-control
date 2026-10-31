@@ -1638,7 +1638,223 @@ class SourceDeadlinePrimitiveTests(unittest.TestCase):
                 self.assertEqual(reopened.count(), 2)
 
     def test_inherited_budget_mutex_and_process_flock(self):
-        self.assertTrue(hasattr(AdmissionReceiptStore, "_acquire_flock"))
+        import asyncio
+        import select
+        import subprocess
+        import sys
+        from invite_rooms import target_http
+        from invite_rooms.admission_receipts import AdmissionReceiptError, _LOCK_NAME
+        from invite_rooms.peer_registry import AdmissionExecutor, LANE_CALLBACK, PeerRegistryError
+
+        def state(store):
+            # Ciphertext/lock bytes are hashed in place; no material-bearing value is kept.
+            return tuple(sorted((item.name, hashlib.sha256(item.read_bytes()).hexdigest())
+                                for item in store.root.iterdir()))
+
+        def refusal(store, lookup, key, deadline):
+            started = time.monotonic()
+            with self.assertRaises(AdmissionReceiptError) as caught:
+                store.reserve(**dict(lookup, idempotency_key=key, deadline=deadline))
+            return caught.exception.args[0], time.monotonic() - started
+
+        with genuine_source_fixture() as fx, _managed_loopback() as http, tempfile.TemporaryDirectory() as directory, ExitStack() as resources:
+            source = _source_for(fx, http.config)
+            store = resources.enter_context(closing(AdmissionReceiptStore(Path(directory) / "admissions")))
+            args, _ = _args(fx, source, store, "m9-lock-expired", http.config, budget=5)
+            live_args, _ = _args(fx, source, store, "m9-lock-live", http.config, budget=5, clear_capture=False)
+            lookup = _lookup(fx, http, args)
+            after_bootstrap = state(store)
+            self.assertEqual((store.count(), len(_pending(store))), (0, 0))
+
+            # 1. Actual store RLock held by another thread: bounded refusal, no state change.
+            held, release_lock, holder_done = threading.Event(), threading.Event(), threading.Event()
+            holder_errors = []
+
+            def hold_rlock():
+                try:
+                    with store._lock:
+                        held.set()
+                        if not release_lock.wait(10):
+                            holder_errors.append("rlock holder barrier was not released")
+                except BaseException as exc:  # reported by the owner under finally
+                    holder_errors.append(type(exc).__name__)
+                finally:
+                    holder_done.set()
+
+            holder = threading.Thread(target=hold_rlock)
+            holder.start()
+            try:
+                self.assertTrue(held.wait(10), "RLock holder did not acquire the store lock")
+                code, elapsed = refusal(store, lookup, "m9-rlock-short", time.monotonic() + 0.1)
+                self.assertEqual(code, "admission_storage_busy")
+                self.assertLess(elapsed, 0.35, "mutex wait ignored the short absolute deadline")
+                code, elapsed = refusal(store, lookup, "m9-rlock-long", time.monotonic() + 3)
+                self.assertEqual(code, "admission_storage_busy")
+                self.assertGreaterEqual(elapsed, 0.4, "mutex refused before the store wait cap")
+                self.assertLess(elapsed, 0.9, "mutex wait exceeded the store cap")
+                self.assertTrue(holder.is_alive() and not holder_done.is_set())
+            finally:
+                release_lock.set()
+                holder.join(10)
+            self.assertFalse(holder.is_alive(), "RLock holder thread was not reaped")
+            self.assertEqual(holder_errors, [])
+            self.assertEqual(state(store), after_bootstrap)
+            self.assertTrue(store._lock.acquire(blocking=False), "store RLock was left held after refusal")
+            store._lock.release()
+            self.assertEqual((store.count(), len(_pending(store))), (0, 0))
+            self.assertIsNone(store.reserve(**dict(lookup, idempotency_key="m9-rlock-live", deadline=time.monotonic() + 5)))
+            pending = _pending(store)
+            self.assertEqual([row["idempotency_key"] for row in pending], ["m9-rlock-live"])
+            self.assertEqual(store.count(), 0)
+
+            # 2. Cross-process flock on the actual lock file held by a child process.
+            after_rlock = state(store)
+            child_code = (
+                "import fcntl, os, sys\n"
+                "fd = os.open(sys.argv[1], os.O_RDWR)\n"
+                "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+                "sys.stdout.write('locked\\n'); sys.stdout.flush()\n"
+                "sys.stdin.readline()\n"
+                "fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)\n")
+            child = subprocess.Popen([sys.executable, "-B", "-c", child_code, str(store.root / _LOCK_NAME)],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            try:
+                ready, _, _ = select.select([child.stdout], [], [], 10)
+                self.assertTrue(ready, "child did not report the flock handshake")
+                self.assertEqual(child.stdout.readline(), "locked\n")
+                self.assertIsNone(child.poll(), "lock-owning child exited early")
+                code, elapsed = refusal(store, lookup, "m9-flock-short", time.monotonic() + 0.15)
+                self.assertEqual(code, "admission_deadline_exceeded")
+                self.assertLess(elapsed, 0.4, "flock wait ignored the short remaining deadline")
+                code, elapsed = refusal(store, lookup, "m9-flock-long", time.monotonic() + 3)
+                self.assertEqual(code, "admission_storage_busy")
+                self.assertGreaterEqual(elapsed, 0.4, "flock refused before the store wait cap")
+                self.assertLess(elapsed, 0.85, "flock wait restarted past the store cap")
+                self.assertIsNone(child.poll(), "lock-owning child exited before release")
+                self.assertEqual(state(store), after_rlock)
+                self.assertTrue(store._lock.acquire(blocking=False), "store RLock was left held after flock refusal")
+                store._lock.release()
+            finally:
+                try:
+                    child.stdin.write("release\n")
+                    child.stdin.flush()
+                except (OSError, ValueError):
+                    pass
+                try:
+                    child.wait(10)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait(10)
+                for stream in (child.stdin, child.stdout):
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+            self.assertEqual(child.returncode, 0)
+            self.assertEqual(state(store), after_rlock)
+            self.assertIsNone(store.reserve(**dict(lookup, idempotency_key="m9-flock-live", deadline=time.monotonic() + 5)))
+            self.assertEqual(sorted(row["idempotency_key"] for row in _pending(store)),
+                             ["m9-flock-live", "m9-rlock-live"])
+            self.assertEqual(store.count(), 0)
+
+            # 3. Expired queued material work in a test-owned executor (global owner untouched).
+            global_owner = target_http.admission_executor
+            executor = AdmissionExecutor(workers=1, queue_cap=1, reserved=0)
+            occupied, release_slot = threading.Event(), threading.Event()
+            slot_done, worker_done = threading.Event(), threading.Event()
+            counters = {"workers": 0, "loads": 0}
+            original_worker = TargetHttpClient._admit_source_worker
+            original_load = source.load
+            outcome = {}
+
+            def occupy():
+                occupied.set()
+                try:
+                    if not release_slot.wait(10):
+                        raise AssertionError("executor slot barrier was not released")
+                finally:
+                    slot_done.set()
+
+            def observed_worker(client, **kwargs):
+                counters["workers"] += 1
+                try:
+                    return original_worker(client, **kwargs)
+                finally:
+                    worker_done.set()
+
+            def observed_load(*load_args, **kwargs):
+                counters["loads"] += 1
+                return original_load(*load_args, **kwargs)
+
+            def occupier():
+                try:
+                    asyncio.run(executor.run(occupy, lane=LANE_CALLBACK))
+                except BaseException as exc:
+                    outcome["occupier"] = type(exc).__name__
+
+            def expired_caller():
+                try:
+                    TargetHttpClient(http.config).admit_run(**dict(args, deadline=time.monotonic() + 0.25))
+                    outcome["caller"] = "returned"
+                except TargetHttpError as exc:
+                    outcome["caller"] = exc.args[0]
+                except BaseException as exc:
+                    outcome["caller"] = type(exc).__name__
+
+            before_effects = _producer_snapshot(fx)
+            pending_before = sorted(row["idempotency_key"] for row in _pending(store))
+            occupier_thread = threading.Thread(target=occupier)
+            caller_thread = threading.Thread(target=expired_caller)
+            try:
+                with mock.patch.object(target_http, "admission_executor", new=lambda: executor), \
+                        mock.patch.object(TargetHttpClient, "_admit_source_worker", new=observed_worker), \
+                        mock.patch.object(source, "load", side_effect=observed_load):
+                    occupier_thread.start()
+                    self.assertTrue(occupied.wait(10), "test-owned executor slot was not occupied")
+
+                    # Pre-submit expiry is refused without queueing any effect.
+                    probe_ran = threading.Event()
+                    with self.assertRaisesRegex(PeerRegistryError, "^admission_deadline_exceeded$"):
+                        asyncio.run(executor.run(probe_ran.set, end_deadline=time.monotonic() - 1))
+                    self.assertFalse(probe_ran.is_set(), "expired pre-submit work ran")
+                    self.assertTrue(executor._slots.acquire(blocking=False),
+                                    "expired pre-submit work retained executor capacity")
+                    executor._slots.release()
+
+                    caller_thread.start()
+                    caller_thread.join(5)
+                    self.assertFalse(caller_thread.is_alive(), "queued caller was not released at its absolute deadline")
+                    self.assertEqual(outcome.get("caller"), "target_admission_ambiguous")
+                    self.assertFalse(slot_done.is_set(), "occupied slot was released before the caller expired")
+                    self.assertFalse(worker_done.is_set(), "queued worker ran while the slot was occupied")
+                    release_slot.set()
+                    self.assertTrue(worker_done.wait(10), "expired queued worker did not settle")
+                    occupier_thread.join(10)
+                    self.assertTrue(slot_done.is_set())
+                    self.assertIsNone(outcome.get("occupier"))
+                    self.assertEqual(counters, {"workers": 1, "loads": 0})
+                    self.assertEqual((http.raw_ingress, http.verified_native_effect, len(http.posts)), (0, 0, 0))
+                    self.assertEqual(store.count(), 0)
+                    self.assertEqual(sorted(row["idempotency_key"] for row in _pending(store)), pending_before)
+                    self.assertEqual(_producer_snapshot(fx), before_effects)
+
+                    # Live-budget control reaches the real worker, source, HTTP and store path.
+                    worker_done.clear()
+                    result = TargetHttpClient(http.config).admit_run(**live_args)
+                    self.assertTrue(worker_done.wait(10))
+                    self.assertEqual(result["status"], "started")
+                    self.assertEqual(counters["workers"], 2)
+                    self.assertGreater(counters["loads"], 0)
+                    self.assertEqual((http.raw_ingress, http.verified_native_effect, len(http.posts)), (1, 1, 1))
+                    self.assertEqual(store.count(), 1)
+            finally:
+                release_slot.set()
+                for thread in (occupier_thread, caller_thread):
+                    if thread.is_alive():
+                        thread.join(10)
+                executor.shutdown(wait=True)
+            self.assertIs(target_http.admission_executor, global_owner)
+            self.assertFalse(occupier_thread.is_alive() or caller_thread.is_alive())
 
     def test_mc_and_core_fingerprint_domains_preserved_for_unicode(self):
         import asyncio
