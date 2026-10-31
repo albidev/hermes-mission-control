@@ -2272,9 +2272,322 @@ class SourceDeadlinePrimitiveTests(unittest.TestCase):
             scenario("verify", hold=True, fault="verify", budget=8)
 
     def test_redirect_non202_invalid_schema_and_wrong_replay_are_not_success(self):
-        c = TargetHttpClient(TargetHttpConfig("http://127.0.0.1:1", "default"))
-        with self.assertRaises(TargetHttpError):
-            c._urlopen("http://127.0.0.1:1/v1/runs", {}, b"{}", deadline=time.monotonic()-1)
+        # M10-F01: every refusal below is observed AFTER exactly one admitted,
+        # natively verified POST (never zero-effect-before-POST evidence), through the
+        # public TargetHttpClient.admit_run source lane, a genuine source fixture,
+        # actual scratch AdmissionReceiptStores and real loopback sockets.
+        # Only the response side of the fixture loopback is replaced per case with a
+        # test-owned handler; request recording and native verification are the same.
+        final_name = "admission_receipts.json.enc"
+        new_run = "run_" + "a" * 32
+        old_run = "run_" + "b" * 32
+        other_run = "run_" + "c" * 32
+        valid_new = {"run_id": new_run, "status": "started", "replayed": False}
+        exact_replay = {"run_id": old_run, "status": "running", "replayed": True}
+        redirect_hits: list = []
+
+        def sha(data):
+            return hashlib.sha256(data).hexdigest()
+
+        def js(value):
+            return json.dumps(value, separators=(",", ":")).encode()
+
+        class Sink(BaseHTTPRequestHandler):
+            def _hit(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    self.rfile.read(length)
+                redirect_hits.append((self.command, self.path))
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+            do_GET = do_POST = do_PUT = do_HEAD = do_DELETE = do_PATCH = _hit
+
+            def log_message(self, *_args):
+                return
+
+        class SinkServer(ThreadingHTTPServer):
+            daemon_threads = False
+            block_on_close = True
+
+        def make_handler(owner, responder):
+            class Handler(BaseHTTPRequestHandler):
+                def do_POST(self):
+                    length = int(self.headers["Content-Length"])
+                    raw = self.rfile.read(length)
+                    owner.posts.append((raw, {k: v for k, v in self.headers.items()}))
+                    owner.paths.append(self.path)
+                    owner.raw_ingress += 1
+                    verified = owner.verify_native is not None and owner.verify_native(raw, self.headers)
+                    if verified:
+                        owner.verified_native_effect += 1
+                        status, headers, body = responder()
+                    else:
+                        status, headers, body = 403, {}, b'{"error":"forbidden"}'
+                    try:
+                        self.send_response(status)
+                        for name, value in headers.items():
+                            self.send_header(name, value)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.send_header("Connection", "close")
+                        self.end_headers()
+                        self.wfile.write(body)
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        # Expected only for the late case: the client already closed.
+                        pass
+                    self.close_connection = True
+
+                def log_message(self, *_args):
+                    return
+            return Handler
+
+        with genuine_source_fixture() as fx, _managed_loopback() as http, \
+                SinkServer(("127.0.0.1", 0), Sink) as sink, ExitStack() as outer:
+            sink_thread = threading.Thread(target=sink.serve_forever)
+            sink_thread.start()
+            release = threading.Event()
+            # LIFO: release any held response, stop the sink, then join its thread.
+            outer.callback(sink_thread.join)
+            outer.callback(sink.shutdown)
+            outer.callback(release.set)
+            sink_url = f"http://127.0.0.1:{sink.server_port}/redirected"
+            default_handler = http.server.RequestHandlerClass
+            source = _source_for(fx, http.config)
+            producer_before = _producer_snapshot(fx)
+
+            # Observer control: the redirect sink really records a request.
+            with closing(HTTPConnection("127.0.0.1", sink.server_port, timeout=3)) as connection:
+                connection.request("GET", "/redirected")
+                with connection.getresponse() as response:
+                    self.assertEqual(response.status, 200)
+                    response.read()
+            self.assertEqual(redirect_hits, [("GET", "/redirected")], "redirect sink observer is blind")
+            redirect_hits.clear()
+
+            def seed(store, root, task, response):
+                http.server.RequestHandlerClass = default_handler
+                http.response = dict(response)
+                args, _ = _args(fx, source, store, task, http.config, budget=20)
+                result = TargetHttpClient(http.config).admit_run(**args)
+                self.assertEqual((result["run_id"], result["replayed"]), (response["run_id"], False))
+                found = _receipt_witness(self, fx, http, args, store, root)
+                self.assertEqual((len(http.posts), http.raw_ingress, http.verified_native_effect), (1, 1, 1))
+                return args, found
+
+            def attempt(label, responder, error, *, seeded, replay=False, budget=5, late=False):
+                """One refusal after exactly one POST with a prior acknowledged receipt."""
+                with tempfile.TemporaryDirectory() as directory, ExitStack() as resources:
+                    root = Path(directory) / "admissions"
+                    store = resources.enter_context(closing(AdmissionReceiptStore(root)))
+                    task = "replay" if replay else "case"
+                    seed_args, old_found = seed(store, root, task if replay else "old", seeded)
+                    old_lookup = _lookup(fx, http, seed_args)
+                    old_sha = sha((root / final_name).read_bytes())
+                    self.assertEqual(store.count(), 1)
+                    args, _ = _args(fx, source, store, task, http.config, budget=budget)
+                    lookup = _lookup(fx, http, args)
+                    capture = http.native_capture
+                    self.assertTrue(capture["raw"] == args["forwarded_body"])
+                    if replay:
+                        self.assertEqual(lookup, old_lookup)
+                    else:
+                        self.assertNotEqual(lookup["idempotency_key"], old_lookup["idempotency_key"])
+                    before = _producer_snapshot(fx)
+                    redirect_hits.clear()
+                    posted, worker_done = threading.Event(), threading.Event()
+                    release.clear()
+
+                    def responding():
+                        posted.set()
+                        if late and not release.wait(30):
+                            raise RuntimeError("late response barrier was not released")
+                        return responder()
+
+                    original_worker = TargetHttpClient._admit_source_worker
+
+                    def observed_worker(client, **kwargs):
+                        try:
+                            return original_worker(client, **kwargs)
+                        finally:
+                            worker_done.set()
+
+                    http.server.RequestHandlerClass = make_handler(http, responding)
+                    outcome = None
+                    try:
+                        with mock.patch.object(store, "put", wraps=store.put) as put, \
+                                mock.patch.object(store, "find", wraps=store.find) as find, \
+                                mock.patch.object(store, "reserve", wraps=store.reserve) as reserve, \
+                                mock.patch.object(TargetHttpClient, "_admit_source_worker", new=observed_worker):
+                            try:
+                                outcome = TargetHttpClient(http.config).admit_run(**args)
+                            except TargetHttpError as caught:
+                                outcome = str(caught)
+                            if late:
+                                self.assertTrue(posted.is_set(), "late response was never requested")
+                                self.assertFalse(release.is_set())
+                    finally:
+                        release.set()
+                        self.assertTrue(worker_done.wait(10), "physical worker did not settle")
+                        http.server.RequestHandlerClass = default_handler
+                    self.assertIsInstance(outcome, str, f"{label}: counted as success")
+                    self.assertRegex(outcome, error, label)
+                    # Counted separately: exactly one admitted POST, one verified effect.
+                    self.assertEqual((len(http.posts), http.raw_ingress, http.verified_native_effect), (1, 1, 1), label)
+                    self.assertEqual(http.paths, ["/v1/runs"])
+                    self.assertTrue(http.posts[0][0] == capture["raw"])
+                    self.assertTrue(http.posts[0][1]["Authorization"] == capture["authorization"])
+                    self.assertTrue(http.posts[0][1]["Idempotency-Key"] == capture["key"])
+                    self.assertEqual(redirect_hits, [], f"{label}: redirect target was contacted")
+                    self.assertEqual(put.call_count, 0, f"{label}: receipt published")
+                    self.assertEqual(find.call_count, 1, f"{label}: store lookup retried")
+                    self.assertEqual(reserve.call_count, 0 if replay else 1, f"{label}: reserve count")
+                    self.assertTrue(_producer_snapshot(fx) == before, f"{label}: producer remint/change")
+                    self.assertEqual(store.count(), 1)
+                    self.assertTrue(sha((root / final_name).read_bytes()) == old_sha,
+                                    f"{label}: acknowledged receipt bytes changed")
+                    self.assertTrue(store.find(**old_lookup) == old_found)
+                    if not replay:
+                        self.assertIsNone(store.find(**lookup), f"{label}: receipt for refused request")
+                    with closing(AdmissionReceiptStore(root)) as reopened:
+                        self.assertEqual(reopened.count(), 1)
+                        self.assertTrue(reopened.find(**old_lookup) == old_found,
+                                        f"{label}: reopened acknowledged receipt changed")
+                        if not replay:
+                            self.assertIsNone(reopened.find(**lookup))
+
+            old_seed = {"run_id": old_run, "status": "started", "replayed": False}
+
+            # 1. Redirects are refused and never followed, for every redirect status.
+            for status in (301, 302, 303, 307, 308):
+                with self.subTest(redirect=status):
+                    attempt(f"redirect-{status}", lambda s=status: (s, {"Location": sink_url}, js(valid_new)),
+                            r"^target_rejected$", seeded=old_seed)
+            with self.subTest(redirect="307_empty_body"):
+                attempt("redirect-307-empty", lambda: (307, {"Location": sink_url}, b""),
+                        r"^invalid_target_response$", seeded=old_seed)
+
+            # 2. Non-202 statuses after one admitted POST.
+            for status in (200, 201, 500):
+                with self.subTest(non202=status):
+                    attempt(f"non202-{status}", lambda s=status: (s, {}, js(valid_new)),
+                            r"^target_rejected$", seeded=old_seed)
+            for status in (400, 409, 503):
+                with self.subTest(non202_error_body=status):
+                    attempt(f"non202-error-{status}", lambda s=status: (s, {}, b'{"error":"refused"}'),
+                            r"^(target_rejected|invalid_target_response)$", seeded=old_seed)
+
+            # 3. Malformed 202 responses, each independently, with an old receipt.
+            def with_field(**changes):
+                value = dict(valid_new)
+                value.update(changes)
+                return js(value)
+            malformed = {
+                "missing_replayed": js({"run_id": new_run, "status": "started"}),
+                "missing_run_id": js({"status": "started", "replayed": False}),
+                "extra_field": with_field(extra=1),
+                "run_id_integer": with_field(run_id=1),
+                "run_id_short": with_field(run_id="run_abc"),
+                "run_id_uppercase": with_field(run_id="run_" + "A" * 32),
+                "run_id_no_prefix": with_field(run_id="a" * 36),
+                "status_empty": with_field(status=""),
+                "status_integer": with_field(status=1),
+                "replayed_string": with_field(replayed="false"),
+                "replayed_integer": with_field(replayed=0),
+                "not_json": b"not-json",
+                "json_array": b"[]",
+                "duplicate_key": ('{"run_id":"%s","run_id":"%s","status":"started","replayed":false}'
+                                  % (new_run, new_run)).encode(),
+                "empty_body": b"",
+            }
+            for name, body in malformed.items():
+                with self.subTest(malformed_202=name):
+                    attempt(f"malformed-{name}", lambda b=body: (202, {}, b),
+                            r"^invalid_target_response$", seeded=old_seed)
+            for name, value in (("replayed_true_for_new", dict(valid_new, replayed=True)),
+                                ("status_not_started_for_new", dict(valid_new, status="running"))):
+                with self.subTest(invalid_new_admission=name):
+                    attempt(f"new-{name}", lambda v=value: (202, {}, js(v)),
+                            r"^invalid_new_admission$", seeded=old_seed)
+
+            # 4. Late 202: the real response is held until the absolute deadline expires.
+            with self.subTest(late_202="held_until_deadline"):
+                attempt("late-202", lambda: (202, {}, js(valid_new)),
+                        r"^target_admission_ambiguous$", seeded=old_seed, budget=3, late=True)
+
+            # 5. Wrong replay against a genuine local prior receipt.
+            wrong_replays = {
+                "wrong_run_id": {"run_id": other_run, "status": "running", "replayed": True},
+                "replayed_false": {"run_id": old_run, "status": "running", "replayed": False},
+                "status_started_not_replay": {"run_id": old_run, "status": "started", "replayed": True},
+                "status_unknown": {"run_id": old_run, "status": "bogus", "replayed": True},
+            }
+            for name, value in wrong_replays.items():
+                with self.subTest(wrong_replay=name):
+                    attempt(f"replay-{name}", lambda v=value: (202, {}, js(v)),
+                            r"^invalid_replay$", seeded=old_seed, replay=True)
+            with self.subTest(wrong_replay="malformed_run_id"):
+                attempt("replay-malformed-run-id", lambda: (202, {}, js(dict(exact_replay, run_id="run_x"))),
+                        r"^invalid_target_response$", seeded=old_seed, replay=True)
+
+            # 6. Positive controls through the same public lane and verifier.
+            with self.subTest(control="valid_new_202_exactly_one_receipt"):
+                with tempfile.TemporaryDirectory() as directory, closing(
+                        AdmissionReceiptStore(Path(directory) / "admissions")) as store:
+                    root = Path(directory) / "admissions"
+                    http.server.RequestHandlerClass = default_handler
+                    http.response = dict(valid_new)
+                    args, _ = _args(fx, source, store, "control-new", http.config, budget=20)
+                    capture = http.native_capture
+                    before = _producer_snapshot(fx)
+                    with mock.patch.object(store, "put", wraps=store.put) as put:
+                        result = TargetHttpClient(http.config).admit_run(**args)
+                    self.assertEqual((result["run_id"], result["status"], result["replayed"]),
+                                     (new_run, "started", False))
+                    self.assertEqual(put.call_count, 1)
+                    self.assertEqual((len(http.posts), http.raw_ingress, http.verified_native_effect), (1, 1, 1))
+                    self.assertTrue(http.posts[0][0] == capture["raw"])
+                    self.assertTrue(http.posts[0][1]["Authorization"] == capture["authorization"])
+                    self.assertTrue(http.posts[0][1]["Idempotency-Key"] == capture["key"])
+                    self.assertEqual(http.paths, ["/v1/runs"])
+                    self.assertEqual(redirect_hits, [])
+                    _receipt_witness(self, fx, http, args, store, root)
+                    self.assertTrue(_producer_snapshot(fx) == before)
+            with self.subTest(control="exact_local_replay_same_run_id"):
+                with tempfile.TemporaryDirectory() as directory, closing(
+                        AdmissionReceiptStore(Path(directory) / "admissions")) as store:
+                    root = Path(directory) / "admissions"
+                    seed_args, found = seed(store, root, "replay", old_seed)
+                    old_sha = sha((root / final_name).read_bytes())
+                    args, _ = _args(fx, source, store, "replay", http.config, budget=20)
+                    capture = http.native_capture
+                    before = _producer_snapshot(fx)
+                    http.response = dict(exact_replay)
+                    with mock.patch.object(store, "put", wraps=store.put) as put, \
+                            mock.patch.object(store, "reserve", wraps=store.reserve) as reserve:
+                        result = TargetHttpClient(http.config).admit_run(**args)
+                    self.assertEqual((result["run_id"], result["status"], result["replayed"]),
+                                     (old_run, "running", True))
+                    self.assertEqual((put.call_count, reserve.call_count), (0, 0))
+                    self.assertEqual((len(http.posts), http.raw_ingress, http.verified_native_effect), (1, 1, 1))
+                    self.assertTrue(http.posts[0][0] == capture["raw"])
+                    self.assertTrue(http.posts[0][1]["Authorization"] == capture["authorization"])
+                    self.assertEqual(redirect_hits, [])
+                    self.assertTrue(sha((root / final_name).read_bytes()) == old_sha)
+                    self.assertTrue(store.find(**_lookup(fx, http, args)) == found)
+                    with closing(AdmissionReceiptStore(root)) as reopened:
+                        self.assertEqual(reopened.count(), 1)
+                        self.assertTrue(reopened.find(**_lookup(fx, http, args)) == found)
+                    self.assertTrue(_producer_snapshot(fx) == before)
+
+            self.assertEqual(redirect_hits, [])
+            self.assertTrue(_producer_snapshot(fx) == producer_before, "matrix changed producer state")
+            release.set()
+            http.close()
+            self.assertFalse(http.thread.is_alive())
+            self.assertEqual(http.server.fileno(), -1)
 
     def test_reserve_race_promotes_real_receipt(self):
         with genuine_source_fixture() as fx, _managed_loopback() as http, \
