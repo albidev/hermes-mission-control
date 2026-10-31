@@ -2855,7 +2855,310 @@ class SourceDeadlinePrimitiveTests(unittest.TestCase):
             self.assertEqual(http.server.fileno(), -1)
 
     def test_whole_budget_connect_write_status_and_trickled_headers_body(self):
+        """N01: fragmented loopback responses under ONE absolute deadline.
+
+        Real numeric-loopback TCP server, genuine source fixture, scratch receipt
+        store and the public TargetHttpClient.admit_run source lane.  Nothing in
+        the socket/selector/HTTPResponse path is faked: the only recorders are
+        transparent call-throughs.
+        """
+        import io
+        import selectors as real_selectors
+        import types
+        from http.client import parse_headers
+        from invite_rooms import target_http_io
+        from invite_rooms.target_http_io import _SocketFacade
+
         self.assertTrue(hasattr(TargetHttpClient, "_urlopen"))
+        payload_dict = {"run_id": "run_" + "b" * 32, "status": "started", "replayed": False}
+        payload = json.dumps(payload_dict, separators=(",", ":")).encode()
+        head = (b"HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\n"
+                b"Content-Length: " + str(len(payload)).encode() + b"\r\nConnection: close\r\n\r\n")
+        full = head + payload
+        GATE = object()
+
+        class Wire:
+            """One-connection raw TCP server that replays a scripted response."""
+            def __init__(self, steps, gap):
+                self.steps, self.gap = steps, gap
+                self.sends, self.request, self.errors = [], None, []
+                self.release, self.stop, self.done = threading.Event(), threading.Event(), threading.Event()
+                self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.listener.bind(("127.0.0.1", 0))
+                self.listener.listen(1)
+                self.config = TargetHttpConfig(f"http://127.0.0.1:{self.listener.getsockname()[1]}", "default")
+                self.thread = threading.Thread(target=self.run)
+                self.thread.start()
+
+            def run(self):
+                try:
+                    self.listener.settimeout(20)
+                    conn, _ = self.listener.accept()
+                    with conn:
+                        conn.settimeout(20)
+                        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        data = b""
+                        while b"\r\n\r\n" not in data:
+                            chunk = conn.recv(65536)
+                            if not chunk:
+                                return
+                            data += chunk
+                        raw_head, _, rest = data.partition(b"\r\n\r\n")
+                        headers = parse_headers(io.BytesIO(raw_head.split(b"\r\n", 1)[1] + b"\r\n\r\n"))
+                        while len(rest) < int(headers["Content-Length"]):
+                            chunk = conn.recv(65536)
+                            if not chunk:
+                                return
+                            rest += chunk
+                        self.request = (rest, headers)
+                        for step in self.steps:
+                            if step is GATE:
+                                if not self.release.wait(20):
+                                    return
+                                continue
+                            try:
+                                conn.sendall(step)
+                            except OSError as exc:  # client already gave up
+                                self.errors.append(type(exc).__name__)
+                                return
+                            self.sends.append((len(step), time.monotonic()))
+                            self.stop.wait(self.gap)  # lets the client consume this segment alone
+                except Exception as exc:
+                    self.errors.append(type(exc).__name__)
+                finally:
+                    self.done.set()
+
+            def close(self):
+                self.release.set()
+                self.stop.set()
+                self.thread.join(30)
+                self.listener.close()
+                if self.thread.is_alive():
+                    raise AssertionError("wire server worker did not finish")
+
+        def split(data, sizes):
+            out, at = [], 0
+            for size in sizes:
+                out.append(data[at:at + size]); at += size
+            out.append(data[at:])
+            return [piece for piece in out if piece]
+
+        def pieces(data, n):
+            return [data[i:i + n] for i in range(0, len(data), n)]
+
+        def run_case(label, steps, *, gap, budget, fx, http, directory):
+            wire = Wire(steps, gap)
+            selector_log, chunks = [], []
+            worker_done = threading.Event()
+            worker_started = []
+            original_worker = TargetHttpClient._admit_source_worker
+
+            def observed_worker(client, **kwargs):
+                worker_started.append(True)
+                try:
+                    return original_worker(client, **kwargs)
+                finally:
+                    worker_done.set()
+
+            def settle_wire():
+                wire.release.set()
+                if not wire.done.wait(30):
+                    raise AssertionError("N01 wire server did not settle during cleanup")
+                wire.close()
+                if worker_started and not worker_done.wait(30):
+                    raise AssertionError("N01 admission worker did not settle during cleanup")
+
+            class RecordingSelector(real_selectors.DefaultSelector):
+                # Transparent call-through: records registered interest + the
+                # readiness the REAL selector reported.
+                def select(self, timeout=None):
+                    interest = tuple(key.events for key in self.get_map().values())
+                    ready = super().select(timeout)
+                    selector_log.append((interest, tuple(mask for _key, mask in ready)))
+                    return ready
+
+            shim = types.SimpleNamespace(**{n: getattr(real_selectors, n) for n in dir(real_selectors)
+                                            if not n.startswith("_")})
+            shim.DefaultSelector = RecordingSelector
+            original_recv = _SocketFacade.recv
+
+            def recording_recv(facade, size, *args):
+                data = original_recv(facade, size, *args)
+                chunks.append(data)  # only bytes the facade actually returned
+                return data
+
+            path = Path(directory) / label
+            outcome = {"wire": wire, "selector": selector_log, "chunks": chunks, "path": path}
+            try:
+                with closing(AdmissionReceiptStore(path)) as store, ExitStack() as cleanup, \
+                        mock.patch.object(TargetHttpClient, "_admit_source_worker", new=observed_worker), \
+                        mock.patch.object(target_http_io, "selectors", shim), \
+                        mock.patch.object(_SocketFacade, "recv", recording_recv):
+                    cleanup.callback(settle_wire)
+                    source = _source_for(fx, wire.config)
+                    args, _ = _args(fx, source, store, "n01-" + label, wire.config)
+                    start = time.monotonic()
+                    args["deadline"] = start + budget
+                    outcome.update(args=args, store=store, start=start, deadline=args["deadline"])
+                    try:
+                        outcome["result"] = TargetHttpClient(wire.config).admit_run(**args)
+                    except TargetHttpError as exc:
+                        outcome["error"] = str(exc)
+                    outcome["end"] = time.monotonic()
+                    outcome["sends_at_return"] = len(wire.sends)
+                    outcome["chunks_at_return"] = list(chunks)
+                    lookup = _lookup(fx, types.SimpleNamespace(config=wire.config), args)
+                    outcome["found"] = store.find(**lookup)
+                    outcome["count"] = store.count()
+                    if "result" in outcome:
+                        outcome["receipt"] = _receipt_witness(
+                            self, fx, types.SimpleNamespace(config=wire.config, response=payload_dict),
+                            args, store, path)
+                    wire.release.set()
+                    self.assertTrue(wire.done.wait(30), label + ": wire server did not settle")
+                    self.assertTrue(worker_started, label + ": physical admission worker was not reached")
+                    self.assertTrue(worker_done.wait(30), label + ": physical admission worker did not settle")
+                    outcome["worker_done"] = worker_done.is_set()
+                    outcome["chunks_after_release"] = list(chunks)
+                    outcome["verified"] = bool(
+                        wire.request is not None
+                        and _ACTIVE_LOOPBACK.verify_native(wire.request[0], wire.request[1])
+                        and wire.request[0] == args["forwarded_body"])
+                    settled_generation = fx["scope"].pairing_generation
+                    self.assertIs(type(settled_generation), int)
+                    outcome["settled_found"] = store.find(
+                        scope=fx["scope"], generation=settled_generation,
+                        profile=wire.config.profile, base_url=wire.config.base_url,
+                        idempotency_key=args["idempotency_key"],
+                        request_fingerprint=request_fingerprint(args["body"]))
+                    outcome["settled_count"] = store.count()
+                    if "result" in outcome:
+                        self.assertEqual(outcome["settled_found"], outcome["found"],
+                                         label + ": receipt changed after worker settlement")
+                        self.assertEqual(outcome["settled_count"], outcome["count"],
+                                         label + ": receipt count changed after worker settlement")
+                    else:
+                        self.assertIsNone(outcome["settled_found"],
+                                          label + ": late receipt appeared after worker settlement")
+                        self.assertEqual(outcome["settled_count"], 0,
+                                         label + ": receipt count changed after timeout settlement")
+            finally:
+                wire.release.set()
+                wire.close()
+                if worker_started and not worker_done.wait(30):
+                    raise AssertionError("N01 admission worker did not settle in final cleanup")
+            return outcome
+
+        def assert_success(case, o, label, expected_sends):
+            wire = o["wire"]
+            self.assertIsNone(o.get("error"), f"{label}: valid response rejected")
+            self.assertTrue(o["verified"], label + ": genuine request not received intact")
+            self.assertEqual(o["result"], payload_dict, label)
+            self.assertLess(o["end"], o["deadline"], label + ": must finish inside the 5s budget")
+            self.assertEqual([n for n, _t in wire.sends], [len(p) for p in expected_sends],
+                             label + ": fixture did not write the scripted fragments")
+            self.assertEqual(wire.errors, [])
+            self.assertEqual(o["receipt"]["run_id"], payload_dict["run_id"])
+            self.assertEqual(o["count"], 1)
+
+        fx_holder = {}
+        with genuine_source_fixture() as fx, _managed_loopback() as http, \
+                tempfile.TemporaryDirectory() as directory:
+            fx_holder["fx"] = fx
+            common = dict(fx=fx, http=http, directory=directory)
+
+            # ---- positive control: one unfragmented write -------------------
+            with self.subTest("unfragmented-control"):
+                steps = [full]
+                o = run_case("control", steps, gap=0.0, budget=5, **common)
+                assert_success(self, o, "control", steps)
+                self.assertEqual(len([c for c in o["chunks"] if c]), 1)
+
+            # ---- positive: fragmented headers / body / both, 5s budget ------
+            cases = {
+                "fragmented-headers": split(head, [7, 25, 60]) + [payload],
+                "fragmented-body": [head] + split(payload, [9, 31]),
+                "fragmented-both": split(head, [12, 40, 20]) + split(payload, [5, 27]),
+            }
+            for label, steps in cases.items():
+                with self.subTest(label):
+                    self.assertEqual(b"".join(steps), full)
+                    self.assertGreaterEqual(len(steps), 4)
+                    o = run_case(label, steps, gap=0.05, budget=5, **common)
+                    assert_success(self, o, label, steps)
+                    nonempty = [c for c in o["chunks"] if c]
+                    # The client really saw the response arrive piecemeal.
+                    self.assertGreaterEqual(len(nonempty), 3, label)
+                    self.assertTrue(all(len(c) < len(full) for c in nonempty), label)
+                    if label != "fragmented-body":
+                        self.assertNotIn(b"\r\n\r\n", nonempty[0], label + ": headers were not split")
+                    if label != "fragmented-headers":
+                        self.assertTrue(all(payload not in c for c in nonempty), label + ": body was not split")
+                    # Readiness contract: every wait for the response uses READ
+                    # interest; WRITE interest is only for connect/send.
+                    log = o["selector"]
+                    write_waits = [e for e in log if e[0] == (real_selectors.EVENT_WRITE,)]
+                    read_waits = [e for e in log if e[0] == (real_selectors.EVENT_READ,)]
+                    self.assertLessEqual(len(write_waits), 3, label + ": receive waited on WRITE interest")
+                    self.assertGreaterEqual(len(read_waits), 2, label)
+                    self.assertTrue(all(real_selectors.EVENT_READ in e[1] for e in read_waits), label)
+                    self.assertLess(len(log), 60, label + ": selector busy-spin")
+
+            # ---- whole-budget: stall or dribble past ONE deadline ------------
+            budget = 1.0
+            over = {
+                "stalled-headers": ([full[:20], GATE, full[20:]], 0.05),
+                "stalled-body": ([head, payload[:10], GATE, payload[10:]], 0.05),
+                "trickled-headers": (pieces(head, 3) + [payload], 0.1),
+                "trickled-body": ([head] + pieces(payload, 2), 0.1),
+            }
+            for label, (steps, gap) in over.items():
+                with self.subTest(label):
+                    self.assertEqual(b"".join(s for s in steps if s is not GATE), full)
+                    o = run_case(label, steps, gap=gap, budget=budget, **common)
+                    wire = o["wire"]
+                    self.assertIsNone(o.get("result"), label + ": late success acknowledged")
+                    # Existing public classifications only: the executor's own deadline
+                    # (target_admission_ambiguous) races the worker's TimeoutError
+                    # mapping (target_unavailable); both are non-success.
+                    self.assertIn(o["error"], ("target_unavailable", "target_admission_ambiguous"), label)
+                    self.assertGreaterEqual(o["end"], o["deadline"] - 0.05, label + ": gave up before the budget")
+                    self.assertLess(o["end"] - o["start"], budget + 1.5, label + ": ignored the absolute deadline")
+                    total = len([s for s in steps if s is not GATE])
+                    self.assertLess(o["sends_at_return"], total, label + ": response had already completed")
+                    # Nothing was consumed after expiry, durable state is clean.
+                    self.assertEqual(o["chunks_after_release"], o["chunks_at_return"], label)
+                    consumed = b"".join(o["chunks_after_release"])
+                    self.assertTrue(full.startswith(consumed) and len(consumed) < len(full), label)
+                    self.assertIsNone(o["found"], label)
+                    self.assertEqual(o["count"], 0, label)
+                    self.assertTrue(o["verified"], label + ": request was not the genuine one")
+
+        # ---- buffered-bytes-after-expiry witness (real socket + facade) -----
+        left, right = socket.socketpair()
+        selector = real_selectors.DefaultSelector()
+        try:
+            left.setblocking(False)
+            selector.register(left, real_selectors.EVENT_WRITE)
+            facade = _SocketFacade(left, selector, time.monotonic() + 5)
+            right.sendall(b"line one\nbuffered-bytes")
+            self.assertEqual(facade.readline(), b"line one\n")
+            self.assertEqual(bytes(facade._buffer), b"buffered-bytes")
+            facade._deadline = time.monotonic()  # budget now exhausted
+            for label, call in (("read(n)", lambda: facade.read(3)), ("readline", facade.readline),
+                                ("read()", facade.read), ("readinto", lambda: facade.readinto(bytearray(4)))):
+                with self.assertRaises(TimeoutError, msg=label):
+                    call()
+            self.assertEqual(bytes(facade._buffer), b"buffered-bytes")  # never handed out
+            right.sendall(b"late")
+            with self.assertRaises(TimeoutError):
+                facade.recv(16)  # socket bytes after expiry are never returned either
+            # Fill contract with a live budget: exact amount returned, excess retained.
+            facade._deadline = time.monotonic() + 5
+            self.assertEqual(facade.read(4), b"buff")
+            self.assertEqual(bytes(facade._buffer), b"ered-bytes")
+        finally:
+            selector.close(); left.close(); right.close()
 
 
 class _managed_loopback:

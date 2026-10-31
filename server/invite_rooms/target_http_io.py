@@ -19,27 +19,45 @@ class _SocketFacade:
     def __init__(self, sock, selector, deadline):
         self._sock, self._selector, self._deadline = sock, selector, deadline
         self._buffer = bytearray()
-    def _wait(self, event):
-        if self._deadline is None:
-            timeout = 10.0
-        else:
-            timeout = min(10.0, self._deadline - time.monotonic())
-            if timeout <= 0:
-                raise TimeoutError
-        ready = self._selector.select(timeout)
-        if not ready or (self._deadline is not None and time.monotonic() >= self._deadline):
+        # post_loopback registers the socket for WRITE while connecting.
+        self._interest = selectors.EVENT_WRITE
+    def _check_deadline(self):
+        if self._deadline is not None and time.monotonic() >= self._deadline:
             raise TimeoutError
+    def _wait(self, event):
+        # Wait for exactly the requested readiness event (WRITE for send, READ
+        # for receive) and inspect what the selector actually reported.
+        if self._interest != event:
+            self._selector.modify(self._sock, event)
+            self._interest = event
+        while True:
+            if self._deadline is None:
+                timeout = 10.0
+            else:
+                timeout = min(10.0, self._deadline - time.monotonic())
+                if timeout <= 0:
+                    raise TimeoutError
+            ready = self._selector.select(timeout)
+            self._check_deadline()
+            if not ready:
+                raise TimeoutError
+            if any(mask & event for _key, mask in ready):
+                return
     def recv(self, size, *args):
         while True:
+            self._check_deadline()
             try:
-                return self._sock.recv(size, *args)
+                data = self._sock.recv(size, *args)
             except BlockingIOError:
                 self._wait(selectors.EVENT_READ)
+                continue
+            # Bytes that arrive at or after expiry are never returned.
+            self._check_deadline()
+            return data
     def sendall(self, data):
         view = memoryview(data)
         while view:
-            if self._deadline is not None and time.monotonic() >= self._deadline:
-                raise TimeoutError
+            self._check_deadline()
             try:
                 sent = self._sock.send(view)
             except BlockingIOError:
@@ -53,24 +71,28 @@ class _SocketFacade:
         # not a normal socket.makefile: every read remains deadline-gated.
         return self
     def read(self, size=-1):
+        self._check_deadline()
         if size < 0:
-            chunks = []
-            if self._buffer:
-                chunks.append(bytes(self._buffer)); self._buffer.clear()
             while True:
                 part = self.recv(65536)
                 if not part: break
-                chunks.append(part)
-            return b''.join(chunks)
-        if self._buffer:
-            data = bytes(self._buffer[:size]); del self._buffer[:len(data)]; return data
-        return self.recv(size)
+                self._buffer.extend(part)
+            data = bytes(self._buffer); self._buffer.clear()
+            return data
+        # Satisfy the requested amount or EOF; retain any excess in the buffer.
+        while len(self._buffer) < size:
+            part = self.recv(max(65536, size - len(self._buffer)))
+            if not part: break
+            self._buffer.extend(part)
+        data = bytes(self._buffer[:size]); del self._buffer[:len(data)]
+        return data
     def readinto(self, buffer):
         data = self.read(len(buffer))
         buffer[:len(data)] = data
         return len(data)
     def readline(self, limit=-1):
         while True:
+            self._check_deadline()
             marker = self._buffer.find(b'\n')
             if marker >= 0:
                 end = marker + 1
