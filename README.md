@@ -126,6 +126,7 @@ Group Rooms use the gateway's `groups.*` JSON-RPC surface over `/api/ws`. The ga
   `websockets`). The sidecar launcher prefers the Hermes virtual environment
   (`~/.hermes/hermes-agent/venv/bin/python`) and falls back to `python3`.
 - Optional: `server/requirements-push.txt` for Web Push.
+- Optional: `server/requirements-rooms.txt` for Invite-only Rooms (off by default; also needs the Hermes core on the import path).
 
 ## Quick start
 

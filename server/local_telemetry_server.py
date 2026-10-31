@@ -59,6 +59,7 @@ _CLIENT_DIAGNOSTICS_LOCK = threading.Lock()
 def _client_diagnostics_log() -> Path:
     return hermes_logs_dir() / "mission-control-client.log"
 
+from invite_rooms import routes as room_invite_routes
 from plugins.loader import resolve_handler, dispatch_plugin_request
 from provider_usage_collector import collect_selected_usage
 from provider_usage_catalog import ProviderCatalogError, discover_codexbar_catalog, parse_provider_catalog
@@ -2006,6 +2007,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
+        if parsed.path == room_invite_routes.PREFIX or parsed.path.startswith(room_invite_routes.PREFIX + "/"):
+            if room_invite_routes.handle_request(self, "GET", parsed.path, params, _is_authorized):
+                return
         if parsed.path.startswith('/api/local/chat/canvas/'):
             # Generic canvas addon GET dispatcher
             # Path format: /api/local/chat/canvas/:addonId?sessionId=...&sessionKey=...
@@ -2599,6 +2603,9 @@ class Handler(BaseHTTPRequestHandler):
         # diagnostics append to disk, so neither may run in read-only mode.
         if self._reject_mutation_in_read_only_mode():
             return
+        if parsed.path == room_invite_routes.PREFIX or parsed.path.startswith(room_invite_routes.PREFIX + "/"):
+            if room_invite_routes.handle_request(self, "POST", parsed.path, urllib.parse.parse_qs(parsed.query), _is_authorized):
+                return
         if parsed.path == "/api/local/terminal/ticket":
             if not _is_authorized(self):
                 self._unauthorized()
@@ -3087,6 +3094,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
+        if parsed.path == room_invite_routes.PREFIX or parsed.path.startswith(room_invite_routes.PREFIX + "/"):
+            if room_invite_routes.handle_request(self, "DELETE", parsed.path, params, _is_authorized):
+                return
         if parsed.path.startswith('/api/local/cron/jobs/') and parsed.path.rstrip('/').endswith('/run'):
             if not _is_authorized(self):
                 self._unauthorized()
@@ -3211,9 +3221,14 @@ def main() -> None:
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     print(f"[mission-control-local-telemetry] listening on http://{host}:{port}", flush=True)
+    # Joining control channel: config-scoped factory, owned by this sidecar's lifecycle (cleared on exit).
+    # Feature-off/invalid owner config never reaches it: the routes layer returns 404 first.
+    from invite_rooms import runtime_joining as _runtime_joining
+    _runtime_joining.install_joining_wiring()
     try:
         server.serve_forever()
     finally:
+        _runtime_joining.clear_joining_wiring()
         shutdown_terminal_sessions()
         terminal_thread.stop()  # type: ignore[attr-defined]
         terminal_thread.join(timeout=2)

@@ -154,6 +154,152 @@ Details: [chat.md](chat.md), [bot-mode.md](bot-mode.md), [rooms.md](rooms.md).
 
 See [tldraw-feature-matrix.md](tldraw-feature-matrix.md).
 
+## Invite-only rooms
+
+All suffixes below are under `/api/local/room-invites`. The route dispatcher is mounted by the telemetry sidecar, but the feature is disabled by default: it requires valid owner-private `MISSION_CONTROL_ROOM_INVITES_CONFIG`; pairing routes additionally require a valid `pairing` block, and joining routes need a valid joining store. Missing or invalid configuration is intentionally reported as 404. These tables describe the candidate code, not production availability: process-lifecycle wiring for the control listener, two-installation end-to-end acceptance, and deployment are still open.
+
+All routes require the normal MC bearer token and exact configured Origin policy whenever an `Origin` header is supplied. Responses are `no-store`; request/response bodies containing invitation or pairing material are not logged. See the [MVP implementation plan](plans/invite-rooms-mc-mvp.md) and the [P3b pairing design](plans/invite-rooms-p3b-pairing.md) for safety boundaries and remaining gates.
+
+### Host lobby and activation
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| GET | `/paired-peers` | List redacted paired peers for roster selection |
+| POST | `/lobbies` | Create a fixed-roster lobby |
+| GET | `/lobbies/{lobby_id}` | Read the redacted lobby projection |
+| POST | `/lobbies/{lobby_id}/invites` | Issue an invitation; this explicit response is the only host-lobby operation that returns the invite code |
+| POST | `/lobbies/{lobby_id}/invites/{invite_id}/revoke` | Revoke an unused invitation |
+| POST | `/lobbies/{lobby_id}/invites/{invite_id}/decision` | Host's explicit approval or rejection, bound to the displayed peer/policy binding |
+| GET | `/lobbies/{lobby_id}/activation` | Read activation readiness and per-peer registration projection |
+| POST | `/lobbies/{lobby_id}/activate` | Owner-explicit activation; ambiguous or incomplete native effects are not reported as success |
+
+### Pairing
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| GET | `/pairing` | Read redacted pairing-journal rows |
+| POST | `/pairing/offers` | Create a host offer code |
+| POST | `/pairing/offers/{pairing_id}/accept` | Accept an offer and return the next public code/SAS step |
+| POST | `/pairing/offers/{pairing_id}/confirm` | Confirm the host-side SAS read over the independent channel |
+| POST | `/pairing/offers/{pairing_id}/cancel` | Cancel an undecided host offer |
+| POST | `/pairing/imports` | Import a joining-side offer and return the next public code |
+| POST | `/pairing/imports/{pairing_id}/reveal` | Reveal the joining-side SAS step |
+| POST | `/pairing/imports/{pairing_id}/confirm` | Confirm the joining-side SAS read over the independent channel |
+| GET | `/peers` | List redacted paired peers |
+| DELETE | `/peers/{peer_id}` | Unpair and advance the durable pairing generation |
+
+Pairing codes are public transcript material, not credentials; owners must compare the SAS out of band. Never automate confirmation or treat a copied code alone as trust.
+
+### Joining-owner imports
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| POST | `/imports/preview` | Parse an invitation locally (`code`, optional `host_id`); no navigation or URL fetch |
+| GET | `/imports/{import_id}` | Read the redacted joining state |
+| POST | `/imports/{import_id}/metadata` | Refresh sanitized invitation metadata over the pinned host channel |
+| POST | `/imports/{import_id}/redeem` | Explicitly redeem the imported invitation |
+| POST | `/imports/{import_id}/scope` | Confirm the exact room/member scope shown to the joining owner |
+| POST | `/imports/{import_id}/consent` | Record the joining owner's explicit consent (`approve` boolean) |
+| POST | `/imports/{import_id}/resolve` | Owner-directed resolution of an ambiguous redemption |
+
+### Guest-room approvals
+
+The guest routes below use the same base path, bearer authentication, Origin policy, and feature gate. Guest approvals remain a separate operation from pairing, invite issuance, and joining-owner consent.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/guest-rooms` | List locally consented joined rooms |
+| GET | `/guest-rooms/{room_id}/log?since_seq=0&limit=200` | Read the pinned host transcript verbatim; unchanged pagination and event identities |
+| GET | `/guest-rooms/{room_id}/my-bot` | Snapshot only the confirmed local bot's approvals |
+| POST | `/guest-rooms/{room_id}/approvals/{request_id}` | Body **only** `{"choice":"approve"}` or `{"choice":"reject"}` |
+| POST | `/guest-rooms/{room_id}/leave` | Empty object; revoke the local grant and persist terminal leave (unchanged) |
+
+Approval response shape:
+
+```json
+{
+  "status": "online",
+  "approvals": [{
+    "request_id": "approval-<opaque-handle>",
+    "title": "native redacted command",
+    "detail": "native redacted description",
+    "command": "native redacted command",
+    "description": "native redacted description",
+    "choices": ["once", "deny"],
+    "allow_permanent": false
+  }],
+  "permissions": []
+}
+```
+
+`request_id` is an opaque MC reference, **not** a native prompt/session ID. It
+maps internally to the exact confirmed scope, native endpoint/credential,
+`session_id`, `prompt_id`, and `execution_generation`. Handles expire after
+five minutes, on process restart, or bounded-cache eviction (2048 handles).
+Do not parse, synthesize, persist, or recycle them for a different prompt.
+The existing frontend `request_id`/`title`/`detail` contract can carry this
+without an API/schema change. A valid decision returns `200 {}` only after an
+exact native `resolved` or `already_resolved` result; the latter means the
+selected request settled concurrently, not that another request was approved.
+
+Discovery uses the fixed owner-configured local native socket/token, with the
+**confirmed binding's target profile**, not the launch profile or an HTTP
+parameter. The adapter requires `gateway.ready` to advertise canonical session
+authority, then requests `session.list {include_hidden:true,limit:200}` and
+filters exact `title == "Group: " + confirmed_room_id` and `source == "bot_room"`.
+It never uses the canonical title resolver, computes a room hash, trusts a
+receipt's `roomlink_*`, or accepts session/generation/profile/URL input.
+There is no persistent REST fallback in this implementation: a cold/missing
+live row is temporarily unavailable, and a full 200-row list is inconclusive
+even if it contains one apparent match. Multiple matches fail closed.
+
+Each snapshot/decision opens one authenticated connection and mounts with
+`session.resume`. A decision rediscovers and snapshots again, matches the
+**exact** saved tuple, and sends canonical `approval.respond` on that same
+subscribed socket (`approve -> once`, `reject -> deny`). `profile` is the
+canonical routing envelope stripped by the authority before method validation.
+Every network await is fenced by fresh confirmed consent/material/leave and
+peer-binding checks, including immediately before the response write. The existing
+target material validator rechecks grant claim scope/expiry and pinned catalog/policy
+digests; the stored consent receipt must exactly match the confirmed scope/purpose.
+Native stale-generation checks remain authoritative for races after that write.
+Snapshot polling is used; there is no event replay or cursor continuity claim.
+Cleanup detaches without `end_reason`, then closes only its socket; no turn is
+submitted, interrupted, stopped or steered. No generic RPC route is exposed.
+The existing bounded groups adapter and leave/transcript contracts are unchanged.
+
+| HTTP | `code` | Meaning |
+|------|--------|---------|
+| 401 | Normal MC auth error | Caller unauthenticated |
+| 403 | `forbidden` | Unconfirmed/left/changed consent or material, peer mismatch/unpair, profile/auth refusal |
+| 403 | `forbidden_origin` | Origin not explicitly allowed |
+| 404 | Normal unknown-route response | Feature off/misconfigured or unsupported guest control route |
+| 409 | `request_expired` | Unknown/expired handle, changed scope/endpoint/credential, vanished exact request or stale generation; resnapshot |
+| 501 | `not_supported` | No canonical adapter/authority or incompatible native session protocol; never legacy fallback on auth failure |
+| 503 | `session_unavailable` | No exact live room session yet; retry snapshot later |
+| 503 | `discovery_inconclusive` | Duplicate matches or saturated live listing; no ID guessing |
+| 503 | `native_unavailable` | Missing config/token, offline/closed socket, bounded timeout, malformed/ambiguous native reply |
+
+**Security restriction:** this is an authenticated-local-operator feature. It
+assumes the trusted core maintains a unique, unaltered canonical room namespace
+within the confirmed target profile. Public session projections do **not**
+include the private `state_meta` room identity; title-based discovery is **not a
+cryptographic grant-to-session binding** and does not independently attest the
+hidden home/member tuple. Local confirmed material/consent and peer state are
+re-read; there is no native grant-status introspection here. An operator who
+revokes directly outside this local state must also revoke local consent/material
+(or leave/unpair) to disable MC responses to an already-running waiter. Deployments
+requiring cryptographic scoped lookup or an independent native-grant revocation
+fence must keep this feature unavailable until a scoped core contract exists.
+Do not use title uniqueness to claim resistance to a malicious local operator
+or tampered native database. Ambiguity is always denied.
+
+**Frontend follow-up (not implemented here):** render temporary discovery/offline
+503 separately from genuine protocol 501, and handle 409 by dropping the selected
+handle and fetching a fresh snapshot. Do not silently retarget or auto-retry a
+decision on the next request. Polling can reuse the existing API fields. No UI
+files are changed in this backend packet.
+
 ## Browser terminal
 
 | Method | Path | Purpose |
