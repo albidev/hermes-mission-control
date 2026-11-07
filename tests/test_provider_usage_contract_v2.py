@@ -83,6 +83,16 @@ class GenericContractTests(unittest.TestCase):
             self.assertEqual(roles, expected)
             self.assertEqual(normalize_cached_entry(normalized), normalized)
 
+    def test_codex_plan_observation_is_normalized_without_partial_data_warning(self):
+        usage = {
+            "secondary": {"usedPercent": 6, "windowMinutes": 10080},
+            "planObservation": {"rawPlan": "prolite", "source": "usage_response", "observedAt": "2026-11-07T09:49:51Z"},
+        }
+        result = normalize_codexbar_entry("codex", [{"provider": "codex", "source": "oauth", "usage": usage}])
+        self.assertEqual(result.get("plan"), "prolite")
+        self.assertNotIn("unsupported_extension", result.get("warnings", []))
+        self.assertEqual(result["windows"][0]["usedPercent"], 6)
+
     def test_detail_roles_use_exact_shared_vocabulary_not_formatted_money(self):
         vocabulary = {
             "API key": {"API key limit": "spend_limit", "API key remaining": "limit_remaining",
