@@ -277,16 +277,89 @@ def _expand_roster(service: InviteRoomsService, ctx, roster_in) -> list[dict]:
 
 @contextlib.asynccontextmanager
 async def _connect_native_rpc(rpc_config: dict):
-    import aiohttp
+    """Attach only. Canonical owner tickets and explicit legacy are disjoint.
 
+    Native helpers are imported lazily: no gateway ensure/start, ambient home,
+    remote URL override or dashboard fallback can select another authority.
+    The bounded RPC object and its final pre-effect admission checks stay intact.
+    """
+    import aiohttp
+    from urllib.parse import urlsplit
     from invite_rooms.native_rpc import BoundedNativeRpc
 
-    token = Path(rpc_config["token_path"]).read_text(encoding="utf-8").strip()
-    if not token:
-        raise ServiceError("activation_unavailable")
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect(rpc_config["endpoint"], headers={"Authorization": f"Bearer {token}"}) as ws:
-            yield BoundedNativeRpc(ws, require_register_admission=True)
+    if "profile_home" not in rpc_config:
+        # Retained only for an explicitly selected old dashboard configuration.
+        if set(rpc_config) != {"endpoint", "token_path"}:
+            raise ServiceError("native_unavailable")
+        token = Path(rpc_config["token_path"]).read_text(encoding="utf-8").strip()
+        if not token:
+            raise ServiceError("activation_unavailable")
+        async with aiohttp.ClientSession(trust_env=False) as session:
+            async with session.ws_connect(rpc_config["endpoint"], headers={"Authorization": f"Bearer {token}"}) as ws:
+                yield BoundedNativeRpc(ws, require_register_admission=True)
+        return
+
+    if set(rpc_config) != {"profile_home", "profile", "installation_id"}:
+        raise ServiceError("native_unavailable")
+    from hermes_cli.gateway_runtime import discover_gateway_endpoint, GatewayEndpoint
+    from hermes_cli.gateway_client import _session_ticket, gateway_ws_target, GATEWAY_WS_PROTOCOL
+
+    async def acquire():
+        home = runtime_config.validate_native_profile_home(
+            rpc_config["profile_home"], rpc_config["profile"], rpc_config["installation_id"])
+        found = await asyncio.to_thread(discover_gateway_endpoint, home, timeout=2.0)
+        endpoint = found.endpoint
+        root = home.parent.parent if rpc_config["profile"] != "default" else home
+        if (found.state != "ready" or type(endpoint) is not GatewayEndpoint
+                or endpoint.profile_id != str(home) or type(endpoint.runtime_protocol) is not int
+                or endpoint.runtime_protocol != 1 or not isinstance(endpoint.instance_id, str) or not endpoint.instance_id
+                or type(endpoint.authority_epoch) is not int or endpoint.authority_epoch <= 0
+                or "session-authority-v1" not in endpoint.capabilities
+                or endpoint.control_home not in (None, str(home), str(root))):
+            raise ServiceError("native_unavailable")
+        # Discovery already checks loopback; re-prove exact authority spelling
+        # before asking for a ticket or permitting any HTTP connection.
+        parsed = urlsplit(endpoint.api_origin)
+        host = parsed.hostname
+        port = parsed.port
+        authority = f"[{host}]" if host == "::1" else host
+        if (parsed.scheme not in {"http", "https"} or host not in {"127.0.0.1", "::1"}
+                or port is None or not 1 <= port <= 65535
+                or endpoint.api_origin != f"{parsed.scheme}://{authority}:{port}"):
+            raise ServiceError("native_unavailable")
+        ticket = await asyncio.to_thread(_session_ticket, home, endpoint)
+        if not isinstance(ticket, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,4096}", ticket):
+            raise ServiceError("native_unavailable")
+        url, protocols = gateway_ws_target(endpoint, ticket)
+        # Private authority metadata for guest approval handle scoping. Never
+        # expose tickets, endpoints or credentials through the browser surface.
+        scope = {"profile_home": str(home), "profile": rpc_config["profile"],
+                 "installation_id": rpc_config["installation_id"],
+                 "instance_id": endpoint.instance_id, "authority_epoch": endpoint.authority_epoch}
+        return url, protocols, scope
+
+    try:
+        # Core bounds discovery (2s per control probe) and ticket (5s). This
+        # outer acquisition budget also covers validation and scheduling.
+        url, protocols, scope = await asyncio.wait_for(acquire(), timeout=8.0)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        raise ServiceError("native_unavailable") from None
+
+    async def refuse_redirect(*_args):
+        raise ServiceError("native_unavailable")
+
+    trace = aiohttp.TraceConfig()
+    trace.on_request_redirect.append(refuse_redirect)
+    async with aiohttp.ClientSession(trust_env=False, timeout=aiohttp.ClientTimeout(total=2.0),
+                                     trace_configs=[trace]) as session:
+        async with session.ws_connect(url, protocols=protocols) as ws:
+            if ws.protocol != GATEWAY_WS_PROTOCOL:
+                raise ServiceError("native_unavailable")
+            rpc = BoundedNativeRpc(ws, require_register_admission=True)
+            rpc.native_scope = scope
+            yield rpc
 
 
 async def _run_activation(service: InviteRoomsService, ctx, lobby_id: str, config) -> dict:

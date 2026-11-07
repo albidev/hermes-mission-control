@@ -2180,8 +2180,12 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
 
   useEffect(() => {
     if (!open || selectedGuest || !state.selectedRoomId || state.selectedRoomId === roomId) return;
+    // The preceding effect is still restoring a valid URL-selected room. Its
+    // selectRoom call cannot update this render's snapshot: publishing the
+    // temporary first-list selection here makes URL and hook chase each other.
+    if (roomId && state.rooms.some((room) => room.id === roomId)) return;
     onRoomChange?.(state.selectedRoomId, state.room?.name ?? null);
-  }, [onRoomChange, open, roomId, selectedGuest, state.selectedRoomId]);
+  }, [onRoomChange, open, roomId, selectedGuest, state.rooms, state.selectedRoomId]);
 
   const selectRoom = useCallback((nextRoomId: string | null) => {
     onRoomChange?.(nextRoomId, state.room?.name ?? null);

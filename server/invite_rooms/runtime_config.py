@@ -193,14 +193,71 @@ def parse_data_listen(raw) -> tuple:
     return _parse_endpoint(raw, "invalid_data_listen")
 
 
+def validate_native_profile_home(home, profile: str, installation_id: str) -> Path:
+    """Read-only binding to one existing private native home, never create/ensure it.
+
+    Canonical mode intentionally excludes overlay/symlink aliases. Named homes
+    are exactly <root>/profiles/<profile>; the stable install_id belongs to root,
+    not to the served profile. Re-proved on every attach, not cached at startup.
+    """
+    code = "invalid_native_rpc_profile_home"
+    try:
+        if not isinstance(home, (str, Path)) or not str(home) or "\x00" in str(home):
+            raise ValueError
+        path = Path(home)
+        if not path.is_absolute() or path.resolve(strict=True) != path:
+            raise ValueError
+        if not isinstance(profile, str) or not _PROFILE_PATTERN.fullmatch(profile):
+            raise ValueError
+        if not isinstance(installation_id, str) or not _INSTALL_PATTERN.fullmatch(installation_id):
+            raise ValueError
+        if profile == "default":
+            if path.parent.name == "profiles":
+                raise ValueError
+            root = path
+        else:
+            if path.name != profile or path.parent.name != "profiles":
+                raise ValueError
+            root = path.parent.parent
+        for directory in (root, path):
+            node = directory.lstat()
+            if (not stat.S_ISDIR(node.st_mode) or node.st_uid != os.getuid()
+                    or stat.S_IMODE(node.st_mode) != 0o700):
+                raise ValueError
+            # Core discovery can narrow an upgraded lock's mode or follow an
+            # overlay lock. This attach-only client must do neither, including
+            # on the multiplexer root if the served home has no own socket.
+            lock = directory / "gateway.lock"
+            if os.path.lexists(lock):
+                metadata = lock.lstat()
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                        or metadata.st_nlink != 1 or stat.S_IMODE(metadata.st_mode) != 0o600):
+                    raise ValueError
+        # Never use read_or_create_install_id: even an invalid/missing ID is a
+        # refusal, not permission to mint a new installation's authority.
+        fd = os.open(root / "install_id", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            node = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(node.st_mode) or node.st_uid != os.getuid()
+                    or node.st_nlink != 1 or stat.S_IMODE(node.st_mode) != 0o600):
+                raise ValueError
+            identity = stream.read(65).decode("ascii").strip()
+        if not re.fullmatch(r"[0-9a-f]{32}", identity) or installation_id != "install:" + identity:
+            raise ValueError
+        return path
+    except (OSError, ValueError, RuntimeError, UnicodeError):
+        raise RuntimeConfigError(code) from None
+
+
 def parse_target_listeners(raw) -> Mapping:
     """Validate ``pairing.target_listeners``: ``{adapter_id: {"host", "port"}}`` -> read-only ``{adapter_id: (host, port)}``.
 
     Local inbound mTLS ``TargetConnector`` bind per immutable material scope.  Keys are the canonical
     ``peer_registry.adapter_id_for`` shape (``link-`` + 32 lowercase hex); shape only, never membership.  No two scopes
-    may share one bind.
+    may share one bind. An explicitly empty object is deny-all bootstrap;
+    omission remains None/incomplete and never authorizes a material scope.
     """
-    if not isinstance(raw, dict) or not raw:
+    if not isinstance(raw, dict):
         raise RuntimeConfigError("invalid_target_listeners")
     result = {}
     for adapter_id, entry in raw.items():
@@ -217,9 +274,10 @@ def parse_data_endpoints(raw) -> Mapping:
 
     Owner-private OUTBOUND data destination per peer/scope; never an alias of any control map.  Returns a read-only
     ``{peer_id: read-only {adapter_id: (host, port)}}``.  Key grammar and shape only: whether a peer is currently
-    paired is journal authority, checked at runtime assembly.
+    paired is journal authority, checked at runtime assembly. An explicitly
+    empty object is deny-all bootstrap, not an omitted/incomplete map.
     """
-    if not isinstance(raw, dict) or not raw:
+    if not isinstance(raw, dict):
         raise RuntimeConfigError("invalid_data_endpoints")
     result = {}
     for peer_id, scopes in raw.items():
@@ -380,17 +438,25 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
         native_rpc_raw = data.get("native_rpc")
         native_rpc: Optional[dict] = None
         if native_rpc_raw is not None:
-            if not isinstance(native_rpc_raw, dict) or set(native_rpc_raw) != _NATIVE_RPC_FIELDS:
+            if not isinstance(native_rpc_raw, dict):
                 raise RuntimeConfigError("invalid_native_rpc")
-            endpoint, token_path_raw = native_rpc_raw["endpoint"], native_rpc_raw["token_path"]
-            if not isinstance(endpoint, str) or not (endpoint.startswith("ws://127.0.0.1:") or endpoint.startswith("ws://[::1]:")):
-                raise RuntimeConfigError("invalid_native_rpc_endpoint")
-            if not isinstance(token_path_raw, str) or not token_path_raw:
-                raise RuntimeConfigError("invalid_native_rpc_token_path")
-            token_path = Path(token_path_raw)
-            if not _is_private_file(token_path):
-                raise RuntimeConfigError("invalid_native_rpc_token_permissions")
-            native_rpc = {"endpoint": endpoint, "token_path": token_path}
+            if set(native_rpc_raw) == {"profile_home"}:
+                home = validate_native_profile_home(native_rpc_raw["profile_home"], profile, installation_id)
+                native_rpc = {"profile_home": home, "profile": profile, "installation_id": installation_id}
+            else:
+                # Explicit legacy configuration only; canonical failure never
+                # downgrades to a reusable Bearer or dashboard endpoint.
+                if set(native_rpc_raw) != _NATIVE_RPC_FIELDS:
+                    raise RuntimeConfigError("invalid_native_rpc")
+                endpoint, token_path_raw = native_rpc_raw["endpoint"], native_rpc_raw["token_path"]
+                if not isinstance(endpoint, str) or not (endpoint.startswith("ws://127.0.0.1:") or endpoint.startswith("ws://[::1]:")):
+                    raise RuntimeConfigError("invalid_native_rpc_endpoint")
+                if not isinstance(token_path_raw, str) or not token_path_raw:
+                    raise RuntimeConfigError("invalid_native_rpc_token_path")
+                token_path = Path(token_path_raw)
+                if not _is_private_file(token_path):
+                    raise RuntimeConfigError("invalid_native_rpc_token_permissions")
+                native_rpc = {"endpoint": endpoint, "token_path": token_path}
         target_http = parse_target_http(data["target_http"]) if "target_http" in data else None
         joining_raw = data.get("joining")
         joining_store_dir = None
