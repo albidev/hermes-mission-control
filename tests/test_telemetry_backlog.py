@@ -20,9 +20,19 @@ SPEC.loader.exec_module(telemetry)
 class TelemetryBacklogTests(unittest.TestCase):
     def _startup_listener(self):
         listeners = []
+        deferred_closes = []
         # Keep the production bind/listen and server selection, but don't start
         # gateway/terminal services or accept until the whole burst is queued.
         with ExitStack() as stack:
+            def capture_listener(server):
+                listeners.append(server)
+                # main() owns teardown when its mocked serve loop returns. Move
+                # only this listener's real close to test cleanup before deferring
+                # main's close; ExitStack restores normal lifetime on return/error.
+                self.addCleanup(server.server_close)
+                deferred_closes.append(stack.enter_context(mock.patch.object(server, "server_close")))
+
+            stack.enter_context(mock.patch.dict(telemetry.os.environ, {"MISSION_CONTROL_ROOM_INVITES_CONFIG": ""}))
             stack.enter_context(mock.patch.object(telemetry, "_resolve_telemetry_bind", return_value=("127.0.0.1", 0)))
             stack.enter_context(mock.patch.object(telemetry, "_cpu_sampler"))
             stack.enter_context(mock.patch.object(telemetry, "start_gateway_watcher"))
@@ -32,13 +42,20 @@ class TelemetryBacklogTests(unittest.TestCase):
             stack.enter_context(mock.patch("builtins.print"))
             stack.enter_context(mock.patch.object(
                 telemetry.ThreadingHTTPServer, "serve_forever", autospec=True,
-                side_effect=lambda server: listeners.append(server),
+                side_effect=capture_listener,
             ))
             telemetry.main()
         self.assertEqual(len(listeners), 1)
+        deferred_closes[0].assert_called_once_with()
         server = listeners[0]
-        self.addCleanup(server.server_close)
+        self.assertGreaterEqual(server.fileno(), 0, "fixture must retain a live listener after main cleanup")
         return server
+
+    def test_startup_listener_transfers_close_to_test_cleanup(self):
+        server = self._startup_listener()
+        self.assertEqual(server.server_close.__func__, telemetry.TelemetryHTTPServer.server_close)
+        self.doCleanups()
+        self.assertEqual(server.fileno(), -1)
 
     def test_startup_listener_queues_and_serves_entire_dashboard_burst(self):
         server = self._startup_listener()
