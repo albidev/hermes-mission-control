@@ -215,9 +215,23 @@ class MaterialWiringTests(assembly.Base):
             try:
                 asyncio.run(a.material_coordinator.ensure_material(scope,deadline=time.monotonic()+8,service=service))
             finally:
-                out=Path(os.environ['TMPDIR'])/'probe-records'; out.mkdir(exist_ok=True)
-                (out/'t6.json').write_text(json.dumps(dict(samples=samples,
-                    native_methods=[method for method,_ in events]),indent=2)+'\n')
+                # Evidence is optional: CI need not export TMPDIR, and an I/O
+                # error must never replace the material operation's exception.
+                # The fixture owns the fallback; explicit evidence gets a unique
+                # directory so concurrent tests cannot overwrite each other.
+                import tempfile
+                import sys
+                try:
+                    root = Path(os.environ.get('TMPDIR') or self.tmp)
+                    if 'TMPDIR' in os.environ and root.is_dir() and not root.is_symlink() and root.stat().st_uid == os.getuid():
+                        out = Path(tempfile.mkdtemp(prefix='material-probe-', dir=root))
+                    else:
+                        out = self.tmp / 'probe-records'
+                        out.mkdir(exist_ok=True)
+                    (out/'t6.json').write_text(json.dumps(dict(samples=samples,
+                        native_methods=[method for method,_ in events]),indent=2)+'\n')
+                except OSError as exc:
+                    print(f'optional material probe evidence unavailable: {exc}', file=sys.stderr)
             self.assertIsNotNone(a.scoped_registry.lookup(scope))
             self.assertEqual(b.scope_lifecycle.snapshot()[0][1],'running')
             self.assertEqual(a.journal.material_origin(scope.endpoint_id,scope.lobby_id,scope.invite_id)['status'],'consumed')
