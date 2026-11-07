@@ -1,0 +1,9 @@
+{
+  "public_key": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "receipt": {
+    "invite_id": "invite-legacy",
+    "lobby_id": "lobby-legacy",
+    "purpose": "joining-owner-consent-v1"
+  },
+  "signature": "rYre8KuUU6BtxLE/5TiYQ80whOXj6QGpenIsZVJulYfKa6yhnx5/RuZakNU4W590eE2vuSdcezr3fB+dwat5Dg=="
+}

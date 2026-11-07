@@ -153,6 +153,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
   const freshBotChatId = chatMode === 'task' && chatBotProfile && location.state && typeof location.state === 'object' && 'freshBotChatId' in location.state
     && location.state.freshBotChatId === chatRecoverySessionId ? chatRecoverySessionId : null;
   const chatRoomId = chatSearchParams.get('roomId');
+  const inviteLobbyId = chatSearchParams.get('lobbyId');
   const resumeRequestKey = location.state && typeof location.state === 'object' && 'sessionResumeRequest' in location.state
     && typeof location.state.sessionResumeRequest === 'string' ? location.state.sessionResumeRequest : null;
   const serverLastRoomRef = useRef<{ roomId: string; revision: number } | null>(null);
@@ -826,6 +827,7 @@ export function MissionControlShell({ registry, navItems: runtimeNavItems = [] }
             resumeRequestKey={resumeRequestKey}
             chatMode={chatMode}
             roomId={chatRoomId}
+            inviteLobbyId={inviteLobbyId}
             botProfile={chatBotProfile}
             onClose={closeChat}
             onStartTaskChat={startTaskChat}
