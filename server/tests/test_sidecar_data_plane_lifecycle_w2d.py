@@ -1524,16 +1524,91 @@ finally:
 
 
 class FixtureIsolationTest(unittest.TestCase):
-    def test_bootstrap_never_enters_the_forbidden_watcher(self):
+    def _bootstrap_probe(self, *, contaminate=False, forbidden=False):
+        # CHILD_BOOTSTRAP owns process-global state (watcher and umask). Never
+        # execute it in unittest's shared interpreter: prior SessionDB imports
+        # there are legitimate, but remain forbidden in each actual child.
         import local_telemetry_server as lts
-        namespace = {}
-        with mock.patch.object(lts, "start_gateway_watcher",
-                               side_effect=AssertionError("forbidden watcher entered")) as forbidden:
-            exec(compile(CHILD_BOOTSTRAP, "<child-bootstrap>", "exec"), namespace)
-            self.assertIs(lts.start_gateway_watcher, namespace["isolated_gateway_watcher"])
+        watcher = lts.start_gateway_watcher
+        mask = os.umask(0o077)
+        os.umask(mask)
+        parent_state = sys.modules.get('hermes_state')
+        bootstrap = CHILD_BOOTSTRAP
+        if forbidden:
+            bootstrap = bootstrap.replace('lts.start_gateway_watcher = isolated_gateway_watcher', '')
+        code = r'''
+import os, sys, socket
+from unittest import mock
+namespace = {}
+mask = os.umask(0o077)
+os.umask(mask)
+with mock.patch.object(socket, 'socket', side_effect=AssertionError('network forbidden')), \
+     mock.patch.object(socket, 'create_connection', side_effect=AssertionError('network forbidden')):
+    import local_telemetry_server as lts
+    watcher = lts.start_gateway_watcher
+    try:
+        with mock.patch.object(lts, 'start_gateway_watcher',
+                               side_effect=AssertionError('forbidden watcher entered')) as forbidden:
+            exec(compile(sys.argv[1], '<child-bootstrap>', 'exec'), namespace)
             lts.start_gateway_watcher()
-            namespace["assert_gateway_isolated"]()
+            if sys.argv[2] == 'contaminate':
+                import hermes_state
+            namespace['assert_gateway_isolated']()
             forbidden.assert_not_called()
+    finally:
+        os.umask(mask)
+        assert lts.start_gateway_watcher is watcher, 'watcher mock leaked'
+        restored = os.umask(mask)
+        assert restored == mask, 'umask leaked'
+'''
+        with tempfile.TemporaryDirectory(prefix='bootstrap-isolation-') as root:
+            home = Path(root) / 'home'
+            home.mkdir(mode=0o700)
+            env = {'PATH': '/usr/bin:/bin', 'HOME': str(home), 'HERMES_HOME': str(home / '.hermes'),
+                   'TMPDIR': root, 'PYTHONDONTWRITEBYTECODE': '1',
+                   'PYTHONPATH': f'{SERVER_DIR}:{SERVER_DIR / "tests"}:{CORE_CONTRACT_DIR}'}
+            argv = ['/usr/bin/env', '-i', *[f'{k}={v}' for k, v in env.items()],
+                    sys.executable, '-B', '-c', code, bootstrap, 'contaminate' if contaminate else 'clean']
+            started = time.time()
+            child = subprocess.Popen(argv, cwd=REPO_DIR, env=env, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, text=True)
+            birth = psutil.Process(child.pid).create_time()
+            timed_out = False
+            try:
+                output, _ = child.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                child.kill()
+                output, _ = child.communicate(timeout=10)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.communicate(timeout=10)
+            record_probe(argv, env, REPO_DIR, child, birth, started, output, timed_out=timed_out)
+            self.assertFalse(timed_out, output)
+            self.assertFalse(psutil.pid_exists(child.pid), 'owned bootstrap probe must be reaped')
+        self.assertIs(lts.start_gateway_watcher, watcher)
+        self.assertIs(sys.modules.get('hermes_state'), parent_state)
+        current = os.umask(mask)
+        self.assertEqual(current, mask, 'bootstrap changed parent umask')
+        return child.returncode, output
+
+    def test_bootstrap_never_enters_the_forbidden_watcher(self):
+        code, output = self._bootstrap_probe()
+        self.assertEqual(code, 0, output)
+        self.assertIn('LIFECYCLE-ISOLATION-VERIFIED', output)
+
+    def test_bootstrap_rejects_sessiondb_import_in_child(self):
+        code, output = self._bootstrap_probe(contaminate=True)
+        self.assertNotEqual(code, 0, output)
+        self.assertIn('watcher must not lazily import SessionDB', output)
+        self.assertNotIn('LIFECYCLE-ISOLATION-VERIFIED', output)
+
+    def test_bootstrap_rejects_forbidden_watcher_in_child(self):
+        code, output = self._bootstrap_probe(forbidden=True)
+        self.assertNotEqual(code, 0, output)
+        self.assertIn('forbidden watcher entered', output)
+        self.assertNotIn('LIFECYCLE-ISOLATION-VERIFIED', output)
 
     def test_all_child_launch_modes_install_watcher_isolation_before_main(self):
         modes = (None, "serve", "startup-sigint", "startup-repeat", "serve-seam",
