@@ -31,7 +31,7 @@ _DRAIN_MAX_BYTES = 4 * MAX_RESPONSE
 _DRAIN_YIELD_EVERY = 16
 # Fixed native Room methods only. Never exposed as a remote control operation.
 _FIELDS = {
-    'groups.capabilities': (set(), set()),
+    'groups.capabilities': (set(), {'profile'}),
     'groups.state': ({'room_id'}, {'room_id'}),
     'groups.log': ({'room_id'}, {'room_id', 'since_seq', 'limit'}),
     'groups.create': ({'room_id', 'name', 'members'}, {'room_id', 'name', 'members'}),

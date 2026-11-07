@@ -37,6 +37,7 @@ def test_request_origin_survives_host_restart_and_response_loss():
     """A durable origin, rather than process memory, owns retry identity."""
     sent = []
     transport = object.__new__(HostConnectorMaterialTransport)
+    transport._owned = False
     transport._connector = SimpleNamespace(binding=SimpleNamespace(endpoint_id="endpoint-1", generation=7))
     def send(wire, *, deadline, admit):
         sent.append(dict(wire))
@@ -58,6 +59,84 @@ def test_request_origin_survives_host_restart_and_response_loss():
         (sent[0]["request_id"], sent[0]["expires_at_utc_ms"]),
         (sent[0]["request_id"], sent[0]["expires_at_utc_ms"]),
     ]
+
+
+@pytest.mark.parametrize('field,value', [
+    ('op','other'), ('v',True), ('operation','material_receipt'), ('request_id','c'*32),
+    ('nonce','c'*32), ('endpoint_id','other'), ('generation',True), ('t1_utc_ms',0),
+])
+def test_t3_adapter_exact_binding_before_second_send(field,value):
+    import json
+    from invite_rooms.control.firewall import UpstreamResponse
+    from invite_rooms.control.dispatcher import utc_now_ms
+    class Recording(HostConnector):
+        def __init__(self):
+            self.binding=SimpleNamespace(endpoint_id='e',generation=1); self.calls=[]
+        def response(self,request_id,nonce,t1):
+            probe=dict(op='material_probe',v=1,operation='material_request',endpoint_id='e',
+                generation=1,request_id=request_id,nonce=nonce,t1_utc_ms=t1,
+                t2_utc_ms=utc_now_ms(),t3_utc_ms=utc_now_ms())
+            probe[field]=value
+            return UpstreamResponse(200,(),json.dumps(probe).encode())
+        def forward_material_probe(self,*,request_id,nonce,deadline,admit):
+            t1=utc_now_ms(); self.calls.append(('probe',deadline,admit))
+            return SimpleNamespace(response=self.response(request_id,nonce,t1),sent_utc_ms=t1,received_utc_ms=utc_now_ms())
+        def forward(self,request,admit=None,*,deadline=None):
+            wire=json.loads(request.body); self.calls.append((wire['op'],deadline,admit))
+            if wire['op']=='material_probe': return self.response(wire['request_id'],wire['nonce'],wire['t1_utc_ms'])
+            return UpstreamResponse(200,(),b'{"status":"material_ready"}')
+    hop=Recording(); transport=HostConnectorMaterialTransport(hop)
+    with pytest.raises(MaterialError):
+        transport.send(dict(op='material_request',request_id='a'*32),deadline=time.monotonic()+2,admit=lambda:True)
+    assert len(hop.calls)==1
+
+
+def test_t4_adapter_same_deadline_predicate_and_original_wire_second_send():
+    import json
+    from invite_rooms.control.firewall import UpstreamResponse
+    from invite_rooms.control.dispatcher import utc_now_ms
+    class Recording(HostConnector):
+        def __init__(self):
+            self.binding=SimpleNamespace(endpoint_id='e',generation=1); self.calls=[]
+        def forward_material_probe(self,*,request_id,nonce,deadline,admit):
+            self.calls.append((deadline,admit)); now=utc_now_ms()
+            body=dict(op='material_probe',v=1,operation='material_request',endpoint_id='e',generation=1,
+                      request_id=request_id,nonce=nonce,t1_utc_ms=now,t2_utc_ms=now,t3_utc_ms=now)
+            return SimpleNamespace(response=UpstreamResponse(200,(),json.dumps(body).encode()),
+                                   sent_utc_ms=now,received_utc_ms=now)
+        def forward(self,request,admit=None,*,deadline=None):
+            self.calls.append((deadline,admit)); self.sent=json.loads(request.body)
+            return UpstreamResponse(200,(),b'{"status":"material_ready"}')
+    hop=Recording(); transport=HostConnectorMaterialTransport(hop); deadline=time.monotonic()+2; admit=lambda:True
+    wire=dict(op='material_request',request_id='a'*32,expires_at_utc_ms=utc_now_ms()+1000,lobby_id='l',invite_id='i',v=2)
+    original=dict(wire)
+    assert transport.send(wire,deadline=deadline,admit=admit)=={'status':'material_ready'}
+    assert wire==original
+    assert {k:v for k,v in hop.sent.items() if k!='probe'}==original
+    assert hop.calls==[(deadline,admit),(deadline,admit)]
+
+
+@pytest.mark.parametrize('withdraw_after_origin',[False,True])
+def test_t5_origin_predicate_before_durability_and_after_origin_await(withdraw_after_origin):
+    import inspect
+    from invite_rooms.pairing_journal import Journal
+    transport=object.__new__(HostConnectorMaterialTransport); transport._owned=False
+    transport._connector=SimpleNamespace(binding=SimpleNamespace(endpoint_id='e',generation=1))
+    sends=[]; allowed=[withdraw_after_origin]
+    def send(wire,*,deadline,admit):
+        sends.append(wire); return {'status':'material_ready'}
+    transport.send=send
+    with tempfile.TemporaryDirectory() as root:
+        journal=Journal(Path(root)/'journal',anchor=root); original=journal.record_material_origin; writes=[]
+        def record(**kwargs):
+            value=original(**kwargs); writes.append(1); allowed[0]=False; time.sleep(.08); return value
+        control=MaterialControl(lobby_id='l',invite_id='i',connector=transport,journal=journal)
+        kwargs=dict(deadline=time.monotonic()+2)
+        if 'admit' in inspect.signature(control.request).parameters: kwargs['admit']=lambda:allowed[0]
+        with patch.object(journal,'record_material_origin',record), pytest.raises(MaterialError):
+            asyncio.run(control.request(**kwargs))
+        assert not sends
+        assert len(writes)==(1 if withdraw_after_origin else 0)
 
 
 def test_material_channel_rejects_callable_v2_sender_before_invocation():

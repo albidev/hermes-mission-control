@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, cast
 from urllib.parse import urlsplit
 
 from .firewall import (
@@ -42,6 +42,14 @@ _AMBIGUOUS = UpstreamResponse(502, (("content-type", "application/json"),),
 class ConnectorError(ValueError):
     def __init__(self):
         super().__init__("room link unavailable")
+
+
+@dataclass(frozen=True)
+class MaterialProbeExchange:
+    """Invocation-local samples; not authority until the exchange checks pass."""
+    response: UpstreamResponse
+    sent_utc_ms: int
+    received_utc_ms: int
 
 
 def _unique(pairs):
@@ -295,6 +303,12 @@ class HostConnector:
     def exchange(self, payload, deadline, *, admit=None, wrap=wrap_client,
                  send=send_message, receive=recv_message, frames_factory=SequencedTLS):
         """One stream, one reader/writer, one send, no retry (also used by spike)."""
+        return self._exchange(payload, deadline, admit=admit, wrap=wrap,
+                              send=send, receive=receive, frames_factory=frames_factory)
+
+    def _exchange(self, payload, deadline, *, admit, wrap, send, receive,
+                  frames_factory, probe=None):
+        sent_utc_ms = received_utc_ms = None
         self._check(admit)
         if time.monotonic() >= deadline:
             raise UpstreamAmbiguous("room link outcome unknown")
@@ -315,6 +329,16 @@ class HostConnector:
             admission = getattr(self, "admission", None)
             if admission is not None:
                 admission.admit(admission.operation)
+            if probe is not None:
+                # Setup and durable admission are outside the sampled exchange.
+                # Only this fixed bounded encoding is allowed after t1. No
+                # caller-supplied payload factory can run at the final gate.
+                sent_utc_ms = time.time_ns() // 1_000_000
+                request_id, nonce = probe
+                body = json.dumps({"op": "material_probe", "v": 1,
+                    "operation": "material_request", "request_id": request_id,
+                    "nonce": nonce, "t1_utc_ms": sent_utc_ms}, separators=(",", ":")).encode()
+                payload = self._encode_forward(ForwardedRequest("POST", "/control/joining", (), body))
             # Final request-local gate: after durable admission succeeds, deny a
             # withdrawn request or expired budget before the first application
             # frame. Keep this check directly adjacent to send(); a post-send
@@ -325,14 +349,24 @@ class HostConnector:
                 raise UpstreamAmbiguous("room link outcome unknown")
             send(frames, payload)
             self._check(admit)
-            response = decode_response(receive(frames))
+            raw = receive(frames)
+            if probe is not None:
+                # Complete authenticated framing, not the first byte/chunk.
+                # Decode and every original recheck still precede publication.
+                received_utc_ms = time.time_ns() // 1_000_000
+            response = decode_response(raw)
             self._check(admit)
+            if probe is not None:
+                if time.monotonic() >= deadline:
+                    raise UpstreamAmbiguous("room link outcome unknown")
+                assert sent_utc_ms is not None and received_utc_ms is not None
+                return MaterialProbeExchange(response, sent_utc_ms, received_utc_ms)
             return response
         finally:
             if tls is not None or sock is not None:
                 (tls if tls is not None else sock).close()
 
-    def forward(self, request: ForwardedRequest, admit=None, *, deadline=None) -> UpstreamResponse:
+    def _encode_forward(self, request):
         payload = encode_request(request)
         if self.admission is not None:
             payload = json.dumps({"endpoint_id": self.binding.endpoint_id,
@@ -340,6 +374,27 @@ class HostConnector:
                                   "request": _json(payload)}, separators=(",", ":")).encode()
             if len(payload) > MAX_MESSAGE:
                 raise FirewallDenied("room request denied")
+        return payload
+
+    def forward(self, request: ForwardedRequest, admit=None, *, deadline=None) -> UpstreamResponse:
+        return cast(UpstreamResponse, self._forward(self._encode_forward(request), admit, deadline=deadline))
+
+    def forward_material_probe(self, *, request_id, nonce, deadline, admit) -> MaterialProbeExchange:
+        """Fixed acknowledged material ingress, sharing normal forward ownership.
+
+        Full sampled RTT remains uncertainty. This deliberately excludes setup
+        and post-receive checks, not encoding, framing or in-exchange latency.
+        PairAck's inherited ingress is closed before opening any stream.
+        """
+        if (isinstance(self, PairAckConnector) or type(self.admission) is not _Admission
+                or any(not isinstance(value, str) or len(value) != 32 for value in (request_id, nonce))
+                or type(deadline) not in (int, float) or not math.isfinite(deadline)
+                or not callable(admit)):
+            raise FirewallDenied("room request denied")
+        return cast(MaterialProbeExchange,
+                    self._forward(None, admit, deadline=deadline, probe=(request_id, nonce)))
+
+    def _forward(self, payload, admit, *, deadline, probe=None):
         if deadline is None:
             deadline = time.monotonic() + self.timeout
         if time.monotonic() >= deadline:
@@ -355,6 +410,9 @@ class HostConnector:
         self._lock.release()
         try:
             # Generation is re-read after capacity acquisition and every I/O wait.
+            if probe is not None:
+                return self._exchange(payload, deadline, admit=admit, wrap=wrap_client,
+                    send=send_message, receive=recv_message, frames_factory=SequencedTLS, probe=probe)
             return self.exchange(payload, deadline, admit=admit, wrap=wrap_client)
         except Exception:
             # Even generation changes after send are ambiguous, never a 4xx.
@@ -465,7 +523,8 @@ def native_http_backend(target_base: str, *, timeout: float = 25.0,
 class TargetConnector:
     """B: pinned peer, fixed firewall, fixed local native origin, bounded serving."""
     def __init__(self, *, inner=None, firewall=None, binding=None, identity=None,
-                 authority=None, expected_scope=None, verify_native=None, target_base=None):
+                 authority=None, expected_scope=None, verify_native=None, target_base=None,
+                 native_backend_factory=None):
         self.admission = None
         if binding is not None:
             self.admission = _Admission(binding, authority)
@@ -474,7 +533,16 @@ class TargetConnector:
             self.peer_fingerprint = binding.peer_fingerprint
             self.timeout = binding.timeout
             capacity = binding.max_inflight
-            native = native_http_backend(target_base, timeout=binding.timeout)
+            if (target_base is None) == (native_backend_factory is None):
+                raise ValueError("exactly one native backend source required")
+            if native_backend_factory is None:
+                native = native_http_backend(target_base, timeout=binding.timeout)
+            else:
+                if not callable(native_backend_factory):
+                    raise ValueError("native backend factory must be callable")
+                native = native_backend_factory(binding, dict(expected_scope))
+                if not callable(native):
+                    raise ValueError("native backend must be callable")
             def backend(request, deadline=None):
                 # RoomFirewall runs its backend in a worker: re-admit IN that
                 # worker, not before queueing it, immediately before native I/O.
@@ -491,6 +559,8 @@ class TargetConnector:
             self.firewall = RoomFirewall(expected_scope=expected_scope, backend=backend,
                 verify_native=verify_native, backend_timeout_seconds=binding.timeout)
         else:
+            if native_backend_factory is not None:
+                raise ValueError("native backend factory requires a bound connector")
             self.context = server_context(ca_file=inner["peer_ca_file"],
                 cert_file=inner["cert_file"], key_file=inner["key_file"])
             self.peer_fingerprint = inner["peer_fingerprint"]
@@ -573,20 +643,42 @@ class TargetConnector:
 
     def start(self, *, host="127.0.0.1", port=0):
         address = _loopback(host)
-        if self._listener is not None:
-            raise RuntimeError("connector already started")
-        listener = socket.socket(socket.AF_INET6 if address.version == 6 else socket.AF_INET)
+        with self._lock:
+            if getattr(self, "_used", False) or self._listener is not None:
+                raise RuntimeError("connector already started")
+            self._used = True
+            self._starting = True
+        listener = None
         try:
+            listener = socket.socket(socket.AF_INET6 if address.version == 6 else socket.AF_INET)
+            with self._lock:
+                self._listener = listener
             listener.bind((host, port))
             listener.listen(16)
             listener.settimeout(.1)
+            if self._stopping.is_set():
+                raise RuntimeError("connector closing")
+            thread = threading.Thread(target=self._accept, name="room-data-accept", daemon=True)
+            with self._lock:
+                self._thread = thread
+            if self._stopping.is_set():
+                raise RuntimeError("connector closing")
+            thread.start()
+            if self._stopping.is_set():
+                raise RuntimeError("connector closing")
         except BaseException:
-            listener.close()
+            with self._lock:
+                self._starting = False
+            # start() may have started the thread before raising. Retain every
+            # reference until close proves it stopped; cleanup cannot mask primary.
+            try:
+                self.close()
+            except BaseException:
+                pass
             raise
-        self._stopping.clear()
-        self._listener = listener
-        self._thread = threading.Thread(target=self._accept, name="room-data-accept", daemon=True)
-        self._thread.start()
+        else:
+            with self._lock:
+                self._starting = False
 
     def _accept(self):
         while not self._stopping.is_set():
@@ -599,20 +691,24 @@ class TargetConnector:
             if not self._slots.acquire(blocking=False):
                 sock.close()
                 continue
-            worker = threading.Thread(target=self._serve_owned, args=(sock,), daemon=True)
-            with self._lock:
-                self.accepted += 1
-                self._workers.add(worker)
-                self._sockets.add(sock)
-                self.peak_active = max(self.peak_active, len(self._workers))
+            worker = None
             try:
+                worker = threading.Thread(target=self._serve_owned, args=(sock,), daemon=True)
+                with self._lock:
+                    self.accepted += 1
+                    self._workers.add(worker)
+                    self._sockets.add(sock)
+                    self.peak_active = max(self.peak_active, len(self._workers))
                 worker.start()
             except BaseException:
-                with self._lock:
-                    self._workers.discard(worker)
-                    self._sockets.discard(sock)
-                sock.close()
-                self._slots.release()
+                if worker is None or worker.ident is None:
+                    with self._lock:
+                        self._workers.discard(worker)
+                        self._sockets.discard(sock)
+                    sock.close()
+                    self._slots.release()
+                # Otherwise the started worker owns socket and slot, even if
+                # Thread.start raised after its first instruction.
                 raise
 
     def _serve_owned(self, sock):
@@ -626,17 +722,35 @@ class TargetConnector:
 
     def close(self):
         self._stopping.set()
-        if self._listener is not None:
-            self._listener.close()
-        if self._thread is not None:
-            self._thread.join(2)
+        with self._lock:
+            listener, thread = self._listener, self._thread
+        failures = []
+        if listener is not None:
+            try:
+                listener.close()
+            except BaseException as exc:
+                failures.append(exc)
+        if thread is not None and thread.ident is not None:
+            try:
+                thread.join(2)
+                if thread.is_alive():
+                    raise RuntimeError("connector teardown incomplete")
+            except BaseException as exc:
+                failures.append(exc)
         deadline = time.monotonic() + self.timeout + 1
         with self._lock:
             workers = tuple(self._workers)
         for worker in workers:
-            worker.join(max(0, deadline - time.monotonic()))
+            try:
+                if worker.ident is not None:
+                    worker.join(max(0, deadline - time.monotonic()))
+            except BaseException as exc:
+                failures.append(exc)
         with self._lock:
-            if self._workers:
-                raise RuntimeError("connector teardown incomplete")
-        self._listener = None
-        self._thread = None
+            if self._workers or getattr(self, "_starting", False):
+                failures.append(RuntimeError("connector teardown incomplete"))
+            if not failures:
+                self._listener = None
+                self._thread = None
+        if failures:
+            raise failures[0]

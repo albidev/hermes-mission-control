@@ -91,6 +91,7 @@
   "inviteUi.loadMore": "Carica i prossimi eventi",
   "inviteUi.guest": "Ospite",
   "inviteUi.guestView": "Vista stanza ospite",
+  "inviteUi.hostUnavailable": "La cronologia canonica della stanza dell'host non è disponibile da questa installazione ospite. Questa vista mostra solo lo stato ospite/importazione, non una stanza vuota.",
   "inviteUi.offline": "{owner} offline dalle {time}; stai vedendo l'ultima versione ricevuta, non salvata su questo dispositivo.",
   "inviteUi.mock": "Anteprima interattiva",
   "inviteUi.mockPairing": "Abbinamento",

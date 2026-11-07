@@ -37,14 +37,15 @@ class HostConnectorMaterialTransport:
     adapter owns the final conversion to ``HostConnector.forward`` and therefore
     cannot silently discard the inherited deadline or admission predicate.
     """
-    def __init__(self, connector):
+    def __init__(self, connector, *, owned=False):
         from .control.connector import HostConnector
         if not isinstance(connector, HostConnector):
             raise TypeError("pinned HostConnector required")
         self._connector = connector
+        self._owned = owned
 
     def send(self, wire: dict, *, deadline: float, admit):
-        from .control.connector import ForwardedRequest
+        from .control.connector import ForwardedRequest, _json
         if wire.get("op") == "status":
             result = self._connector.forward(
                 ForwardedRequest("POST", "/control/joining", (),
@@ -55,20 +56,23 @@ class HostConnectorMaterialTransport:
         if not isinstance(request_id, str):
             raise MaterialError("control_unavailable")
         nonce = secrets.token_hex(16)
-        probe_request = {"op": "material_probe", "v": 1, "operation": "material_request",
-                         "request_id": request_id, "nonce": nonce, "t1_utc_ms": utc_now_ms()}
-        probe_result = self._connector.forward(
-            ForwardedRequest("POST", "/control/joining", (),
-                             json.dumps(probe_request, separators=(",", ":")).encode()),
-            admit=admit, deadline=deadline)
-        probe = json.loads(probe_result.body)
-        if (not isinstance(probe, dict) or set(probe) != {"op", "v", "operation", "endpoint_id", "generation",
+        sampled = self._connector.forward_material_probe(
+            request_id=request_id, nonce=nonce, admit=admit, deadline=deadline)
+        probe = _json(sampled.response.body)
+        if (sampled.response.status != 200 or not isinstance(probe, dict)
+                or set(probe) != {"op", "v", "operation", "endpoint_id", "generation",
                 "request_id", "nonce", "t1_utc_ms", "t2_utc_ms", "t3_utc_ms"}
+                or probe.get("op") != "material_probe" or type(probe.get("v")) is not int or probe["v"] != 1
+                or probe.get("operation") != "material_request"
                 or probe.get("request_id") != request_id or probe.get("nonce") != nonce
                 or probe.get("endpoint_id") != self._connector.binding.endpoint_id
-                or probe.get("generation") != self._connector.binding.generation):
+                or type(probe.get("generation")) is not int
+                or probe.get("generation") != self._connector.binding.generation
+                or any(type(probe.get(key)) is not int or probe[key] < 0
+                       for key in ("t1_utc_ms", "t2_utc_ms", "t3_utc_ms"))
+                or probe.get("t1_utc_ms") != sampled.sent_utc_ms):
             raise MaterialError("control_unavailable")
-        probe["t4_utc_ms"] = utc_now_ms()
+        probe["t4_utc_ms"] = sampled.received_utc_ms
         wire = dict(wire, probe=probe)
         result = self._connector.forward(
             ForwardedRequest("POST", "/control/joining", (),
@@ -111,6 +115,10 @@ async def _call_connector(connector, wire: dict, *, deadline: float, admit, allo
         fn = functools.partial(connector.send, wire, deadline=deadline, admit=admit)
     else:
         fn = functools.partial(connector, wire, deadline=deadline, admit=admit)
+    if isinstance(connector, HostConnectorMaterialTransport) and connector._owned:
+        # Coordinator-owned asyncio.run drains its executor before releasing
+        # ownership, including a TLS worker whose await timed out or cancelled.
+        return await _await_deadline(asyncio.to_thread(fn), deadline)
     worker = loop.create_future()
     def invoke() -> None:
         try:
@@ -280,7 +288,8 @@ class MaterialControl:
                  journal=None,
                  target_resolver: Callable[..., TargetMaterialMint] | None = None,
                  receipt_resolver: Callable[..., tuple[Any, MaterialScope]] | None = None,
-                 scope_status_resolver: Callable[..., dict] | None = None):
+                 scope_status_resolver: Callable[..., dict] | None = None,
+                 post_durable_receipt=None, post_success_target=None, receipt_registry_release=None):
         self.lobby_id, self.invite_id = lobby_id, invite_id
         self._mint, self._mint_factory = mint, mint_factory
         self._registry, self._scope_factory = registry, scope_factory
@@ -291,11 +300,20 @@ class MaterialControl:
         self._pending_generation = None
         self._target_resolver, self._receipt_resolver = target_resolver, receipt_resolver
         self._scope_status_resolver = scope_status_resolver
+        self._post_durable_receipt = post_durable_receipt
+        self._post_success_target = post_success_target
+        self._receipt_registry_release = receipt_registry_release
 
-    async def request(self, *, deadline: float | None = None) -> dict:
+    async def request(self, *, deadline: float | None = None,
+                      admit: Callable[[], bool] | None = None) -> dict:
         if self._connector is None:
             raise MaterialError("control_unavailable")
         end = _deadline(deadline if deadline is not None else self._deadline)
+        admission = admit if admit is not None else (lambda: True)
+        def check():
+            if time.monotonic() >= end or admission() is not True:
+                raise MaterialError("control_unavailable")
+        check()
         binding = getattr(getattr(self._connector, "_connector", None), "binding", None)
         endpoint_id = getattr(binding, "endpoint_id", "lab")
         generation = getattr(binding, "generation", 0)
@@ -319,8 +337,7 @@ class MaterialControl:
                             deadline=end)
                     except Exception:
                         raise MaterialError("control_unavailable") from None
-                    if time.monotonic() >= end:
-                        raise MaterialError("control_unavailable")
+                    check()
                     self._pending_request = dict(candidate, request_id=origin["request_id"],
                                                  expires_at_utc_ms=origin["expires_at_utc_ms"])
                     pending_generation = origin["generation"]
@@ -334,6 +351,7 @@ class MaterialControl:
         self._pending_generation = pending_generation
         request_wire = dict(self._pending_request)
         pending_key = (self.lobby_id, self.invite_id, endpoint_id)
+        check()
         with self._pending_lock:
             self._pending_requests[pending_key] = dict(request_wire, endpoint_id=endpoint_id, generation=pending_generation)
         try:
@@ -341,14 +359,15 @@ class MaterialControl:
                 self._connector,
                 request_wire,
                 deadline=end,
-                admit=lambda: True,
+                admit=admission,
                 allow_legacy=not self._request_bound,
             )
         except Exception as exc:
             if isinstance(exc, MaterialError):
                 raise
             raise MaterialError("control_unavailable") from None
-        if time.monotonic() >= end or result != _READY:
+        check()
+        if result != _READY:
             raise MaterialError("control_unavailable")
         return _READY.copy()
 
@@ -405,6 +424,10 @@ class MaterialControl:
                 result = await asyncio.wait_for(result, max(0.0, context.deadline - time.monotonic()))
             if time.monotonic() >= context.deadline or not context.readmit() or result != _READY:
                 raise MaterialError("control_unavailable")
+            if self._post_success_target is not None:
+                await self._post_success_target(context=context, request=dict(request), deadline=context.deadline)
+                if time.monotonic() >= context.deadline or not context.readmit():
+                    raise MaterialError("control_unavailable")
             return _READY.copy()
         except Exception:
             raise ControlError() from None
@@ -475,6 +498,7 @@ class MaterialControl:
                 raise ControlError() from None
             if time.monotonic() >= effective_deadline:
                 raise ControlError()
+        registry = None
         try:
             if self._receipt_resolver is not None:
                 resolved = self._receipt_resolver(context=context, request=dict(request), deadline=effective_deadline)
@@ -516,6 +540,10 @@ class MaterialControl:
                 ADMISSION_DEADLINE.reset(token)
             if not context.readmit():
                 raise ValueError()
+            if self._post_durable_receipt is not None:
+                await self._post_durable_receipt(scope=scope, context=context, deadline=effective_deadline)
+            if time.monotonic() >= effective_deadline or not context.readmit():
+                raise ValueError()
             if v2 and self._journal is not None:
                 consumed = await asyncio.to_thread(
                     self._journal.consume_material_origin,
@@ -530,6 +558,10 @@ class MaterialControl:
             raise
         except Exception:
             raise ControlError() from None
+
+        finally:
+            if registry is not None and self._receipt_registry_release is not None:
+                self._receipt_registry_release(registry)
 
     def handlers(self):
         return {"material_request": self.target_handler, "material_receipt": self.receipt_handler}

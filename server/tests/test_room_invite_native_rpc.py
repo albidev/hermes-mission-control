@@ -8,6 +8,7 @@ and normal/hostile idle backlog.  The spike shim must re-export the same classes
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 import time
@@ -29,6 +30,34 @@ from invite_rooms.native_rpc import (
     _FIELDS,
 )
 from room_lobby_service import AdmissionDenied
+
+
+@contextlib.asynccontextmanager
+async def recording_catalog_rpc(records, catalog):
+    """Disposable recording WS: adapter contract evidence, NOT native interoperation."""
+    async def handler(request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        async for frame in ws:
+            value = json.loads(frame.data)
+            records.append((value['method'], value['params']))
+            await ws.send_json({'jsonrpc': '2.0', 'id': value['id'],
+                                'result': {'room_link': {'enabled': True, 'catalog': catalog}}})
+        return ws
+
+    app = web.Application()
+    app.router.add_get('/api/ws', handler)
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    try:
+        site = web.TCPSite(runner, '127.0.0.1', 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession(trust_env=False) as session:
+            async with session.ws_connect(f'http://127.0.0.1:{port}/api/ws') as ws:
+                yield BoundedNativeRpc(ws, timeout=1, require_register_admission=True)
+    finally:
+        await runner.cleanup()
 
 
 class CanonicalImportTests(unittest.TestCase):
@@ -74,6 +103,21 @@ class CanonicalImportTests(unittest.TestCase):
 
 class BoundedRpcProtocolTests(unittest.IsolatedAsyncioTestCase):
     """Core protocol: rejection vs ambiguity, bounds, poison, allowlist."""
+
+    async def test_catalog_empty_params_compatible_and_unknown_fields_denied_without_send(self):
+        records = []
+        catalog = {'recording_only': True}
+        async with recording_catalog_rpc(records, catalog) as rpc:
+            expected = {'room_link': {'enabled': True, 'catalog': catalog}}
+            self.assertEqual(await rpc('groups.capabilities', {}), expected)
+            for params in ({'extra': 'bad'}, {'profile': 'research', 'extra': 'bad'},
+                           {'profile': 'default', 'grant': 'not-authority'}):
+                with self.assertRaises(NativeRpcDenied):
+                    await rpc('groups.capabilities', params)
+            self.assertEqual(records, [('groups.capabilities', {})])
+            # Denial did not poison the stream or silently send a default fallback.
+            self.assertEqual(await rpc('groups.capabilities', {}), expected)
+            self.assertEqual(records, [('groups.capabilities', {}), ('groups.capabilities', {})])
 
     async def _serve(self, handler):
         runner = web.AppRunner(web.Application(), access_log=None)

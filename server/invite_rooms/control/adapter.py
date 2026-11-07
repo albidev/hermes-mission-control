@@ -161,9 +161,18 @@ class LoopbackAdapter:
                 self.end_headers(); self.wfile.write(body)
 
         self._server = server_cls((host, port), Handler)
-        self._thread = threading.Thread(target=self._server.serve_forever,
-                                         name="room-loopback-adapter", daemon=True)
-        self._thread.start()
+        try:
+            self._thread = threading.Thread(target=self._server.serve_forever,
+                                            name="room-loopback-adapter", daemon=True)
+            self._thread.start()
+        except BaseException:
+            # Publish ownership immediately after acquisition, including during Thread construction. Failed cleanup
+            # retains its resources for the owner's rollback/close; it must never replace the exact startup error.
+            try:
+                self.close()
+            except Exception:
+                pass
+            raise
 
     def register(self, endpoint_id: str, generation: int, *,
                  firewall: RoomFirewall, connector: Callable[..., Any],
@@ -362,7 +371,32 @@ class LoopbackAdapter:
         with self._lock:
             for link in self._routes.values(): link.closed = True
             self._routes.clear()
-        if self._server is not None:
-            self._server.shutdown(); self._server.server_close(); self._server = None
-        if self._thread is not None:
-            self._thread.join(timeout=2); self._thread = None
+        server, thread = self._server, self._thread
+        failures = []
+        # ident distinguishes never-started from terminated: is_alive() alone does not. Only a live serve thread
+        # needs shutdown, and an unstarted thread must never be joined (nor its never-served server shut down).
+        if thread is not None and thread.ident is not None:
+            try:
+                if thread.is_alive() and server is not None:
+                    server.shutdown()
+            except Exception as exc:
+                failures.append(exc)
+            try:
+                thread.join(timeout=2)
+                if thread.is_alive():
+                    raise RuntimeError("adapter serve thread did not terminate")
+            except Exception as exc:
+                failures.append(exc)
+        if thread is None or not thread.is_alive():
+            self._thread = None
+        if server is not None:
+            try:
+                server.server_close()
+            except Exception as exc:
+                failures.append(exc)
+            else:
+                # Retain the server as well if its serve thread still needs a shutdown retry.
+                if self._thread is None:
+                    self._server = None
+        if failures:
+            raise failures[0]

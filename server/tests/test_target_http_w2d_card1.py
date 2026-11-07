@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from invite_rooms.admission_receipts import AdmissionReceiptStore
+from invite_rooms import admission_receipts
+from invite_rooms.admission_receipts import AdmissionReceiptError, AdmissionReceiptStore
 from invite_rooms.runtime_config import RuntimeConfigError, TargetHttpConfig, parse_target_http
 from invite_rooms.target_http import HttpResponse, TargetHttpClient, TargetHttpError
 
@@ -42,6 +43,47 @@ class Material:
 
 
 class TargetHttpCard1Tests(unittest.TestCase):
+    def _capacity_expected(self, size):
+        return [{"version": "mc-admission-receipt-v1", "scope": Scope().as_dict(),
+                 "generation": 7, "profile": "default", "base_url": "http://127.0.0.1:8765",
+                 "idempotency_key": f"k-{index}", "request_fingerprint": f"{index:064x}",
+                 "run_id": "run_" + f"{index:032x}", "status": "started", "replayed": False}
+                for index in range(size)]
+
+    def _capacity_put_args(self, record):
+        return {**{key: value for key, value in record.items() if key not in {"version", "scope"}},
+                "scope": Scope(), "verifier_version": record["version"]}
+
+    def _capacity_error(self, operation, reason):
+        with self.assertRaises(AdmissionReceiptError) as caught:
+            operation()
+        self.assertIs(type(caught.exception), AdmissionReceiptError, "capacity exception type")
+        self.assertEqual(caught.exception.args, (reason,), "capacity exception args")
+
+    def _capacity_phase(self, phase):
+        print("capacity-phase " + self._testMethodName + " " + phase, flush=True)
+
+    def _capacity_overflow(self, store):
+        self._capacity_phase("overflow-before")
+        self._capacity_error(lambda: store.put(
+            scope=Scope(), generation=7, profile="default", base_url="http://127.0.0.1:8765",
+            idempotency_key="overflow", request_fingerprint="f" * 64,
+            run_id="run_" + "f" * 32, status="started", replayed=False), "admission_capacity")
+        self._capacity_phase("overflow-after")
+
+    def _capacity_samples(self, store, expected, indices):
+        for index in indices:
+            record = expected[index]
+            self.assertTrue(store.find_idempotency_key(record["idempotency_key"]) == record,
+                            "public idempotency sample equality")
+            lookup = {key: value for key, value in self._capacity_put_args(record).items()
+                      if key not in {"verifier_version", "run_id", "status", "replayed"}}
+            self.assertTrue(store.find(**lookup) == record, "public find sample equality")
+        self.assertIsNone(store.find_idempotency_key("overflow"))
+        self.assertIsNone(store.find(scope=Scope(), generation=7, profile="default",
+                                     base_url="http://127.0.0.1:8765", idempotency_key="overflow",
+                                     request_fingerprint="f" * 64))
+
     def test_target_config_is_exact_loopback_explicit_port(self):
         self.assertEqual(parse_target_http({"base_url": "http://127.0.0.1:8765", "profile": "default"}).base_url,
                          "http://127.0.0.1:8765")
@@ -177,17 +219,124 @@ class TargetHttpCard1Tests(unittest.TestCase):
             TargetHttpClient(config, transport=lambda *args: self.fail("transport contacted"))
 
     def test_capacity_rejection_preserves_readable_store(self):
+        self.assertEqual(admission_receipts._MAX_RECORDS, 4096, "literal real capacity")
+        self._capacity_phase("build-before")
+        expected = self._capacity_expected(4096)
+        self.assertEqual(len({r["idempotency_key"] for r in expected}), 4096)
+        self.assertEqual(len({AdmissionReceiptStore._key(r) for r in expected}), 4096)
+        schema = {"version", "scope", "generation", "profile", "base_url", "idempotency_key",
+                  "request_fingerprint", "run_id", "status", "replayed"}
+        self.assertEqual(admission_receipts._MAX_RECORD_BYTES, 65536)
+        self.assertEqual(admission_receipts._MAX_BLOB_BYTES, 8388608)
+        for record in expected:
+            self.assertIs(type(record), dict)
+            self.assertEqual(set(record), schema)
+            self.assertIs(type(record["scope"]), dict)
+            AdmissionReceiptStore._validate_record(record, pending=False)
+            self.assertLessEqual(len(json.dumps(record, sort_keys=True, separators=(",", ":")).encode()),
+                                 65536)
+        self.assertLessEqual(len(json.dumps(expected, sort_keys=True, separators=(",", ":")).encode()) + 28,
+                             8388608)
+        self._capacity_phase("build-after")
         with tempfile.TemporaryDirectory() as directory:
-            store = AdmissionReceiptStore(Path(directory) / "admissions")
-            for index in range(4096):
-                store.put(scope=Scope(), generation=7, profile="default", base_url="http://127.0.0.1:8765",
-                          idempotency_key=f"k-{index}", request_fingerprint=f"{index:064x}",
-                          run_id="run_" + f"{index:032x}", status="started", replayed=False)
-            with self.assertRaises(Exception):
-                store.put(scope=Scope(), generation=7, profile="default", base_url="http://127.0.0.1:8765",
-                          idempotency_key="overflow", request_fingerprint="f" * 64,
-                          run_id="run_" + "f" * 32, status="started", replayed=False)
-            self.assertEqual(store.count(), 4096)
+            root = Path(directory) / "admissions"
+            store = reopened = None
+            try:
+                store = AdmissionReceiptStore(root)
+                self._capacity_phase("seed-before")
+                with store._transaction():
+                    self.assertEqual(store._read(), [])
+                    self.assertEqual(store._read_pending(), [])
+                    store._write(expected[:4095])
+                    self.assertTrue(store._read() == expected[:4095], "seed entire-list equality")
+                self._capacity_phase("seed-after")
+                self._capacity_phase("count-before")
+                self.assertEqual(store.count(), 4095, "pre-last literal count")
+                self._capacity_phase("count-after")
+                self._capacity_phase("last-put-before")
+                self.assertTrue(store.put(**self._capacity_put_args(expected[4095])) == expected[4095],
+                                "last-slot public put equality")
+                self._capacity_phase("last-put-after")
+                self.assertEqual(store.count(), 4096, "last-slot literal count")
+                before = store.path.read_bytes()
+                self._capacity_overflow(store)
+                self.assertTrue(store.path.read_bytes() == before, "overflow ciphertext equality")
+                self._capacity_phase("count-before")
+                self.assertEqual(store.count(), 4096, "overflow literal count")
+                self._capacity_phase("count-after")
+                self._capacity_phase("readback-before")
+                with store._transaction():
+                    self.assertTrue(store._read() == expected, "open entire-list equality")
+                self._capacity_phase("readback-after")
+                self._capacity_phase("close-before")
+                store.close()
+                self._capacity_phase("close-after")
+                self._capacity_phase("reopen-before")
+                reopened = AdmissionReceiptStore(root)
+                self._capacity_phase("reopen-after")
+                self.assertTrue(reopened.path.read_bytes() == before, "reopen ciphertext equality")
+                self.assertEqual(reopened.count(), 4096, "reopen literal count")
+                self._capacity_phase("readback-before")
+                with reopened._transaction():
+                    self.assertTrue(reopened._read() == expected, "reopen entire-list equality")
+                self._capacity_samples(reopened, expected, (0, 2048, 4095))
+                self._capacity_phase("readback-after")
+                self.assertTrue(reopened.put(**self._capacity_put_args(expected[4095])) == expected[4095],
+                                "full-capacity duplicate equality")
+                self.assertTrue(reopened.path.read_bytes() == before, "duplicate ciphertext equality")
+                self.assertEqual(reopened.count(), 4096)
+                conflict = {**self._capacity_put_args(expected[4095]), "run_id": "run_" + "e" * 32}
+                self._capacity_error(lambda: reopened.put(**conflict), "admission_receipt_conflict")
+                self.assertTrue(reopened.path.read_bytes() == before, "conflict ciphertext equality")
+                self.assertEqual(reopened.count(), 4096)
+            finally:
+                for instance in (reopened, store):
+                    if instance is not None:
+                        instance.close()
+
+    def test_capacity_scaled_public_put_rejection_preserves_reopen(self):
+        self.assertEqual(admission_receipts._MAX_RECORDS, 4096)
+        with patch.object(admission_receipts, "_MAX_RECORDS", 4):
+            self._capacity_phase("build-before")
+            expected = self._capacity_expected(4)
+            self._capacity_phase("build-after")
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "admissions"
+                store = reopened = None
+                try:
+                    store = AdmissionReceiptStore(root)
+                    self._capacity_phase("seed-before")
+                    for record in expected:
+                        self.assertTrue(store.put(**self._capacity_put_args(record)) == record,
+                                        "scaled public put equality")
+                    self._capacity_phase("seed-after")
+                    self._capacity_phase("count-before")
+                    self.assertEqual(store.count(), 4)
+                    self._capacity_phase("count-after")
+                    before = store.path.read_bytes()
+                    self._capacity_overflow(store)
+                    self.assertTrue(store.path.read_bytes() == before, "scaled overflow ciphertext equality")
+                    self.assertEqual(store.count(), 4)
+                    with store._transaction():
+                        self.assertTrue(store._read() == expected, "scaled open entire-list equality")
+                    self._capacity_phase("close-before")
+                    store.close()
+                    self._capacity_phase("close-after")
+                    self._capacity_phase("reopen-before")
+                    reopened = AdmissionReceiptStore(root)
+                    self._capacity_phase("reopen-after")
+                    self.assertTrue(reopened.path.read_bytes() == before, "scaled reopen ciphertext equality")
+                    self.assertEqual(reopened.count(), 4)
+                    self._capacity_phase("readback-before")
+                    with reopened._transaction():
+                        self.assertTrue(reopened._read() == expected, "scaled reopen entire-list equality")
+                    self._capacity_samples(reopened, expected, (0, 1, 2, 3))
+                    self._capacity_phase("readback-after")
+                finally:
+                    for instance in (reopened, store):
+                        if instance is not None:
+                            instance.close()
+        self.assertEqual(admission_receipts._MAX_RECORDS, 4096)
 
     def test_ancestor_symlink_is_refused_before_any_private_files(self):
         from invite_rooms.admission_receipts import AdmissionReceiptError

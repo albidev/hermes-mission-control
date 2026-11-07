@@ -272,9 +272,9 @@ class JoiningStore:
                 raise JoiningStoreError("import_unavailable")
             return dict(row)
 
-    def list_imports(self) -> list[dict]:
+    def list_imports(self, *, deadline=None) -> list[dict]:
         """Return redacted joining records for the local guest read model."""
-        with self._read() as conn:
+        with self._read(deadline=deadline) as conn:
             rows = conn.execute("SELECT * FROM imports ORDER BY created_at, import_id").fetchall()
         return [dict(row) for row in rows]
 
