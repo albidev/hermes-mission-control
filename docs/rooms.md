@@ -153,6 +153,108 @@ For invite-only guest rooms, the joining installation shows two separate things:
 - Local `GroupRoomView` data is **not** the host transcript and is never used as a substitute.
 - No transcript, message copy, or synthetic event IDs are rendered in this state.
 
+## Invite Rooms sidecar native attach and bootstrap
+
+The optional owner-private Invite Rooms JSON file selected by
+`MISSION_CONTROL_ROOM_INVITES_CONFIG` supports two **mutually exclusive**
+`native_rpc` forms:
+
+```json
+{"native_rpc": {"profile_home": "/absolute/private/native-root/profiles/research"}}
+```
+
+Canonical mode attaches to an **already-running** native owner serving that
+exact home. The top-level `profile` must be `research` in this example, and
+`installation_id` must match `install:<native-root/install_id>`. For `default`,
+`profile_home` is the installation root itself. The existing root/home must be
+owned by the current user, mode `0700`, with a regular single-link `0600`
+`install_id` file; symlink/overlay aliases are deliberately not supported.
+Missing/invalid native identity is a refusal, never permission to create one.
+
+Each connection uses Core `discover_gateway_endpoint` (ready state only), an
+owner-control-socket **fresh single-use session ticket**, and
+`gateway_ws_target` subprotocols. It verifies the negotiated native protocol,
+exact profile/instance binding and literal loopback authority, refuses redirects,
+and never ensures, starts, replaces or falls back to a gateway. Installations
+must provide compatible Core helper modules on the sidecar's Python import path.
+
+The older explicit `{"endpoint":"ws://127.0.0.1:PORT/...","token_path":"/absolute/private/token"}`
+form remains available only for the legacy topology that accepts it. It is not
+a canonical native authentication mechanism and is never a fallback from
+`profile_home`. Do not mix the forms or place credentials in endpoint URLs.
+
+Cold-start data topology may explicitly contain:
+
+```json
+{"pairing": {"target_listeners": {}, "data_endpoints": {}}}
+```
+
+This is a **fragment**, not a complete startup file: the other existing pairing,
+joining, control/data listener and target HTTP fields remain required. With a
+complete private config the sidecar can own its control listener and empty data
+adapter/registry before any material scope exists. Omitted maps remain incomplete;
+malformed maps, duplicate keys, wildcard/alias destinations and bind collisions
+still fail closed. An empty map authorizes **no** data route, and populating a map
+alone creates neither consent nor a READY material scope. After actual pairing,
+invitation and both owner decisions, configure only product-derived immutable
+adapter IDs at the explicit sidecar restart boundary. Never preseed fake scopes.
+
+Guest approval snapshots and decisions use the same canonical attach in
+`profile_home` mode, without reading a token file or trying Bearer fallback.
+Opaque approval handles bind the confirmed guest scope to the validated native
+home, profile, installation ID, gateway instance and authority epoch (not the
+single-use ticket). A changed authority requires a fresh snapshot. Only the
+existing fixed session discovery/resume/detach and once/deny approval verbs are
+available; native discovery/handshake failures report `native_unavailable`.
+The explicit legacy form retains its existing transport and handle behavior.
+
+These source/transport-contract tests are not two-installation native E2E proof.
+Live configuration activation, real native guest approval behavior and model
+admission remain separately verified gates; no production service is enabled by
+this documentation.
+
+## Invite Rooms native compatibility boundary (N1)
+
+A successful canonical ticket attach is **not** proof that a native owner can
+perform cross-installation pairing. At native Core revision
+`eb30bd6e48a86bcbcbbc0f343e7c0f0aadfe2dc4`, two isolated real host gateways
+reported `driver: true` but returned:
+
+```json
+{"room_link":{"enabled":false,"reason":"canonical_driver_required"}}
+```
+
+Their canonical `groups.capabilities.methods` contains no `groups.peer.*` verbs
+and supplies no RoomLink catalog. An authenticated, correct-Origin
+`POST /api/local/room-invites/pairing/offers` therefore returns **503**
+`{"error":"unavailable","code":"pairing_native_unavailable"}`. This is the
+required fail-closed behavior, not a missing token or a runtime model choice.
+
+The native source also contains richer legacy `tui_gateway/methods_groups.py`
+handlers. Those are not an interchangeable canonical owner contract:
+`gateway/session_controls.py` intercepts `groups.capabilities`, and
+`tui_gateway/ws.py` only considers legacy fallback after an **unknown-method**
+response. A successful disabled capability response does not trigger fallback.
+Some peer verbs may still qualify for legacy fallback with a full interactive
+grant; absence from the canonical method list alone is **not** proof that every
+peer verb is absent from the final WebSocket surface. Bypassing the catalog
+refusal or calling legacy grant helpers does not establish canonical
+home/profile/instance/ticket/consent/admission authority.
+
+No Mission Control-only correction has been demonstrated for that pinned owner
+and the existing two-native-host/two-sidecar layout. Keep pairing refused until
+a separately reviewed native compatibility decision supplies a supported owner
+contract with a real catalog, scoped peer invite/register behavior and preserved
+authority. Do not synthesize a catalog, set `enabled` locally, downgrade to Bearer
+auth, start an extra driver daemon, or edit Core as an MC workaround.
+
+`server/tests/test_native_room_link_contract.py` exercises this disabled payload
+through the actual catalog gate and HTTP pairing route. Its native connector is
+an explicitly labelled response fixture, not a running native host or E2E proof.
+Full acceptance and model flow remain disabled. UI hosting is a separate gate:
+the API sidecar returning 404 at `/` is not a hosted Mission Control frontend,
+and native `HERMES_WEB_DIST` is not a verified MC API proxy.
+
 ## Failure handling
 
 - `groups.list` returns zero rooms → honest empty state, not a broken UI.

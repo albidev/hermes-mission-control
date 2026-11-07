@@ -6,6 +6,7 @@ an invented cryptographic grant -> session binding. See the API restriction.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import secrets
@@ -167,10 +168,33 @@ class GuestApprovalAdapter:
     def __init__(self, rpc_config, *, handles=HANDLES):
         self.config, self.handles = rpc_config, handles
 
-    async def run(self, context, validate, *, request_id=None, choice=None):
+    @contextlib.asynccontextmanager
+    async def _transport(self, context, expected):
         if self.config is None:
             raise GuestServiceError('native_unavailable')
-        expected = self.handles.get(request_id) if request_id is not None else None
+        if 'profile_home' in self.config:
+            # Lazy import avoids routes -> adapter's module cycle. Share the
+            # canonical attach, not BoundedNativeRpc's groups-only verb set.
+            from invite_rooms.routes import _connect_native_rpc
+            try:
+                if context['profile'] != self.config['profile']:
+                    raise GuestServiceError('native_unavailable')
+                async with _connect_native_rpc(self.config) as rpc:
+                    key = scope_key({'confirmed': context, 'native': rpc.native_scope})
+                    if expected is not None and expected[0] != key:
+                        raise GuestServiceError('request_expired')
+                    yield rpc.ws, key
+            except GuestServiceError:
+                raise
+            except Exception:
+                # Discovery/handshake errors never downgrade to Bearer or leak
+                # Core exceptions or authority details to the browser.
+                raise GuestServiceError('native_unavailable') from None
+            return
+
+        # Explicit legacy mode preserves credential-bound handles and transport.
+        if set(self.config) != {'endpoint', 'token_path'}:
+            raise GuestServiceError('native_unavailable')
         try:
             token = Path(self.config['token_path']).read_text(encoding='utf-8').strip()
         except (OSError, UnicodeError):
@@ -181,66 +205,73 @@ class GuestApprovalAdapter:
                          'credential': hashlib.sha256(token.encode()).hexdigest()})
         if expected is not None and expected[0] != key:
             raise GuestServiceError('request_expired')
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as client:
+            async with client.ws_connect(self.config['endpoint'], max_msg_size=MAX_RESPONSE,
+                    headers={'Authorization': 'Bearer ' + token}) as ws:
+                yield ws, key
+
+    async def run(self, context, validate, *, request_id=None, choice=None):
+        if self.config is None:
+            raise GuestServiceError('native_unavailable')
+        expected = self.handles.get(request_id) if request_id is not None else None
         snapshot = None
         sid = None
         try:
             async with asyncio.timeout(10):
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as client:
-                    async with client.ws_connect(self.config['endpoint'], max_msg_size=MAX_RESPONSE,
-                            headers={'Authorization': 'Bearer ' + token}) as ws:
-                        validate()
-                        socket = _Socket(ws, context['profile'], validate)
-                        await socket.ready()
-                        try:
-                            sid = await socket.discover(context['room_id'])
-                            snapshot = await socket.resume(sid)
-                            prompts = []
-                            identities = set()
-                            for prompt in snapshot['prompts']:
-                                if not isinstance(prompt, dict):
-                                    raise GuestServiceError('native_unavailable')
-                                if prompt.get('kind') != 'approval':
-                                    continue
-                                pid, generation = prompt.get('prompt_id'), prompt.get('execution_generation')
-                                choices = prompt.get('choices')
-                                if (not isinstance(pid, str) or not pid or len(pid) > 256
-                                        or type(generation) is not int or generation < 1
-                                        or generation != snapshot['execution_generation']
-                                        or not isinstance(choices, list) or not {'once', 'deny'} <= set(choices)
-                                        or pid in identities or prompt.get('session_id', sid) != sid):
-                                    raise GuestServiceError('native_unavailable')
-                                identities.add(pid)
-                                identity = (key, sid, pid, generation)
-                                prompts.append((identity, prompt))
-                            validate()
-                            if expected is None:
-                                return [{'request_id': self.handles.issue(identity),
-                                         'title': p.get('command', ''), 'detail': p.get('description', ''),
-                                         'command': p.get('command', ''), 'description': p.get('description', ''),
-                                         'choices': ['once', 'deny'], 'allow_permanent': False}
-                                        for identity, p in prompts]
-                            if expected not in [identity for identity, _ in prompts]:
-                                raise GuestServiceError('request_expired')
-                            if choice not in {'once', 'deny'}:
-                                raise GuestServiceError('invalid_choice')
-                            result = await socket._call('approval.respond', {
-                                'session_id': sid, 'prompt_id': expected[2],
-                                'execution_generation': expected[3], 'choice': choice})
-                            if (set(result) != {'status', 'prompt_id'} or result['prompt_id'] != expected[2]
-                                    or result['status'] not in {'resolved', 'already_resolved'}):
+                async with self._transport(context, expected) as (ws, key):
+                    validate()
+                    socket = _Socket(ws, context['profile'], validate)
+                    await socket.ready()
+                    try:
+                        sid = await socket.discover(context['room_id'])
+                        snapshot = await socket.resume(sid)
+                        prompts = []
+                        identities = set()
+                        for prompt in snapshot['prompts']:
+                            if not isinstance(prompt, dict):
                                 raise GuestServiceError('native_unavailable')
-                            self.handles.discard(request_id)
-                            return result
-                        finally:
-                            if snapshot is not None:
-                                # A failed scope check skips explicit detach; closing the socket
-                                # removes only its subscriptions. Never stamp end_reason or stop.
-                                try:
-                                    async with asyncio.timeout(1):
-                                        await socket._call('session.detach', {
-                                            'session_id': sid, 'subscription_id': snapshot['subscription_id']})
-                                except Exception:
-                                    pass
+                            if prompt.get('kind') != 'approval':
+                                continue
+                            pid, generation = prompt.get('prompt_id'), prompt.get('execution_generation')
+                            choices = prompt.get('choices')
+                            if (not isinstance(pid, str) or not pid or len(pid) > 256
+                                    or type(generation) is not int or generation < 1
+                                    or generation != snapshot['execution_generation']
+                                    or not isinstance(choices, list) or not {'once', 'deny'} <= set(choices)
+                                    or pid in identities or prompt.get('session_id', sid) != sid):
+                                raise GuestServiceError('native_unavailable')
+                            identities.add(pid)
+                            identity = (key, sid, pid, generation)
+                            prompts.append((identity, prompt))
+                        validate()
+                        if expected is None:
+                            return [{'request_id': self.handles.issue(identity),
+                                     'title': p.get('command', ''), 'detail': p.get('description', ''),
+                                     'command': p.get('command', ''), 'description': p.get('description', ''),
+                                     'choices': ['once', 'deny'], 'allow_permanent': False}
+                                    for identity, p in prompts]
+                        if expected not in [identity for identity, _ in prompts]:
+                            raise GuestServiceError('request_expired')
+                        if choice not in {'once', 'deny'}:
+                            raise GuestServiceError('invalid_choice')
+                        result = await socket._call('approval.respond', {
+                            'session_id': sid, 'prompt_id': expected[2],
+                            'execution_generation': expected[3], 'choice': choice})
+                        if (set(result) != {'status', 'prompt_id'} or result['prompt_id'] != expected[2]
+                                or result['status'] not in {'resolved', 'already_resolved'}):
+                            raise GuestServiceError('native_unavailable')
+                        self.handles.discard(request_id)
+                        return result
+                    finally:
+                        if snapshot is not None:
+                            # A failed scope check skips explicit detach; closing the socket
+                            # removes only its subscriptions. Never stamp end_reason or stop.
+                            try:
+                                async with asyncio.timeout(1):
+                                    await socket._call('session.detach', {
+                                        'session_id': sid, 'subscription_id': snapshot['subscription_id']})
+                            except Exception:
+                                pass
         except GuestServiceError:
             raise
         except aiohttp.WSServerHandshakeError as exc:

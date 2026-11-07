@@ -108,7 +108,13 @@ class TargetListenersTests(_Base):
         for value in bad_values:
             runtime_config._warned_once.clear()
             self.assertIsNone(self.load(self.with_pairing(target_listeners={LINK_1: value})), repr(value))
-        for empty in ({}, [], None, "x"):
+        empty_config = self.load(self.with_pairing(target_listeners={}))
+        self.assertIsNotNone(empty_config)
+        self.assertIsInstance(empty_config.pairing.target_listeners, MappingProxyType)
+        self.assertEqual(dict(empty_config.pairing.target_listeners), {})
+        with self.assertRaises(TypeError):
+            empty_config.pairing.target_listeners[LINK_1] = ("127.0.0.1", 1)
+        for empty in ([], None, "x"):
             runtime_config._warned_once.clear()
             self.assertIsNone(self.load(self.with_pairing(target_listeners=empty)), repr(empty))
         # Two scopes may not share one bind.
@@ -153,11 +159,16 @@ class DataEndpointsTests(_Base):
             {PEER_A: {LINK_1: _ep(port="7001")}},
             {PEER_A: {LINK_1: {"host": "127.0.0.1"}}},
             {PEER_A: {LINK_1: "127.0.0.1:7001"}},
-            {},
             [],
             None,
             "x",
         ]
+        empty_config = self.load(self.with_pairing(data_endpoints={}))
+        self.assertIsNotNone(empty_config)
+        self.assertIsInstance(empty_config.pairing.data_endpoints, MappingProxyType)
+        self.assertEqual(dict(empty_config.pairing.data_endpoints), {})
+        with self.assertRaises(TypeError):
+            empty_config.pairing.data_endpoints[PEER_A] = {}
         for value in bad:
             runtime_config._warned_once.clear()
             self.assertIsNone(self.load(self.with_pairing(data_endpoints=value)), repr(value))
