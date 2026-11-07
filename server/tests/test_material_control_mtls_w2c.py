@@ -51,6 +51,200 @@ LOBBY = "lobby-" + "1" * 32
 INVITE = "invite-" + "2" * 32
 
 
+class ProbeBoundaryTests(unittest.TestCase):
+    # Reuse only real disposable identity/journal lifecycle, not inherited tests.
+    def setUp(self):
+        RealTwoListenerMaterialRoundtrip.setUp(self)
+
+    def close_listeners(self):
+        RealTwoListenerMaterialRoundtrip.close_listeners(self)
+
+    def connector(self, *, capacity=1):
+        endpoint = next(iter(self.a.journal.snapshot().links))
+        authority = JournalLinkAuthority(self.a.journal)
+        generation = authority.current(endpoint).generation
+        trust = authority.peer_trust(endpoint, generation, role='host')
+        listener = ControlListener(host='127.0.0.1', port=w2a.free_port(),
+            authority=JournalLinkAuthority(self.b.journal),
+            identity=lambda: (str(self.b_bundle.leaf_cert_file), str(self.b_bundle.leaf_key_file)),
+            pair_ack_handler=lambda request: self.b.handle_pair_ack(request), timeout=3)
+        self.listeners.append(listener); listener.start()
+        hop = HostConnector(binding=LinkBinding(endpoint, generation, listener.address, None,
+            trust.fingerprint, trust.binding_dict(), max_inflight=capacity, peer_ca_data=trust.ca_pem),
+            identity=type('Identity', (), dict(cert_file=str(self.a_bundle.leaf_cert_file),
+                key_file=str(self.a_bundle.leaf_key_file)))(), authority=authority)
+        return hop, listener
+
+    def probe(self, hop, *, deadline=None, admit=lambda: True, nonce='b'*32):
+        from types import SimpleNamespace
+        from invite_rooms.control.dispatcher import utc_now_ms
+        deadline = deadline if deadline is not None else time.monotonic()+3
+        if hasattr(hop, 'forward_material_probe'):
+            return hop.forward_material_probe(request_id='a'*32, nonce=nonce, deadline=deadline, admit=admit)
+        # Authentic old adapter path, allowing RED on behavior, not a missing API.
+        t1 = utc_now_ms()
+        body = dict(op='material_probe', v=1, operation='material_request',
+                    request_id='a'*32, nonce=nonce, t1_utc_ms=t1)
+        response = hop.forward(ForwardedRequest('POST', '/control/joining', (), json.dumps(body).encode()),
+                               deadline=deadline, admit=admit)
+        json.loads(response.body)
+        return SimpleNamespace(response=response, sent_utc_ms=t1, received_utc_ms=utc_now_ms())
+
+    def test_t1_real_setup_is_before_transmitted_sample(self):
+        import invite_rooms.control.connector as c
+        from invite_rooms.control.dispatcher import utc_now_ms
+        hop, _ = self.connector(); finished=[]
+        original = c.wrap_client
+        def delayed(*args, **kwargs):
+            stream=original(*args, **kwargs); time.sleep(.08); finished.append(utc_now_ms()); return stream
+        with mock.patch.object(c, 'wrap_client', delayed): result=self.probe(hop)
+        self.assertEqual(json.loads(result.response.body)['t1_utc_ms'], result.sent_utc_ms)
+        self.assertGreaterEqual(result.sent_utc_ms, finished[0])
+        self.assertEqual(hop.active, 0)
+
+    def test_t2_complete_receive_sample_precedes_recheck_but_return_follows(self):
+        import invite_rooms.control.connector as c
+        from invite_rooms.control.dispatcher import utc_now_ms
+        hop, _ = self.connector(); received=[]; ended=[]
+        decode=c.decode_response; check=hop._check
+        def decoded(raw):
+            received.append(utc_now_ms()); return decode(raw)
+        def delayed(admit=None):
+            if received:
+                time.sleep(.08); ended.append(utc_now_ms())
+            return check(admit)
+        with mock.patch.object(c, 'decode_response', decoded), mock.patch.object(hop, '_check', delayed):
+            result=self.probe(hop)
+        self.assertLess(result.received_utc_ms, ended[0])
+        self.assertGreaterEqual(utc_now_ms(), ended[0])
+
+    def test_t2_withdrawn_after_complete_receive_never_publishes(self):
+        import invite_rooms.control.connector as c
+        hop, _ = self.connector(); allowed=[True]; decode=c.decode_response
+        def withdrawn(raw):
+            value=decode(raw); time.sleep(.08); allowed[0]=False; return value
+        with mock.patch.object(c, 'decode_response', withdrawn), self.assertRaises(c.UpstreamAmbiguous):
+            self.probe(hop, admit=lambda: allowed[0])
+        self.assertEqual(hop.active, 0)
+
+    def test_t3_inside_window_real_delay_denied_and_nonce_not_replayable(self):
+        from invite_rooms.control.dispatcher import validate_clock_probe, ClockProbeError
+        hop, listener = self.connector(); original=listener._material_probe
+        def delayed(*args):
+            time.sleep(.08); return original(*args)
+        with mock.patch.object(listener, '_material_probe', delayed): result=self.probe(hop)
+        probe=dict(json.loads(result.response.body), t4_utc_ms=result.received_utc_ms)
+        with self.assertRaisesRegex(ClockProbeError, 'probe_uncertain'):
+            validate_clock_probe(probe, endpoint_id=hop.binding.endpoint_id,
+                generation=hop.binding.generation, request_id='a'*32)
+        from invite_rooms.control.firewall import UpstreamAmbiguous
+        with self.assertRaises(UpstreamAmbiguous): self.probe(hop)
+        self.assertEqual(hop.active, 0)
+
+    def test_t4_capacity_shared_with_forward_cleanup_and_no_retry(self):
+        import invite_rooms.control.connector as c
+        hop, listener=self.connector()
+        self.assertTrue(hop._slots.acquire(blocking=False))
+        try:
+            with mock.patch.object(hop.client, 'open_stream', wraps=hop.client.open_stream) as opened:
+                with self.assertRaises(c.UpstreamAmbiguous): self.probe(hop)
+                opened.assert_not_called()
+        finally: hop._slots.release()
+        allowed=[True]; original=hop.admission.authority.admit
+        def withdraw(*args):
+            value=original(*args); allowed[0]=False; return value
+        with mock.patch.object(hop.admission.authority, 'admit', withdraw), self.assertRaises(c.UpstreamAmbiguous):
+            self.probe(hop, admit=lambda: allowed[0])
+        self.assertEqual(hop.active, 0)
+        self.assertTrue(hop._slots.acquire(blocking=False)); hop._slots.release()
+        # Exactly one failed attempt; no material/probe handler reached.
+        self.assertEqual(len(listener._probe_nonces), 0)
+
+    def test_t4_setup_past_single_deadline_has_zero_frames(self):
+        import invite_rooms.control.connector as c
+        hop, listener=self.connector(); original=c.wrap_client
+        def delayed(*args, **kwargs):
+            stream=original(*args, **kwargs); time.sleep(.12); return stream
+        with mock.patch.object(c, 'wrap_client', delayed), self.assertRaises(c.UpstreamAmbiguous):
+            self.probe(hop, deadline=time.monotonic()+.1)
+        self.assertEqual(len(listener._probe_nonces), 0)
+        self.assertEqual(hop.active, 0)
+
+
+    def test_t3_timed_malformed_duplicate_sequence_and_incomplete_refused(self):
+        import invite_rooms.control.connector as c
+        hop, listener=self.connector(); send=listener_module.send_message
+        for index,mode in enumerate(('json','duplicate','sequence','chunks','incomplete')):
+            def broken(frames,raw):
+                if mode=='json': return send(frames,b'{')
+                if mode=='duplicate':
+                    return send(frames,b'{"status":200,"status":200,"headers":[],"body":"e30="}')
+                if mode=='sequence':
+                    frames._next_send=1; return send(frames,raw)
+                frames.send(b'{"chunks":1,"length":100}')
+                if mode=='chunks': frames.send(b'x')
+                # Incomplete: the listener closes its stream without a body.
+            with self.subTest(mode=mode), mock.patch.object(listener_module,'send_message',broken):
+                with self.assertRaises(c.UpstreamAmbiguous): self.probe(hop,nonce=str(index)*32)
+            self.assertEqual(hop.active,0)
+            self.assertTrue(hop._slots.acquire(blocking=False)); hop._slots.release()
+
+    def test_t4_encoding_expiry_and_receive_recheck_expiry_no_result(self):
+        import invite_rooms.control.connector as c
+        hop, listener=self.connector(); encode=c.encode_request
+        def slow(request):
+            value=encode(request); time.sleep(.12); return value
+        # On the original path encoding also precedes the send, but t1 differs.
+        with mock.patch.object(c,'encode_request',slow), self.assertRaises(c.UpstreamAmbiguous):
+            self.probe(hop,deadline=time.monotonic()+.1)
+        self.assertEqual(len(listener._probe_nonces),0)
+        decode=c.decode_response
+        def slow_decode(raw):
+            value=decode(raw); time.sleep(.25); return value
+        with mock.patch.object(c,'decode_response',slow_decode), self.assertRaises(c.UpstreamAmbiguous):
+            self.probe(hop,deadline=time.monotonic()+.2,nonce='c'*32)
+        self.assertEqual(hop.active,0)
+
+    def test_t4_pairack_inherited_probe_denied_before_open(self):
+        import invite_rooms.control.connector as c
+        hop, _=self.connector()
+        pair=object.__new__(c.PairAckConnector); pair.__dict__.update(hop.__dict__)
+        pair.admission=c._PairAckAdmission(pair.binding, hop.admission.authority)
+        with mock.patch.object(pair.client, 'open_stream', side_effect=AssertionError('must not open')) as opened:
+            with self.assertRaises(c.FirewallDenied): self.probe(pair)
+            opened.assert_not_called()
+
+
+    def test_t4_real_inflight_probe_blocks_normal_forward_and_releases_slot(self):
+        import concurrent.futures
+        import threading
+        import invite_rooms.control.connector as c
+        hop, listener=self.connector(); entered=threading.Event(); release=threading.Event()
+        original=listener._material_probe
+        def held(*args):
+            entered.set(); release.wait(2); return original(*args)
+        with mock.patch.object(listener,'_material_probe',held), concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            first=pool.submit(self.probe,hop)
+            try:
+                self.assertTrue(entered.wait(2)); self.assertEqual(hop.active,1)
+                with mock.patch.object(hop.client,'open_stream',wraps=hop.client.open_stream) as opened:
+                    with self.assertRaises(c.UpstreamAmbiguous):
+                        hop.forward(ForwardedRequest('POST','/control/joining',(),b'{}'),deadline=time.monotonic()+1)
+                    opened.assert_not_called()
+            finally: release.set()
+            self.assertEqual(first.result(3).response.status,200)
+        self.assertEqual(hop.active,0)
+        self.assertEqual(self.probe(hop,nonce='d'*32).response.status,200)
+
+    def test_t1_sample_is_also_after_real_durable_admission(self):
+        from invite_rooms.control.dispatcher import utc_now_ms
+        hop,_=self.connector(); finished=[]; original=hop.admission.admit
+        def delayed(operation):
+            original(operation); time.sleep(.08); finished.append(utc_now_ms())
+        with mock.patch.object(hop.admission,'admit',delayed): result=self.probe(hop)
+        self.assertGreaterEqual(result.sent_utc_ms,finished[0])
+
+
 class _JournalConsentSigner:
     """ConsentKey-compatible signer backed by the paired B identity key."""
     def __init__(self, private_key, public_bytes):

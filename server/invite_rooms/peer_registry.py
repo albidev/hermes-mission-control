@@ -31,6 +31,20 @@ class PeerRegistryError(ValueError):
     """Sanitized machine code; never includes paths, input or secrets."""
 
 
+def _scoped_route_url(route, scope, expected_id: str) -> Optional[str]:
+    """Return the exact URL of a validated ScopedRoute, or None (fail closed)."""
+    if (type(route.adapter_id) is not str or route.adapter_id != expected_id
+            or type(route.endpoint_id) is not str or route.endpoint_id != scope.endpoint_id
+            or type(route.pairing_generation) is not int
+            or route.pairing_generation != scope.pairing_generation
+            or type(route.host) is not str or route.host not in ("127.0.0.1", "::1")
+            or type(route.port) is not int or not 1 <= route.port <= 65535):
+        return None
+    authority = f"[{route.host}]" if route.host == "::1" else route.host
+    url = f"http://{authority}:{route.port}/links/{expected_id}"
+    return url if type(route.url) is str and route.url == url else None
+
+
 _TOKEN = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
 _PROFILE = r"[a-z0-9][a-z0-9_-]{0,63}"
 _INSTALL = r"install:[0-9a-f]{32}"
@@ -551,8 +565,14 @@ class PeerRegistry:
         expected_id = adapter_id_for(scope)
         adapter_url = record.get("adapter_url")
         if adapter_url is None:
-            port = self._route_provider(scope) if callable(self._route_provider) else None
-            adapter_url = f"http://127.0.0.1:{port}/links/{expected_id}" if isinstance(port, int) and 1 <= port <= 65535 else None
+            route = self._route_provider(scope) if callable(self._route_provider) else None
+            # Imported lazily: scoped_registry imports MaterialScope from this module.
+            from invite_rooms.control.scoped_registry import ScopedRoute
+            if type(route) is ScopedRoute:
+                adapter_url = _scoped_route_url(route, scope, expected_id)
+            else:  # trusted legacy integer provider: IPv4 loopback only
+                port = route
+                adapter_url = f"http://127.0.0.1:{port}/links/{expected_id}" if isinstance(port, int) and 1 <= port <= 65535 else None
         if not isinstance(adapter_url, str): raise PeerRegistryError("material_channel_unavailable")
         try: _validate_adapter(adapter_url)
         except InviteError: raise PeerRegistryError("invalid_adapter") from None

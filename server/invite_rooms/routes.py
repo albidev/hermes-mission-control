@@ -26,6 +26,7 @@ conventions and the P2 route contract:
 from __future__ import annotations
 
 import asyncio
+import time
 import contextlib
 import json as json_module
 import logging
@@ -315,6 +316,7 @@ async def _run_activation(service: InviteRoomsService, ctx, lobby_id: str, confi
     (P-3), the same derivation the service itself uses for its own
     catch-all, so routes and the service always agree.
     """
+    deadline = time.monotonic() + _ACTIVATE_TIMEOUT_SECONDS
     lobby, early = service.preflight_activate(ctx, lobby_id)
     if early is not None:
         return early
@@ -334,7 +336,8 @@ async def _run_activation(service: InviteRoomsService, ctx, lobby_id: str, confi
         raise ServiceError("native_unavailable") from None
 
     scoped = InviteRoomsService(service.store, service.registry, trusted_owner=ctx, rpc=rpc,
-                                 material_resolver=service._material_resolver)
+                                 material_resolver=service._material_resolver,
+                                 material_coordinator=service._material_coordinator, activation_deadline=deadline)
     result: Optional[dict] = None
     outcome_exc: Optional[BaseException] = None
     try:
@@ -621,7 +624,7 @@ def _pairing_catalog(config, ctx) -> dict:
 
     async def _fetch():
         async with _connect_native_rpc(config.native_rpc) as rpc:
-            result = await rpc("groups.capabilities", {})
+            result = await rpc("groups.capabilities", {"profile": config.profile})
         link = result.get("room_link") if isinstance(result, dict) else None
         if not isinstance(link, dict) or link.get("enabled") is not True or not isinstance(link.get("catalog"), dict):
             raise ServiceError("native_contract_unavailable")
@@ -803,7 +806,8 @@ _PAIRING_ROUTES = (
 )
 
 
-def handle_request(handler, method: str, path: str, params: dict, is_authorized, *, scoped_adapter_registry=None) -> bool:
+def handle_request(handler, method: str, path: str, params: dict, is_authorized, *, scoped_adapter_registry=None,
+                   material_coordinator=None) -> bool:
     """Entry point called from local_telemetry_server's thin dispatch.
 
     Returns False only when ``path`` is not under :data:`PREFIX` at all (the
@@ -836,7 +840,10 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized,
             approval_factory=_guest_approval_factory)
         loaded = (guest, None, None) if guest is not None else None
     else:
-        if scoped_adapter_registry is None:
+        if material_coordinator is not None:
+            loaded = runtime_config.load_service(scoped_adapter_registry=scoped_adapter_registry,
+                                                 material_coordinator=material_coordinator)
+        elif scoped_adapter_registry is None:
             # Preserve the legacy call shape for existing sidecar test fakes
             # and for the feature-off/default path.
             loaded = runtime_config.load_service(material_resolver=_MATERIAL_RESOLVER)

@@ -125,6 +125,8 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
   const [events, setEvents] = useState<GuestLogEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set only when the initial canonical log read is unavailable; later action errors must not set it.
+  const [logUnavailable, setLogUnavailable] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [busy, setBusy] = useState(false);
   const lifecycle = useRef<AbortController | null>(null);
@@ -137,6 +139,7 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
     setBot(null);
     setApprovalsUnsupported(false);
     setError(null);
+    setLogUnavailable(false);
     setHidden(false);
     setTab(defaultGuestTab);
     sequence.current = 0;
@@ -158,7 +161,16 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
       setEvents(mergeGuestEvents([], page.events));
       sequence.current = Math.max(0, ...page.events.map((event) => event.seq));
       setHasMore(page.has_more);
-    }).catch(fail);
+    }).catch((cause) => {
+      if (controller.signal.aborted) return;
+      // The initial host_offline is presented by the import-only note, not as a generic operation error.
+      if (inviteErrorCode(cause) === 'host_offline') {
+        setLogUnavailable(true);
+        if (isInviteUnavailable(cause)) setHidden(true);
+        return;
+      }
+      fail(cause);
+    });
     return () => controller.abort();
   }, [api, room.room_id]);
 
@@ -235,7 +247,14 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
             approvalsUnsupported={approvalsUnsupported} onLeave={() => void leave()} />
         </aside>
         <div className="guest-chat-column">
-          <GuestTranscript events={events} hasMore={hasMore} busy={busy} onLoadMore={() => void loadMore()} owner={room.owner} />
+          {logUnavailable ? (
+            <div className="invite-notice guest-host-unavailable m-4" role="note">
+              <Lock size={16} className="shrink-0" aria-hidden="true" />
+              <p>{t('inviteUi.hostUnavailable')}</p>
+            </div>
+          ) : (
+            <GuestTranscript events={events} hasMore={hasMore} busy={busy} onLoadMore={() => void loadMore()} owner={room.owner} />
+          )}
         </div>
       </div>
     </section>

@@ -1186,6 +1186,33 @@ class AdmissionReceiptStore:
             records = self._read()
         return next((dict(r) for r in records if r.get("idempotency_key") == idempotency_key), None)
 
+    def find_confirmed_run(self, *, scope, generation: int, profile: str, base_url: str,
+                           run_id: str, idempotency_key: str | None = None, deadline=None) -> Optional[dict]:
+        """Read ONE confirmed run in the exact owner scope, never a pending reservation.
+
+        Multiple/conflicting rows for the same run or key are not verification.
+        The existing bounded encrypted format and publication protocol are unchanged.
+        """
+        self._validate_fields(generation=generation, profile=profile, base_url=base_url,
+                              run_id=run_id, idempotency_key=idempotency_key or "lookup",
+                              request_fingerprint="0" * 64)
+        if idempotency_key is not None and not idempotency_key:
+            raise AdmissionReceiptError("invalid_admission_receipt")
+        scope_value = self._validated_scope(scope, generation=generation, profile=profile)
+        with self._transaction(deadline=deadline):
+            records = self._read()
+        candidates = [r for r in records if r["run_id"] == run_id
+                      or (idempotency_key is not None and r["idempotency_key"] == idempotency_key)]
+        if len(candidates) != 1:
+            return None
+        record = candidates[0]
+        if (record["run_id"] != run_id or record["scope"] != scope_value
+                or record["generation"] != generation or record["profile"] != profile
+                or record["base_url"] != base_url
+                or (idempotency_key is not None and record["idempotency_key"] != idempotency_key)):
+            return None
+        return json.loads(canonical(record))
+
     def count(self) -> int:
         with self._transaction():
             return len(self._read())

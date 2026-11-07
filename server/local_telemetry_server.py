@@ -1748,6 +1748,14 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, socket.timeout):
             return
 
+    def _scoped_registry_kwargs(self) -> Dict[str, Any]:
+        """Server-owned scope registry for the invite routes; empty (legacy call shape) when no bundle is enabled."""
+        registry = getattr(getattr(self, "server", None), "scoped_adapter_registry", None)
+        coordinator = getattr(getattr(self, "server", None), "material_coordinator", None)
+        if coordinator is not None:
+            return {"scoped_adapter_registry": registry, "material_coordinator": coordinator}
+        return {} if registry is None else {"scoped_adapter_registry": registry}
+
     def _cors_headers(self) -> Dict[str, str]:
         configured_origin = (os.getenv("MISSION_CONTROL_ALLOWED_ORIGIN") or "").strip()
         request_origin = (self.headers.get("Origin") or "").strip()
@@ -2008,7 +2016,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         if parsed.path == room_invite_routes.PREFIX or parsed.path.startswith(room_invite_routes.PREFIX + "/"):
-            if room_invite_routes.handle_request(self, "GET", parsed.path, params, _is_authorized):
+            if room_invite_routes.handle_request(self, "GET", parsed.path, params, _is_authorized,
+                                                 **self._scoped_registry_kwargs()):
                 return
         if parsed.path.startswith('/api/local/chat/canvas/'):
             # Generic canvas addon GET dispatcher
@@ -2604,7 +2613,8 @@ class Handler(BaseHTTPRequestHandler):
         if self._reject_mutation_in_read_only_mode():
             return
         if parsed.path == room_invite_routes.PREFIX or parsed.path.startswith(room_invite_routes.PREFIX + "/"):
-            if room_invite_routes.handle_request(self, "POST", parsed.path, urllib.parse.parse_qs(parsed.query), _is_authorized):
+            if room_invite_routes.handle_request(self, "POST", parsed.path, urllib.parse.parse_qs(parsed.query),
+                                                 _is_authorized, **self._scoped_registry_kwargs()):
                 return
         if parsed.path == "/api/local/terminal/ticket":
             if not _is_authorized(self):
@@ -3095,7 +3105,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         if parsed.path == room_invite_routes.PREFIX or parsed.path.startswith(room_invite_routes.PREFIX + "/"):
-            if room_invite_routes.handle_request(self, "DELETE", parsed.path, params, _is_authorized):
+            if room_invite_routes.handle_request(self, "DELETE", parsed.path, params, _is_authorized,
+                                                 **self._scoped_registry_kwargs()):
                 return
         if parsed.path.startswith('/api/local/cron/jobs/') and parsed.path.rstrip('/').endswith('/run'):
             if not _is_authorized(self):
@@ -3208,30 +3219,114 @@ def main() -> None:
     start_gateway_watcher()
     terminal_thread = start_terminal_server()
 
-    server = TelemetryHTTPServer((host, port), Handler)
-    # Client handlers must not keep the process alive after the listener is
-    # restarted while a browser/proxy still owns an abandoned connection.
-    server.daemon_threads = True
-    server.block_on_close = False
-    def shutdown(signum: int, _frame: Any) -> None:
-        print(f"[mission-control-local-telemetry] stopping (signal {signum})", flush=True)
-        shutdown_terminal_sessions()
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
-    print(f"[mission-control-local-telemetry] listening on http://{host}:{port}", flush=True)
-    # Joining control channel: config-scoped factory, owned by this sidecar's lifecycle (cleared on exit).
-    # Feature-off/invalid owner config never reaches it: the routes layer returns 404 first.
-    from invite_rooms import runtime_joining as _runtime_joining
-    _runtime_joining.install_joining_wiring()
+    server = None
+    plane = None
+    stop_requested = threading.Event()
+    serving = threading.Event()
+    # Signal handlers run on this main thread. A first request owns at most one helper; subsequent signals cannot
+    # create another, especially after the loop has been abandoned or teardown has begun.
+    loop_state = "startup"
+    shutdown_waiters: list = []
+    cleanup_errors: list = []
+    wiring_installed = False
+    _runtime_joining = None
     try:
-        server.serve_forever()
+        server = TelemetryHTTPServer((host, port), Handler)
+        # Client handlers must not keep the process alive after the listener is
+        # restarted while a browser/proxy still owns an abandoned connection.
+        server.daemon_threads = True
+        server.block_on_close = False
+
+        def shutdown(signum: int, _frame: Any) -> None:
+            if stop_requested.is_set() or loop_state == "teardown":
+                return
+            stop_requested.set()
+            print(f"[mission-control-local-telemetry] stopping (signal {signum})", flush=True)
+            shutdown_terminal_sessions()
+            if loop_state == "committing":
+                waiter = threading.Thread(target=server.shutdown, daemon=True)
+                shutdown_waiters.append(waiter)
+                waiter.start()
+
+        signal.signal(signal.SIGTERM, shutdown)
+        signal.signal(signal.SIGINT, shutdown)
+        # Joining control channel: config-scoped factory, owned by this sidecar's lifecycle (cleared on exit).
+        # Feature-off/invalid owner config never reaches it: the routes layer returns 404 first.
+        from invite_rooms import runtime_joining as _runtime_joining
+        _runtime_joining.install_joining_wiring()
+        wiring_installed = True
+        # Invite-rooms data plane: the canonical owner config is the feature gate.  The COMPLETE bundle is built before
+        # anything is bound; absent/invalid/incomplete config yields no bundle and the telemetry sidecar serves as before.
+        # Imported lazily: all listener construction/start/close logic lives in that module, not here.
+        from invite_rooms import sidecar_data_plane as _data_plane
+        try:
+            plane = _data_plane.build_from_env()
+        except Exception as exc:  # fail closed: a broken owner config must never take the telemetry sidecar down
+            print(f"[mission-control-local-telemetry] invite-rooms data plane disabled ({type(exc).__name__})",
+                  file=sys.stderr, flush=True)
+            plane = None
+        if plane is not None and not stop_requested.is_set():
+            # Bind the data adapter, hand the server-owned registry to Handler via this server instance, then bind
+            # the complete control listener.  Nothing is served until serve_forever below.
+            def attach_material(registry):
+                server.scoped_adapter_registry = registry
+                server.material_coordinator = plane.material_coordinator
+            plane.start(attach=attach_material)
+        loop_state = "committing"
+        serving.set()
+        # A signal that arrived before ``serving`` was set only recorded the request: honour it without serving.  A
+        # signal at any later point already started a shutdown waiter, so the loop MUST be entered for it to return.
+        if not stop_requested.is_set():
+            print(f"[mission-control-local-telemetry] listening on http://{host}:{port}", flush=True)
+        if not stop_requested.is_set() or shutdown_waiters:
+            # A helper created during commitment obligates us to enter, even if the signal precedes loop entry.
+            server.serve_forever()
     finally:
-        _runtime_joining.clear_joining_wiring()
-        shutdown_terminal_sessions()
-        terminal_thread.stop()  # type: ignore[attr-defined]
-        terminal_thread.join(timeout=2)
+        loop_state = "teardown"  # no helper may be created after the serve decision, even during later releases
+        # Every owned cleanup is attempted independently and none can raise out of here: the in-flight (primary)
+        # exception, if any, keeps propagating unchanged.  Failures are collected and surfaced only after all attempts
+        # on a normal shutdown.
+        def attempt(label: str, step: Callable[[], Any]) -> None:
+            try:
+                step()
+            except Exception as exc:
+                cleanup_errors.append(exc)
+                # Diagnostics are fallible IO too: never let a closed stream/pipe replace the primary error or
+                # interrupt the remaining releases. Only the real cleanup failure participates in error ordering.
+                try:
+                    print(f"[mission-control-local-telemetry] {label} cleanup failed ({type(exc).__name__})",
+                          file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+
+        def close_plane() -> None:
+            if server is not None:
+                server.scoped_adapter_registry = None  # type: ignore[attr-defined]
+                server.material_coordinator = None  # type: ignore[attr-defined]
+            plane.close()  # type: ignore[union-attr]
+
+        def join_shutdown_helper(waiter) -> None:
+            if waiter.ident is None:
+                return  # start() failed; never join an unstarted thread
+            waiter.join(timeout=5)
+            if waiter.is_alive():
+                raise RuntimeError("telemetry shutdown helper did not terminate")
+
+        for waiter in shutdown_waiters:
+            attempt("shutdown helper", lambda waiter=waiter: join_shutdown_helper(waiter))
+        if wiring_installed and _runtime_joining is not None:
+            attempt("joining wiring", _runtime_joining.clear_joining_wiring)
+        if plane is not None:
+            attempt("invite-rooms data plane", close_plane)
+        server_close = getattr(server, "server_close", None)
+        if callable(server_close):
+            attempt("telemetry server", server_close)
+        attempt("terminal sessions", shutdown_terminal_sessions)
+        attempt("terminal server stop", terminal_thread.stop)  # type: ignore[attr-defined]
+        attempt("terminal server join", lambda: terminal_thread.join(timeout=2))
+    if cleanup_errors:
+        # Only reached when startup/serving itself finished normally: a cleanup failure is never reported as success.
+        raise cleanup_errors[0]
 
 
 if __name__ == "__main__":

@@ -91,6 +91,7 @@
   "inviteUi.loadMore": "Load next events",
   "inviteUi.guest": "Guest",
   "inviteUi.guestView": "Guest room view",
+  "inviteUi.hostUnavailable": "The host's canonical Room history is unavailable from this guest installation. This view shows guest/import status only, not an empty room.",
   "inviteUi.offline": "{owner} offline since {time}; you are seeing the last version received, not saved on this device.",
   "inviteUi.mock": "Interactive preview",
   "inviteUi.mockPairing": "Pairing",

@@ -18,16 +18,18 @@ import tempfile
 import unittest
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from invite_rooms import routes, runtime_config
 from invite_rooms.control.adapter import LoopbackAdapter
 from invite_rooms.control.connector import LinkBinding, LinkIdentity, TargetConnector
-from invite_rooms.control.scoped_registry import ScopedAdapterRegistry
+from invite_rooms.control.scoped_registry import ScopedAdapterRegistry, ScopedRoute
 from invite_rooms.identity import load_identity
 from invite_rooms.pairing_journal import JournalLinkAuthority
-from invite_rooms.peer_registry import MaterialScope, adapter_id_for
+from invite_rooms.peer_registry import MaterialScope, PeerRegistryError, adapter_id_for
 from room_invite_store import RoomInviteStore
 
 import pairing_support
@@ -90,57 +92,128 @@ class RuntimeWiringTest(unittest.TestCase):
         self.addCleanup(registry.close)
         return registry, adapter
 
-    def test_real_private_loader_installs_concrete_registry_port_provider(self):
+    def _loaded_scope(self, registry):
+        loaded = runtime_config.load_service(self.env, scoped_adapter_registry=registry)
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        service, ctx, config = loaded
+        peer = service.registry.lookup("owner-b")
+        binding = service.registry.binding_for("owner-b")
+        scope = MaterialScope(
+            owner_installation_id=ctx.installation_id,
+            owner_profile=ctx.profile,
+            lobby_id="lobby-" + "1" * 32,
+            planned_room_id="room-" + "2" * 32,
+            member_id="peer-b",
+            invite_id="invite-" + "3" * 32,
+            peer_id="owner-b",
+            pairing_generation=peer.pairing_generation,
+            **binding,
+        )
+        service.registry._receipt_store.admit(scope, {
+            "binding": binding,
+            "catalog": service.registry._peers["owner-b"].catalog,
+            "grant": "fixture-grant",
+        })
+        return service, ctx, config, scope
+
+    @staticmethod
+    def _route_for(scope, *, host="127.0.0.1", port=49123, **over):
+        aid = adapter_id_for(scope)
+        authority = f"[{host}]" if ":" in host else host
+        fields = {
+            "adapter_id": aid, "endpoint_id": scope.endpoint_id,
+            "pairing_generation": scope.pairing_generation, "host": host, "port": port,
+            "url": f"http://{authority}:{port}/links/{aid}",
+        }
+        fields.update(over)
+        return ScopedRoute(**fields)
+
+    def test_real_private_loader_installs_concrete_registry_route_provider(self):
         registry, adapter = self._owned_registry()
-        port = adapter._server.server_address[1]
-        with patch.object(registry, "port_for", return_value=port) as port_for:
-            loaded = runtime_config.load_service(self.env, scoped_adapter_registry=registry)
-            self.assertIsNotNone(loaded)
-            assert loaded is not None
-            service, ctx, config = loaded
-            self.assertEqual(ctx.installation_id, "install:" + "a" * 32)
-            self.assertEqual(ctx.profile, "default")
-            self.assertIsNotNone(config)
-            self.assertTrue(service.registry.material_capability())
-            scope = object()
-            self.assertEqual(service.registry._route_provider(scope), port)
-            port_for.assert_called_once_with(scope)
-            self.assertTrue(adapter.is_running())
+        service, ctx, config, scope = self._loaded_scope(registry)
+        self.assertEqual(ctx.installation_id, "install:" + "a" * 32)
+        self.assertEqual(ctx.profile, "default")
+        self.assertIsNotNone(config)
+        self.assertTrue(service.registry.material_capability())
+        route = self._route_for(scope)
+        with patch.object(registry, "lookup", return_value=route) as lookup:
+            self.assertIs(service.registry._route_provider(scope), route)
+            lookup.assert_called_once_with(scope)
+        self.assertTrue(adapter.is_running())
 
     def test_real_receipt_resolution_uses_exact_scoped_ipv4_link(self):
         registry, adapter = self._owned_registry()
+        service, _ctx, _config, scope = self._loaded_scope(registry)
         port = adapter._server.server_address[1]
-        with patch.object(registry, "port_for", return_value=port):
-            loaded = runtime_config.load_service(self.env, scoped_adapter_registry=registry)
-            self.assertIsNotNone(loaded)
-            assert loaded is not None
-            service, ctx, _config = loaded
-            peer = service.registry.lookup("owner-b")
-            binding = service.registry.binding_for("owner-b")
-            scope = MaterialScope(
-                owner_installation_id=ctx.installation_id,
-                owner_profile=ctx.profile,
-                lobby_id="lobby-" + "1" * 32,
-                planned_room_id="room-" + "2" * 32,
-                member_id="peer-b",
-                invite_id="invite-" + "3" * 32,
-                peer_id="owner-b",
-                pairing_generation=peer.pairing_generation,
-                **binding,
-            )
-            service.registry._receipt_store.admit(scope, {
-                "binding": binding,
-                "catalog": service.registry._peers["owner-b"].catalog,
-                "grant": "fixture-grant",
-            })
+        route = self._route_for(scope, port=port)
+        with patch.object(registry, "lookup", return_value=route):
             material = asyncio.run(service.registry.resolve_scoped_material(scope))
-            self.assertEqual(material.grant, "fixture-grant")
-            self.assertEqual(material.catalog, service.registry._peers["owner-b"].catalog)
-            self.assertEqual(
-                material.adapter_url,
-                f"http://127.0.0.1:{port}/links/{adapter_id_for(scope)}",
-            )
-            self.assertTrue(adapter.is_running())
+        self.assertEqual(material.grant, "fixture-grant")
+        self.assertEqual(material.catalog, service.registry._peers["owner-b"].catalog)
+        self.assertEqual(material.adapter_url, f"http://127.0.0.1:{port}/links/{adapter_id_for(scope)}")
+        self.assertTrue(adapter.is_running())
+
+    def test_receipt_resolution_preserves_ipv6_scoped_route_without_ipv4_substitution(self):
+        registry, _adapter = self._owned_registry()
+        service, _ctx, _config, scope = self._loaded_scope(registry)
+        route = self._route_for(scope, host="::1", port=49124)
+        with patch.object(registry, "lookup", return_value=route), \
+                patch.object(registry, "port_for", return_value=None):
+            material = asyncio.run(service.registry.resolve_scoped_material(scope))
+        self.assertEqual(material.adapter_url, f"http://[::1]:49124/links/{adapter_id_for(scope)}")
+        self.assertNotIn("127.0.0.1", material.adapter_url)
+
+    def test_invalid_scoped_route_descriptor_fails_closed(self):
+        registry, _adapter = self._owned_registry()
+        service, _ctx, _config, scope = self._loaded_scope(registry)
+        aid = adapter_id_for(scope)
+        other = "link-" + "0" * 32
+        valid = self._route_for(scope)
+
+        class RouteSubclass(ScopedRoute):
+            pass
+
+        subclass = RouteSubclass(**vars(valid))
+        lookalike = SimpleNamespace(**vars(valid))
+        bad = [
+            self._route_for(scope, adapter_id=other, url=f"http://127.0.0.1:49123/links/{other}"),
+            replace(valid, adapter_id=1),
+            self._route_for(scope, endpoint_id="other-endpoint"),
+            replace(valid, endpoint_id=None),
+            self._route_for(scope, pairing_generation=scope.pairing_generation + 1),
+            replace(valid, pairing_generation=True),
+            replace(valid, pairing_generation=1.0),
+            self._route_for(scope, host="localhost", url=f"http://localhost:49123/links/{aid}"),
+            self._route_for(scope, host="0.0.0.0", url=f"http://0.0.0.0:49123/links/{aid}"),
+            replace(valid, host=None),
+            self._route_for(scope, port=True, url=f"http://127.0.0.1:1/links/{aid}"),
+            self._route_for(scope, port=0, url=f"http://127.0.0.1:0/links/{aid}"),
+            self._route_for(scope, port=65536, url=f"http://127.0.0.1:65536/links/{aid}"),
+            replace(valid, port="49123"),
+            self._route_for(scope, url=f"http://127.0.0.1:49999/links/{aid}"),
+            self._route_for(scope, url=f"http://[::1]:49123/links/{aid}"),
+            self._route_for(scope, host="::1", url=f"http://127.0.0.1:49123/links/{aid}"),
+            self._route_for(scope, url=f"http://127.0.0.1:49123/links/{aid}/x"),
+            self._route_for(scope, url=f"http://127.0.0.1:49123/links/{aid}?a=1"),
+            self._route_for(scope, url=f"https://127.0.0.1:49123/links/{aid}"),
+            self._route_for(scope, url=f"http://user@127.0.0.1:49123/links/{aid}"),
+            replace(valid, url=None),
+            subclass,
+            lookalike,
+        ]
+        for route in bad + [None, "http://127.0.0.1:49123/links/" + aid, object()]:
+            with self.subTest(route=route), patch.object(registry, "lookup", return_value=route):
+                with self.assertRaises(PeerRegistryError) as refused:
+                    asyncio.run(service.registry.resolve_scoped_material(scope))
+                self.assertEqual(str(refused.exception), "material_channel_unavailable")
+
+    def test_legacy_integer_route_provider_remains_ipv4_only(self):
+        registry, _adapter = self._owned_registry()
+        service, _ctx, _config, scope = self._loaded_scope(registry)
+        service.registry._route_provider = lambda _scope: 49125
+        material = asyncio.run(service.registry.resolve_scoped_material(scope))
+        self.assertEqual(material.adapter_url, f"http://127.0.0.1:49125/links/{adapter_id_for(scope)}")
 
     def test_missing_injection_preserves_fail_closed_capability_and_does_not_use_legacy(self):
         legacy_called = []

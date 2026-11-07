@@ -145,6 +145,14 @@ Hosted rooms live in the gateway's `shared-state.db` — a dedicated file, delib
 
 This gap is upstream, not a Mission Control bug — reported as [hermes-agent#109775](https://github.com/NousResearch/hermes-agent/issues/109775). The migration script is the local repair; if upstream ships one, this becomes a no-op on a healthy install.
 
+## Invite-only guest limitation (import status only)
+
+For invite-only guest rooms, the joining installation shows two separate things: guest/import status (the bot panel, approvals, permissions and membership) and the host's canonical remote Room history. The second is currently unavailable on the guest installation: there is no supported authenticated read path for it, so `GuestRoomView` shows an explicit note instead of a transcript when the log request returns `host_offline`.
+
+- This is **not** an empty-room result. The host may have history the guest cannot read.
+- Local `GroupRoomView` data is **not** the host transcript and is never used as a substitute.
+- No transcript, message copy, or synthetic event IDs are rendered in this state.
+
 ## Failure handling
 
 - `groups.list` returns zero rooms → honest empty state, not a broken UI.

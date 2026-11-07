@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import re
+import time
 from dataclasses import dataclass
 
 from room_invite_store import InviteError, RoomInviteStore, IssuedInvite, _validate_roster
@@ -57,7 +58,7 @@ class InviteRoomsService:
     """The only product API. Trusted owner identity is immutable construction config."""
 
     def __init__(self, store: RoomInviteStore, registry: PeerRegistry, *, trusted_owner: OwnerContext | None = None,
-                 rpc=None, material_resolver=None):
+                 rpc=None, material_resolver=None, material_coordinator=None, activation_deadline=None):
         if not isinstance(store, RoomInviteStore) or not isinstance(registry, PeerRegistry):
             raise ServiceError("invalid_service_dependencies")
         if trusted_owner is None or not isinstance(trusted_owner, OwnerContext):
@@ -71,6 +72,8 @@ class InviteRoomsService:
         self._trusted_owner = trusted_owner
         self._rpc = rpc
         self._material_resolver = material_resolver
+        self._material_coordinator = material_coordinator
+        self._activation_deadline = activation_deadline
 
     def _validate_ctx(self, ctx: OwnerContext) -> None:
         if not isinstance(ctx, OwnerContext) or ctx != self._trusted_owner:
@@ -266,6 +269,7 @@ class InviteRoomsService:
 
     async def activate(self, ctx: OwnerContext, lobby_id: str) -> dict:
         """Explicit side-effect boundary; no native call occurs before durable approvals are pinned."""
+        deadline = self._activation_deadline if self._activation_deadline is not None else time.monotonic() + 9.0
         lobby, early = self.preflight_activate(ctx, lobby_id)
         if early is not None:
             return early
@@ -291,7 +295,14 @@ class InviteRoomsService:
                                   lobby_id=lobby_id, planned_room_id=lobby["planned_room_id"],
                                   member_id=peer["member_id"], invite_id=peer["invite_id"],
                                   peer_id=member["target"]["peer_id"], pairing_generation=peer_record.pairing_generation, **binding)
-            return await self.registry.resolve_scoped_material(scope, self._material_resolver)
+            from invite_rooms.material_receipts import ADMISSION_DEADLINE
+            token = ADMISSION_DEADLINE.set(deadline)
+            try:
+                if self._material_coordinator is not None:
+                    await self._material_coordinator.ensure_material(scope, deadline=deadline, service=self)
+                return await self.registry.resolve_scoped_material(scope, self._material_resolver)
+            finally:
+                ADMISSION_DEADLINE.reset(token)
 
         def _peer_id_for(member_id):
             return next(m["target"]["peer_id"] for m in lobby["roster"] if m.get("member_id") == member_id and "target" in m)

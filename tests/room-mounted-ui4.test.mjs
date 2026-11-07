@@ -102,7 +102,57 @@ try {
       getLog: async () => { throw { problem: { kind: 'error', code: 'host_offline' } }; },
     } });
     assert.equal(button('Approve').disabled, false);
-    assert.match(document.querySelector('[role=alert]').textContent, /host_offline/);
+    const note = document.querySelector('.guest-host-unavailable');
+    assert.ok(note, 'host_offline must show an explicit guest/import status note');
+    assert.match(note.textContent, /canonical Room history is unavailable from this guest installation/);
+    assert.match(note.textContent, /guest\/import status only/);
+    assert.equal(document.querySelector('.guest-transcript'), null, 'host_offline must not mount the empty transcript');
+    assert.equal(document.querySelector('.invite-error'), null, 'host_offline must not render the raw error code');
+  });
+  await test('later host_offline on loadMore keeps the already-loaded canonical event mounted', async () => {
+    let calls = 0;
+    await mount(GuestRoomView, { room, api: {
+      getMyBot: async () => { throw { problem: { kind: 'error', code: 'not_supported' } }; },
+      getLog: async () => {
+        calls += 1;
+        if (calls === 1) return { events: [event], cursor: null, latest_seq: 1, has_more: true };
+        throw { problem: { kind: 'error', code: 'host_offline' } };
+      },
+    } });
+    assert.match(document.body.textContent, /Canonical log survives 501/);
+    await click('Load next events');
+    assert.equal(calls, 2, 'loadMore must issue the second log request');
+    assert.match(document.body.textContent, /Canonical log survives 501/, 'loaded event must stay visible after later host_offline');
+    assert.ok(document.querySelector('.guest-transcript'), 'transcript must stay mounted after later host_offline');
+    assert.equal(document.querySelector('.guest-host-unavailable'), null, 'initial-history-unavailable note must not replace loaded history');
+    assert.match(document.querySelector('.guest-transcript').textContent, /Canonical log survives 501/);
+  });
+  await test('initial host_offline note does not hide a later approval operation error', async () => {
+    await mount(GuestRoomView, { room, api: {
+      getMyBot: async () => ({ status: 'online', approvals: [{ request_id: 'q', title: 'Build' }], permissions: [] }),
+      getLog: async () => { throw { problem: { kind: 'error', code: 'host_offline' } }; },
+      decideApproval: async () => { throw { problem: { kind: 'error', code: 'permission_denied' } }; },
+    } });
+    assert.ok(document.querySelector('.guest-host-unavailable'), 'import-only note must remain');
+    await click('Approve');
+    const alert = document.querySelector('[role=alert]');
+    assert.ok(alert, 'later approval error must render a generic alert while the note is active');
+    assert.match(alert.textContent, /permission_denied/);
+    assert.ok(document.querySelector('.guest-host-unavailable'), 'import-only note must remain after approval error');
+    assert.equal(document.querySelector('.guest-transcript'), null, 'no transcript may be fabricated after host_offline');
+  });
+  await test('initial host_offline note does not hide a later leave operation error', async () => {
+    await mount(GuestRoomView, { room, api: {
+      getMyBot: async () => { throw { problem: { kind: 'error', code: 'not_supported' } }; },
+      getLog: async () => { throw { problem: { kind: 'error', code: 'host_offline' } }; },
+      leaveRoom: async () => { throw { problem: { kind: 'error', code: 'network_error' } }; },
+    } });
+    assert.ok(document.querySelector('.guest-host-unavailable'), 'import-only note must remain');
+    await click('Leave room');
+    const alert = document.querySelector('[role=alert]');
+    assert.ok(alert, 'later leave error must render a generic alert while the note is active');
+    assert.match(alert.textContent, /network_error/);
+    assert.ok(document.querySelector('.guest-host-unavailable'), 'import-only note must remain after leave error');
   });
   await test('active peer list and unpair server notice (journal may be empty)', async () => {
     const notice = 'Does not revoke native grants or stop already admitted runs; remote records may remain stale.';
