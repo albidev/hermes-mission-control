@@ -79,7 +79,7 @@ def _redeem(store: Any, context: Any, request: Any) -> dict:
 
 
 def _scope(result: Any) -> tuple[str, dict]:
-    if not isinstance(result, dict) or set(result) != {"status", "scope"}:
+    if not isinstance(result, dict) or set(result) - {"status", "scope", "grant_ttl_hint_seconds"} or not {"status", "scope"} <= set(result):
         raise _unavailable()
     status, scope = result["status"], result["scope"]
     if status not in _STATUSES or not isinstance(scope, dict) or set(scope) != _SCOPE_KEYS:
@@ -103,7 +103,10 @@ def _status(store: Any, context: Any, request: Any) -> dict:
     result = store.peer_scope_status(request["lobby_id"], request["invite_id"], peer_id=peer_id,
                                      binding=binding, before_return=readmit)
     status, scope = _scope(result)
-    return {"status": status, "scope": scope}
+    response = {"status": status, "scope": scope}
+    if "grant_ttl_hint_seconds" in result and type(result["grant_ttl_hint_seconds"]) is int and 60 <= result["grant_ttl_hint_seconds"] <= 86400:
+        response["grant_ttl_hint_seconds"] = result["grant_ttl_hint_seconds"]
+    return response
 
 
 def _consent(store: Any, context: Any, request: Any) -> dict:

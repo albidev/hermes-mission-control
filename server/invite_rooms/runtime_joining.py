@@ -904,7 +904,9 @@ class JoiningOwner:
         """One authenticated, non-consuming host status read + exact scope validation."""
         response = self.control({"op": "status", "invite_id": record["invite_id"]},
                                 lobby_id=record["lobby_id"])
-        if set(response) != {"status", "scope"}:
+        if (not isinstance(response, dict)
+                or set(response) - {"status", "scope", "grant_ttl_hint_seconds"}
+                or not {"status", "scope"} <= set(response)):
             raise JoiningError("control_unavailable")
         status = response["status"]
         if not isinstance(status, str) or status not in _REMOTE_STATUS:

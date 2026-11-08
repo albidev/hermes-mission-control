@@ -110,6 +110,9 @@ try {
     // The server suite POSTs this same fixture and expects 200, so the two sides cannot drift.
     const fixture = JSON.parse(readFileSync(path.join(process.cwd(), 'tests/fixtures/room-invites/create-lobby.json'), 'utf8'));
     assert.deepEqual(buildCreateLobbyRequest('  Release triage ', 'default', peer), fixture);
+    for (const seconds of [3600, 28800, 86400]) assert.equal(buildCreateLobbyRequest('x', 'default', peer, seconds).grant_ttl_hint_seconds, seconds);
+    assert.equal('grant_ttl_hint_seconds' in buildCreateLobbyRequest('x', 'default', peer, 600), false);
+    for (const value of [601, '3600', true, Number.NaN]) assert.throws(() => buildCreateLobbyRequest('x', 'default', peer, value as never), TypeError);
   });
 
   await runCase('C2 a peer whose profile differs from the owner keeps its profile as handle', async () => {
@@ -151,6 +154,16 @@ try {
     assert.ok(alert, 'an alert is rendered');
     assert.match(alert!.textContent || '', /invalid_roster/);
     assert.ok(document.querySelector('select[aria-label*="paired" i]'), 'the form stays open for another attempt');
+    await flush(() => root.unmount());
+  });
+
+  await runCase('C4c default access duration is static and does not add a radio control', async () => {
+    const api = fakeApi();
+    const { root, render } = mount(React.createElement(RoomInvitePanel, { lobbyId: null, api, initialName: 'Room' }));
+    await render();
+    assert.match(document.body.textContent || '', /Access duration/);
+    assert.match(document.body.textContent || '', /10 min/);
+    assert.equal(document.querySelectorAll('[role="radiogroup"] [role="radio"]').length, 0);
     await flush(() => root.unmount());
   });
 
@@ -196,7 +209,7 @@ try {
     await render();
     await typeInput(document.querySelector('input') as HTMLInputElement, 'Release triage');
     // A fully valid local form, so only the room type keeps the submit from creating it.
-    await click('Add member');
+    await click('Select all');
     assert.equal(document.querySelectorAll('input[type="checkbox"]:checked').length, 2);
     await click('Invite-only');
     const slot = document.querySelector('[data-invite-slot]');
@@ -228,7 +241,7 @@ try {
   });
 } finally {
   await server.close();
-  rmSync(cacheDir, { recursive: true, force: true });
+  rmSync(cacheDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 }
 
 if (failures.length > 0) {

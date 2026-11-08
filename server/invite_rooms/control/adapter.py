@@ -50,10 +50,13 @@ class _Link:
     connector: Callable[..., Any]
     ownership_token: object | None = None
     closed: bool = False
+    original_guard: object = None
 
     def admit(self) -> None:
         if self.closed:
             raise FirewallDenied("link generation changed")
+        if self.original_guard is not None:
+            self.original_guard()
 
     def forward(self, request: Request) -> UpstreamResponse:
         # This check is intentionally adjacent to connector invocation.  A
@@ -91,6 +94,7 @@ class LoopbackAdapter:
         self._lock = threading.RLock()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
+        self.original_frontdoor = None
 
     def start(self, *, host: str = "127.0.0.1", port: int = 0) -> None:
         address = ipaddress.ip_address(host)
@@ -109,6 +113,8 @@ class LoopbackAdapter:
             def do_POST(self): self._forward("POST")
 
             def _forward(self, method: str):
+                if self.path.startswith('/frontdoor'):
+                    self._original(method); return
                 parts = urlsplit(self.path)
                 if parts.query or parts.fragment or not parts.path.startswith("/links/"):
                     self._reply(404, _GENERIC_404); return
@@ -147,6 +153,62 @@ class LoopbackAdapter:
                 except Exception:
                     self._reply(404, _GENERIC_404); return
                 self._reply(result.status, result.body, result.headers)
+
+            def _original(self, method):
+                """Select one original bearer, then reuse the SAME owned firewall/connector."""
+                front = adapter.original_frontdoor
+                if front is None:
+                    self._reply(404, _GENERIC_404); return
+                try:
+                    # Literal origin grammar and bounded framing. Never hide
+                    # duplicate auth/length or transfer-encoding by filtering.
+                    if (len(self.path)>2048 or not self.path.startswith('/frontdoor/')
+                            or any(c in self.path for c in ('?', '#', '%', '\\'))
+                            or '//' in self.path):
+                        raise FirewallDenied('invalid frontdoor path')
+                    pairs = tuple(self.headers.items())
+                    names = [k.lower() for k,v in pairs]
+                    if len(names)!=len(set(names)) or sum(len(k)+len(v) for k,v in pairs)>16384:
+                        raise FirewallDenied('invalid frontdoor headers')
+                    transport = {'host', 'content-length', 'connection', 'user-agent', 'accept-encoding'}
+                    policy = {'authorization', 'accept', 'content-type', 'idempotency-key'}
+                    if any(k.lower() not in transport|policy or '\r' in v or '\n' in v for k,v in pairs):
+                        raise FirewallDenied('invalid frontdoor header')
+                    auth = self.headers.get('Authorization','')
+                    if not auth.startswith('HermesRoom ') or not auth[11:] or len(auth)>4096:
+                        raise FirewallDenied('invalid original authorization')
+                    length_text = self.headers.get('Content-Length','0')
+                    if not length_text.isascii() or not length_text.isdecimal() or len(length_text)>8:
+                        raise FirewallDenied('invalid body framing')
+                    length = int(length_text)
+                    if length>min(adapter.max_body_bytes, 256*1024):
+                        raise FirewallDenied('body exceeds limit')
+                    self.connection.settimeout(5)
+                    body = self.rfile.read(length) if length else b''
+                    if len(body)!=length:raise FirewallDenied('truncated body')
+                    if body:
+                        def unique(pairs):
+                            value={}
+                            for k,v in pairs:
+                                if k in value:raise ValueError('duplicate JSON field')
+                                value[k]=v
+                            return value
+                        json.loads(body, object_pairs_hook=unique,
+                                   parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+                    entry = front.select(auth[11:])
+                    child = self.path[len('/frontdoor'):]
+                    if child == '/v1/room-members/grants/refresh':
+                        self._reply(501,b'{"error":"original-bearer renewal unimplemented"}');return
+                    entry.guard()
+                    request = Request(method,child,tuple((k,v) for k,v in pairs if k.lower() in policy),body)
+                    result = entry.link.firewall.forward(request)
+                except UpstreamAmbiguous:
+                    self._reply(502,_GENERIC_AMBIGUOUS);return
+                except (FirewallDenied, ValueError, OSError):
+                    self._reply(403,_GENERIC_DENIED);return
+                except Exception:
+                    self._reply(403,_GENERIC_DENIED);return
+                self._reply(result.status,result.body,result.headers)
 
             def _reply(self, status: int, body: bytes, headers=()):
                 self.send_response(status)
@@ -200,6 +262,9 @@ class LoopbackAdapter:
                 raise FirewallDenied("link unavailable")
             link = link_ref[0]
             link.admit()
+            if (link.original_guard is not None
+                    and request.path == '/v1/room-members/grants/refresh'):
+                return UpstreamResponse(501, (), b'{"error":{"message":"original-bearer renewal unimplemented","type":"room_error","code":null}}')
             try:
                 result = _invoke(connector, request, link.admit)
                 if inspect.isawaitable(result):
@@ -337,6 +402,21 @@ class LoopbackAdapter:
             host, port = self._server.server_address[:2]
             rendered = f"[{host}]" if ":" in str(host) else str(host)
             return str(host), int(port), f"http://{rendered}:{port}/links/{route_id}"
+
+    def owned_link(self, route_id, ownership_token):
+        with self._lock:
+            link = self._routes.get(route_id)
+            if (link is None or link.closed or self._server is None
+                    or link.ownership_token is not ownership_token):
+                return None
+            return link
+
+    def guard_owned_link(self, link, guard):
+        if not callable(guard):raise ValueError('guard required')
+        with self._lock:
+            if not any(value is link for value in self._routes.values()) or link.closed:
+                raise FirewallDenied('private route changed')
+            link.original_guard = guard
 
     def is_running(self) -> bool:
         """Return whether this adapter still owns a live listener."""

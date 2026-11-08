@@ -233,7 +233,9 @@ class JoiningOwnerService:
         if confirmed is None:
             raise JoiningError("owner_scope_required")
         status = self._call({"op": "status", "invite_id": record["invite_id"]})
-        if set(status) != {"status", "scope"}:
+        if (not isinstance(status, dict)
+                or set(status) - {"status", "scope", "grant_ttl_hint_seconds"}
+                or not {"status", "scope"} <= set(status)):
             raise JoiningError("control_unavailable")
         if status["status"] not in ("consent_required", "ready"):
             raise JoiningError("host_approval_required")

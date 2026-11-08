@@ -30,15 +30,17 @@ _DRAIN_MAX_BYTES = 4 * MAX_RESPONSE
 # inside a run of buffered frames: yield explicitly and check our own deadline.
 _DRAIN_YIELD_EVERY = 16
 # Fixed native Room methods only. Never exposed as a remote control operation.
+# Wire fields follow af5c2014 gateway/session_group_controls.py, not the
+# legacy TUI schema (which still lists caller-owned grant/route IDs).
 _FIELDS = {
     'groups.capabilities': (set(), {'profile'}),
     'groups.state': ({'room_id'}, {'room_id'}),
     'groups.log': ({'room_id'}, {'room_id', 'since_seq', 'limit'}),
     'groups.create': ({'room_id', 'name', 'members'}, {'room_id', 'name', 'members'}),
     'groups.peer.invite': ({'room_id', 'home_install_id', 'authority_gateway_id', 'authority_epoch', 'member_id'},
-                         {'profile', 'room_id', 'home_install_id', 'authority_gateway_id', 'authority_epoch', 'member_id', 'grant_id', 'ttl_seconds'}),
+                         {'profile', 'room_id', 'home_install_id', 'authority_gateway_id', 'authority_epoch', 'member_id', 'ttl_seconds', 'status_ttl_seconds'}),
     'groups.peer.register': ({'room_id', 'member_id', 'target_url', 'target_profile', 'grant', 'catalog'},
-                           {'room_id', 'member_id', 'target_url', 'target_profile', 'grant', 'catalog', 'cancellation_scope_id', 'trace_id'}),
+                           {'room_id', 'member_id', 'target_url', 'target_profile', 'grant', 'catalog'}),
     'groups.peer.revoke': ({'grant'}, {'grant', 'profile'}),
     'groups.send': ({'room_id', 'event_id', 'payload'}, {'room_id', 'event_id', 'payload'}),
     # Owner-explicit orphan reconciliation only (lobby_reconcile): exact room id, nothing else.

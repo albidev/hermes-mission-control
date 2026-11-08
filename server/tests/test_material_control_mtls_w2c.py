@@ -450,7 +450,8 @@ class RealTwoListenerMaterialRoundtrip(unittest.TestCase):
                     message = json.loads(frame.data)
                     native_calls.append(message)
                     now = time.time()
-                    claims = {"room_id": scope.planned_room_id, "home_install_id": scope.owner_installation_id,
+                    self.assertNotIn("grant_id", message["params"])
+                    claims = {"grant_id": "issuer-material-roundtrip", "room_id": scope.planned_room_id, "home_install_id": scope.owner_installation_id,
                               "authority_gateway_id": scope.owner_installation_id, "authority_epoch": 1,
                               "member_id": scope.member_id, "target_install_id": SELF_BINDING["target_install_id"],
                               "target_profile": "default", "issued_at": now, "expires_at": now + 600,
@@ -644,7 +645,6 @@ class RealTwoListenerMaterialRoundtrip(unittest.TestCase):
             "room_id": scope.planned_room_id, "home_install_id": scope.owner_installation_id,
             "authority_gateway_id": scope.owner_installation_id, "authority_epoch": 1,
             "member_id": scope.member_id, "profile": "default",
-            "grant_id": native_calls[0]["params"]["grant_id"],
             "ttl_seconds": native_calls[0]["params"]["ttl_seconds"],
         })
         self.assertEqual(len(native_calls), 1)
@@ -877,7 +877,8 @@ class RealTwoListenerMaterialRoundtrip(unittest.TestCase):
                 async for frame in ws:
                     message = json.loads(frame.data)
                     now = time.time()
-                    claims = {"room_id": params["room_id"], "home_install_id": params["home_install_id"],
+                    self.assertNotIn("grant_id", message["params"])
+                    claims = {"grant_id": "issuer-material-request", "room_id": params["room_id"], "home_install_id": params["home_install_id"],
                               "authority_gateway_id": params["authority_gateway_id"], "authority_epoch": 1,
                               "member_id": params["member_id"], "target_install_id": SELF_BINDING["target_install_id"],
                               "target_profile": "default", "issued_at": now, "expires_at": now + 600,

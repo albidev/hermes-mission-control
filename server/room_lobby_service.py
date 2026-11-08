@@ -41,6 +41,22 @@ class PeerMaterial:
     catalog: dict
     grant: str = field(repr=False)
     adapter_url: str
+    native_target: object = field(default=None, repr=False, compare=False)
+
+
+def _native_target_url(material):
+    """Private /links stays private; only owned typed enrollment selects frontdoor."""
+    _validate_adapter(material.adapter_url)
+    target = material.native_target
+    if target is None:
+        return material.adapter_url
+    from invite_rooms.original_frontdoor import OwnedOriginalTarget
+    if type(target) is not OwnedOriginalTarget:
+        raise InviteError("invalid_adapter")
+    url = target.validate(material)
+    if material.catalog.get("endpoint", {}).get("url") != url:
+        raise InviteError("invalid_adapter")
+    return url
 
 
 def _validate_adapter(url):
@@ -98,6 +114,7 @@ class RoomLobbyService:
             if not isinstance(material, PeerMaterial) or material.binding != expected_binding:
                 raise InviteError("fingerprint_mismatch")
             _validate_adapter(material.adapter_url)
+            _native_target_url(material)
             catalog = material.catalog
             if not full_policy:
                 digest = catalog.get("catalog_digest") if isinstance(catalog, dict) else None
@@ -185,10 +202,8 @@ class RoomLobbyService:
                 try:
                     registered = await self.rpc("groups.peer.register", {
                         "room_id": room["room_id"], "member_id": member_id,
-                        "target_url": material.adapter_url, "target_profile": material.binding["target_profile"],
+                        "target_url": _native_target_url(material), "target_profile": material.binding["target_profile"],
                         "catalog": material.catalog, "grant": material.grant,
-                        "cancellation_scope_id": "cancel-" + room["room_id"],
-                        "trace_id": "trace-" + room["room_id"],
                     })
                 finally:
                     REGISTER_ADMISSION.reset(token)

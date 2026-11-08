@@ -259,7 +259,9 @@ class TargetMaterialSource:
                 _fail()
             validate_material(wire_scope, envelope)
             claims = _claim_payload(envelope["grant"])
-            if claims.get("grant_id") != credential_ref:
+            # credential_ref is the legacy LOCAL journal operation tag, not
+            # the issuer-owned native ID. Signed material binds the bearer.
+            if type(claims.get("grant_id")) is not str or not claims["grant_id"]:
                 _fail()
             unsigned = dict(envelope)
             signature = unsigned.pop("signature")

@@ -42,9 +42,32 @@ from invite_rooms.consent import ConsentKey
 from room_invite_store import InviteError, RoomInviteStore
 
 _CONFIG_ENV = "MISSION_CONTROL_ROOM_INVITES_CONFIG"
-_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing", "target_http", "data_listen"}
+_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing", "target_http", "data_listen", "original_frontdoor_url", "lobby_grant_ttl_extended_presets"}
 _TARGET_HTTP_FIELDS = {"base_url", "profile"}
-_JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id", "identity_dir", "hosts_path", "origins", "control_endpoints"}
+_JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id", "identity_dir", "hosts_path", "origins", "control_endpoints",
+                   "grant_ttl_seconds", "grant_status_ttl_seconds", "grant_ttl_max_seconds"}
+# Core ``_issue_invitation`` bounds (api_server_room_grants): 60 <= ttl <= 86400, ttl <= status_ttl <= 2592000.
+_GRANT_TTL_MIN, _GRANT_TTL_MAX, _GRANT_STATUS_TTL_MAX = 60, 86400, 2592000
+
+
+def _parse_joining_grant_ttls(raw) -> tuple:
+    """Installation-local bearer lifetime knobs; returns ``(ttl, status, max_ttl)`` when unset."""
+    ttl = raw.get("grant_ttl_seconds")
+    status = raw.get("grant_status_ttl_seconds")
+    max_ttl = raw.get("grant_ttl_max_seconds")
+    for key, value in (("grant_ttl_seconds", ttl), ("grant_status_ttl_seconds", status),
+                       ("grant_ttl_max_seconds", max_ttl)):
+        if key in raw and type(value) is not int:
+            raise RuntimeConfigError("invalid_joining")
+    if ttl is not None and not _GRANT_TTL_MIN <= ttl <= _GRANT_TTL_MAX:
+        raise RuntimeConfigError("invalid_joining")
+    if max_ttl is not None and not _GRANT_TTL_MIN <= max_ttl <= _GRANT_TTL_MAX:
+        raise RuntimeConfigError("invalid_joining")
+    if ttl is not None and max_ttl is not None and ttl > max_ttl:
+        raise RuntimeConfigError("invalid_joining")
+    if status is not None and (ttl is None or not ttl <= status <= _GRANT_STATUS_TTL_MAX):
+        raise RuntimeConfigError("invalid_joining")
+    return ttl, status, max_ttl
 _CONTROL_ENDPOINT_FIELDS = {"host", "port"}
 _CONTROL_ENDPOINT_HOSTS = frozenset({"127.0.0.1", "::1"})
 _PAIRING_FIELDS = {"identity_dir", "journal_dir", "peers_path"}
@@ -344,9 +367,14 @@ class RuntimeConfig:
     joining_store_dir: Optional[Path] = None
     joining_host_label: str = "host"
     joining_own_bot_id: Optional[str] = None
+    joining_grant_ttl_seconds: Optional[int] = None
+    joining_grant_status_ttl_seconds: Optional[int] = None
+    joining_grant_ttl_max_seconds: Optional[int] = None
     pairing: Optional["PairingConfig"] = None
     joining_owner: Optional[object] = None
     data_listen: Optional[tuple] = None  # (host, port) owner-private local HTTP LoopbackAdapter bind, or None
+    original_frontdoor_url: Optional[str] = None
+    lobby_grant_ttl_extended_presets: bool = False
 
 
 @dataclass(frozen=True)
@@ -463,6 +491,7 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
         joining_control_endpoints = None
         joining_host_label = "host"
         joining_own_bot_id = None
+        joining_grant_ttl = joining_grant_status_ttl = joining_grant_ttl_max = None
         if joining_raw is not None:
             if not isinstance(joining_raw, dict) or not {"store_dir"} <= set(joining_raw) or set(joining_raw) - _JOINING_FIELDS:
                 raise RuntimeConfigError("invalid_joining")
@@ -475,6 +504,7 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
                 raise RuntimeConfigError("invalid_joining")
             joining_host_label = joining_raw.get("host_label", "host")
             joining_own_bot_id = joining_raw.get("own_bot_id")
+            joining_grant_ttl, joining_grant_status_ttl, joining_grant_ttl_max = _parse_joining_grant_ttls(joining_raw)
             if "control_endpoints" in joining_raw:
                 joining_control_endpoints = parse_control_endpoints(joining_raw["control_endpoints"])
 
@@ -503,11 +533,26 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
             if pairing is None:
                 _warn_once("pairing", "pairing block is invalid; pairing routes are disabled")
         joining_owner_config = data.get("joining")
+        extended_presets = data.get("lobby_grant_ttl_extended_presets", False)
+        if type(extended_presets) is not bool:
+            raise RuntimeConfigError("invalid_lobby_grant_ttl")
+        original_frontdoor_url = data.get("original_frontdoor_url")
+        if "original_frontdoor_url" in data:
+            from invite_rooms.original_frontdoor import validate_frontdoor, FrontdoorDenied
+            try:
+                if validate_frontdoor(original_frontdoor_url) != data_listen:
+                    raise FrontdoorDenied("frontdoor_bind_mismatch")
+            except FrontdoorDenied:
+                raise RuntimeConfigError("invalid_original_frontdoor") from None
         return RuntimeConfig(store_path=store_path, installation_id=installation_id, profile=profile,
                               peer_registry_path=peer_registry_path, native_rpc=native_rpc, target_http=target_http,
                               joining_store_dir=joining_store_dir, joining_host_label=joining_host_label,
-                              joining_own_bot_id=joining_own_bot_id, pairing=pairing, joining_owner=joining_owner_config,
-                              data_listen=data_listen)
+                              joining_own_bot_id=joining_own_bot_id,
+                              joining_grant_ttl_seconds=joining_grant_ttl,
+                              joining_grant_status_ttl_seconds=joining_grant_status_ttl,
+                              joining_grant_ttl_max_seconds=joining_grant_ttl_max, pairing=pairing, joining_owner=joining_owner_config,
+                              data_listen=data_listen, original_frontdoor_url=original_frontdoor_url,
+                              lobby_grant_ttl_extended_presets=extended_presets)
     except RuntimeConfigError:
         _warn_once("values", "config file contains invalid owner identity, store, peer registry or native RPC values")
         return None
@@ -622,6 +667,8 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None, scoped_a
         # a caller-installed builder provider), not erase it.
         if route_provider is not None:
             registry._route_provider = route_provider
+        if material_coordinator is not None:
+            registry._original_frontdoor = material_coordinator._plane.original_frontdoor
         # Receipt admission is enabled only when the owner has supplied the validated pairing
         # configuration.  The journal is authoritative; a JSON-only registry is never a production
         # fallback because it cannot serialize a post-fsync unpair cutover.
@@ -630,7 +677,8 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None, scoped_a
             registry._authority = JournalLinkAuthority(journal)
         ctx = OwnerContext(installation_id=config.installation_id, profile=config.profile)
         service = InviteRoomsService(store, registry, trusted_owner=ctx, material_resolver=material_resolver,
-                                     material_coordinator=material_coordinator)
+                                     material_coordinator=material_coordinator,
+                                     lobby_grant_ttl_extended_presets=config.lobby_grant_ttl_extended_presets)
     except (RuntimeConfigError, InviteError, ServiceError, PeerRegistryError, MaterialReceiptError, sqlite3.Error, OSError):
         # A store that can't be opened (corrupt file, unreadable schema row,
         # locked/foreign file bytes, ...) must behave exactly like any other

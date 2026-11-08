@@ -438,6 +438,8 @@ class PeerRegistry:
         self._route_provider = route_provider
         self._source = source
         self._authority = authority
+        self._verified_originals = {}
+        self._original_frontdoor = None
 
     def material_capability(self) -> bool:
         """Explicit capability seam for activation: a receipt store AND a route provider are installed."""
@@ -578,7 +580,11 @@ class PeerRegistry:
         except InviteError: raise PeerRegistryError("invalid_adapter") from None
         if record.get("binding") != scope.binding or record.get("catalog") != e.catalog or not valid_grant(record.get("grant")):
             raise PeerRegistryError("material_scope_mismatch")
-        return PeerMaterial(binding=scope.binding, catalog=copy.deepcopy(e.catalog), grant=record["grant"], adapter_url=adapter_url)
+        target = None
+        if self._original_frontdoor is not None:
+            target = self._original_frontdoor.target(scope, record["grant"])
+        return PeerMaterial(binding=scope.binding, catalog=copy.deepcopy(e.catalog), grant=record["grant"],
+                            adapter_url=adapter_url, native_target=target)
 
     async def resolve_scoped_material(self, scope: MaterialScope, resolver=None) -> PeerMaterial:
         self._validate_scope(scope)
@@ -663,6 +669,10 @@ class PeerRegistry:
                         map_scope=lambda received, expected: self._assert_envelope_scope(received, expected),
                         guard=lambda: self._require_unchanged(source, version),
                     )
+                    if envelope.get("v") == 2:
+                        # Transient evidence of THIS successful pinned signature
+                        # admission, not permission reconstructed from disk.
+                        self._verified_originals[scope] = (copy.deepcopy(envelope), bytes(consent_key))
         except Exception as exc:
             code = str(exc)
             if code == "unknown_peer":

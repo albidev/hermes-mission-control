@@ -268,7 +268,21 @@ class MaterialCoordinator:
         registry._source = RegistrySource(config.peer_registry_path, runtime_config.build_peer_registry)
         registry._authority = plane.authority
         registry._route_provider = plane.scoped_registry.lookup
+        registry._original_frontdoor = plane.original_frontdoor
         return registry
+
+    def original_registry(self):
+        registry = self.new_registry()
+        registry._frontdoor_release = registry._receipt_store.close
+        return registry
+
+    def original_scope_ready(self, scope):
+        self._host_trust(scope)
+        status = self._plane.store.peer_scope_status(scope.lobby_id, scope.invite_id,
+            peer_id=scope.peer_id, binding=scope.binding,
+            before_return=lambda: self._host_trust(scope) is not None)
+        if status.get('status') != 'ready':
+            _refuse('original_scope_unavailable')
 
     def _host_trust(self, scope):
         trust = self._plane.authority.peer_trust_strict(scope.endpoint_id, scope.pairing_generation,
@@ -384,6 +398,7 @@ class SidecarDataPlane:
     scope_lifecycle: ScopeLifecycle
     host_ack_store: HostAckBindingStore
     material_coordinator: Any = None
+    original_frontdoor: Any = None
     _owned: tuple = ()
     _state: Any = field(default_factory=_Lifecycle, repr=False, compare=False)
 
@@ -439,6 +454,8 @@ class SidecarDataPlane:
         """Best-effort reverse unwind of a partial start; never raises (the caller re-raises the original error)."""
         steps: list = ([self.material_coordinator.close] if self.material_coordinator is not None else [])
         steps.append(self.scope_lifecycle.close)
+        if self.original_frontdoor is not None:
+            steps.insert(0, self.original_frontdoor.close)
         if "control" in started:
             steps.append(self._close_control)
         if "adapter" in started:
@@ -497,6 +514,8 @@ class SidecarDataPlane:
         failures: list = []
         steps = ([self.material_coordinator.close] if self.material_coordinator is not None else [])
         steps.extend((self.scope_lifecycle.close, self.scoped_registry.close, self._close_adapter, self._close_control))
+        if self.original_frontdoor is not None:
+            steps.insert(0, self.original_frontdoor.close)
         for step in steps:
             try:
                 step()
@@ -552,6 +571,10 @@ def _validate_topology(config: RuntimeConfig) -> None:
     """Re-prove the accepted A2b3-1a topology on the object actually handed to the builder (fail closed)."""
     pairing = config.pairing
     joining = config.joining_owner
+    if config.original_frontdoor_url is not None:
+        from invite_rooms.original_frontdoor import validate_frontdoor
+        if validate_frontdoor(config.original_frontdoor_url) != tuple(config.data_listen):
+            _refuse('frontdoor_bind_mismatch')
     joining_control = None
     if isinstance(joining, Mapping) and "control_endpoints" in joining:
         joining_control = runtime_config.parse_control_endpoints(joining["control_endpoints"])
@@ -684,6 +707,12 @@ def _assemble(service, ctx, config, store_parent, opened) -> SidecarDataPlane:
         return True
 
     scope_lifecycle = ScopeLifecycle(prepare=connector_factory, check=check_target)
+    original_frontdoor = None
+    if config.original_frontdoor_url is not None:
+        from invite_rooms.original_frontdoor import OriginalFrontdoor
+        original_frontdoor = OriginalFrontdoor(adapter, scoped_registry, config.original_frontdoor_url,
+            coordinator.original_registry, coordinator.original_scope_ready)
+        opened.append(original_frontdoor.close)
     owned = (scope_lifecycle.close, scoped_registry.close, control_listener.close, adapter.close, *reversed(opened))
     plane = SidecarDataPlane(
         config=config, owner=ctx, owner_service=service, store=service.store, registry=service.registry,
@@ -693,7 +722,8 @@ def _assemble(service, ctx, config, store_parent, opened) -> SidecarDataPlane:
         material_control=material_control, material_handlers=MappingProxyType(dict(material_handlers)),
         target_dispatch_backend_factory=dispatch_factory, data_endpoint_resolver=resolve_endpoint,
         data_endpoint_for_scope=endpoint_for_scope, target_connector_factory=connector_factory,
-        scope_lifecycle=scope_lifecycle, host_ack_store=host_ack_store, material_coordinator=coordinator, _owned=owned)
+        scope_lifecycle=scope_lifecycle, host_ack_store=host_ack_store, material_coordinator=coordinator,
+        original_frontdoor=original_frontdoor, _owned=owned)
     coordinator._plane = plane
     return plane
 
@@ -773,8 +803,10 @@ def _material_control(service, ctx, config, journal, authority, joining_store, c
         status = store.peer_scope_status(lobby_id, invite_id, peer_id=context.peer_id,
                                          binding=context.binding_dict(), before_return=context.readmit)
         scope = status.get("scope") if isinstance(status, dict) else None
-        if (not isinstance(status, dict) or set(status) != {"status", "scope"} or not isinstance(scope, dict)
-                or set(scope) != _SCOPE_KEYS or scope["host_id"] != ctx.installation_id
+        if (not isinstance(status, dict) or set(status) - {"status", "scope", "grant_ttl_hint_seconds"}
+                or not {"status", "scope"} <= set(status) or ("grant_ttl_hint_seconds" in status and
+                (type(status["grant_ttl_hint_seconds"]) is not int or not 60 <= status["grant_ttl_hint_seconds"] <= 86400))
+                or not isinstance(scope, dict) or set(scope) != _SCOPE_KEYS or scope["host_id"] != ctx.installation_id
                 or scope["lobby_id"] != lobby_id or scope["invite_id"] != invite_id
                 or scope["binding"] != context.binding_dict() or scope["binding"].get("endpoint_id") != context.endpoint_id
                 or set(scope["binding"]) != _BINDING_KEYS):
@@ -831,7 +863,10 @@ def _material_control(service, ctx, config, journal, authority, joining_store, c
                                              invite_id=invite_id, deadline=end, admit=context.readmit)
             return TargetMaterialMint(joining_store, consent_key=_IdentityConsentKey(bundle), channel=channel,
                                       rpc=_LazyNativeRpc(config.native_rpc),
-                                      host_peer_id=f"{context.endpoint_id}:{context.generation}")
+                                      host_peer_id=f"{context.endpoint_id}:{context.generation}",
+                                      grant_ttl_seconds=config.joining_grant_ttl_seconds,
+                                      grant_ttl_max_seconds=config.joining_grant_ttl_max_seconds,
+                                      grant_status_ttl_seconds=config.joining_grant_status_ttl_seconds)
         except ControlError:
             raise
         except Exception:

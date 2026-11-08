@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {AlertTriangle, Check, ChevronRight, Loader2, Plus, RefreshCw, Send, ShieldAlert, Trash2, Users, X, XCircle, XOctagon, ChevronDown, EyeOff} from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 import { RoomTranscriptRow } from './RoomTranscriptRow';
@@ -190,7 +190,7 @@ type CreateRoomFormProps = {
   onCreate: (name: string, handles: string[], vaultId: string) => Promise<unknown>;
   initialVault?: string;
   /** Renders the invite-only creation flow; the room-type switch only appears when it is provided. */
-  renderInviteOnly?: (name: string) => React.ReactNode;
+  renderInviteOnly?: (name: string, onBusyChange: (busy: boolean) => void) => React.ReactNode;
 };
 
 export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '', renderInviteOnly }: CreateRoomFormProps) {
@@ -202,6 +202,37 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '',
   const [vaultOptions, setVaultOptions] = useState<MissionControlVaultDescriptor[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const pending = saving || inviteBusy;
+  const savingRef = useRef(false);
+  const [query, setQuery] = useState('');
+  const formRef = useRef<HTMLFormElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const [opener] = useState(() => typeof document === 'undefined' ? null : document.activeElement);
+  const id = useId();
+  // Duplicate rows must not turn Select all into duplicate callback handles.
+  const availableMembers = useMemo(() => [...new Map(members.map((member) => [member.handle, member])).values()], [members]);
+  const filteredMembers = useMemo(() => {
+    const search = query.trim().toLocaleLowerCase();
+    return availableMembers.filter((member) => [member.handle, member.displayName, member.description].some((value) => value?.toLocaleLowerCase().includes(search)));
+  }, [availableMembers, query]);
+  const allSelected = availableMembers.length > 0 && availableMembers.every((member) => selected.includes(member.handle));
+
+  useLayoutEffect(() => {
+    const form = formRef.current;
+    form?.querySelector<HTMLElement>('h3')?.focus({ preventScroll: true });
+    return () => {
+      // Restore only when focus still belongs to this surface, not after a user
+      // has intentionally moved to another drawer control.
+      if (opener instanceof HTMLElement && opener.isConnected && (form?.contains(document.activeElement) || document.activeElement === document.body)) opener.focus({ preventScroll: true });
+    };
+  }, [opener]);
+  useEffect(() => {
+    if (error) {
+      errorRef.current?.focus({ preventScroll: true });
+      errorRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [error]);
 
   useEffect(() => {
     let cancelled = false;
@@ -224,81 +255,117 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '',
   const submit = useCallback(async (event: React.FormEvent) => {
     event.preventDefault();
     // Enter inside the embedded invite-only flow must not create a local room.
-    if (kind === 'invite') return;
+    if (kind === 'invite' || savingRef.current) return;
     if (!name.trim()) { setError(t('rooms.nameRequired')); return; }
-    if (selected.length < 2) { setError(t('rooms.memberRequired')); return; }
+    if (selected.length < 2) { setError(t('rooms.createMemberMinimum')); return; }
+    savingRef.current = true;
     setSaving(true); setError(null);
     try {
       await onCreate(name.trim(), selected, vault);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }, [kind, name, onCreate, selected, t, vault]);
 
+  // Filtering is presentation only: bulk actions always affect the full roster.
   const toggleAll = useCallback(() => {
-    setSelected((current) => current.length === members.length ? [] : members.map((m) => m.handle));
-  }, [members]);
+    setSelected(allSelected ? [] : availableMembers.map((member) => member.handle));
+  }, [allSelected, availableMembers]);
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3 rounded-xl border border-border-subtle bg-surface-raised/40 p-3 sm:p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-text">{t('rooms.createTitle')}</h3>
-        <button type="button" className="chat-control chat-icon-button" onClick={onCancel} aria-label={t('rooms.close')}><X size={16} /></button>
-      </div>
-      {renderInviteOnly ? (
-        <div className="flex flex-col gap-1.5 text-xs text-text-muted">
-          <div role="radiogroup" aria-label={t('rooms.kind')} className="grid grid-cols-2 gap-1 rounded-lg border border-border-subtle bg-surface p-1">
-            {(['local', 'invite'] as const).map((option) => (
-              <button key={option} type="button" role="radio" aria-checked={kind === option} onClick={() => { setKind(option); setError(null); }} className={`rounded-md px-2 py-1.5 text-xs ${kind === option ? 'bg-accent text-white' : 'text-text-muted hover:bg-surface-sunken'}`}>
-                {option === 'local' ? t('rooms.kindLocal') : t('rooms.kindInvite')}
-              </button>
-            ))}
+    <form ref={formRef} onSubmit={submit} role="dialog" className="room-create-form" aria-labelledby={`${id}-title`} aria-busy={pending}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault(); event.stopPropagation();
+          if (!pending) onCancel();
+        }
+        if (event.key === 'Tab') {
+          const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')].filter((node) => node.tabIndex >= 0 && !node.closest('[hidden]'));
+          const first = controls[0], last = controls.at(-1);
+          if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget.querySelector('h3'))) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }
+      }}>
+      <header className="room-create-header">
+        <h3 id={`${id}-title`} tabIndex={-1}>{t('rooms.createTitle')}</h3>
+        <button type="button" className="room-create-close" disabled={pending} onClick={onCancel} aria-label={t('rooms.createClose')}><X size={18} aria-hidden="true" /></button>
+      </header>
+      <div className="room-create-scroll">
+        {renderInviteOnly ? (
+          <div className="room-create-kind">
+            <div role="radiogroup" aria-label={t('rooms.kind')} className="room-create-kind-options">
+              {(['local', 'invite'] as const).map((option) => (
+                <button key={option} type="button" role="radio" disabled={pending} aria-checked={kind === option} tabIndex={kind === option ? 0 : -1}
+                  onClick={() => { setKind(option); setError(null); }}
+                  onKeyDown={(event) => {
+                    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+                    event.preventDefault();
+                    const next = event.key === 'Home' ? 'local' : event.key === 'End' ? 'invite' : kind === 'local' ? 'invite' : 'local';
+                    setKind(next); setError(null);
+                    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button');
+                    buttons?.[next === 'local' ? 0 : 1]?.focus();
+                  }}>
+                  {option === 'local' ? t('rooms.kindLocal') : t('rooms.kindInvite')}
+                </button>
+              ))}
+            </div>
+            <p className="room-create-hint">{kind === 'local' ? t('rooms.kindLocalHint') : t('rooms.kindInviteHint')}</p>
           </div>
-          <span className="text-[11px] text-text-subtle">{kind === 'local' ? t('rooms.kindLocalHint') : t('rooms.kindInviteHint')}</span>
-        </div>
-      ) : null}
-      {renderInviteOnly && kind === 'invite' ? renderInviteOnly(name) : <>
-      <label className="flex flex-col gap-1.5 text-xs text-text-muted">
-        <span>{t('rooms.name')}</span>
-        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={t('rooms.namePlaceholder')} className="mc-input h-9" />
-      </label>
-      <label className="flex flex-col gap-1.5 text-xs text-text-muted">
-        <span>{t('rooms.vault')}</span>
-        <select value={vault} onChange={(event) => setVault(event.target.value)} className="mc-input h-9">
-          {vaultOptions.length === 0 ? <option value="">{t('rooms.vaultDefault')}</option> : null}
-          {vaultOptions.map((item) => (
-            <option key={item.id} value={item.id}>{item.label || item.name || item.id}</option>
-          ))}
-          {vault && !vaultOptions.some((item) => item.id === vault) ? <option value={vault}>{vault}</option> : null}
-        </select>
-        <span className="text-[11px] text-text-subtle">{t('rooms.vaultHint')}</span>
-      </label>
-      <div className="flex flex-col gap-1.5 text-xs text-text-muted">
-        <span>{t('rooms.members')} ({selected.length}/{members.length})</span>
-        <div className="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-lg border border-border-subtle bg-surface p-1.5">
-          <button type="button" onClick={toggleAll} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-accent hover:bg-surface-sunken">
-            {selected.length === members.length && members.length > 0 ? <Check size={13} /> : <Plus size={13} />}{selected.length === members.length && members.length > 0 ? t('rooms.clearFocus') : t('rooms.addMember')}
-          </button>
-          {members.map((member) => {
-            const active = selected.includes(member.handle);
-            return (
-              <label key={member.handle} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-surface-sunken">
-                <input type="checkbox" checked={active} onChange={() => toggle(member.handle)} className="accent-[var(--color-accent)]" />
-                <span className="font-medium text-text">@{member.handle}</span>
-                {member.displayName ? <span className="truncate text-text-muted">{member.displayName}</span> : null}
-                {member.description ? <span className="truncate text-text-subtle">{member.description}</span> : null}
+        ) : null}
+        {renderInviteOnly && kind === 'invite' ? <div className="room-create-invite">{renderInviteOnly(name, setInviteBusy)}</div> : <>
+          <div className="room-create-fields">
+            <label className="room-create-field">
+              <span>{t('rooms.name')}</span>
+              <input disabled={pending} value={name} onChange={(event) => setName(event.target.value)} placeholder={t('rooms.namePlaceholder')} className="mc-input" />
+            </label>
+            <label className="room-create-field room-create-vault">
+              <span>{t('rooms.vault')}</span>
+              <select disabled={pending} value={vault} onChange={(event) => setVault(event.target.value)} className="mc-input" aria-describedby={`${id}-vault-hint`}>
+                {vaultOptions.length === 0 ? <option value="">{t('rooms.vaultDefault')}</option> : null}
+                {vaultOptions.map((item) => <option key={item.id} value={item.id}>{item.label || item.name || item.id}</option>)}
+                {vault && !vaultOptions.some((item) => item.id === vault) ? <option value={vault}>{vault}</option> : null}
+              </select>
+              <span id={`${id}-vault-hint`} className="room-create-hint">{t('rooms.vaultHint')}</span>
+            </label>
+          </div>
+          <fieldset className="room-create-members" aria-describedby={`${id}-member-hint`}>
+            <legend>{t('rooms.members')} <span className="room-create-count" aria-live="polite">({selected.length}/{availableMembers.length})</span></legend>
+            <div className="room-create-member-tools">
+              <label className="room-create-field">
+                <span>{t('rooms.createSearchMembers')}</span>
+                <input type="search" disabled={pending} className="mc-input" value={query} onChange={(event) => setQuery(event.target.value)} />
               </label>
-            );
-          })}
-        </div>
+              <button type="button" onClick={toggleAll} disabled={pending || availableMembers.length === 0} className="room-create-selection">
+                {allSelected ? t('rooms.createClearSelection') : t('rooms.createSelectAll')}
+              </button>
+            </div>
+            <p id={`${id}-member-hint`} className="room-create-hint">{t('rooms.createSelectionHint')}</p>
+            <div className="room-create-member-list">
+              {filteredMembers.map((member) => (
+                <label key={member.handle} className="room-create-member">
+                  <input type="checkbox" disabled={pending} checked={selected.includes(member.handle)} onChange={() => toggle(member.handle)} />
+                  <span className="room-create-member-copy">
+                    <span className="room-create-handle">@{member.handle}</span>
+                    {member.displayName && member.displayName.replace(/^@/, '') !== member.handle ? <span className="room-create-display-name">{member.displayName}</span> : null}
+                    {member.description ? <span className="room-create-description">{member.description}</span> : null}
+                  </span>
+                </label>
+              ))}
+              {filteredMembers.length === 0 ? <p className="room-create-empty" role="status">{availableMembers.length === 0 ? t('rooms.createNoMembers') : t('rooms.createNoMatches')}</p> : null}
+            </div>
+          </fieldset>
+          {error ? <p ref={errorRef} tabIndex={-1} className="room-create-error" role="alert">{error}</p> : null}
+        </>}
       </div>
-      {error ? <p className="text-xs text-negative" role="alert">{error}</p> : null}
-      <button type="submit" disabled={saving} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm text-white disabled:opacity-50">
-        {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}{t('rooms.createSubmit')}
-      </button>
-      </>}
+      {kind === 'local' ? <footer className="room-create-actions">
+        <span className="room-create-hint" role="status">{saving ? t('rooms.createSaving') : selected.length < 2 ? t('rooms.createMemberMinimum') : t('rooms.membersCount', { count: selected.length })}</span>
+        <button type="submit" disabled={saving} className="room-create-submit">
+          {saving ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Plus size={16} aria-hidden="true" />}{t('rooms.createSubmit')}
+        </button>
+      </footer> : null}
     </form>
   );
 }

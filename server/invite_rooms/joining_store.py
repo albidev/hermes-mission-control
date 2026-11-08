@@ -490,9 +490,9 @@ class JoiningStore:
         return row["grant_id"] if row else None
 
     def mint_begin(self, scope_key: str, *, final_admission=None, deadline: float | None = None) -> str:
-        """Durable exclusive intent BEFORE any native call. Returns a fresh
-        grant_id the first time; a scope that already has a journal entry is
-        ambiguous and is never silently retried with a new grant_id."""
+        """Durable exclusive intent BEFORE any native call. Returns a LOCAL
+        operation tag (legacy grant_id column), never a native grant ID.
+        Existing intent stays ambiguous; READY holds the independent bearer."""
         grant_id = "grant-" + _secrets.token_hex(16)
         with self._write(deadline=deadline) as conn:
             if conn.execute("SELECT 1 FROM material WHERE scope_key=?", (scope_key,)).fetchone() is not None:

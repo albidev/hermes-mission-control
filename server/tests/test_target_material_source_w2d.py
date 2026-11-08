@@ -57,9 +57,10 @@ def genuine_source_fixture():
     async def native_with_real_grant(rpc, method, params, **kwargs):
         response = await original_rpc(rpc, method, params, **kwargs)
         if method == "groups.peer.invite":
+            assert "grant_id" not in params  # issuer owns native IDs
             catalog = GatewayRoomCatalog.from_mapping(response["catalog"])
             token = issue_room_grant(
-                native_secret, grant_id=params["grant_id"], room_id=params["room_id"],
+                native_secret, grant_id="issuer-" + secrets.token_hex(16), room_id=params["room_id"],
                 home_install_id=params["home_install_id"],
                 authority_gateway_id=params["authority_gateway_id"],
                 authority_epoch=params["authority_epoch"], member_id=params["member_id"],
@@ -97,7 +98,8 @@ def genuine_source_fixture():
         key = canonical(wire_scope).decode()
         reference = fx["joining_store"].mint_grant_id(key)
         claims = decode_room_grant(native_secret, issued[0], permission="dispatch")
-        assert claims["grant_id"] == reference
+        assert claims["grant_id"] != reference
+        assert claims["grant_id"].startswith("issuer-")
         assert fx["joining_store"].mint_state(key) == "ready"
         source = TargetMaterialSource(
             joining_store=fx["joining_store"], authority=local["authority_b"],
@@ -151,7 +153,7 @@ class TargetMaterialSourceContractTests(unittest.TestCase):
         before = self._controls(fx)
         value = source.load(scope, credential_ref=fx["credential_ref"], deadline=time.monotonic() + 3)
         from gateway.hosted_room_peer import decode_room_grant
-        self.assertEqual(
+        self.assertNotEqual(
             decode_room_grant(fx["native_secret"], fx["grant"], permission="dispatch")["grant_id"],
             fx["credential_ref"],
         )
@@ -488,7 +490,7 @@ class TargetMaterialSourceContractTests(unittest.TestCase):
             self._assert_controls(fx, controls)
             self._positive(fx)
 
-    def test_envelope_signature_and_grant_reference_are_bound(self):
+    def test_envelope_signature_and_local_operation_reference_are_bound(self):
         with genuine_source_fixture() as fx:
             store, source, scope = fx["fx"]["joining_store"], fx["source"], fx["scope"]
             self._positive(fx)
@@ -503,7 +505,11 @@ class TargetMaterialSourceContractTests(unittest.TestCase):
                 grant_id="grant-" + "d" * 32, issued_at=claims["issued_at"],
                 ttl_seconds=claims["expires_at"] - claims["issued_at"],
                 status_expires_at=claims["status_expires_at"])
-            other_raw = self._raw(fx, lambda e: e.__setitem__("grant", other), resign=True)
+            # Native IDs are independent of the local operation reference.
+            # Substituting even a real same-scope bearer without the owner's
+            # envelope signature must still fail. Do not manufacture a new
+            # owner signature and then demand the obsolete ID equality.
+            other_raw = self._raw(fx, lambda e: e.__setitem__("grant", other))
             self.assertNotEqual(decode_room_grant(fx["native_secret"], other, permission="dispatch")["grant_id"],
                                 fx["credential_ref"])
             original_claims = decode_room_grant(fx["native_secret"], fx["grant"], permission="dispatch")
@@ -513,12 +519,21 @@ class TargetMaterialSourceContractTests(unittest.TestCase):
                 {key: value for key, value in original_claims.items() if key != "grant_id"},
                 {key: value for key, value in different_claims.items() if key != "grant_id"},
             )
-            for label, raw in (("signature", badsig), ("grant-reference", other_raw)):
+            for label, raw in (("signature", badsig), ("unsigned-bearer-substitution", other_raw)):
                 with self.subTest(label=label), mock.patch.object(store, "mint_load", return_value=raw):
                     with self.assertRaises(TargetMaterialSourceError):
                         source.load(scope, credential_ref=fx["credential_ref"], deadline=time.monotonic() + 3)
                     self._assert_controls(fx, controls)
                 self._positive(fx)
+
+            # The local lookup/fence remains exact: a native grant ID cannot
+            # be used as a local credential_ref, nor can an arbitrary tag.
+            for wrong_ref in (claims["grant_id"], "grant-" + "e" * 32):
+                with self.subTest(wrong_reference=wrong_ref):
+                    with self.assertRaises(TargetMaterialSourceError):
+                        source.load(scope, credential_ref=wrong_ref, deadline=time.monotonic() + 3)
+                    self._assert_controls(fx, controls)
+            self._positive(fx)
 
     def test_ready_absent_intent_and_decrypt_failure_are_read_only(self):
         with genuine_source_fixture() as fx:

@@ -157,7 +157,9 @@ class MaterialWiringTests(assembly.Base):
                     return {'driver':True,'authority_gateway_id':self.A.installation_id,
                         'room_link':{'enabled':True,'catalog':self.B.catalog}}
                 if method=='groups.peer.invite':
-                    token=issue_room_grant(b'k'*32,grant_id=params['grant_id'],room_id=params['room_id'],
+                    assert 'grant_id' not in params  # canonical Core owns this ID
+                    import secrets
+                    token=issue_room_grant(b'k'*32,grant_id='issuer-'+secrets.token_hex(16),room_id=params['room_id'],
                         home_install_id=params['home_install_id'],authority_gateway_id=params['authority_gateway_id'],
                         authority_epoch=params['authority_epoch'],member_id=params['member_id'],
                         target_install_id=catalog.installation_id,target_profile=params['profile'],

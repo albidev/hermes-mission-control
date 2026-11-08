@@ -62,6 +62,10 @@ CREATE TABLE peer_links(
  lobby_id TEXT NOT NULL REFERENCES lobbies(lobby_id), member_id TEXT NOT NULL,
  state TEXT NOT NULL, PRIMARY KEY(lobby_id,member_id)
 );
+CREATE TABLE lobby_grant_ttl(
+ lobby_id TEXT PRIMARY KEY REFERENCES lobbies(lobby_id),
+ hint_seconds INTEGER NOT NULL CHECK(hint_seconds BETWEEN 60 AND 86400)
+);
 """
 
 
@@ -162,6 +166,7 @@ class RoomInviteStore:
                 raise InviteError("legacy_schema_recovery_required")
             self.read_only = versions[0][0] > 2
             if not self.read_only:
+                conn.execute("CREATE TABLE IF NOT EXISTS lobby_grant_ttl(lobby_id TEXT PRIMARY KEY REFERENCES lobbies(lobby_id), hint_seconds INTEGER NOT NULL CHECK(hint_seconds BETWEEN 60 AND 86400))")
                 self._enable_wal(conn)
 
     @staticmethod
@@ -208,8 +213,10 @@ class RoomInviteStore:
                 conn.rollback()
                 raise
 
-    def create_lobby(self, *, name: str, roster: list[dict]) -> dict:
+    def create_lobby(self, *, name: str, roster: list[dict], grant_ttl_hint_seconds=None) -> dict:
         _validate_roster(name, roster)
+        if grant_ttl_hint_seconds is not None and (type(grant_ttl_hint_seconds) is not int or not 60 <= grant_ttl_hint_seconds <= 86400):
+            raise InviteError("invalid_lobby")
         # Match native display-label semantics BEFORE freezing any spec. IDs are
         # validated literally and are never stripped, case-folded or repaired.
         name, roster = name.strip(), copy.deepcopy(roster)
@@ -221,6 +228,8 @@ class RoomInviteStore:
         with self._write() as conn:
             conn.execute("INSERT INTO lobbies VALUES(?,NULL,?,?,'open',?,NULL,?,?)",
                          (lobby_id, "invite-room-" + uuid.uuid4().hex, name, json.dumps(roster), now, now))
+            if grant_ttl_hint_seconds is not None:
+                conn.execute("INSERT INTO lobby_grant_ttl(lobby_id,hint_seconds) VALUES(?,?)", (lobby_id, grant_ttl_hint_seconds))
         return self.get_lobby(lobby_id)
 
     def get_lobby(self, lobby_id: str) -> dict:
@@ -228,7 +237,19 @@ class RoomInviteStore:
             row = conn.execute("SELECT * FROM lobbies WHERE lobby_id=?", (lobby_id,)).fetchone()
             if row is None:
                 raise InviteError("lobby_unavailable")
-            return {key: value for key, value in dict(row).items() if key not in {"roster_json", "native_spec_json"}} | {"roster": json.loads(row["roster_json"])}
+            result = {key: value for key, value in dict(row).items() if key not in {"roster_json", "native_spec_json"}} | {"roster": json.loads(row["roster_json"])}
+            result["grant_ttl_hint_seconds"] = self.lobby_grant_ttl_hint(lobby_id)
+            return result
+
+    def lobby_grant_ttl_hint(self, lobby_id):
+        with self._connection() as conn:
+            try:
+                row = conn.execute("SELECT hint_seconds FROM lobby_grant_ttl WHERE lobby_id=?", (lobby_id,)).fetchone()
+            except sqlite3.OperationalError as exc:
+                if str(exc) == "no such table: lobby_grant_ttl":
+                    return None
+                raise
+            return None if row is None else row[0]
 
     def issue_invite(self, lobby_id: str, member_id: str, *, invitee_label: str, ttl_seconds=86400) -> IssuedInvite:
         if not _text(invitee_label):
@@ -387,8 +408,12 @@ class RoomInviteStore:
                   "scope": {"host_id": snap["owner"]["installation_id"], "room_id": snap["lobby"]["planned_room_id"],
                             "member_id": snap["invite"]["member_id"], "lobby_id": lobby_id, "invite_id": invite_id,
                             "binding": {key: stored[key] for key in binding}}}
+        hint = self.lobby_grant_ttl_hint(lobby_id)
+        if hint is not None:
+            result["grant_ttl_hint_seconds"] = hint
         self._admit(before_return)
         return result
+
 
     def redeem(self, lobby_id: str, invite_id: str, secret: str, *, binding: dict, peer_id: str | None = None,
                before_effect=None) -> dict:

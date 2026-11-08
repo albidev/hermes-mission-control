@@ -32,7 +32,7 @@ class OwnerContext:
             raise ServiceError("invalid_profile")
 
 
-_LOBBY_VIEW_KEYS = frozenset({"lobby_id", "name", "state", "planned_room_id", "created_at", "updated_at", "roster"})
+_LOBBY_VIEW_KEYS = frozenset({"lobby_id", "name", "state", "planned_room_id", "created_at", "updated_at", "roster", "grant_ttl_hint_seconds"})
 _REDEMPTION_VIEW_KEYS = frozenset({"invite_id", "member_id", "status", "host_decision", "joining_consent"})
 # Durable per-peer binding keys shown to the owner for the exact decision
 # contract ("decision bound to the exact peer/profile/scope and policy
@@ -58,8 +58,10 @@ class InviteRoomsService:
     """The only product API. Trusted owner identity is immutable construction config."""
 
     def __init__(self, store: RoomInviteStore, registry: PeerRegistry, *, trusted_owner: OwnerContext | None = None,
-                 rpc=None, material_resolver=None, material_coordinator=None, activation_deadline=None):
-        if not isinstance(store, RoomInviteStore) or not isinstance(registry, PeerRegistry):
+                 rpc=None, material_resolver=None, material_coordinator=None, activation_deadline=None,
+                 lobby_grant_ttl_extended_presets=False):
+        if (not isinstance(store, RoomInviteStore) or not isinstance(registry, PeerRegistry)
+                or type(lobby_grant_ttl_extended_presets) is not bool):
             raise ServiceError("invalid_service_dependencies")
         if trusted_owner is None or not isinstance(trusted_owner, OwnerContext):
             raise ServiceError("trusted_owner_required")
@@ -74,6 +76,7 @@ class InviteRoomsService:
         self._material_resolver = material_resolver
         self._material_coordinator = material_coordinator
         self._activation_deadline = activation_deadline
+        self._lobby_grant_ttl_extended_presets = lobby_grant_ttl_extended_presets
 
     def _validate_ctx(self, ctx: OwnerContext) -> None:
         if not isinstance(ctx, OwnerContext) or ctx != self._trusted_owner:
@@ -134,13 +137,15 @@ class InviteRoomsService:
         if remote[0]["target"]["installation_id"] == self._trusted_owner.installation_id:
             raise ServiceError("distinct_peer_installation_required")
 
-    def create_lobby(self, ctx: OwnerContext, *, name: str, roster: list[dict]) -> dict:
+    def create_lobby(self, ctx: OwnerContext, *, name: str, roster: list[dict], grant_ttl_hint_seconds=None) -> dict:
         self._validate_ctx(ctx)
+        if grant_ttl_hint_seconds is not None and (type(grant_ttl_hint_seconds) is not int or grant_ttl_hint_seconds not in ({600} | ({3600, 28800, 86400} if self._lobby_grant_ttl_extended_presets else set()))):
+            raise ServiceError("invalid_lobby")
         self._validate_mvp_roster(name, roster)
         self._validate_roster_bindings(roster)
         if not any(isinstance(m, dict) and "target" not in m and m.get("profile") == self._trusted_owner.profile for m in roster):
             raise ServiceError("owner_profile_mismatch")
-        return self._redact_lobby(self.store.create_lobby(name=name, roster=copy.deepcopy(roster)))
+        return self._redact_lobby(self.store.create_lobby(name=name, roster=copy.deepcopy(roster), grant_ttl_hint_seconds=grant_ttl_hint_seconds))
 
     def inspect_lobby(self, ctx: OwnerContext, lobby_id: str) -> dict:
         return self._redact_lobby(self._owned_lobby(ctx, lobby_id))
@@ -334,7 +339,18 @@ class InviteRoomsService:
             binding = copy.deepcopy(material.binding)
 
             def admit():
-                return self.registry.check_admission(peer_id, generation, binding)
+                final = self.registry.check_admission(peer_id, generation, binding)
+                target = material.native_target
+                if target is None:
+                    return final
+                from invite_rooms.original_frontdoor import OwnedOriginalTarget
+                if type(target) is not OwnedOriginalTarget:
+                    raise ServiceError('peer_binding_changed')
+                owned = target.registration_admission(material)
+                def checked():
+                    final()
+                    owned()
+                return checked
             return admit
 
         coordinator = RoomLobbyService(self.store, self._rpc, product_material,

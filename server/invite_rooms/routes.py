@@ -458,11 +458,13 @@ def _h_create_lobby(handler, service, ctx, config, args, params) -> None:
     if not _content_type_is_json(handler):
         handler._json(400, {"error": "bad_request", "code": "invalid_content_type"})
         return
-    body = _read_strict_body(handler, {"name", "roster"})
+    body = _read_strict_body(handler, {"name", "roster", "grant_ttl_hint_seconds"})
     if body is None:
         return
     name, roster_in = body.get("name"), body.get("roster")
-    if not isinstance(name, str) or not isinstance(roster_in, list):
+    hint = body.get("grant_ttl_hint_seconds")
+    if (not isinstance(name, str) or not isinstance(roster_in, list)
+            or ("grant_ttl_hint_seconds" in body and type(hint) is not int)):
         handler._json(400, {"error": "bad_request", "code": "invalid_body"})
         return
     try:
@@ -471,7 +473,7 @@ def _h_create_lobby(handler, service, ctx, config, args, params) -> None:
         handler._json(400, {"error": "bad_request", "code": "invalid_roster"})
         return
     try:
-        view = service.create_lobby(ctx, name=name, roster=roster)
+        view = service.create_lobby(ctx, name=name, roster=roster, grant_ttl_hint_seconds=hint)
     except _KNOWN_ERRORS as exc:
         _respond_error(handler, exc)
         return

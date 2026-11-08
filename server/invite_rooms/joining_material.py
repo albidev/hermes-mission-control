@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import json
 import time
 import os
@@ -40,6 +41,23 @@ class MintAmbiguous(ValueError):
 
 class MaterialError(ValueError):
     """Machine code only: never interpolates remote values or secrets."""
+
+
+_UNSET_HINT = object()
+_GRANT_TTL_HINT = contextvars.ContextVar("grant_ttl_hint", default=_UNSET_HINT)
+
+
+def _status_scope_hint(status: object, scope: dict) -> object:
+    """Validate joiner status; only the unsigned TTL hint is optional."""
+    if (not isinstance(status, dict)
+            or set(status) - {"status", "scope", "grant_ttl_hint_seconds"}
+            or status.get("status") != "ready"
+            or status.get("scope") != scope):
+        raise MaterialError("both_consents_required")
+    hint = status.get("grant_ttl_hint_seconds", _UNSET_HINT)
+    if hint is _UNSET_HINT or type(hint) is not int or not 60 <= hint <= 86400:
+        return None
+    return hint
 
 
 class MintJournal:
@@ -231,7 +249,24 @@ def _store_call(method, *args, deadline=None, **kwargs):
 class TargetMaterialMint:
     """B-local-owner only: never accepts RPC parameters or URLs from a message."""
 
-    def __init__(self, store, *, consent_key, channel, rpc, host_peer_id):
+    def __init__(self, store, *, consent_key, channel, rpc, host_peer_id,
+                 grant_ttl_seconds=None, grant_ttl_max_seconds=None, grant_status_ttl_seconds=None):
+        # Installation-local knob (owner runtime config only). Re-validated here with Core's bounds
+        # (60..86400, ttl <= status <= 2592000); never clamped, never read from a request/peer/scope.
+        if grant_ttl_seconds is not None and (
+                type(grant_ttl_seconds) is not int or not 60 <= grant_ttl_seconds <= 86400):
+            raise MaterialError("invalid_grant_ttl")
+        if grant_status_ttl_seconds is not None and (
+                grant_ttl_seconds is None or type(grant_status_ttl_seconds) is not int
+                or not grant_ttl_seconds <= grant_status_ttl_seconds <= 2592000):
+            raise MaterialError("invalid_grant_ttl")
+        if grant_ttl_max_seconds is not None and (
+                type(grant_ttl_max_seconds) is not int or not 60 <= grant_ttl_max_seconds <= 86400
+                or (grant_ttl_seconds is not None and grant_ttl_seconds > grant_ttl_max_seconds)):
+            raise MaterialError("invalid_grant_ttl")
+        self._grant_ttl_seconds = grant_ttl_seconds
+        self._grant_ttl_max_seconds = grant_ttl_max_seconds
+        self._grant_status_ttl_seconds = grant_status_ttl_seconds
         self._store = store
         self._consent_key = consent_key
         self._channel = channel
@@ -270,11 +305,10 @@ class TargetMaterialMint:
             status = self._channel.call({"op": "status", "invite_id": payload["invite_id"]})
         except Exception:
             raise MaterialError("control_unavailable") from None
-        if status != {"status": "ready", "scope": scope}:
-            raise MaterialError("both_consents_required")
+        _status_scope_hint(status, scope)
         return scope
 
-    async def approved_scope_async(self, payload: dict, *, deadline: float | None = None, peer_context=None) -> dict:
+    async def _approved_scope_with_hint_async(self, payload: dict, *, deadline: float | None = None, peer_context=None) -> tuple[dict, object]:
         """Async counterpart used by the real pinned control channel.
 
         The old synchronous method is retained for the lab adapter; production
@@ -319,8 +353,12 @@ class TargetMaterialMint:
             status = await asyncio.to_thread(self._channel.call, {"op": "status", "invite_id": payload["invite_id"]})
         if deadline is not None and _time.monotonic() >= deadline:
             raise MaterialError("control_unavailable")
-        if status != {"status": "ready", "scope": scope}:
-            raise MaterialError("both_consents_required")
+        hint = _status_scope_hint(status, scope)
+        return scope, hint
+
+    async def approved_scope_async(self, payload: dict, *, deadline: float | None = None, peer_context=None) -> dict:
+        scope, hint = await self._approved_scope_with_hint_async(payload, deadline=deadline, peer_context=peer_context)
+        _GRANT_TTL_HINT.set(hint)
         return scope
 
     async def mint(self, payload: dict, *, deadline: float | None = None, final_admission=None,
@@ -339,7 +377,13 @@ class TargetMaterialMint:
                 raise MaterialError("control_unavailable")
         if deadline is not None and (type(deadline) not in (int, float) or time.monotonic() >= deadline):
             raise MaterialError("control_unavailable")
-        scope = await self.approved_scope_async(payload, deadline=deadline, peer_context=peer_context)
+        hint_token = _GRANT_TTL_HINT.set(_UNSET_HINT)
+        try:
+            scope = await self.approved_scope_async(payload, deadline=deadline, peer_context=peer_context)
+            parsed_hint = _GRANT_TTL_HINT.get()
+
+        finally:
+            _GRANT_TTL_HINT.reset(hint_token)
         if deadline is not None and time.monotonic() >= deadline:
             raise MaterialError("control_unavailable")
         scope_key = canonical(scope).decode()
@@ -353,7 +397,9 @@ class TargetMaterialMint:
                 # 'intent' with no completion left over from a prior crash:
                 # the mint stays blocked, it is never silently retried.
                 raise MintAmbiguous()
-            grant_id = await asyncio.to_thread(_store_call, self._store.mint_begin, scope_key,
+            # Legacy grant_id column is a LOCAL operation tag. Core alone
+            # chooses the native grant ID; persist its opaque bearer below.
+            await asyncio.to_thread(_store_call, self._store.mint_begin, scope_key,
                                                final_admission=final_admission,
                                                deadline=deadline)  # durable exclusive intent BEFORE the call
             try:
@@ -372,12 +418,23 @@ class TargetMaterialMint:
                     native_rpc = binder(invite_admission=final_admission, deadline=deadline)
                     if not callable(native_rpc) or not getattr(native_rpc, "_request_bound_native_rpc", False):
                         raise MaterialError("control_unavailable")
-                result = await native_rpc("groups.peer.invite", {
+                base_ttl = 600 if self._grant_ttl_seconds is None else self._grant_ttl_seconds
+                # Without an explicit maximum, the joiner can only lower its own base lifetime.
+                cap_ttl = (self._grant_ttl_max_seconds if self._grant_ttl_max_seconds is not None
+                           else base_ttl)
+                effective_ttl = (min(parsed_hint, cap_ttl)
+                                 if type(parsed_hint) is int and 60 <= parsed_hint <= 86400
+                                 else min(base_ttl, cap_ttl))
+
+                invite_params = {
                         "profile": binding["target_profile"], "room_id": scope["room_id"],
                         "home_install_id": scope["host_id"], "authority_gateway_id": scope["host_id"],
                         "authority_epoch": 1, "member_id": scope["member_id"],
-                        "grant_id": grant_id, "ttl_seconds": 600,
-                    })
+                        "ttl_seconds": effective_ttl,
+                    }
+                if self._grant_status_ttl_seconds is not None:
+                    invite_params["status_ttl_seconds"] = max(self._grant_status_ttl_seconds, effective_ttl)
+                result = await native_rpc("groups.peer.invite", invite_params)
                 if deadline is not None and time.monotonic() >= deadline:
                     raise MaterialError("control_unavailable")
                 # The native groups.peer.invite contract returns 'endpoint'

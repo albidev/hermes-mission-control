@@ -5,7 +5,7 @@ import { createRoomInviteApi, type RoomInviteApi, type RoomInviteBinding, type R
 import { useRoomInvite } from '../../lib/use-room-invite';
 import { InviteLobbyCreateForm } from './InviteLobbyCreateForm';
 
-type RoomInvitePanelProps = { lobbyId: string | null; accessToken?: string; api?: RoomInviteApi; initialName?: string; embedded?: boolean; onLobbyCreated?: (lobbyId: string) => void; onRoomActivated?: (roomId: string) => void; onClose?: () => void };
+type RoomInvitePanelProps = { lobbyId: string | null; accessToken?: string; api?: RoomInviteApi; initialName?: string; embedded?: boolean; onBusyChange?: (busy: boolean) => void; onLobbyCreated?: (lobbyId: string) => void; onRoomActivated?: (roomId: string) => void; onClose?: () => void };
 
 function stateLabel(value: string, t: (key: string) => string) {
   if (value === 'approved' || value === 'given') return t('rooms.invites.state.approved');
@@ -19,7 +19,7 @@ function persistLobbyId(lobbyId: string) {
   window.history.replaceState(window.history.state, '', url);
 }
 
-export function RoomInvitePanel({ lobbyId, accessToken, api, initialName, embedded, onLobbyCreated, onRoomActivated, onClose }: RoomInvitePanelProps) {
+export function RoomInvitePanel({ lobbyId, accessToken, api, initialName, embedded, onBusyChange, onLobbyCreated, onRoomActivated, onClose }: RoomInvitePanelProps) {
   const { t } = useI18n();
   const [createdLobbyId, setCreatedLobbyId] = useState<string | null>(null);
   const activeLobbyId = lobbyId ?? createdLobbyId;
@@ -31,7 +31,7 @@ export function RoomInvitePanel({ lobbyId, accessToken, api, initialName, embedd
   const [confirmActivate, setConfirmActivate] = useState(false);
   const remoteMembers = useMemo(() => state.lobby?.roster.filter((member) => Boolean(member.target)) ?? [], [state.lobby?.roster]);
 
-  if (!activeLobbyId) return <InviteLobbyCreateForm api={inviteApi} initialName={initialName} embedded={embedded} onCreated={(id) => { persistLobbyId(id); setCreatedLobbyId(id); onLobbyCreated?.(id); }} />;
+  if (!activeLobbyId) return <InviteLobbyCreateForm api={inviteApi} initialName={initialName} embedded={embedded} onBusyChange={onBusyChange} onCreated={(id) => { persistLobbyId(id); setCreatedLobbyId(id); onLobbyCreated?.(id); }} />;
   if (state.status === 'loading' || state.status === 'idle') return <div className="flex items-center gap-2 p-4 text-sm text-text-muted"><Loader2 size={15} className="animate-spin" />{t('rooms.invites.loading')}</div>;
   if (state.status === 'empty') return <div className="rounded-lg border border-border-subtle p-4 text-sm text-text-muted" role="status">{t('rooms.invites.empty')}</div>;
   if (state.status === 'error' && !state.lobby) return <div className="rounded-lg border border-negative/30 bg-negative-subtle p-4 text-sm text-negative" role="alert">{state.error?.kind === 'unavailable' ? t('rooms.invites.unavailable') : `${t('rooms.invites.error')} (${state.error?.code})`} <button type="button" className="ml-2 underline" onClick={() => void state.reload()}>{t('rooms.invites.retry')}</button></div>;

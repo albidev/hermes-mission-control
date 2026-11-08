@@ -365,7 +365,7 @@ class InviteAdmissionTests(unittest.IsolatedAsyncioTestCase):
             await rpc("groups.peer.invite", {"profile": "p", "room_id": "r",
                                               "home_install_id": "h", "authority_gateway_id": "h",
                                               "authority_epoch": 1, "member_id": "m",
-                                              "grant_id": "g", "ttl_seconds": 1})
+                                              "ttl_seconds": 1})
         self.assertEqual(sent, [])
 
 
@@ -398,7 +398,7 @@ class LiveSocketCutoverTests(unittest.IsolatedAsyncioTestCase):
                     pending = asyncio.create_task(rpc("groups.peer.invite", {
                         "room_id": "r", "home_install_id": "h",
                         "authority_gateway_id": "h", "authority_epoch": 1,
-                        "member_id": "m", "grant_id": "g", "ttl_seconds": 1,
+                        "member_id": "m", "ttl_seconds": 1,
                     }))
                     await asyncio.sleep(0)
                     # Cutover occurs while the real client is queued on its lock;

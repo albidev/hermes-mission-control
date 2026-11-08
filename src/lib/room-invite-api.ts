@@ -1,7 +1,7 @@
 import { buildHeaders, localApiUrl } from './hermes-api';
 
 export type RoomInviteErrorKind = 'unavailable' | 'unauthorized' | 'forbidden' | 'not_found' | 'conflict' | 'ambiguous' | 'error';
-export type RoomInviteError = { kind: RoomInviteErrorKind; code: string };
+export type RoomInviteError = { kind: RoomInviteErrorKind; code: string; status?: number };
 export class RoomInviteApiError extends Error {
   readonly problem: RoomInviteError;
   constructor(problem: RoomInviteError) { super(`${problem.kind}:${problem.code}`); this.name = 'RoomInviteApiError'; this.problem = problem; }
@@ -17,7 +17,7 @@ export type RoomInviteBinding = {
 export type RoomInviteTarget = { kind?: string; peer_id: string; installation_id?: string; profile?: string; capability_digest?: string };
 export type RoomInvitePeer = { peer_id: string; installation_id: string; profile: string; capability_digest: string };
 export type RoomInviteMember = { member_id: string; profile: string; handle: string; display_name?: string; target?: RoomInviteTarget };
-export type RoomInviteLobby = { lobby_id: string; name: string; state: string; planned_room_id?: string; created_at?: string; updated_at?: string; roster: RoomInviteMember[] };
+export type RoomInviteLobby = { lobby_id: string; name: string; state: string; planned_room_id?: string; created_at?: string; updated_at?: string; grant_ttl_hint_seconds?: number | null; roster: RoomInviteMember[] };
 export type RoomInvitePeerStatus = {
   member_id: string;
   peer_id?: string | null;
@@ -37,6 +37,7 @@ export type RoomInvitePairing = { peers: RoomInvitePeer[]; owner_profile: string
 export type RoomInviteCreateLobbyRequest = {
   name: string;
   roster: Array<{ member_id: string; handle: string; display_name?: string; target?: { peer_id: string } }>;
+  grant_ttl_hint_seconds?: number;
 };
 
 /**
@@ -45,15 +46,27 @@ export type RoomInviteCreateLobbyRequest = {
  * named by `peer_id` only. Handles must be unique, so a peer whose profile name equals the
  * owner's is addressed by its peer id.
  */
-export function buildCreateLobbyRequest(name: string, ownerProfile: string, peer: RoomInvitePeer): RoomInviteCreateLobbyRequest {
+export function isRoomsExtendedTtlEnabled(): boolean {
+  const env = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
+  return env?.VITE_ROOMS_EXTENDED_TTL === '1';
+}
+
+const EXTENDED_TTL_PRESETS = new Set([3600, 28800, 86400]);
+
+export function buildCreateLobbyRequest(name: string, ownerProfile: string, peer: RoomInvitePeer, grantTtlHintSeconds?: number): RoomInviteCreateLobbyRequest {
+  if (grantTtlHintSeconds !== undefined && grantTtlHintSeconds !== 600 && (typeof grantTtlHintSeconds !== 'number' || !Number.isInteger(grantTtlHintSeconds) || !EXTENDED_TTL_PRESETS.has(grantTtlHintSeconds))) {
+    throw new TypeError('grantTtlHintSeconds must be undefined, 600, 3600, 28800, or 86400');
+  }
   const peerHandle = peer.profile.toLowerCase() === ownerProfile.toLowerCase() ? peer.peer_id : peer.profile;
-  return {
+  const request: RoomInviteCreateLobbyRequest = {
     name: name.trim(),
     roster: [
       { member_id: 'local-owner', handle: ownerProfile },
       { member_id: `peer-${peer.peer_id}`, handle: peerHandle, target: { peer_id: peer.peer_id } },
     ],
   };
+  if (grantTtlHintSeconds !== undefined && grantTtlHintSeconds !== 600) request.grant_ttl_hint_seconds = grantTtlHintSeconds;
+  return request;
 }
 
 export type RoomInviteApi = {
@@ -84,7 +97,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
     const code = typeof body.code === 'string' ? body.code : typeof body.error === 'string' ? body.error : `http_${response.status}`;
-    throw new RoomInviteApiError({ kind: errorKind(response.status, code), code });
+    throw new RoomInviteApiError({ kind: errorKind(response.status, code), code, status: response.status });
   }
   return payload as T;
 }

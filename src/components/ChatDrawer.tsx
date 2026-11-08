@@ -96,6 +96,7 @@ import { compareChatTimelineEntries } from '../lib/chat-timeline';
 import { useGroupRoom } from '../lib/use-group-room';
 import { createGroupGatewayClient, type GroupRoom } from '../lib/group-gateway';
 import { CreateRoomForm, GroupRoomView } from './chat/GroupRoomView';
+import { RoomCreationLayer } from './chat/RoomCreationLayer';
 import { persistRoomVault } from '../lib/hermes-api';
 import { RoomInvitePanel } from './chat/RoomInvitePanel';
 import { useRoomInvitesAvailable } from '../lib/use-room-invites-available';
@@ -2210,8 +2211,8 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
 
   return (
     <>
-      {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
-      <aside ref={drawerRef} className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
+      {open && !creating ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
+      <aside ref={drawerRef} className={`chat-drawer chat-room-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal={creating ? undefined : true} aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
         <div className="chat-drawer-resize-handle" role="separator" aria-orientation="vertical" aria-label={t('chatDrawer.resize')} title={t('chatDrawer.dragToResize')} onMouseDown={startResize} />
         <header className="chat-drawer-head">
           <div className="chat-head-main">
@@ -2250,7 +2251,7 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
               {state.refreshing ? <Loader2 size={16} className="chat-spin chat-header-loader" aria-label={t('rooms.refresh')} /> : null}
               <span className={`chat-led ${state.disbanded || state.serviceUnavailable ? 'is-offline' : state.pendingActions.length > 0 || state.blocked ? 'is-pending' : 'is-online'}`} title={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')} aria-label={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')}><span className="chat-led-dot" /></span>
               <button className="chat-control chat-icon-button" type="button" onClick={() => { if (state.room) { setNameDraft(state.room.name ?? ''); setEditingName(true); } }} title={t('rooms.renameRoom')} aria-label={t('rooms.renameRoom')} disabled={!state.room || state.disbanded}><Pen size={15} /></button>
-              <button className="chat-control chat-icon-button" type="button" onClick={() => setCreating((current) => !current)} title={creating ? t('rooms.close') : t('rooms.create')} aria-label={creating ? t('rooms.close') : t('rooms.create')}>{creating ? <X size={16} /> : <Plus size={16} />}</button>
+              <button className="chat-control chat-icon-button" type="button" onClick={() => { setRoomPickerOpen(false); setCreating(true); }} title={t('rooms.create')} aria-label={t('rooms.create')}><Plus size={16} /></button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title={t('rooms.close')} aria-label={t('rooms.close')}><X size={18} /></button>
             </div>
           </div>
@@ -2279,7 +2280,7 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
             </div>
           ) : null}
         </header>
-        <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} chatLed="none" roomsLed={roomAttention} storedToken={storedToken} enabled={open} onResumeSession={onResumeSession} />
+        <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} chatLed="none" roomsLed={roomAttention} storedToken={storedToken} enabled={open} blocked={creating} onResumeSession={onResumeSession} />
         {invitesAvailable ? (
           <button type="button" className="chat-control mx-3 mt-3 min-h-11 justify-between"
             onClick={() => setReceivedInvitationsOpen(true)}>
@@ -2305,15 +2306,6 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
               <RoomInvitePanel lobbyId={activeLobbyId} accessToken={storedToken} onClose={closeLobby}
                 onRoomActivated={(nextRoomId) => { closeLobby(); void selectRoom(nextRoomId); }} />
             </div>
-          ) : creating ? (
-            <div className="chat-transcript rooms-empty">
-              <CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster}
-                onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer}
-                renderInviteOnly={invitesAvailable ? (name) => (
-                  <RoomInvitePanel lobbyId={null} accessToken={storedToken} initialName={name} embedded
-                    onLobbyCreated={(id) => { setCreating(false); setActiveLobbyId(id); }} />
-                ) : undefined} />
-            </div>
           ) : state.room && canUseRooms ? (
             <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster}
               onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)}
@@ -2334,6 +2326,16 @@ function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, on
             });
           }} />
         </BottomSheet>
+        {open && creating ? (
+          <RoomCreationLayer>
+            <CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster}
+              onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer}
+              renderInviteOnly={invitesAvailable ? (name, onBusyChange) => (
+                <RoomInvitePanel lobbyId={null} accessToken={storedToken} initialName={name} embedded onBusyChange={onBusyChange}
+                  onLobbyCreated={(id) => { setCreating(false); setActiveLobbyId(id); }} />
+              ) : undefined} />
+          </RoomCreationLayer>
+        ) : null}
       </aside>
     </>
   );

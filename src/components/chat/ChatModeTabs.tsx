@@ -95,12 +95,13 @@ interface AutoHideModeTabsProps extends Pick<ChatModeTabsProps, 'active' | 'onSe
   containerRef: RefObject<HTMLElement | null>;
   storedToken: string;
   enabled: boolean;
+  blocked?: boolean;
   currentSessionId?: string | null;
   currentProfile?: string | null;
   onResumeSession?: (session: MissionControlAgentSessionItem) => void;
 }
 
-export function AutoHideModeTabs({ active, onSelect, containerRef, chatLed = 'none', roomsLed = 'none', storedToken, enabled, currentSessionId, currentProfile, onResumeSession }: AutoHideModeTabsProps) {
+export function AutoHideModeTabs({ active, onSelect, containerRef, chatLed = 'none', roomsLed = 'none', storedToken, enabled, blocked = false, currentSessionId, currentProfile, onResumeSession }: AutoHideModeTabsProps) {
   const { t } = useI18n();
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [liveCount, setLiveCount] = useState<number | null>(null);
@@ -110,7 +111,7 @@ export function AutoHideModeTabs({ active, onSelect, containerRef, chatLed = 'no
     setSessionsOpen(false);
     sessionsTriggerRef.current?.focus({ preventScroll: true });
   }, []);
-  useEffect(() => { if (!enabled) setSessionsOpen(false); }, [enabled]);
+  useEffect(() => { if (!enabled || blocked) setSessionsOpen(false); }, [enabled, blocked]);
   useEffect(() => {
     if (!enabled || !onResumeSession) return;
     const controller = new AbortController();
@@ -198,7 +199,7 @@ export function AutoHideModeTabs({ active, onSelect, containerRef, chatLed = 'no
   }, [containerRef]);
 
   return (
-    <div className={`chat-mode-tabs-shell ${hidden && !sessionsOpen ? 'is-hidden' : ''}`} aria-hidden={hidden && !sessionsOpen} inert={hidden && !sessionsOpen ? true : undefined}>
+    <div className={`chat-mode-tabs-shell ${hidden && !sessionsOpen ? 'is-hidden' : ''}`} aria-hidden={blocked || (hidden && !sessionsOpen)} inert={blocked || (hidden && !sessionsOpen) ? true : undefined}>
       <ChatModeTabs active={active} onSelect={(mode) => { setSessionsOpen(false); onSelect(mode); }} chatLed={chatLed} roomsLed={roomsLed} sessionsOpen={sessionsOpen} sessionsLed={activityError ? 'help' : liveCount ? 'done' : 'none'} sessionsTitle={activityError ? t('sessions.unableToLoad') : t('sessionPicker.activeCount', { count: liveCount ?? 0 })} sessionsTriggerRef={sessionsTriggerRef} onToggleSessions={onResumeSession ? () => setSessionsOpen((current) => !current) : undefined} />
       {onResumeSession ? <SessionPicker key={storedToken} open={sessionsOpen && enabled} storedToken={storedToken} currentSessionId={currentSessionId} currentProfile={currentProfile} onClose={closeSessions} onSelect={(session) => { setSessionsOpen(false); onResumeSession(session); }} /> : null}
     </div>

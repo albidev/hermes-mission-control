@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildCreateLobbyRequest,
   createRoomInviteApi,
+  isRoomsExtendedTtlEnabled,
   RoomInviteApiError,
 } from '../src/lib/room-invite-api.ts';
 
@@ -11,6 +13,32 @@ function response(body: unknown, status = 200) {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+test('API parser preserves HTTP status for frontend error classification', async () => {
+  for (const status of [400, 401, 403, 409, 500, 503]) {
+    const api = createRoomInviteApi(undefined, async () => response({ code: 'invalid_lobby' }, status));
+    await assert.rejects(() => api.activate('lobby-1'), (error: unknown) =>
+      error instanceof RoomInviteApiError && error.problem.status === status && error.problem.code === 'invalid_lobby');
+  }
+});
+
+test('buildCreateLobbyRequest validates and serializes access-duration hints', () => {
+  const peer = { peer_id: 'peer-b', installation_id: 'install-b', profile: 'default', capability_digest: 'c'.repeat(64) };
+  assert.equal(isRoomsExtendedTtlEnabled(), false);
+  const base = buildCreateLobbyRequest('  Room  ', 'default', peer);
+  assert.deepEqual(base, {
+    name: 'Room',
+    roster: [
+      { member_id: 'local-owner', handle: 'default' },
+      { member_id: 'peer-peer-b', handle: 'peer-b', target: { peer_id: 'peer-b' } },
+    ],
+  });
+  assert.equal('grant_ttl_hint_seconds' in buildCreateLobbyRequest('x', 'default', peer, undefined), false);
+  for (const seconds of [3600, 28800, 86400]) assert.equal(buildCreateLobbyRequest('x', 'default', peer, seconds).grant_ttl_hint_seconds, seconds);
+  assert.equal('grant_ttl_hint_seconds' in buildCreateLobbyRequest('x', 'default', peer, 600), false);
+  for (const value of [601, '3600', true, Number.NaN] as const) assert.throws(() => buildCreateLobbyRequest('x', 'default', peer, value as never), TypeError);
+});
+
 
 test('room invite API uses canonical method/path/body and owner auth', async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];

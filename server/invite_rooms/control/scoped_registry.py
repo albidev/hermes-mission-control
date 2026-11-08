@@ -355,6 +355,30 @@ class ScopedAdapterRegistry:
                 return None
         return route
 
+    def owned_link(self, scope):
+        """Opaque current ownership, never an authority reconstructed from a URL."""
+        with self._lock:
+            registration = self._entries.get(adapter_id_for(scope))
+            if registration is None or registration.scope != scope or self._route(registration) is None:
+                return None
+            return self._adapter.owned_link(registration.adapter_id, registration.token)
+
+    def owns_link(self, scope, link):
+        return link is not None and self.owned_link(scope) is link
+
+    def ownership_fence(self, scope, link):
+        """Non-I/O final check AFTER a register worker's material validation."""
+        with self._lock:
+            registration = self._entries.get(adapter_id_for(scope))
+            return (not self._closed and registration is not None and registration.scope == scope
+                    and self._adapter.owned_link(registration.adapter_id, registration.token) is link)
+
+    def guard_owned_link(self, scope, link, guard):
+        with self._lock:
+            if not self.owns_link(scope, link):
+                raise ScopedRegistryError("private_route_changed")
+            self._adapter.guard_owned_link(link, guard)
+
     def port_for(self, scope: MaterialScope) -> int | None:
         route = self.lookup(scope)
         return route.port if route is not None and route.is_ipv4_loopback else None

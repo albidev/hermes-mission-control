@@ -553,6 +553,23 @@ class MaterialControl:
                     deadline=effective_deadline)
                 if not consumed:
                     raise ValueError()
+            frontdoor = getattr(registry, '_original_frontdoor', None)
+            if frontdoor is not None:
+                # Only the already authenticated, origin-bound signed receipt
+                # path may enroll. No network token/digest registration API.
+                live = threading.Event()
+                live.set()
+                completed = False
+                try:
+                    await asyncio.to_thread(frontdoor.enroll, registry, scope,
+                        admit=lambda: live.is_set() and time.monotonic() < effective_deadline and context.readmit())
+                    if time.monotonic() >= effective_deadline or not context.readmit():
+                        raise ValueError()
+                    completed = True
+                finally:
+                    live.clear()
+                    if not completed:
+                        frontdoor.retire(scope)
             return _READY.copy()
         except ControlError:
             raise
