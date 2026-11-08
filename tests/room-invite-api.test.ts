@@ -22,6 +22,20 @@ test('API parser preserves HTTP status for frontend error classification', async
   }
 });
 
+test('issueInvite rejects an old sidecar success without invite_url', async () => {
+  const api = createRoomInviteApi(undefined, async () => response({
+    invite_id: 'invite-old',
+    secret: 'old-secret',
+    expires_at: '2030-01-01',
+  }));
+  await assert.rejects(
+    () => api.issueInvite('lobby-1', { member_id: 'peer-1', invitee_label: 'old sidecar' }),
+    (error: unknown) => error instanceof RoomInviteApiError
+      && error.problem.code === 'invite_response_incompatible'
+      && error.problem.status === 200,
+  );
+});
+
 test('buildCreateLobbyRequest validates and serializes access-duration hints', () => {
   const peer = { peer_id: 'peer-b', installation_id: 'install-b', profile: 'default', capability_digest: 'c'.repeat(64) };
   assert.equal(isRoomsExtendedTtlEnabled(), false);
@@ -44,6 +58,12 @@ test('room invite API uses canonical method/path/body and owner auth', async () 
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const api = createRoomInviteApi('owner-token', async (url, init) => {
     calls.push({ url: String(url), init });
+    if (String(url).endsWith('/invites')) return response({
+      invite_id: 'invite-1',
+      secret: 'secret-value',
+      invite_url: 'https://invite.example.test/invite/lobby-1/invite-1#secret-value',
+      expires_at: '2030-01-01',
+    });
     return response({
       lobby: { lobby_id: 'lobby-1', name: 'x', state: 'open', roster: [] },
     });
@@ -148,6 +168,7 @@ test(
         response({
           invite_id: 'invite-1',
           secret: 'one-time-secret',
+          invite_url: 'https://invite.example.test/invite/lobby-1/invite-1#one-time-secret',
           expires_at: '2030-01-01',
         }),
       );
@@ -157,6 +178,7 @@ test(
       });
 
       assert.equal(issued.secret, 'one-time-secret');
+      assert.equal(issued.invite_url, 'https://invite.example.test/invite/lobby-1/invite-1#one-time-secret');
       assert.deepEqual(logs, []);
       assert.deepEqual(stored, []);
       assert.equal(

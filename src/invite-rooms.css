@@ -124,6 +124,25 @@
   .invite-step-content { margin-left: 34px; }
   .invite-mock-content { padding: 32px 24px 48px; }
 }
+.invite-panel {
+  overflow-wrap: anywhere;
+}
+.invite-panel > header,
+.invite-panel > header > div,
+.invite-panel > div,
+.invite-panel li,
+.invite-panel strong,
+.invite-panel dd {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.invite-panel > header { flex: 0 0 auto; }
+.invite-panel .invite-lobby-title { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.invite-panel .chat-icon-button { min-width: 44px; min-height: 44px; }
+.invite-panel .chat-control { min-height: 44px; }
+
 @media (min-width: 1024px) {
   .guest-mobile-tabs { display: none; }
   .guest-room-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); }

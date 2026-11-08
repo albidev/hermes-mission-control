@@ -34,7 +34,20 @@ export function useRoomInvite(lobbyId: string | null, accessToken?: string, apiO
   const mutationControllersRef = useRef(new Set<AbortController>());
   const mountedRef = useRef(true);
   const currentLobbyRef = useRef(lobbyId);
+  const scopeRef = useRef<{ lobbyId: string | null; accessToken?: string; api: RoomInviteApi }>({ lobbyId, accessToken, api });
+  const scopeGenerationRef = useRef(0);
+  const loadedGenerationRef = useRef(-1);
+  // Effects are too late: old lobby material must not remain usable on the
+  // first render after an owner/API scope change.
+  if (scopeRef.current.lobbyId !== lobbyId || scopeRef.current.accessToken !== accessToken || scopeRef.current.api !== api) {
+    loadControllerRef.current?.abort();
+    for (const controller of mutationControllersRef.current) controller.abort();
+    scopeRef.current = { lobbyId, accessToken, api };
+    scopeGenerationRef.current += 1;
+    loadedGenerationRef.current = -1;
+  }
   const load = useCallback(async (id: string) => {
+    const generation = scopeGenerationRef.current;
     loadControllerRef.current?.abort();
     const controller = new AbortController();
     loadControllerRef.current = controller;
@@ -43,16 +56,18 @@ export function useRoomInvite(lobbyId: string | null, accessToken?: string, apiO
     try {
       const lobby = await api.getLobby(id, controller.signal);
       const activation = await api.getActivation(id, controller.signal);
-      if (!mountedRef.current || controller.signal.aborted || currentLobbyRef.current !== id) return;
+      if (!mountedRef.current || controller.signal.aborted || currentLobbyRef.current !== id || scopeGenerationRef.current !== generation) return;
+      loadedGenerationRef.current = generation;
       setActivationNeedsRefresh(false);
       if (lobby.roster.length === 0) setState({ status: 'empty', lobby: null, activation: null, error: null });
       else setState({ status: 'ready', lobby, activation, error: null });
     } catch (error) {
-      if (!mountedRef.current || controller.signal.aborted || currentLobbyRef.current !== id) return;
+      if (!mountedRef.current || controller.signal.aborted || currentLobbyRef.current !== id || scopeGenerationRef.current !== generation) return;
       const problem = asError(error);
+      loadedGenerationRef.current = generation;
       setState({ status: 'error', lobby: null, activation: null, error: problem });
     }
-  }, [api]);
+  }, [api, accessToken]);
 
   useEffect(() => {
     currentLobbyRef.current = lobbyId;
@@ -114,19 +129,20 @@ export function useRoomInvite(lobbyId: string | null, accessToken?: string, apiO
     } catch (error) {
       if (mountedRef.current && currentLobbyRef.current === id) setState((previous) => ({ ...previous, status: 'error', error: asError(error) }));
     }
-  }, [api]);
+  }, [api, accessToken]);
 
   const issueInvite = useCallback(async (input: { member_id: string; invitee_label: string; ttl_seconds?: number }) => {
     const id = currentLobbyRef.current;
+    const generation = scopeGenerationRef.current;
     if (!id) throw new RoomInviteApiError({ kind: 'error', code: 'no_lobby' });
     const controller = new AbortController();
     mutationControllersRef.current.add(controller); setIsMutating(true);
     try {
       const issued = await api.issueInvite(id, input, controller.signal);
-      if (mountedRef.current && currentLobbyRef.current === id) await load(id);
+      if (mountedRef.current && currentLobbyRef.current === id && scopeGenerationRef.current === generation) await load(id);
       return issued;
     } catch (error) {
-      if (!controller.signal.aborted && mountedRef.current && currentLobbyRef.current === id) setState((previous) => ({ ...previous, status: 'error', error: asError(error) }));
+      if (!controller.signal.aborted && mountedRef.current && currentLobbyRef.current === id && scopeGenerationRef.current === generation) setState((previous) => ({ ...previous, status: 'error', error: asError(error) }));
       throw error;
     } finally {
       mutationControllersRef.current.delete(controller); setIsMutating(mutationControllersRef.current.size > 0);
@@ -155,5 +171,8 @@ export function useRoomInvite(lobbyId: string | null, accessToken?: string, apiO
     }
   }, [api, load]);
 
-  return { ...state, reload: () => currentLobbyRef.current ? load(currentLobbyRef.current) : Promise.resolve(), resume: load, issueInvite, revokeInvite, decideHost, activate, refreshActivation, isMutating, activationNeedsRefresh };
+  const scopedState = loadedGenerationRef.current === scopeGenerationRef.current
+    ? state
+    : { status: lobbyId ? 'loading' as const : 'idle' as const, lobby: null, activation: null, error: null };
+  return { ...scopedState, reload: () => currentLobbyRef.current ? load(currentLobbyRef.current) : Promise.resolve(), resume: load, issueInvite, revokeInvite, decideHost, activate, refreshActivation, isMutating, activationNeedsRefresh };
 }

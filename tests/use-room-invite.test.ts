@@ -114,6 +114,7 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     issueInvite: async () => ({
       invite_id: 'invite-1',
       secret: 'secret-value',
+      invite_url: 'https://invite.example.test/invite/lobby-1/invite-1#secret-value',
       expires_at: '2030-01-01',
     }),
     revokeInvite: async () => ({ revoked: true }),
@@ -370,6 +371,7 @@ try {
       issue.resolve({
         invite_id: 'invite-1',
         secret: 'one-time-secret',
+        invite_url: 'https://invite.example.test/invite/lobby-1/invite-1#one-time-secret',
         expires_at: '2030-01-01',
       }),
     );
@@ -846,6 +848,7 @@ try {
       issueInvite: async () => ({
         invite_id: 'invite-new',
         secret: 'new-secret',
+        invite_url: 'https://invite.example.test/invite/lobby-1/invite-new#new-secret',
         expires_at: '2030-01-01',
       }),
     });

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import stat
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -34,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gateway.hosted_room_peer import catalog_mapping  # noqa: E402
 from invite_rooms import routes as room_invite_routes  # noqa: E402
 from invite_rooms import runtime_config  # noqa: E402
+from invite_rooms.invitation import parse_invitation  # noqa: E402
 from invite_rooms.peer_registry import MaterialScope, PeerRegistry, ScopedPeerMaterial  # noqa: E402
 from invite_rooms.service import InviteRoomsService, OwnerContext  # noqa: E402
 from room_invite_store import RoomInviteStore  # noqa: E402
@@ -172,7 +174,7 @@ class RoomInviteRoutesHttpTest(unittest.TestCase):
             else:
                 os.environ[key] = value
 
-    def _write_config(self, *, native_rpc=None, installation_id=INSTALL_A, profile="default") -> None:
+    def _write_config(self, *, native_rpc=None, installation_id=INSTALL_A, profile="default", invitation_origin="https://invite.example.test") -> None:
         payload = {
             "store_path": str(self.store_path),
             "installation_id": installation_id,
@@ -181,6 +183,8 @@ class RoomInviteRoutesHttpTest(unittest.TestCase):
         }
         if native_rpc is not None:
             payload["native_rpc"] = native_rpc
+        if invitation_origin is not None:
+            payload["invitation_origin"] = invitation_origin
         _write_private_file(self.config_path, json.dumps(payload))
 
     def _request(self, method: str, path: str, payload=None, *, token="test-token", origin=None, raw_body=None):
@@ -557,6 +561,64 @@ class LifecycleTests(RoomInviteRoutesHttpTest):
         # The secret never appears again in a later GET.
         status2, data2, _ = self._request("GET", f"/api/local/room-invites/lobbies/{lobby['lobby_id']}")
         self.assertNotIn(data["secret"], json.dumps(data2))
+
+    def test_issue_invite_uses_dedicated_origin_not_cors_origin(self):
+        os.environ["MISSION_CONTROL_ALLOWED_ORIGIN"] = "http://browser.example:5174"
+        self.addCleanup(lambda: os.environ.pop("MISSION_CONTROL_ALLOWED_ORIGIN", None))
+        lobby = self._create_lobby()
+        status, data, _ = self._request("POST", f"/api/local/room-invites/lobbies/{lobby['lobby_id']}/invites", {
+            "member_id": "peer-b", "invitee_label": "B",
+        }, origin="http://browser.example:5174")
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["invite_url"].startswith("https://invite.example.test/invite/"))
+        parsed = parse_invitation(data["invite_url"], origin="https://invite.example.test")
+        self.assertEqual(parsed.invite_id, data["invite_id"])
+        self.assertEqual(parsed.secret, data["secret"])
+
+    def test_missing_dedicated_origin_fails_before_mint(self):
+        self._write_config(invitation_origin=None)
+        lobby = self._create_lobby()
+        status, data, _ = self._request("POST", f"/api/local/room-invites/lobbies/{lobby['lobby_id']}/invites", {
+            "member_id": "peer-b", "invitee_label": "B",
+        })
+        self.assertEqual(status, 503)
+        self.assertEqual(data.get("code"), "invite_origin_unavailable")
+
+    def test_malformed_authority_fails_without_changing_all_invitation_rows(self):
+        lobby = self._create_lobby()
+        status, issued, _ = self._request("POST", f"/api/local/room-invites/lobbies/{lobby['lobby_id']}/invites", {
+            "member_id": "peer-b", "invitee_label": "B",
+        })
+        self.assertEqual(status, 200, issued)
+
+        def snapshot():
+            with sqlite3.connect(self.store_path) as connection:
+                tables = [row[0] for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                )]
+                return {table: connection.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall() for table in tables}
+
+        before = snapshot()
+        invalid_origins = [
+            "https://invite.example.test:abc",
+            "https://invite.example.test:65536",
+            "https://invite.example.test:-1",
+            "https://[::1]:wat",
+            "https://:443",
+            "https://@invite.example.test",
+            "https://invite.example.test:",
+            "https://[gg::1]",
+        ]
+        for origin in invalid_origins:
+            self._write_config(invitation_origin=origin)
+            status, data, _ = self._request("POST", f"/api/local/room-invites/lobbies/{lobby['lobby_id']}/invites", {
+                "member_id": "peer-b", "invitee_label": "should-not-mint",
+            })
+            self.assertEqual(status, 404, origin)
+            self.assertEqual(snapshot(), before, origin)
+
+        self._write_config(invitation_origin="https://invite.example.test")
+        self.assertEqual(parse_invitation(issued["invite_url"], origin="https://invite.example.test").invite_id, issued["invite_id"])
 
     def test_revoke_invite_works(self):
         lobby = self._create_lobby()

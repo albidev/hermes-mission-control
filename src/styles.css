@@ -5001,6 +5001,17 @@ body.modal-open .route-page-scroll {
   aspect-ratio: 1 / 1;
 }
 
+.chat-control.chat-text-action {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: var(--chat-control-size);
+  aspect-ratio: auto;
+  padding: 0.55rem 0.75rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .chat-new-button {
   min-width: 74px;
   padding-inline: 0.8rem;

@@ -50,6 +50,54 @@ class ParsedInvitation:
     secret: str = field(repr=False)
 
 
+def parse_invitation_origin(origin: str) -> str:
+    """Validate the owner-provisioned invitation origin used by both sides."""
+    if not isinstance(origin, str) or not origin:
+        raise InvitationError("invalid_invitation_origin")
+    # urlsplit strips a few ASCII controls before parsing. This value is a wire
+    # prefix, so validate the raw string before accepting the normalized view.
+    if any(ord(ch) < 33 or ord(ch) == 127 for ch in origin):
+        raise InvitationError("invalid_invitation_origin")
+    try:
+        pinned = urlsplit(origin)
+        # This is a raw, owner-provisioned HTTPS authority contract.  Do not
+        # let urlsplit's permissive/normalizing view turn a malformed value
+        # into a mintable origin: userinfo (including empty ``@``), empty
+        # ports, invalid ports, missing hosts and malformed IPv6 are refused.
+        if (pinned.scheme != "https" or not pinned.netloc or pinned.path
+                or pinned.query or pinned.fragment or "@" in pinned.netloc):
+            raise InvitationError("invalid_invitation_origin")
+        if pinned.hostname is None or not pinned.hostname:
+            raise InvitationError("invalid_invitation_origin")
+        authority = pinned.netloc.rsplit("@", 1)[-1]
+        if authority.startswith("["):
+            closing = authority.find("]")
+            if closing < 0:
+                raise InvitationError("invalid_invitation_origin")
+            suffix = authority[closing + 1:]
+            if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+                raise InvitationError("invalid_invitation_origin")
+        elif ":" in authority:
+            host_part, raw_port = authority.rsplit(":", 1)
+            if not host_part or not raw_port.isdigit():
+                raise InvitationError("invalid_invitation_origin")
+        if authority.endswith(":"):
+            raise InvitationError("invalid_invitation_origin")
+        # Accessing .port is intentional: urlsplit defers non-decimal and
+        # out-of-range port validation until this property is read.
+        port = pinned.port
+        if port is not None and not 0 <= port <= 65535:
+            raise InvitationError("invalid_invitation_origin")
+    except (AttributeError, ValueError):
+        raise InvitationError("invalid_invitation_origin") from None
+    return origin
+
+
+def validate_invitation_wire(origin: str, lobby_id: str, invite_id: str, secret: str) -> None:
+    """Preflight the exact consumer grammar and maximum wire length."""
+    parse_invitation(f"{origin}/invite/{lobby_id}/{invite_id}#{secret}", origin=origin)
+
+
 def parse_invitation(text: str, *, origin: str) -> ParsedInvitation:
     """Parse WITHOUT any network/navigation/fetch; never consumes the invitation.
 
@@ -64,15 +112,7 @@ def parse_invitation(text: str, *, origin: str) -> ParsedInvitation:
         raise InvitationError("invalid_invitation")
     if any(ord(ch) < 33 or ord(ch) == 127 for ch in text):
         raise InvitationError("invalid_invitation")
-    if not isinstance(origin, str) or not origin:
-        raise InvitationError("invalid_invitation_origin")
-    try:
-        pinned = urlsplit(origin)
-        if (pinned.scheme != "https" or not pinned.netloc or pinned.username or pinned.password
-                or pinned.path or pinned.query or pinned.fragment):
-            raise InvitationError("invalid_invitation_origin")
-    except ValueError:
-        raise InvitationError("invalid_invitation_origin") from None
+    pinned = urlsplit(parse_invitation_origin(origin))
     try:
         parsed = urlsplit(text)
     except ValueError:

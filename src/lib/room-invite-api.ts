@@ -30,7 +30,7 @@ export type RoomInvitePeerStatus = {
   registered?: boolean;
 };
 export type RoomInviteActivationStatus = { lobby_id: string; lobby_state: string; ready: boolean; peers: RoomInvitePeerStatus[] };
-export type RoomInviteIssue = { invite_id: string; secret: string; expires_at: string };
+export type RoomInviteIssue = { invite_id: string; secret: string; invite_url: string; expires_at: string };
 export type RoomInviteRedemption = { invite_id: string; member_id: string; status: string; host_decision: string; joining_consent: string };
 export type RoomInvitePairing = { peers: RoomInvitePeer[]; owner_profile: string };
 /** Browser-safe lobby body: the server resolves every peer attribute from its own registry. */
@@ -91,7 +91,7 @@ function errorKind(status: number, code: string): RoomInviteErrorKind {
   return 'error';
 }
 
-async function parseResponse<T>(response: Response): Promise<T> {
+async function parseResponse<T>(response: Response, validate?: (payload: unknown) => payload is T): Promise<T> {
   let payload: unknown = null;
   try { payload = await response.json(); } catch { /* preserve a stable local error below */ }
   if (!response.ok) {
@@ -99,7 +99,20 @@ async function parseResponse<T>(response: Response): Promise<T> {
     const code = typeof body.code === 'string' ? body.code : typeof body.error === 'string' ? body.error : `http_${response.status}`;
     throw new RoomInviteApiError({ kind: errorKind(response.status, code), code, status: response.status });
   }
+  if (validate && !validate(payload)) {
+    throw new RoomInviteApiError({ kind: 'error', code: 'invite_response_incompatible', status: response.status });
+  }
   return payload as T;
+}
+
+function isRoomInviteIssue(value: unknown): value is RoomInviteIssue {
+  if (!value || typeof value !== 'object') return false;
+  const issue = value as Record<string, unknown>;
+  return typeof issue.invite_id === 'string'
+    && typeof issue.secret === 'string'
+    && typeof issue.invite_url === 'string'
+    && issue.invite_url.length > 0
+    && typeof issue.expires_at === 'string';
 }
 
 function roomInviteUrl(path: string): string {
@@ -117,7 +130,10 @@ export function createRoomInviteApi(accessToken?: string, fetcher: typeof fetch 
     listPairedPeers: async (signal) => (await request<{ peers: RoomInvitePeer[] }>('/paired-peers', { method: 'GET' }, signal)).peers,
     getPairing: (signal) => request<RoomInvitePairing>('/paired-peers', { method: 'GET' }, signal),
     createLobby: async (input, signal) => (await request<{ lobby: RoomInviteLobby }>('/lobbies', { method: 'POST', body: JSON.stringify(input) }, signal)).lobby,
-    issueInvite: (id, input, signal) => request<RoomInviteIssue>(`/lobbies/${encodeURIComponent(id)}/invites`, { method: 'POST', body: JSON.stringify(input) }, signal),
+    issueInvite: (id, input, signal) => request<unknown>(`/lobbies/${encodeURIComponent(id)}/invites`, { method: 'POST', body: JSON.stringify(input) }, signal).then((value) => {
+      if (!isRoomInviteIssue(value)) throw new RoomInviteApiError({ kind: 'error', code: 'invite_response_incompatible', status: 200 });
+      return value;
+    }),
     revokeInvite: (id, invite, signal) => request<{ revoked: boolean }>(`/lobbies/${encodeURIComponent(id)}/invites/${encodeURIComponent(invite)}/revoke`, { method: 'POST', body: '{}' }, signal),
     decideHost: async (id, invite, input, signal) => (await request<{ redemption: RoomInviteRedemption }>(`/lobbies/${encodeURIComponent(id)}/invites/${encodeURIComponent(invite)}/decision`, { method: 'POST', body: JSON.stringify(input) }, signal)).redemption,
     getActivation: (id, signal) => request<RoomInviteActivationStatus>(`/lobbies/${encodeURIComponent(id)}/activation`, { method: 'GET' }, signal),

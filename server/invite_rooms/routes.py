@@ -34,11 +34,13 @@ import os
 import re
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 from invite_rooms import runtime_config
 from invite_rooms import pairing_codec
 from invite_rooms.pairing_journal import E_BUSY, JournalError
 from invite_rooms.pairing_service import PairingError, PairingService, PeerAckInvalid
+from invite_rooms.invitation import InvitationError, validate_invitation_wire
 from invite_rooms.peer_registry import PeerRegistryError
 from invite_rooms.service import InviteRoomsService, ServiceError, _valid_expected_binding
 from invite_rooms.guest import GuestRoomService, GuestServiceError
@@ -124,7 +126,7 @@ _CONFLICT_CODES = {
 _UNAVAILABLE_CODES = {
     "activation_unavailable", "creation_ambiguous", "registration_ambiguous",
     "native_peer_unconfirmed", "native_contract_unavailable", "activation_failed",
-    "material_channel_unavailable", "native_unavailable",
+    "material_channel_unavailable", "native_unavailable", "invite_origin_unavailable",
 }
 _FORBIDDEN_CODES = {"authority_mismatch"}
 
@@ -504,13 +506,34 @@ def _h_issue_invite(handler, service, ctx, config, args, params) -> None:
             or type(ttl_seconds) not in (int, float) or isinstance(ttl_seconds, bool)):
         handler._json(400, {"error": "bad_request", "code": "invalid_body"})
         return
+    # Do not mint one-time material that the recipient cannot consume. The
+    # origin is a server-side deployment setting, not window.location or body input.
+    origin = config.invitation_origin
+    if origin is None:
+        handler._json(503, {"error": "unavailable", "code": "invite_origin_unavailable"})
+        return
+    # UUID/token sizes are fixed by the store. Validate a representative final
+    # wire value before issue_invite: that call revokes the previous open invite
+    # and must never be reached for a URL the joiner cannot consume.
+    try:
+        validate_invitation_wire(
+            origin,
+            lobby_id,
+            "invite-" + "0" * 32,
+            "A" * 43,
+        )
+    except InvitationError:
+        handler._json(503, {"error": "unavailable", "code": "invite_origin_invalid"})
+        return
     try:
         issued = service.issue_invite(ctx, lobby_id, member_id, invitee_label=invitee_label, ttl_seconds=ttl_seconds)
     except _KNOWN_ERRORS as exc:
         _respond_error(handler, exc)
         return
     # The secret is returned ONLY here; _json already sets Cache-Control: no-store.
-    handler._json(200, {"invite_id": issued.invite_id, "secret": issued.secret, "expires_at": issued.expires_at})
+    invite_url = f"{origin}/invite/{lobby_id}/{issued.invite_id}#{issued.secret}"
+    handler._json(200, {"invite_id": issued.invite_id, "secret": issued.secret,
+                        "invite_url": invite_url, "expires_at": issued.expires_at})
 
 
 def _h_revoke_invite(handler, service, ctx, config, args, params) -> None:

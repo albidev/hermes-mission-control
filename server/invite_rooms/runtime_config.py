@@ -32,6 +32,7 @@ from types import MappingProxyType
 from typing import Mapping, Optional
 
 from invite_rooms.guest import GuestRoomService
+from invite_rooms.invitation import InvitationError, parse_invitation_origin
 from invite_rooms.joining_store import JoiningStore
 from invite_rooms import private_fs
 from invite_rooms.peer_registry import PeerRegistry, PeerRegistryError, RegistrySource
@@ -42,7 +43,7 @@ from invite_rooms.consent import ConsentKey
 from room_invite_store import InviteError, RoomInviteStore
 
 _CONFIG_ENV = "MISSION_CONTROL_ROOM_INVITES_CONFIG"
-_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing", "target_http", "data_listen", "original_frontdoor_url", "lobby_grant_ttl_extended_presets"}
+_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing", "target_http", "data_listen", "original_frontdoor_url", "invitation_origin", "lobby_grant_ttl_extended_presets"}
 _TARGET_HTTP_FIELDS = {"base_url", "profile"}
 _JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id", "identity_dir", "hosts_path", "origins", "control_endpoints",
                    "grant_ttl_seconds", "grant_status_ttl_seconds", "grant_ttl_max_seconds"}
@@ -374,6 +375,7 @@ class RuntimeConfig:
     joining_owner: Optional[object] = None
     data_listen: Optional[tuple] = None  # (host, port) owner-private local HTTP LoopbackAdapter bind, or None
     original_frontdoor_url: Optional[str] = None
+    invitation_origin: Optional[str] = None
     lobby_grant_ttl_extended_presets: bool = False
 
 
@@ -544,6 +546,12 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
                     raise FrontdoorDenied("frontdoor_bind_mismatch")
             except FrontdoorDenied:
                 raise RuntimeConfigError("invalid_original_frontdoor") from None
+        invitation_origin = data.get("invitation_origin")
+        if invitation_origin is not None:
+            try:
+                invitation_origin = parse_invitation_origin(invitation_origin)
+            except InvitationError:
+                raise RuntimeConfigError("invalid_invitation_origin") from None
         return RuntimeConfig(store_path=store_path, installation_id=installation_id, profile=profile,
                               peer_registry_path=peer_registry_path, native_rpc=native_rpc, target_http=target_http,
                               joining_store_dir=joining_store_dir, joining_host_label=joining_host_label,
@@ -552,6 +560,7 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
                               joining_grant_status_ttl_seconds=joining_grant_status_ttl,
                               joining_grant_ttl_max_seconds=joining_grant_ttl_max, pairing=pairing, joining_owner=joining_owner_config,
                               data_listen=data_listen, original_frontdoor_url=original_frontdoor_url,
+                              invitation_origin=invitation_origin,
                               lobby_grant_ttl_extended_presets=extended_presets)
     except RuntimeConfigError:
         _warn_once("values", "config file contains invalid owner identity, store, peer registry or native RPC values")

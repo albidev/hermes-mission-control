@@ -299,6 +299,33 @@ A reverse proxy (`tailscale serve`, Caddy, nginx) in front of the frontend is
 the recommended alternative. Remember that a valid token also opens the browser
 terminal: treat it like a shell credential.
 
+### Invite origin (separate from CORS)
+
+Owner invite issuance uses the existing owner-private JSON selected by
+`MISSION_CONTROL_ROOM_INVITES_CONFIG`. Add the dedicated top-level
+`invitation_origin` field, for example:
+
+```json
+{
+  "store_path": "/private/path/invites.sqlite",
+  "installation_id": "install:…",
+  "profile": "default",
+  "peer_registry_path": "/private/path/peers.json",
+  "invitation_origin": "https://owner-a.example"
+}
+```
+
+Both owners must provision the same exact HTTPS scheme and authority
+out-of-band in their local runtime configuration. On the issuer, this is the
+owner-private top-level `invitation_origin` used to mint/display invitation
+URLs. On the receiving peer, the corresponding pin belongs under
+`joining.origins[issuer_peer_id]`; setting the receiver's top-level
+`invitation_origin` does not configure its joining parser. The value may not contain a
+path, query, fragment, userinfo, or HTTP scheme. If it is absent, issuance
+returns `invite_origin_unavailable` before the one-time secret is minted.
+`MISSION_CONTROL_ALLOWED_ORIGIN` remains only the browser CORS/CSRF setting;
+it is intentionally independent and may be an HTTP frontend origin.
+
 ## Building
 
 ```bash
