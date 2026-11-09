@@ -16,7 +16,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 window.HTMLElement.prototype.getClientRects = function () { return [{ width: 44, height: 44 }]; };
 const { createRoot } = await import('react-dom/client');
 const cacheDir = mkdtempSync(path.join(tmpdir(), 'invite-panel-regression-'));
-const server = await createServer({ root: process.cwd(), configFile: false, cacheDir, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true, hmr: false }, plugins: [react()] });
+const server = await createServer({ root: process.cwd(), configFile: false, cacheDir, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, plugins: [react()] });
 const flush = (action = () => {}) => act(async () => { await action(); for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); });
 let root;
 const byText = (selector, text) => [...document.querySelectorAll(selector)].find(node => node.textContent.trim() === text);
