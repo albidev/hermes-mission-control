@@ -191,9 +191,10 @@ type CreateRoomFormProps = {
   initialVault?: string;
   /** Renders the invite-only creation flow; the room-type switch only appears when it is provided. */
   renderInviteOnly?: (name: string, onBusyChange: (busy: boolean) => void) => React.ReactNode;
+  onBusyChange?: (busy: boolean) => void;
 };
 
-export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '', renderInviteOnly }: CreateRoomFormProps) {
+export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '', renderInviteOnly, onBusyChange }: CreateRoomFormProps) {
   const { t } = useI18n();
   const [name, setName] = useState('');
   const [kind, setKind] = useState<'local' | 'invite'>('local');
@@ -217,6 +218,8 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '',
     return availableMembers.filter((member) => [member.handle, member.displayName, member.description].some((value) => value?.toLocaleLowerCase().includes(search)));
   }, [availableMembers, query]);
   const allSelected = availableMembers.length > 0 && availableMembers.every((member) => selected.includes(member.handle));
+
+  useEffect(() => { onBusyChange?.(pending); }, [onBusyChange, pending]);
 
   useLayoutEffect(() => {
     const form = formRef.current;
@@ -281,12 +284,6 @@ export function CreateRoomForm({ members, onCancel, onCreate, initialVault = '',
         if (event.key === 'Escape') {
           event.preventDefault(); event.stopPropagation();
           if (!pending) onCancel();
-        }
-        if (event.key === 'Tab') {
-          const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')].filter((node) => node.tabIndex >= 0 && !node.closest('[hidden]'));
-          const first = controls[0], last = controls.at(-1);
-          if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget.querySelector('h3'))) { event.preventDefault(); last?.focus(); }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
         }
       }}>
       <header className="room-create-header">

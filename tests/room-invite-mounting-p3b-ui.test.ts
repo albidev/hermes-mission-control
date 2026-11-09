@@ -7,8 +7,8 @@ test('production entry points keep pairing/invitations/guest rooms behind featur
   const config = source('src/routes/ConfigRoute.tsx');
   const drawer = source('src/components/ChatDrawer.tsx');
   assert.match(config, /roomInvitesAvailable\s*\?\s*\(?\s*<PairingSection/);
-  assert.match(drawer, /invitesAvailable\s*\?\s*\([\s\S]*?inviteUi\.invitations/);
-  assert.match(drawer, /receivedInvitationsOpen && invitesAvailable/);
+  assert.match(drawer, /room-create-choice-rail[\s\S]*rooms\.createModeJoin/);
+  assert.doesNotMatch(drawer, /receivedInvitationsOpen|<BottomSheet[\s\S]*ReceivedInvitationPanel/);
   assert.match(drawer, /const selectedGuest = invitesAvailable/);
   assert.match(drawer, /!selectedGuest/);
 });

@@ -39,7 +39,8 @@ try{
   assert.equal(find('button[aria-label="Select a room"]').textContent.trim(),'Preserved room');
   assert.equal(find('.chat-drawer-head').inert,true);assert.equal(find('.chat-drawer-head').getAttribute('aria-hidden'),'true');
   assert.equal(Boolean(document.getElementById('outside').inert),false);assert.equal(document.querySelector('.chat-backdrop'),null);
-  assert.equal(dialog.parentElement.parentElement,find('aside'));assert.equal(document.activeElement,dialog.querySelector('h3'));
+  assert.equal(dialog.parentElement.classList.contains('room-create-choice'), true);
+  assert.equal(dialog.parentElement.parentElement, find('.room-create-layer'));
   assert.equal(dialog.querySelectorAll('button[aria-label="Close room creation"]').length,1);assert.equal([...dialog.querySelectorAll('button')].some(n=>n.textContent==='Cancel'),false);
   assert.equal(opener.querySelector('.lucide-arrow-left'),null);
   await flush(()=>dialog.querySelector('h3').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));

@@ -35,11 +35,24 @@ export function ReceivedInvitationPanel({
     pendingCallback.current?.(record && !['open', 'expired', 'cancelled'].includes(step) ? 1 : 0);
   }, [record, step]);
   const lifecycle = useRef<AbortController | null>(null);
+  const tokenRef = useRef(accessToken);
   useEffect(() => {
+    const changed = tokenRef.current !== accessToken;
+    tokenRef.current = accessToken;
+    lifecycle.current?.abort();
     const controller = new AbortController();
     lifecycle.current = controller;
+    if (changed) {
+      setStep('paste');
+      setCode('');
+      setRecord(null);
+      setScopeConfirmed(false);
+      setError(null);
+      setHidden(false);
+      setBusy(false);
+    }
     return () => controller.abort();
-  }, []);
+  }, [accessToken]);
 
   const showError = (cause: unknown) => {
     if (isInviteUnavailable(cause)) setHidden(true);
