@@ -676,14 +676,16 @@ def _assemble(service, ctx, config, store_parent, opened) -> SidecarDataPlane:
     # The local owner identity is the only issuer of the owner-history receipt.
     # The guest key is supplied only by the journal-authenticated context at
     # handler execution; it is never taken from config or request data.
-    owner_bundle = identity_bundle()
-    history = OwnerHistoryHandlers(
-        store=service.store, owner_installation_id=ctx.installation_id,
-        owner_key=_Signer(owner_bundle.consent_key()),
-        consent_db=store_parent / "history-consent.sqlite",
-        native_rpc=history_native_rpc)
     host_handlers = build_host_handlers(service.store, ctx)
     if getattr(config, "history_enabled", False):
+        # Gate the resources, not only their public handlers. Cold-start and
+        # nondefault-profile assembly must retain their lazy identity loading.
+        owner_bundle = identity_bundle()
+        history = OwnerHistoryHandlers(
+            store=service.store, owner_installation_id=ctx.installation_id,
+            owner_key=_Signer(owner_bundle.consent_key()),
+            consent_db=store_parent / "history-consent.sqlite",
+            native_rpc=history_native_rpc)
         host_handlers.update({
             "history_read_scope": history.history_read_scope,
             "history_read_acceptance": history.history_read_acceptance,

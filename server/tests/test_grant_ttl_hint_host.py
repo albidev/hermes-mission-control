@@ -332,13 +332,17 @@ class RouteAndStoreHardeningTests(unittest.TestCase):
                 with self.assertRaises(sqlite3.IntegrityError):
                     db.execute("UPDATE lobby_grant_ttl SET hint_seconds=86401 WHERE lobby_id=?", (migrated_lobby["lobby_id"],))
 
-    def test_schema_v3_without_sidecar_is_readable_and_other_operational_error_propagates(self):
+    def test_future_schema_without_sidecar_is_readable_and_other_operational_error_propagates(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "legacy.sqlite"
             with sqlite3.connect(path) as db:
-                db.executescript("CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES(3); CREATE TABLE lobbies(lobby_id TEXT PRIMARY KEY, room_id TEXT, planned_room_id TEXT, name TEXT, state TEXT, roster_json TEXT, native_spec_json TEXT, created_at REAL, updated_at REAL); INSERT INTO lobbies VALUES('lobby-x',NULL,'room-x','X','open','[]',NULL,1,1);")
+                db.executescript("CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES(4); CREATE TABLE lobbies(lobby_id TEXT PRIMARY KEY, room_id TEXT, planned_room_id TEXT, name TEXT, state TEXT, roster_json TEXT, native_spec_json TEXT, created_at REAL, updated_at REAL); INSERT INTO lobbies VALUES('lobby-x',NULL,'room-x','X','open','[]',NULL,1,1);")
+            before = path.read_bytes()
             store = RoomInviteStore(path)
+            self.assertTrue(store.read_only)
             self.assertIsNone(store.get_lobby("lobby-x")["grant_ttl_hint_seconds"])
+            self.assertIsNone(store.get_history_policy("lobby-x"))
+            self.assertEqual(path.read_bytes(), before, 'opening a future schema must not migrate it')
             class BrokenConnection:
                 def __enter__(self): return self
                 def __exit__(self, *args): return False

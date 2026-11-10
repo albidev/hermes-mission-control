@@ -24,7 +24,22 @@ from invite_rooms.pairing_journal import JournalLinkAuthority
 from test_control_peer_context_w2b import H1Base
 import test_control_peer_context_w2b as w2b
 
-w2b.setUpModule()
+_previous_pairing_templates = None
+
+
+def setUpModule():
+    global _previous_pairing_templates
+    _previous_pairing_templates = (getattr(w2b, 'TEMPLATES', None), getattr(w2b, 'FOREIGN', None))
+    w2b.setUpModule()
+
+
+def tearDownModule():
+    w2b.tearDownModule()
+    previous, foreign = _previous_pairing_templates
+    if previous is not None:
+        w2b.TEMPLATES = previous
+    if foreign is not None:
+        w2b.FOREIGN = foreign
 
 
 class CoreFixture:

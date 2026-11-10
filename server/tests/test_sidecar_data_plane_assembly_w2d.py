@@ -304,6 +304,13 @@ class AssemblyBuilderTests(Base):
         plane.close()
         plane.close()
 
+    def test_disabled_history_does_not_load_owner_identity_or_create_consent_store(self):
+        with mock.patch.object(sdp().identity_module, 'load_identity', side_effect=AssertionError('history identity must stay lazy')) as load_identity:
+            plane = self.plane()
+        load_identity.assert_not_called()
+        self.assertNotIn('room_log', plane.control_listener._host_handlers)
+        self.assertFalse((self.A.root / 'invites' / 'history-consent.sqlite').exists())
+
     def test_history_handlers_require_explicit_runtime_gate(self):
         from dataclasses import replace
         service, owner, config = self.load(self.A, self.peer_b)

@@ -178,6 +178,11 @@ class RoomInviteStore:
                 # Do not write, infer ownership, or silently retrofit consent.
                 raise InviteError("legacy_schema_recovery_required")
             version = versions[0][0]
+            self.read_only = version > 3
+            if self.read_only:
+                # Unknown schemas are readable projections only. Never apply
+                # current history DDL or journal-mode changes to future data.
+                return
             if version == 2:
                 # Public v2 stores have no history decision.  Add only empty
                 # tables; never infer a policy from existing invitations or

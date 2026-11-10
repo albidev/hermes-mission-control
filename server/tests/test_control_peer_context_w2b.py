@@ -406,7 +406,14 @@ class DispatcherContextTest(H1Base):
         with self.assertRaises(ValueError):
             ControlDispatcher(self.authority, handlers={}, contextual_handlers={"pair_ack": status}, direction="B_to_A")
         with self.assertRaises(ValueError):
-            ControlDispatcher(self.authority, handlers={}, contextual_handlers={"room_log": status}, direction="B_to_A")
+            ControlDispatcher(self.authority, handlers={}, contextual_handlers={"groups.log": status}, direction="B_to_A")
+        for op in ("room_log", "history_read_scope", "history_read_acceptance"):
+            # History is additive only in the authenticated host lane: never
+            # allow A_to_B dispatch or shadow it with an identity-less handler.
+            with self.assertRaises(ValueError, msg=op):
+                ControlDispatcher(self.authority, handlers={}, contextual_handlers={op: status}, direction="A_to_B")
+            with self.assertRaises(ValueError, msg=op):
+                ControlDispatcher(self.authority, handlers={op: lambda r: {}}, contextual_handlers={op: status}, direction="B_to_A")
         with self.assertRaises(ValueError):
             ControlDispatcher(object(), handlers={}, contextual_handlers={"status": status}, direction="B_to_A")
         self.assertEqual(calls, [])
@@ -441,9 +448,9 @@ class DispatcherContextTest(H1Base):
             self.run_dispatch(d2, request={"op": "preview", "lobby_id": LOBBY, "invite_id": INVITE})
 
     def test_op_allowlist_and_wrong_direction_state_are_refused_by_the_journal(self):
-        for op in ("pair_ack", "material_request", "material_receipt", "room_log", "member_left", "bogus", "consent", 7):
+        for op in ("pair_ack", "material_request", "material_receipt", "groups.log", "member_left", "bogus", "consent", 7):
             self.assertIsNone(self.authority.authenticate_peer(self.expected, op), op)
-        for op in ("preview", "redeem", "joining_consent", "status"):
+        for op in ("preview", "redeem", "joining_consent", "status", "room_log", "history_read_scope", "history_read_acceptance"):
             ctx = self.authority.authenticate_peer(self.expected, op)
             self.assertIsInstance(ctx, AuthenticatedPeerContext, op)
             self.assertEqual(ctx.operation, op)
