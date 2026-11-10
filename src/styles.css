@@ -6938,6 +6938,11 @@ button {
   .room-create-header { padding-block: 4px; }
   .room-create-actions { padding-top: 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 }
+@container (max-height: 260px) {
+  /* With the join field focused, keep scarce keyboard space for the field
+     and close action. The mode switch returns on blur or viewport expansion. */
+  .room-create-choice:has(.room-create-join textarea:focus) > .room-create-choice-rail { display: none; }
+}
 @container (max-width: 340px) {
   .room-create-scroll { padding-inline: 12px; }
   .room-create-member-tools { flex-wrap: wrap; }

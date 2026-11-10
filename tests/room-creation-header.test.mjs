@@ -65,4 +65,31 @@ try{
   viewport.height=200;await flush(()=>viewport.dispatchEvent(new Event('resize')));assert.equal(layer.style.bottom,'670px');
   await flush(()=>layerRoot.unmount());assert.equal(background.inert,true);assert.equal(background.getAttribute('aria-hidden'),'false');assert.equal(Boolean(late.inert),false);assert.equal(late.hasAttribute('aria-hidden'),false);host.remove();delete window.visualViewport;
  });
+ await test('keyboard viewport changes keep the active invitation field inside its own scroller without moving the transcript',async()=>{
+  const {RoomCreationLayer}=await vite.ssrLoadModule('/src/components/chat/RoomCreationLayer.tsx');
+  const viewport=new window.EventTarget();viewport.offsetTop=0;viewport.height=844;
+  Object.defineProperty(window,'visualViewport',{configurable:true,value:viewport});
+  const host=document.createElement('aside'),transcript=document.createElement('div');
+  transcript.scrollTop=91;host.append(transcript);document.body.append(host);
+  host.getBoundingClientRect=()=>({top:0,bottom:844});
+  const target=document.createElement('div');host.append(target);const layerRoot=createRoot(target);
+  const {createPortal}=await import('react-dom');
+  try{
+   await flush(()=>layerRoot.render(createPortal(React.createElement(RoomCreationLayer,null,
+    React.createElement('div',{className:'room-create-scroll'},React.createElement('textarea',{defaultValue:'synthetic-invitation'}))),host)));
+   const field=host.querySelector('textarea'),scroller=host.querySelector('.room-create-scroll');
+   // jsdom has no layout: use the measured browser scenario as a geometry fixture.
+   scroller.getBoundingClientRect=()=>({top:100,bottom:220});
+   field.getBoundingClientRect=()=>({top:(viewport.height<400?210:140)-scroller.scrollTop,bottom:(viewport.height<400?274:204)-scroller.scrollTop});
+   await flush(()=>field.focus());await new Promise(r=>setTimeout(r,35));
+   assert.equal(scroller.scrollTop,0,'no unnecessary scroll while the field fits');
+   viewport.height=340;await flush(()=>viewport.dispatchEvent(new Event('resize')));await new Promise(r=>setTimeout(r,35));
+   assert.ok(field.getBoundingClientRect().bottom<=scroller.getBoundingClientRect().bottom,'keyboard must not leave the active field clipped');
+   assert.ok(field.getBoundingClientRect().top>=scroller.getBoundingClientRect().top);
+   assert.equal(document.activeElement,field);assert.equal(field.value,'synthetic-invitation');assert.equal(transcript.scrollTop,91);
+   const position=scroller.scrollTop;viewport.offsetTop=100;
+   await flush(()=>viewport.dispatchEvent(new Event('scroll')));await new Promise(r=>setTimeout(r,35));
+   assert.equal(scroller.scrollTop,position,'viewport panning must not repeatedly scroll a visible field');
+  }finally{await flush(()=>layerRoot.unmount());host.remove();delete window.visualViewport;}
+ });
 }finally{document.removeEventListener('keydown',onEscape);await vite.close();dom.window.close();rmSync(cacheDir,{recursive:true,force:true});}

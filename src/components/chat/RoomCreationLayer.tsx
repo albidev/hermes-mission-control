@@ -23,18 +23,39 @@ export function RoomCreationLayer({ children }: { children: ReactNode }) {
     const observer = new window.MutationObserver(protect);
     observer.observe(drawer, { childList: true });
     const viewport = window.visualViewport;
+    let revealFrame = 0;
+    const revealFocusedField = () => {
+      window.cancelAnimationFrame(revealFrame);
+      revealFrame = window.requestAnimationFrame(() => {
+        const field = document.activeElement;
+        if (!(field instanceof HTMLElement) || !layer.contains(field)
+            || !field.matches('input, textarea, select, [contenteditable="true"]')) return;
+        const scroller = field.closest<HTMLElement>('.room-create-scroll');
+        if (!scroller) return;
+        const visible = scroller.getBoundingClientRect();
+        const bounds = field.getBoundingClientRect();
+        // Scroll only the task body, never the transcript or the document.
+        // Wait for the new viewport/container-query layout before measuring.
+        if (bounds.bottom > visible.bottom - 8) scroller.scrollTop += bounds.bottom - visible.bottom + 8;
+        else if (bounds.top < visible.top + 8) scroller.scrollTop += bounds.top - visible.top - 8;
+      });
+    };
     const fit = () => {
       const bounds = drawer.getBoundingClientRect();
       layer.style.top = `${Math.max(0, (viewport?.offsetTop ?? 0) - bounds.top)}px`;
       layer.style.bottom = `${Math.max(0, bounds.bottom - ((viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)))}px`;
+      revealFocusedField();
     };
     fit();
+    layer.addEventListener('focusin', revealFocusedField);
     viewport?.addEventListener('resize', fit);
     viewport?.addEventListener('scroll', fit);
     const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
     resize?.observe(drawer);
     return () => {
       observer.disconnect(); resize?.disconnect();
+      window.cancelAnimationFrame(revealFrame);
+      layer.removeEventListener('focusin', revealFocusedField);
       viewport?.removeEventListener('resize', fit);
       viewport?.removeEventListener('scroll', fit);
       for (const [node, { inert, hidden }] of previous) {
