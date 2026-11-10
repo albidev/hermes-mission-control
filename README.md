@@ -81,6 +81,22 @@ For installation and the host contract, see [Mission Control plugins](docs/plugi
 
 Feature docs: [Overview](docs/overview.md) · [Chat](docs/chat.md) · [Bot Mode](docs/bot-mode.md) · [Group Rooms](docs/rooms.md) · [Localization](docs/i18n.md) · [Telemetry sidecar](docs/telemetry.md) · [Honcho identity and profile isolation](docs/honcho.md) · [Tools inventory](docs/tools.md) · [HTTP API](docs/api.md).
 
+### Invite-only Rooms (configuration-gated)
+
+Cross-installation invite Rooms are separate from ordinary local Group Rooms. The
+implementation provides pairing, fixed-roster invitations, explicit owner consent,
+activation and immutable full/post-join history policy. It is not an automatic
+network deployment or a public directory; end-to-end topology/release acceptance
+must be demonstrated on the actual installations.
+
+- [User guide: Create / Join, decisions, history and leaving](docs/invite-rooms-user-guide.md)
+- [Operator setup, readiness, private config and troubleshooting](docs/runbooks/invite-rooms-setup.md)
+- [Agent runbook: bounded API calls and owner checkpoints](docs/runbooks/invite-rooms-agent.md)
+- [API contracts](docs/api.md#invite-only-rooms) and [technical boundaries](server/invite_rooms/README.md)
+
+These guides describe the feature-branch implementation, not a claim that the
+feature is enabled on every installation or accepted across different networks.
+
 ## tldraw Agent Mode
 
 The whiteboard is built with the [tldraw SDK](https://github.com/tldraw/tldraw), maintained by [@tldraw](https://github.com/tldraw).

@@ -4,6 +4,11 @@ Group Rooms let several Hermes bots work on one request while you watch the whol
 
 Rooms live inside the Chat drawer, next to the canonical Chat, and reuse the canonical chat rendering surfaces instead of duplicating markup.
 
+For the separate, configuration-gated **cross-installation invite** flow, start
+with the [user guide](invite-rooms-user-guide.md), [operator setup](runbooks/invite-rooms-setup.md)
+or [agent runbook](runbooks/invite-rooms-agent.md). Local Group Rooms and a fully
+provisioned invite Room do not have the same setup requirements.
+
 ## In action
 
 ### Desktop
@@ -145,9 +150,24 @@ Hosted rooms live in the gateway's `shared-state.db` — a dedicated file, delib
 
 This gap is upstream, not a Mission Control bug — reported as [hermes-agent#109775](https://github.com/NousResearch/hermes-agent/issues/109775). The migration script is the local repair; if upstream ships one, this becomes a no-op on a healthy install.
 
-## Invite-only guest limitation (import status only)
+## Invite-only guest history
 
-For invite-only guest rooms, the joining installation shows two separate things: guest/import status (the bot panel, approvals, permissions and membership) and the host's canonical remote Room history. The second is currently unavailable on the guest installation: there is no supported authenticated read path for it, so `GuestRoomView` shows an explicit note instead of a transcript when the log request returns `host_offline`.
+The joining installation separates guest/import status (bot approvals, permissions
+and membership) from the host's authorized canonical history. A pinned mTLS
+`room_log` read path now exists. It requires complete runtime configuration,
+`history_enabled: true`, current admission/membership and **both** explicit
+owner-issued approval and guest read acceptance; participation consent alone is
+insufficient. See [history API](api.md#history-policy-and-read-consent).
+
+The creation checkbox chooses immutable `full` or `postjoin` policy. The browser
+starts unchecked (`postjoin`); headless callers should always send the selected
+policy explicitly because the omitted-policy API default is `full`. Revocation,
+reissue and readmission never reopen that lifetime decision. `postjoin` applies
+the current member's admission boundary even if the guest requests sequence zero.
+
+Reads retain eligible canonical text-event IDs/order and pagination, not private
+native metadata. A missing/offline/unauthorized path remains a visible failure,
+not an empty or substitute transcript:
 
 - This is **not** an empty-room result. The host may have history the guest cannot read.
 - Local `GroupRoomView` data is **not** the host transcript and is never used as a substitute.
@@ -213,7 +233,15 @@ Live configuration activation, real native guest approval behavior and model
 admission remain separately verified gates; no production service is enabled by
 this documentation.
 
-## Invite Rooms native compatibility boundary (N1)
+## Historical native compatibility boundary (N1)
+
+The following is a **historical pinned-revision result**, not the current universal
+state of Hermes. Compatible current owners expose the peer methods and may still
+report a deployment-specific refusal (for example `endpoint_required` until their
+explicit RoomLink endpoint is configured). Run the current [native readiness
+check](runbooks/invite-rooms-setup.md#2-verify-native-readiness-without-creating-a-room)
+instead of inheriting this old verdict or treating an old Core pin as a supported
+latest version.
 
 A successful canonical ticket attach is **not** proof that a native owner can
 perform cross-installation pairing. At native Core revision
@@ -251,7 +279,7 @@ auth, start an extra driver daemon, or edit Core as an MC workaround.
 `server/tests/test_native_room_link_contract.py` exercises this disabled payload
 through the actual catalog gate and HTTP pairing route. Its native connector is
 an explicitly labelled response fixture, not a running native host or E2E proof.
-Full acceptance and model flow remain disabled. UI hosting is a separate gate:
+That fixture does not establish full acceptance or model flow. UI hosting is a separate gate:
 the API sidecar returning 404 at `/` is not a hosted Mission Control frontend,
 and native `HERMES_WEB_DIST` is not a verified MC API proxy.
 

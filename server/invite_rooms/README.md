@@ -1,8 +1,18 @@
-# Invite rooms MVP.1 — private integration boundaries
+# Invite Rooms — private implementation boundaries
 
 The owner-only `/api/local/room-invites/*` HTTP dispatcher is mounted by `server/local_telemetry_server.py`; its handlers live in `routes.py` and `joining_routes.py`. It remains **off by default**: a valid owner-private `MISSION_CONTROL_ROOM_INVITES_CONFIG` is required, and missing or invalid configuration is indistinguishable from a 404. Pairing endpoints additionally require a valid `pairing` block.
 
-The product tree contains control-listener and connector primitives, but the sidecar does not yet own a verified start/stop lifecycle for the complete two-installation flow. There is no accepted two-instance E2E or production deployment. The route module's `_MATERIAL_RESOLVER` is `None` by default, so remote material activation fails closed until the integration seam is wired. This README describes candidate implementation boundaries, not release readiness.
+The sidecar now owns complete-bundle control/data listener construction, startup
+and shutdown, including the running scoped registry and material coordinator.
+Incomplete configuration still fails closed. That implementation is distinct
+from accepted two-native-process E2E or cross-network deployment; those gates
+remain separate. This is a living technical reference, not a release receipt.
+
+Start with the [user guide](../../docs/invite-rooms-user-guide.md),
+[operator setup](../../docs/runbooks/invite-rooms-setup.md) or
+[agent runbook](../../docs/runbooks/invite-rooms-agent.md).
+The [HTTP reference](../../docs/api.md#invite-only-rooms) is the route/response
+source of truth; old slice plans are design history, not current onboarding.
 
 The product service supports exactly one local owner profile and one remote member
 on a distinct installation. The owner identity is trusted construction configuration,
@@ -10,7 +20,11 @@ not a browser field and not whatever a connected gateway reports.
 
 ## Store version and owner-directed recovery
 
-New stores are explicitly **schema version 2**. Version 1 is refused immediately
+New stores are explicitly **schema version 3**. Version 2 migrates by adding
+empty history policy/admission tables; existing Rooms acquire no policy or
+consent by inference. Pre-generation version 3 admission rows receive durable
+generation metadata on reopen. Back up the coherent databases, keys and journals
+before migration; it grants no new access. Version 1 is refused immediately
 with `InviteError("legacy_schema_recovery_required")`, before schema initialization,
 owner binding, or any application write. This includes both the real accepted
 pre-P1 layout and the short-lived unversioned P1 layout. The ambiguity is deliberate:
@@ -18,8 +32,8 @@ there is no safe way to infer historical ownership or approval of a new policy.
 Future versions remain write-refused with `schema_too_new`, including when a live
 store object observes a version change made by another process.
 
-There is **no automatic migration** and this batch does not touch production data.
-On this error the operator must stop using that path, preserve the old database and
+There is **no automatic adoption of version 1 ownership/consent**. On that error
+the operator must stop using that path, preserve the old database and
 its journal files as an owner-controlled archive/backup, and explicitly select a
 **new** empty store path for the trusted owner. Recreate the intended lobby and issue
 new invitations, then obtain fresh host approval and actual Joining-owner consent
@@ -46,7 +60,8 @@ again, builds the exact scoped request, and resolves **only** approved scoped ma
 The coordinator also independently validates the real native catalog for six-pin
 plans. The product passes `expected_authority` from trusted owner installation;
 capabilities must match it before native create/register. Exact room/member/authority
-readback is still mandatory. No send or mint is performed on activation.
+readback is still mandatory. Activation sends no prompt; scoped material/grants
+may be acquired through the joining owner's consent-bound material channel.
 
 ## Portable canonical native contract
 
@@ -82,7 +97,7 @@ seals, creates, registers or sends.
 The JSON registry is installation-local trusted configuration; it contains identity,
 TLS CA, catalog and consent pins only. Private grants never live in it.
 
-## Activation idempotency and the material-channel seam (MVP.2a-fix)
+## Activation idempotency and the material-channel seam
 
 `RoomInviteStore.mark_created` runs BEFORE any per-peer `groups.peer.register`
 call, and `mark_peer_registered` runs only after that peer's native
@@ -93,26 +108,24 @@ explicit idempotency check, not a success shortcut: it reads the store's
 read-only `peer_registration_status` projection (zero native calls) and
 returns the activated result only when every remote roster member is
 durably `registered`; otherwise it raises `ServiceError("registration_incomplete")`
-(HTTP 409). Recovery/resume for a lobby stuck in that state belongs to the
-explicit reconcile packet (P2c) — this packet does not retry or resume a
-partial registration. `InviteRoomsService.activation_status` exposes the
+(HTTP 409). The public route does not blindly retry or infer success from a
+partial registration; preserve its IDs for operator inspection. There is no
+generic reconciliation HTTP endpoint in the published route table.
+`InviteRoomsService.activation_status` exposes the
 same projection as a redacted `registered: bool` per peer entry once the
 lobby has reached `"created"`.
 
-`InviteRoomsService(..., material_resolver=...)` and
-`runtime_config.load_service(..., material_resolver=...)` are the explicit
-constructor seam for the joining-owner material channel. Neither this module
-nor the owner-private JSON config format invents a resolver configuration:
-by default `material_resolver` stays `None`, and any activation attempt that
-actually needs remote peer material fails closed with
-`ServiceError("material_channel_unavailable")` (HTTP 503) BEFORE any native
-RPC call, including `groups.capabilities`. `invite_rooms.routes._MATERIAL_RESOLVER`
-is the single process-wiring point the routes layer reads today (`None`); P2b's
-joining-owner integration is expected to replace that module attribute with a
-real resolver coroutine, not to invent a new JSON field or a request-scoped
-parameter.
+Directly constructed services without material/route injection remain
+fail-closed. The live sidecar's `SidecarDataPlane` / `MaterialCoordinator` and
+scoped registry now supply the product wiring; an unset legacy test injection
+is not proof that the production process has no material channel. The JSON
+format does not install arbitrary resolver callables or static global grants.
+Native dependencies must be importable in the installed sidecar interpreter.
+Canonical `native_rpc: {profile_home: ...}` attaches only to the exact existing
+owner using discovery and a fresh session ticket; it never ensures/restarts a
+gateway or falls back to a Bearer/dashboard endpoint.
 
-**Known limitation, not fixed by this packet (P2c input):** if `/activate`
+**Mutation ambiguity:** if `/activate`
 times out mid-flight, the coroutine is cancelled and no durable "ambiguous"
 marker is written. The lobby is left exactly where the coordinator's own
 native calls left it (possibly `"created"` with a partially registered
@@ -120,8 +133,8 @@ roster, or still `"sealed"`/`"open"` if the timeout hit before
 `groups.create`). The next attempt either resumes cleanly through the
 idempotency check above, or meets a native conflict (`409`-mapped
 `native_room_conflict`/`native_peer_conflict`) if the prior attempt is still
-in flight on the native side. Reconciling that ambiguity window is explicitly
-out of scope here and is the next packet's (P2c) job.
+in flight on the native side. The operator must inspect that existing scope;
+do not create another lobby or treat an unavailable native reply as rollback.
 
 ## Control signals and post-mutation ambiguity (MVP.2a-fix4)
 
@@ -218,10 +231,11 @@ header is present, an exact `MISSION_CONTROL_ALLOWED_ORIGIN` match.
 | 503  | `unavailable`       | `activation_unavailable`, `creation_ambiguous`, `registration_ambiguous`, `native_peer_unconfirmed`, `native_contract_unavailable`, `activation_failed`, `material_channel_unavailable`, `native_unavailable`, `activation_timeout` |
 | 500  | `internal`          | — (sanitized catch-all; never a traceback or an interpolated value)              |
 
-## MVP.2b-core — joining-owner side (no HTTP, no transport promotion)
+## Joining owner and immutable history
 
-Five new, single-topic modules add the JOINING owner's local operations, symmetric
-to P1's host-side `InviteRoomsService`: `invitation.py` (network-free invitation
+The JOINING owner's operations are exposed through `joining_routes.py` under
+`/imports/*`, with the same authenticated owner boundary as the host routes.
+Implementation modules include `invitation.py` (network-free invitation
 parsing against a pinned, constructor-supplied origin, plus the joining owner's own
 `ApprovedHostRegistry`), `consent.py` (the pure Ed25519 canonical/verify primitives
 and an owner-private `ConsentKey`), `joining_store.py` (durable, schema-versioned,
@@ -230,14 +244,36 @@ mint journal), `joining.py` (`JoiningOwnerService`: preview/redeem/confirm_scope
 consent), and `joining_material.py` (`TargetMaterialMint`: the target-side handlers
 exercised during host activation, with a durable encrypted mint journal).
 
-These preserve the accepted S2 lab contract through thin adapters: `lobby_material.TargetMint`
-uses the product `invite_rooms.joining_material.TargetMaterialMint` for scope checks,
-signing, and mint state transitions; its local journal/control objects are only storage and
-transport bridges. `lobby_owner.JoiningOwner` and `lobby_activation.OnceActivation` remain
-lab-only in this packet because their legacy four-field scope and operation journal cannot
-be passed to the product six-pin store without inventing digests or silently changing the
-once-only boundary. A follow-up must first provide an explicit legacy-scope migration seam
-and a product-owned activation journal contract; this packet deliberately does not fake it.
-One test drives the REAL lab control classes against the product mint implementation to prove
-interoperability. No HTTP route exists yet; a `ControlChannel`-shaped object (`.call(request)
--> dict`) and a bounded async `rpc(method, params)` callable remain injected.
+The product transport uses journal-authenticated peer contexts and pinned mTLS.
+Address-map entries and registry projections are not consent or peer trust.
+Current bind/destination validation is loopback-only; the issuer's invitation
+origin and browser CORS are not network provisioning. See the operator guide
+for the deny-all bootstrap and explicit scope-mapping/restart boundary.
+
+At Room creation, `history_policy` is fixed to `full` or `postjoin` for the
+Room's lifetime. The browser defaults to unchecked (`postjoin`); the API's
+omitted-policy default is `full`, so headless callers must send the reviewed
+choice. Revocation/reissue/readmission never reopen that policy decision.
+
+`history_enabled` is a separate private runtime boolean, default false. It
+gates history HTTP operations and construction/registration of history handlers.
+OFF preserves lazy identity loading for cold-start/nondefault-profile assembly.
+It does not change stored policy or issue receipts. Both modes require explicit
+owner-issued read approval and guest acceptance of the exact current scope.
+
+`history_host.py`, `history_consent.py` and `room_log.py` bind reads to current
+peer identity/generation, owner/home, native authority/epoch, member/recipient
+and durable admission. The lifecycle generation is not a log cursor. Final
+revalidation refuses revocation/replacement during native I/O; the guest verifies
+the owner signature before producing its distinct acceptance. Eligible text
+events preserve native IDs/order/cursors, without private native metadata.
+
+The complete [API reference](../../docs/api.md#history-policy-and-read-consent)
+describes owner history approval, guest acceptance and bounded log reads. Tests
+include `test_room_history_policy`, `test_history_consent_store`,
+`test_history_product_http`, `test_history_integrated_regressions`,
+`test_history_owner_action`, `test_room_log_slice` and sidecar gate/lifecycle tests.
+Use the [actual CI lane](../../.github/workflows/ci.yml) for Core/dependency pins
+and separate unittest/pytest selections. Copied Core methods, independent native
+processes, cross-network topology and physical-phone/Safari checks are different
+proof classes; a selected test or green CI does not close all of them.

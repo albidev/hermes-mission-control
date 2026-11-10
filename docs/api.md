@@ -156,9 +156,9 @@ See [tldraw-feature-matrix.md](tldraw-feature-matrix.md).
 
 ## Invite-only rooms
 
-All suffixes below are under `/api/local/room-invites`. The route dispatcher is mounted by the telemetry sidecar, but the feature is disabled by default: it requires valid owner-private `MISSION_CONTROL_ROOM_INVITES_CONFIG`; pairing routes additionally require a valid `pairing` block, and joining routes need a valid joining store. Missing or invalid configuration is intentionally reported as 404. These tables describe the candidate code, not production availability: process-lifecycle wiring for the control listener, two-installation end-to-end acceptance, and deployment are still open.
+All suffixes below are under `/api/local/room-invites`. The route dispatcher is mounted by the telemetry sidecar, but the feature is disabled by default: it requires valid owner-private `MISSION_CONTROL_ROOM_INVITES_CONFIG`; pairing routes additionally require a valid `pairing` block, and joining routes need a valid joining store. Missing or invalid configuration is intentionally reported as 404. The sidecar now owns complete-bundle control/data listener start and shutdown when its topology is valid. That implementation is distinct from an accepted two-installation end-to-end deployment, which remains a separate gate.
 
-All routes require the normal MC bearer token and exact configured Origin policy whenever an `Origin` header is supplied. Responses are `no-store`; request/response bodies containing invitation or pairing material are not logged. See the [MVP implementation plan](plans/invite-rooms-mc-mvp.md) and the [P3b pairing design](plans/invite-rooms-p3b-pairing.md) for safety boundaries and remaining gates.
+All routes require the normal MC bearer token and exact configured Origin policy whenever an `Origin` header is supplied. Responses are `no-store`; request/response bodies containing invitation or pairing material are not logged. Start with the [user guide](invite-rooms-user-guide.md), [operator setup](runbooks/invite-rooms-setup.md) or [agent runbook](runbooks/invite-rooms-agent.md). The older MVP/pairing plans are design history, not current onboarding or evidence that a deployment passed.
 
 ### Host lobby and activation
 
@@ -172,6 +172,13 @@ All routes require the normal MC bearer token and exact configured Origin policy
 | POST | `/lobbies/{lobby_id}/invites/{invite_id}/decision` | Host's explicit approval or rejection, bound to the displayed peer/policy binding |
 | GET | `/lobbies/{lobby_id}/activation` | Read activation readiness and per-peer registration projection |
 | POST | `/lobbies/{lobby_id}/activate` | Owner-explicit activation; ambiguous or incomplete native effects are not reported as success |
+
+Host successes above use HTTP **200**, not 201. Create/inspect return
+`{"lobby": ...}`, issuance returns `{invite_id, secret, invite_url, expires_at}`
+at the root, decisions return `{"redemption": ...}`, and activation returns
+`{lobby_id, status: "activated", room_id}` at the root. Activation status is a
+root-level readiness projection. The [agent runbook](runbooks/invite-rooms-agent.md)
+specifies the current request bodies and owner checkpoints.
 
 ### Pairing
 
@@ -202,6 +209,10 @@ Pairing codes are public transcript material, not credentials; owners must compa
 | POST | `/imports/{import_id}/consent` | Record the joining owner's explicit consent (`approve` boolean) |
 | POST | `/imports/{import_id}/resolve` | Owner-directed resolution of an ambiguous redemption |
 
+All successful import operations return HTTP **200** with `{"import": ...}`.
+Metadata/redeem/resolve accept fieldless requests or `{}`; scope requires exactly
+`{room_id, member_id}`, and consent requires exactly `{"approve": true|false}`.
+
 ### Guest-room approvals
 
 The guest routes below use the same base path, bearer authentication, Origin policy, and feature gate. Guest approvals remain a separate operation from pairing, invite issuance, and joining-owner consent.
@@ -209,12 +220,59 @@ The guest routes below use the same base path, bearer authentication, Origin pol
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/guest-rooms` | List locally consented joined rooms |
-| GET | `/guest-rooms/{room_id}/log?since_seq=0&limit=200` | Read the pinned host transcript verbatim; unchanged pagination and event identities |
+| GET | `/guest-rooms/{room_id}/log?since_seq=0&limit=200` | Read authorized canonical text events from the pinned host; original event IDs/order and bounded pagination, not private native metadata |
 | GET | `/guest-rooms/{room_id}/my-bot` | Snapshot only the confirmed local bot's approvals |
 | POST | `/guest-rooms/{room_id}/approvals/{request_id}` | Body **only** `{"choice":"approve"}` or `{"choice":"reject"}` |
 | POST | `/guest-rooms/{room_id}/leave` | Empty object; revoke the local grant and persist terminal leave (unchanged) |
 
-Approval response shape:
+### History policy and read consent
+
+`POST /lobbies` accepts `history_policy: "full"|"postjoin"` and optional
+`creation_id`, alongside the existing name/roster/TTL fields. The stored policy
+is immutable for the Room lifetime; reissue/revocation/readmission cannot update
+it. API omission defaults to `full`, whereas the browser checkbox starts
+unchecked and explicitly sends `postjoin`. Headless callers should always send
+the owner's reviewed policy. `creation_id` is not blanket permission to replay
+ambiguous mutations.
+
+`history_enabled` is a separate top-level private runtime boolean, default
+`false`. It gates both read-consent routes and host history-handler registration;
+enabling it neither changes the stored Room policy nor creates approval. Complete
+native/pairing/joining/topology configuration and the existing identity are still
+required. Changing handler registration requires a sidecar restart.
+
+| Method | Suffix | Body | Success |
+|--------|--------|------|---------|
+| POST | `/rooms/{room_id}/history-approval` | Exactly `{"recipient_id":"peer-<actual paired id>"}` | 200 with `status: "owner_approved"`; issuer is the local host owner |
+| POST | `/guest-rooms/{room_id}/history-consent` | `{}` | 200 `{room_id, status: "ready"}` after guest verification, persistence and authenticated acknowledgement |
+
+These require **explicit owner approval and explicit guest acceptance in both
+policy modes**. No guest call issues the owner's approval. The canonical signed
+scope binds room/home authority and epoch, member/recipient, pairing relation,
+history policy and the admission sequence boundary. It is derived from current
+authority/journal/store state, not supplied as browser authorization input.
+
+The history routes return 404 while their runtime gate is off. Owner approval
+refusals are 403; guest consent refusals are 403, or 503 for
+`history_read_unavailable` / `host_offline`. A successful guest log page has
+`events`, `cursor`, `latest_seq`, `has_more` and `authority`; the wire cursor is a
+nonnegative integer. Each eligible text event preserves its native ID/sequence;
+the projection deliberately omits private metadata and non-message control events.
+Limits are 1..200. `postjoin` enforces the member's admission boundary even when
+the caller requests `since_seq=0`. A transport/unavailable log read is 503
+`host_offline`; authorization refusal is 403 `forbidden`. Neither is an empty
+canonical transcript or permission to substitute a local Room.
+
+The installed mTLS control operations `history_read_scope`,
+`history_read_acceptance` and `room_log` are **not** additional browser HTTP
+endpoints. They use journal-authenticated peer contexts and current admission.
+There is no policy-toggle HTTP route or generic reconcile route in this table.
+An ambiguous activation requires operator-directed inspection; do not invent a
+reconcile URL or directly alter a database to retry it.
+
+### Guest bot approval response
+
+Approval response shape (separate from the history-read exchange):
 
 ```json
 {
