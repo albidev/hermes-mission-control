@@ -1514,5 +1514,11 @@
   "inviteRooms.namesNotVerified": "Owner names are chosen by each owner, not verified identities.",
   "inviteRooms.offline": "Owner offline; you are seeing the last version received, not saved on this device.",
   "inviteRooms.leave": "Leave room",
-  "inviteRooms.consent": "Give consent"
+  "inviteRooms.consent": "Give consent",
+  "rooms.invites.history.label": "Allow this room to share history with admitted guests",
+  "rooms.invites.history.onHint": "On is permanent for this room. Earlier messages require the owner's separate signed approval and the guest's acceptance.",
+  "rooms.invites.history.offHint": "Off by default. Guests can only see messages after their own admission boundary.",
+  "rooms.invites.history.approve": "Approve history access",
+  "rooms.invites.history.approved": "History access approved. The guest must accept separately.",
+  "rooms.invites.history.failed": "History approval failed. No access was granted."
 }

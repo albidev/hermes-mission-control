@@ -138,7 +138,7 @@ class BoundedNativeRpc:
             if frames % _DRAIN_YIELD_EVERY == 0:
                 await asyncio.sleep(0)
 
-    async def __call__(self, method, params, *, invite_admission=None, deadline=None):
+    async def __call__(self, method, params, *, invite_admission=None, effect_admission=None, deadline=None):
         if not isinstance(method, str) or method not in _FIELDS or not isinstance(params, dict):
             raise NativeRpcDenied()
         required, allowed = _FIELDS[method]
@@ -194,6 +194,12 @@ class BoundedNativeRpc:
                         raise AdmissionDenied() from None
                     finally:
                         ADMISSION_DEADLINE.reset(token)
+                if effect_admission is not None:
+                    check = effect_admission()
+                    if asyncio.iscoroutine(check):
+                        check = await check
+                    if check is not True:
+                        raise AdmissionDenied()
                 if time.monotonic() >= deadline:
                     raise TimeoutError()
                 sent = True  # send failure can follow partial native admission

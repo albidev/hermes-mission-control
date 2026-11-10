@@ -28,7 +28,8 @@ class GuestServiceError(ValueError):
 class GuestRoomService:
     def __init__(self, store: JoiningStore, *, channel: HostChannel | None = None,
                  rpc=None, approvals=None, peer_check=None, local_installation_id=None,
-                 host_label: str = "host", own_bot_id: str | None = None):
+                 host_label: str = "host", own_bot_id: str | None = None,
+                 history_consent=None, history_consent_key=None, history_enabled: bool = False):
         if not isinstance(store, JoiningStore) or (channel is not None and
                 not callable(getattr(channel, "call", None))):
             raise GuestServiceError("invalid_guest_service")
@@ -40,6 +41,9 @@ class GuestRoomService:
         self.local_installation_id = local_installation_id
         self.host_label = host_label if isinstance(host_label, str) else "host"
         self.own_bot_id = own_bot_id
+        self.history_consent = history_consent
+        self.history_consent_key = history_consent_key
+        self.history_enabled = type(history_enabled) is bool and history_enabled
 
     @staticmethod
     def _invoke(fn, *args):
@@ -96,7 +100,7 @@ class GuestRoomService:
             result.append({
                 "room_id": scope["room_id"], "name": scope["room_id"], "owner": self.host_label,
                 "owner_online": self.channel is not None, "owner_offline_since": None,
-                "members": [], "permissions": [],
+                "members": [], "permissions": [], "history_enabled": self.history_enabled,
             })
         return result
 
@@ -120,6 +124,54 @@ class GuestRoomService:
         if not isinstance(page, dict):
             raise GuestServiceError("host_offline")
         return page
+
+    def accept_history_read(self, room_id: str) -> dict:
+        """Explicit guest read acceptance; never inferred from redeem/material.
+
+        The host first returns the exact canonical scope and signed owner
+        approval.  The guest verifies/persists that approval, signs a distinct
+        acceptance, persists it before sending, then requires an authenticated
+        acknowledgement.  Missing wiring remains fail-closed.
+        """
+        if self.channel is None or self.history_consent is None or self.history_consent_key is None:
+            raise GuestServiceError("history_read_unavailable")
+        record, confirmed = self._room_context(room_id)
+        response = self._invoke(self.channel.call, {"op": "history_read_scope", "room_id": room_id})
+        if (not isinstance(response, dict) or set(response) != {"scope", "owner_receipt", "owner_signature"}
+                or not isinstance(response.get("scope"), dict)):
+            raise GuestServiceError("forbidden")
+        scope = response["scope"]
+        if set(scope) != {"room_id", "home_install_id", "authority_gateway_id", "authority_epoch",
+                          "member_id", "recipient_id", "pairing_generation", "history_policy", "from_seq_inclusive"}:
+            raise GuestServiceError("forbidden")
+        if (scope["room_id"] != confirmed.get("room_id")
+                or scope["member_id"] != confirmed.get("member_id")
+                or scope["home_install_id"] != confirmed.get("host_id")):
+            raise GuestServiceError("forbidden")
+        # The host-side store verifies this signature against the paired host
+        # key; the guest never accepts a request-supplied verification key.
+        if (not isinstance(response["owner_receipt"], dict)
+                or not isinstance(response["owner_signature"], str)):
+            raise GuestServiceError("forbidden")
+        # The guest ledger is initialized with the host consent public key from
+        # the verified pairing journal. Verify and persist the exact owner
+        # receipt locally before producing our distinct guest acceptance. A
+        # transport ack is not a substitute for this cryptographic check.
+        try:
+            self.history_consent.owner_approve(scope, response["owner_receipt"], response["owner_signature"])
+        except Exception:
+            raise GuestServiceError("forbidden") from None
+        guest_receipt = dict(scope, purpose="room-history-guest-read-v1")
+        guest_signature = self.history_consent_key.sign(guest_receipt)
+        try:
+            self.history_consent.guest_accept(scope, guest_receipt, guest_signature)
+        except Exception:
+            raise GuestServiceError("forbidden") from None
+        ack = self._invoke(self.channel.call, {"op": "history_read_acceptance", "scope": scope,
+                                               "receipt": guest_receipt, "signature": guest_signature})
+        if not isinstance(ack, dict) or ack.get("status") != "ready":
+            raise GuestServiceError("history_read_unavailable")
+        return {"room_id": room_id, "status": "ready"}
 
     def _approval_context(self, room_id):
         from invite_rooms.peer_binding import validate_peer_binding

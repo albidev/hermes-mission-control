@@ -109,7 +109,7 @@ try {
   await runCase('C1 the create-lobby body is the shared server contract', async () => {
     // The server suite POSTs this same fixture and expects 200, so the two sides cannot drift.
     const fixture = JSON.parse(readFileSync(path.join(process.cwd(), 'tests/fixtures/room-invites/create-lobby.json'), 'utf8'));
-    assert.deepEqual(buildCreateLobbyRequest('  Release triage ', 'default', peer), fixture);
+    assert.deepEqual(buildCreateLobbyRequest('  Release triage ', 'default', peer, undefined, false), { ...fixture, history_policy: 'postjoin' });
     for (const seconds of [3600, 28800, 86400]) assert.equal(buildCreateLobbyRequest('x', 'default', peer, seconds).grant_ttl_hint_seconds, seconds);
     assert.equal('grant_ttl_hint_seconds' in buildCreateLobbyRequest('x', 'default', peer, 600), false);
     for (const value of [601, '3600', true, Number.NaN]) assert.throws(() => buildCreateLobbyRequest('x', 'default', peer, value as never), TypeError);

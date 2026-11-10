@@ -38,12 +38,14 @@ from urllib.parse import urlsplit
 
 from invite_rooms import runtime_config
 from invite_rooms import pairing_codec
-from invite_rooms.pairing_journal import E_BUSY, JournalError
+from invite_rooms.pairing_journal import E_BUSY, JournalError, Journal, JournalLinkAuthority
 from invite_rooms.pairing_service import PairingError, PairingService, PeerAckInvalid
 from invite_rooms.invitation import InvitationError, validate_invitation_wire
 from invite_rooms.peer_registry import PeerRegistryError
 from invite_rooms.service import InviteRoomsService, ServiceError, _valid_expected_binding
 from invite_rooms.guest import GuestRoomService, GuestServiceError
+from invite_rooms.history_host import OwnerHistoryHandlers, _Signer
+from invite_rooms import identity as identity_module
 from invite_rooms.pair_ack_sender import PairAckUnavailable, pair_ack_sender
 from room_invite_store import InviteError
 
@@ -53,6 +55,7 @@ _LOBBY_ID = r"lobby-[0-9a-f]{32}"
 _INVITE_ID = r"invite-[0-9a-f]{32}"
 _PAIRING_ID = r"pairing-[0-9a-f]{32}"
 _PEER_ID = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
+_ROOM_ID = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
 
 _MAX_ROUTE_BODY_BYTES = 16 * 1024
 _ACTIVATE_TIMEOUT_SECONDS = 9.0
@@ -460,13 +463,17 @@ def _h_create_lobby(handler, service, ctx, config, args, params) -> None:
     if not _content_type_is_json(handler):
         handler._json(400, {"error": "bad_request", "code": "invalid_content_type"})
         return
-    body = _read_strict_body(handler, {"name", "roster", "grant_ttl_hint_seconds"})
+    body = _read_strict_body(handler, {"name", "roster", "grant_ttl_hint_seconds", "history_policy", "creation_id"})
     if body is None:
         return
     name, roster_in = body.get("name"), body.get("roster")
     hint = body.get("grant_ttl_hint_seconds")
+    history_policy = body.get("history_policy", "full")
+    creation_id = body.get("creation_id")
     if (not isinstance(name, str) or not isinstance(roster_in, list)
-            or ("grant_ttl_hint_seconds" in body and type(hint) is not int)):
+            or ("grant_ttl_hint_seconds" in body and type(hint) is not int)
+            or not isinstance(history_policy, str)
+            or (creation_id is not None and not isinstance(creation_id, str))):
         handler._json(400, {"error": "bad_request", "code": "invalid_body"})
         return
     try:
@@ -475,7 +482,8 @@ def _h_create_lobby(handler, service, ctx, config, args, params) -> None:
         handler._json(400, {"error": "bad_request", "code": "invalid_roster"})
         return
     try:
-        view = service.create_lobby(ctx, name=name, roster=roster, grant_ttl_hint_seconds=hint)
+        view = service.create_lobby(ctx, name=name, roster=roster, grant_ttl_hint_seconds=hint,
+                                    history_policy=history_policy, creation_id=creation_id)
     except _KNOWN_ERRORS as exc:
         _respond_error(handler, exc)
         return
@@ -486,6 +494,7 @@ def _h_inspect_lobby(handler, service, ctx, config, args, params) -> None:
     (lobby_id,) = args
     try:
         view = service.inspect_lobby(ctx, lobby_id)
+        view = dict(view, history_enabled=getattr(config, "history_enabled", False) is True)
     except _KNOWN_ERRORS as exc:
         _respond_error(handler, exc)
         return
@@ -641,6 +650,77 @@ def _h_guest_log(handler, service, ctx, config, args, params) -> None:
         handler._json(400, {"code": "invalid_request"})
         return
     handler._json(200, page)
+
+
+def _h_guest_history_consent(handler, service, ctx, config, args, params) -> None:
+    if not getattr(config, "history_enabled", False):
+        handler._json(404, {"error": "not_found"})
+        return
+    if _read_strict_body(handler, set()) is None:
+        return
+    try:
+        result = service.accept_history_read(args[0])
+    except GuestServiceError as exc:
+        code = str(exc)
+        status = 503 if code in {"history_read_unavailable", "host_offline"} else 403
+        handler._json(status, {"code": code if status == 503 else "forbidden"})
+        return
+    handler._json(200, result)
+
+
+def _h_owner_history_approval(handler, service, ctx, config, args, params) -> None:
+    """Explicit owner action; guest routes never call this handler."""
+    if not getattr(config, "history_enabled", False):
+        handler._json(404, {"error": "not_found"})
+        return
+    if not _content_type_is_json(handler):
+        handler._json(400, {"error": "bad_request", "code": "invalid_content_type"})
+        return
+    body = _read_strict_body(handler, {"recipient_id"})
+    if body is None or set(body) != {"recipient_id"} or not isinstance(body.get("recipient_id"), str):
+        handler._json(400, {"error": "bad_request", "code": "invalid_body"})
+        return
+    recipient_id = body["recipient_id"]
+    if not re.fullmatch(_PEER_ID, recipient_id) or config.pairing is None or config.native_rpc is None:
+        handler._json(403, {"error": "forbidden"})
+        return
+    try:
+        record = service.registry.lookup(recipient_id)
+        # Projection data locates the candidate link only.  Trust for an owner
+        # action comes from one fresh, journal-authenticated snapshot, never
+        # from peers.json's key/binding projection.
+        journal = Journal(config.pairing.journal_dir, anchor=config.pairing.journal_anchor)
+        journal_authority = JournalLinkAuthority(journal)
+        trust = journal_authority.peer_trust(record.endpoint_id, record.pairing_generation, role="host")
+        journal_context = (journal_authority.authenticate_peer(trust, "history_read_scope")
+                           if trust is not None else None)
+        if (journal_context is None or journal_context.peer_id != recipient_id
+                or journal_context.generation != record.pairing_generation):
+            raise ControlError("forbidden")
+        binding = journal_context.binding_dict()
+        guest_public_key = bytes(journal_context.consent_public_key)
+        bundle = identity_module.load_identity(config.pairing.identity_dir,
+                                                installation_id=ctx.installation_id, profile=ctx.profile)
+
+        async def native_rpc(method, rpc_params, *, effect_admission=None, deadline=None):
+            async with _connect_native_rpc(config.native_rpc) as rpc:
+                return await rpc(method, rpc_params, effect_admission=effect_admission, deadline=deadline)
+
+        history = OwnerHistoryHandlers(
+            store=service.store, owner_installation_id=ctx.installation_id,
+            owner_key=_Signer(bundle.consent_key()),
+            consent_db=config.store_path.parent / "history-consent.sqlite", native_rpc=native_rpc,
+            admission_check=lambda: journal_authority.admit(
+                journal_context.endpoint_id, journal_context.generation, "history_read_scope"))
+        result = asyncio.run(history.owner_approve_for_owner(
+            room_id=args[0], recipient_id=recipient_id, guest_public_key=guest_public_key,
+            binding=binding, owner_installation_id=ctx.installation_id, owner_profile=ctx.profile,
+            pairing_generation=record.pairing_generation))
+    except Exception as exc:
+        _LOG.error("owner history approval refused: %s", type(exc).__name__)
+        handler._json(403, {"error": "forbidden"})
+        return
+    handler._json(200, result)
 
 
 def _h_guest_bot(handler, service, ctx, config, args, params) -> None:
@@ -878,6 +958,8 @@ _ROUTES = (
     ("POST", re.compile(r"^/lobbies$"), _h_create_lobby),
     ("GET", re.compile(r"^/guest-rooms$"), _h_guest_rooms),
     ("GET", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/log$"), _h_guest_log),
+    ("POST", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/history-consent$"), _h_guest_history_consent),
+    ("POST", re.compile(rf"^/rooms/({_ROOM_ID})/history-approval$"), _h_owner_history_approval),
     ("GET", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/my-bot$"), _h_guest_bot),
     ("POST", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/approvals/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})$"), _h_guest_approval),
     ("POST", re.compile(r"^/guest-rooms/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/leave$"), _h_guest_leave),
@@ -933,10 +1015,9 @@ def handle_request(handler, method: str, path: str, params: dict, is_authorized,
 
     is_guest_path = path[len(PREFIX):].startswith("/guest-rooms")
     if is_guest_path:
-        guest = runtime_config.load_guest_service(
+        loaded = runtime_config.load_guest_service(
             channel_factory=_HOST_CHANNEL_FACTORY, rpc_factory=_guest_rpc_factory,
-            approval_factory=_guest_approval_factory)
-        loaded = (guest, None, None) if guest is not None else None
+            approval_factory=_guest_approval_factory, return_config=True)
     else:
         if material_coordinator is not None:
             loaded = runtime_config.load_service(scoped_adapter_registry=scoped_adapter_registry,

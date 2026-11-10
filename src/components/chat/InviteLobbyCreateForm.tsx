@@ -17,6 +17,7 @@ export function InviteLobbyCreateForm({ api, initialName = '', embedded = false,
   const [name, setName] = useState(initialName);
   const [selectedPeer, setSelectedPeer] = useState('');
   const [selectedTtl, setSelectedTtl] = useState<InviteTtl>(600);
+  const [historyEnabled, setHistoryEnabled] = useState(false);
   const extendedTtl = isRoomsExtendedTtlEnabled();
   const [pairing, setPairing] = useState<PairingState>({ status: 'loading' });
   const [busy, setBusy] = useState(false);
@@ -49,7 +50,7 @@ export function InviteLobbyCreateForm({ api, initialName = '', embedded = false,
     const sentTtl = extendedTtl ? selectedTtl : undefined;
     setLastSentTtl(sentTtl);
     try {
-      const lobby = await api.createLobby(buildCreateLobbyRequest(name, ownerProfile, peer, sentTtl));
+      const lobby = await api.createLobby(buildCreateLobbyRequest(name, ownerProfile, peer, sentTtl, historyEnabled));
       onCreated(lobby.lobby_id);
     } catch (error) {
       setCreateError(asProblem(error));
@@ -58,7 +59,7 @@ export function InviteLobbyCreateForm({ api, initialName = '', embedded = false,
       setBusy(false);
       onBusyChange?.(false);
     }
-  }, [api, extendedTtl, name, onBusyChange, onCreated, ownerProfile, peer, selectedTtl]);
+  }, [api, extendedTtl, historyEnabled, name, onBusyChange, onCreated, ownerProfile, peer, selectedTtl]);
 
   return <section className={embedded ? 'grid gap-3 text-sm' : 'grid gap-3 rounded-lg border border-border-subtle p-4 text-sm'} aria-label={t('rooms.invites.title')}>
     {embedded ? null : <div><p className="eyebrow">{t('rooms.invites.eyebrow')}</p><h3 className="font-semibold text-text">{t('rooms.invites.createTitle')}</h3></div>}
@@ -80,6 +81,10 @@ export function InviteLobbyCreateForm({ api, initialName = '', embedded = false,
             ? <div className="rounded-lg border border-warning/40 bg-warning-subtle p-2 text-warning" role="status">{t('rooms.invites.noPairedPeer')}</div>
             : <select className="mc-input h-9" value={selectedPeer} onChange={(event) => setSelectedPeer(event.target.value)} aria-label={t('rooms.invites.pairedPeer')}><option value="">{t('rooms.invites.choosePeer')}</option>{pairing.pairing.peers.map((candidate) => <option key={candidate.peer_id} value={candidate.peer_id}>{candidate.profile} · {candidate.peer_id}</option>)}</select>}
     </div>
+    <label className="flex min-h-11 items-start gap-3 rounded-lg border border-border-subtle p-3 text-xs text-text-muted">
+      <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" disabled={busy} checked={historyEnabled} onChange={(event) => setHistoryEnabled(event.target.checked)} aria-describedby="room-history-policy-hint" />
+      <span><span className="block font-medium text-text">{t('rooms.invites.history.label')}</span><span id="room-history-policy-hint" className="mt-1 block">{t(historyEnabled ? 'rooms.invites.history.onHint' : 'rooms.invites.history.offHint')}</span></span>
+    </label>
     <div className="flex flex-col gap-1.5 text-xs text-text-muted">
       <span>{t('rooms.invites.ttl.label')}</span>
       {extendedTtl ? <div role="radiogroup" aria-label={t('rooms.invites.ttl.label')} className="room-create-kind-options">

@@ -37,7 +37,7 @@ class IssuedInvite:
 
 _SCHEMA = """
 CREATE TABLE schema_version(version INTEGER NOT NULL);
-INSERT INTO schema_version VALUES (2);
+INSERT INTO schema_version VALUES (3);
 CREATE TABLE owner_scope(installation_id TEXT NOT NULL, profile TEXT NOT NULL);
 CREATE TABLE lobbies(
  lobby_id TEXT PRIMARY KEY, room_id TEXT UNIQUE,
@@ -65,6 +65,19 @@ CREATE TABLE peer_links(
 CREATE TABLE lobby_grant_ttl(
  lobby_id TEXT PRIMARY KEY REFERENCES lobbies(lobby_id),
  hint_seconds INTEGER NOT NULL CHECK(hint_seconds BETWEEN 60 AND 86400)
+);
+CREATE TABLE history_policies(
+ lobby_id TEXT PRIMARY KEY REFERENCES lobbies(lobby_id),
+ creation_id TEXT NOT NULL UNIQUE, canonical_room_id TEXT NOT NULL UNIQUE,
+ mode TEXT NOT NULL CHECK(mode IN ('full','postjoin')),
+ request_digest TEXT NOT NULL, created_at REAL NOT NULL
+);
+CREATE TABLE history_admissions(
+ lobby_id TEXT NOT NULL REFERENCES lobbies(lobby_id), member_id TEXT NOT NULL,
+ invite_id TEXT NOT NULL UNIQUE REFERENCES invitations(invite_id),
+ from_seq_inclusive INTEGER NOT NULL CHECK(from_seq_inclusive > 0),
+ admission_generation INTEGER NOT NULL CHECK(admission_generation > 0),
+ admitted_at REAL NOT NULL, PRIMARY KEY(lobby_id, member_id)
 );
 """
 
@@ -164,7 +177,30 @@ class RoomInviteStore:
                 # Neither proves owner adoption or approval of a full policy.
                 # Do not write, infer ownership, or silently retrofit consent.
                 raise InviteError("legacy_schema_recovery_required")
-            self.read_only = versions[0][0] > 2
+            version = versions[0][0]
+            if version == 2:
+                # Public v2 stores have no history decision.  Add only empty
+                # tables; never infer a policy from existing invitations or
+                # rows, which would silently widen read access.
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    conn.execute("CREATE TABLE IF NOT EXISTS history_policies(lobby_id TEXT PRIMARY KEY REFERENCES lobbies(lobby_id), creation_id TEXT NOT NULL UNIQUE, canonical_room_id TEXT NOT NULL UNIQUE, mode TEXT NOT NULL CHECK(mode IN ('full','postjoin')), request_digest TEXT NOT NULL, created_at REAL NOT NULL)")
+                    conn.execute("CREATE TABLE IF NOT EXISTS history_admissions(lobby_id TEXT NOT NULL REFERENCES lobbies(lobby_id), member_id TEXT NOT NULL, invite_id TEXT NOT NULL UNIQUE REFERENCES invitations(invite_id), from_seq_inclusive INTEGER NOT NULL CHECK(from_seq_inclusive > 0), admitted_at REAL NOT NULL, PRIMARY KEY(lobby_id,member_id))")
+                    conn.execute("UPDATE schema_version SET version=3")
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise InviteError("schema_migration_failed") from None
+                version = 3
+            # Version 3 stores may predate the durable admission identity.  Add
+            # only this fail-closed column; never derive it from the history
+            # cursor (a cursor is data position, not admission lifecycle).
+            admission_columns = {r[1] for r in conn.execute("PRAGMA table_info(history_admissions)")}
+            if "admission_generation" not in admission_columns:
+                conn.execute("ALTER TABLE history_admissions ADD COLUMN admission_generation INTEGER")
+                conn.execute("UPDATE history_admissions SET admission_generation = rowid WHERE admission_generation IS NULL")
+                conn.execute("CREATE INDEX IF NOT EXISTS history_admissions_generation ON history_admissions(admission_generation)")
+            self.read_only = version > 3
             if not self.read_only:
                 conn.execute("CREATE TABLE IF NOT EXISTS lobby_grant_ttl(lobby_id TEXT PRIMARY KEY REFERENCES lobbies(lobby_id), hint_seconds INTEGER NOT NULL CHECK(hint_seconds BETWEEN 60 AND 86400))")
                 self._enable_wal(conn)
@@ -203,9 +239,9 @@ class RoomInviteStore:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 version = conn.execute("SELECT version FROM schema_version").fetchall()
-                if len(version) != 1 or version[0][0] > 2:
+                if len(version) != 1 or version[0][0] > 3:
                     raise InviteError("schema_too_new")
-                if version[0][0] != 2:
+                if version[0][0] != 3:
                     raise InviteError("legacy_schema_recovery_required")
                 yield conn
                 conn.commit()
@@ -213,10 +249,18 @@ class RoomInviteStore:
                 conn.rollback()
                 raise
 
-    def create_lobby(self, *, name: str, roster: list[dict], grant_ttl_hint_seconds=None) -> dict:
+    def create_lobby(self, *, name: str, roster: list[dict], grant_ttl_hint_seconds=None,
+                     history_policy=None, creation_id=None) -> dict:
         _validate_roster(name, roster)
         if grant_ttl_hint_seconds is not None and (type(grant_ttl_hint_seconds) is not int or not 60 <= grant_ttl_hint_seconds <= 86400):
             raise InviteError("invalid_lobby")
+        if history_policy not in (None, "full", "postjoin"):
+            raise InviteError("invalid_history_policy")
+        if history_policy is not None:
+            if creation_id is None:
+                creation_id = "create-" + uuid.uuid4().hex
+            if not isinstance(creation_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", creation_id):
+                raise InviteError("invalid_history_policy")
         # Match native display-label semantics BEFORE freezing any spec. IDs are
         # validated literally and are never stripped, case-folded or repaired.
         name, roster = name.strip(), copy.deepcopy(roster)
@@ -224,10 +268,29 @@ class RoomInviteStore:
             if "display_name" in member:
                 member["display_name"] = member["display_name"].strip()
         lobby_id = "lobby-" + uuid.uuid4().hex
+        planned_room_id = "invite-room-" + uuid.uuid4().hex
         now = self.clock()
+        request_digest = hashlib.sha256(json.dumps({
+            "name": name,
+            "roster": roster,
+            "mode": history_policy,
+            "grant_ttl_hint_seconds": grant_ttl_hint_seconds,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         with self._write() as conn:
+            if history_policy is not None:
+                existing = conn.execute("SELECT lobby_id,request_digest,mode FROM history_policies WHERE creation_id=?", (creation_id,)).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != request_digest or existing["mode"] != history_policy:
+                        raise InviteError("history_policy_conflict")
+                    row = conn.execute("SELECT * FROM lobbies WHERE lobby_id=?", (existing["lobby_id"],)).fetchone()
+                    if row is None:
+                        raise InviteError("history_policy_unavailable")
+                    return self.get_lobby(existing["lobby_id"])
             conn.execute("INSERT INTO lobbies VALUES(?,NULL,?,?,'open',?,NULL,?,?)",
-                         (lobby_id, "invite-room-" + uuid.uuid4().hex, name, json.dumps(roster), now, now))
+                         (lobby_id, planned_room_id, name, json.dumps(roster), now, now))
+            if history_policy is not None:
+                conn.execute("INSERT INTO history_policies VALUES(?,?,?,?,?,?)",
+                             (lobby_id, creation_id, planned_room_id, history_policy, request_digest, now))
             if grant_ttl_hint_seconds is not None:
                 conn.execute("INSERT INTO lobby_grant_ttl(lobby_id,hint_seconds) VALUES(?,?)", (lobby_id, grant_ttl_hint_seconds))
         return self.get_lobby(lobby_id)
@@ -240,6 +303,64 @@ class RoomInviteStore:
             result = {key: value for key, value in dict(row).items() if key not in {"roster_json", "native_spec_json"}} | {"roster": json.loads(row["roster_json"])}
             result["grant_ttl_hint_seconds"] = self.lobby_grant_ttl_hint(lobby_id)
             return result
+
+    def get_history_policy(self, lobby_id: str):
+        with self._connection() as conn:
+            try:
+                row = conn.execute("SELECT p.lobby_id,p.creation_id,p.canonical_room_id,p.mode,l.planned_room_id FROM history_policies p JOIN lobbies l ON l.lobby_id=p.lobby_id WHERE p.lobby_id=?", (lobby_id,)).fetchone()
+            except sqlite3.OperationalError as exc:
+                if str(exc) == "no such table: history_policies":
+                    return None
+                raise
+        if row is None:
+            return None
+        if (row["mode"] not in {"full", "postjoin"}
+                or not isinstance(row["creation_id"], str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", row["creation_id"])
+                or not isinstance(row["canonical_room_id"], str)
+                or not re.fullmatch(r"invite-room-[0-9a-f]{32}", row["canonical_room_id"])
+                or row["canonical_room_id"] != row["planned_room_id"]):
+            raise InviteError("history_policy_unavailable")
+        return {"mode": row["mode"], "lobby_id": row["lobby_id"], "room_id": row["canonical_room_id"], "creation_id": row["creation_id"]}
+
+    def bind_room_history_policy(self, lobby_id: str, room_id: str) -> dict:
+        policy = self.get_history_policy(lobby_id)
+        if policy is None or not isinstance(room_id, str) or room_id != policy["room_id"]:
+            raise InviteError("history_policy_conflict")
+        return policy
+
+    def record_history_admission(self, lobby_id: str, member_id: str, invite_id: str, from_seq_inclusive: int) -> dict:
+        if type(from_seq_inclusive) is not int or from_seq_inclusive <= 0:
+            raise InviteError("history_admission_conflict")
+        with self._write() as conn:
+            policy = conn.execute("SELECT p.mode,p.canonical_room_id,l.planned_room_id FROM history_policies p JOIN lobbies l ON l.lobby_id=p.lobby_id WHERE p.lobby_id=?", (lobby_id,)).fetchone()
+            if (policy is None or policy["mode"] not in {"full", "postjoin"}
+                    or not isinstance(policy["canonical_room_id"], str)
+                    or not re.fullmatch(r"invite-room-[0-9a-f]{32}", policy["canonical_room_id"])
+                    or policy["canonical_room_id"] != policy["planned_room_id"]):
+                raise InviteError("history_policy_unavailable")
+            if policy["mode"] == "full" and from_seq_inclusive != 1:
+                raise InviteError("history_admission_conflict")
+            redemption = conn.execute("SELECT i.member_id,i.version,r.host_decision,r.joining_consent FROM invitations i JOIN redemptions r USING(invite_id) WHERE i.lobby_id=? AND i.invite_id=?", (lobby_id, invite_id)).fetchone()
+            if redemption is None or redemption["member_id"] != member_id or redemption["host_decision"] != "approved" or redemption["joining_consent"] != "given":
+                raise InviteError("history_admission_conflict")
+            existing = conn.execute("SELECT * FROM history_admissions WHERE lobby_id=? AND member_id=?", (lobby_id, member_id)).fetchone()
+            if existing is not None:
+                if existing["invite_id"] == invite_id and existing["from_seq_inclusive"] == from_seq_inclusive:
+                    return dict(existing)
+                raise InviteError("history_admission_conflict")
+            now = self.clock()
+            try:
+                conn.execute("INSERT INTO history_admissions(lobby_id,member_id,invite_id,from_seq_inclusive,admission_generation,admitted_at) VALUES(?,?,?,?,?,?)",
+                             (lobby_id, member_id, invite_id, from_seq_inclusive, redemption["version"], now))
+            except sqlite3.IntegrityError:
+                raise InviteError("history_admission_conflict") from None
+            return dict(conn.execute("SELECT * FROM history_admissions WHERE lobby_id=? AND member_id=?", (lobby_id, member_id)).fetchone())
+
+    def get_history_admission(self, lobby_id: str, member_id: str):
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM history_admissions WHERE lobby_id=? AND member_id=?", (lobby_id, member_id)).fetchone()
+        return None if row is None else dict(row)
 
     def lobby_grant_ttl_hint(self, lobby_id):
         with self._connection() as conn:
@@ -414,6 +535,75 @@ class RoomInviteStore:
         self._admit(before_return)
         return result
 
+    def history_scope_for_peer(self, room_id: str, *, peer_id: str, binding: dict) -> dict:
+        """Read the immutable owner-bound history coordinates for one paired member."""
+        binding = self._peer_binding(binding)
+        if not all(isinstance(value, str) and value for value in (room_id, peer_id)):
+            raise self._unavailable()
+        with self._connection() as conn:
+            owners = conn.execute("SELECT installation_id,profile FROM owner_scope").fetchall()
+            lobbies = conn.execute(
+                "SELECT l.*,p.mode,p.canonical_room_id FROM lobbies l LEFT JOIN history_policies p ON p.lobby_id=l.lobby_id "
+                "WHERE l.planned_room_id=? OR l.room_id=?", (room_id, room_id)).fetchall()
+            if len(owners) != 1 or len(lobbies) != 1:
+                raise self._unavailable()
+            row = lobbies[0]
+            if row["state"] != "created" or row["planned_room_id"] != room_id or row["room_id"] != room_id:
+                raise self._unavailable()
+            if row["mode"] not in {"full", "postjoin"} or row["canonical_room_id"] != room_id:
+                raise self._unavailable()
+            member = None
+            for candidate in json.loads(row["roster_json"]):
+                target = candidate.get("target") if isinstance(candidate, dict) else None
+                if isinstance(target, dict) and self._target_matches(target, peer_id, binding):
+                    if member is not None:
+                        raise self._unavailable()
+                    member = candidate
+            if member is None:
+                raise self._unavailable()
+            registered = conn.execute(
+                "SELECT state FROM peer_links WHERE lobby_id=? AND member_id=?",
+                (row["lobby_id"], member["member_id"])).fetchone()
+            # A roster row is only a plan.  History is disclosed only after the
+            # authoritative native registration has been durably confirmed.
+            if registered is None or registered["state"] != "registered":
+                raise self._unavailable()
+            admission = conn.execute("SELECT * FROM history_admissions WHERE lobby_id=? AND member_id=?",
+                                     (row["lobby_id"], member["member_id"])).fetchone()
+            redemption = conn.execute(
+                "SELECT i.invite_id,i.state,r.* FROM invitations i JOIN redemptions r USING(invite_id) "
+                "WHERE i.lobby_id=? AND i.member_id=? AND i.invite_id=?",
+                (row["lobby_id"], member["member_id"], admission["invite_id"] if admission else "")).fetchone()
+        if (admission is None or redemption is None or redemption["invite_id"] != admission["invite_id"]
+                or redemption["state"] == "revoked" or redemption["host_decision"] != "approved"
+                or redemption["joining_consent"] != "given"):
+            raise self._unavailable()
+        if any(redemption[key] != binding[key] for key in binding):
+            raise self._unavailable()
+        boundary, generation = admission["from_seq_inclusive"], admission["admission_generation"]
+        if (type(boundary) is not int or boundary < 1 or (row["mode"] == "full" and boundary != 1)
+                or type(generation) is not int or generation < 1):
+            raise self._unavailable()
+        return {"lobby_id": row["lobby_id"], "invite_id": redemption["invite_id"],
+                "member_id": member["member_id"], "owner_installation_id": owners[0]["installation_id"],
+                "history_policy": "on" if row["mode"] == "full" else "off",
+                "from_seq_inclusive": boundary}
+
+    def history_admission_generation(self, lobby_id: str, member_id: str, invite_id: str) -> int:
+        """Return the durable lifecycle generation for one exact admission.
+
+        This is internal authorization state, deliberately not part of the
+        nine-field signed wire scope.  Missing, mismatched, or malformed rows
+        deny rather than falling back to the history cursor.
+        """
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT admission_generation FROM history_admissions WHERE lobby_id=? AND member_id=? AND invite_id=?",
+                (lobby_id, member_id, invite_id)).fetchone()
+        generation = None if row is None else row["admission_generation"]
+        if type(generation) is not int or generation < 1:
+            raise self._unavailable()
+        return generation
 
     def redeem(self, lobby_id: str, invite_id: str, secret: str, *, binding: dict, peer_id: str | None = None,
                before_effect=None) -> dict:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import asyncio
 import json
 import logging
 import os
@@ -25,13 +26,16 @@ import re
 import sqlite3
 import stat
 import threading
+import time
 from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping, Optional
 
+from invite_rooms import identity as identity_module
 from invite_rooms.guest import GuestRoomService
+from invite_rooms.history_consent import HistoryConsentStore
 from invite_rooms.invitation import InvitationError, parse_invitation_origin
 from invite_rooms.joining_store import JoiningStore
 from invite_rooms import private_fs
@@ -43,7 +47,7 @@ from invite_rooms.consent import ConsentKey
 from room_invite_store import InviteError, RoomInviteStore
 
 _CONFIG_ENV = "MISSION_CONTROL_ROOM_INVITES_CONFIG"
-_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing", "target_http", "data_listen", "original_frontdoor_url", "invitation_origin", "lobby_grant_ttl_extended_presets"}
+_TOP_LEVEL_FIELDS = {"store_path", "installation_id", "profile", "peer_registry_path", "native_rpc", "joining", "pairing", "target_http", "data_listen", "original_frontdoor_url", "lobby_grant_ttl_extended_presets", "history_enabled", "invitation_origin"}
 _TARGET_HTTP_FIELDS = {"base_url", "profile"}
 _JOINING_FIELDS = {"store_dir", "host_label", "own_bot_id", "identity_dir", "hosts_path", "origins", "control_endpoints",
                    "grant_ttl_seconds", "grant_status_ttl_seconds", "grant_ttl_max_seconds"}
@@ -377,6 +381,9 @@ class RuntimeConfig:
     original_frontdoor_url: Optional[str] = None
     invitation_origin: Optional[str] = None
     lobby_grant_ttl_extended_presets: bool = False
+    # History is a separate explicit gate. Missing means OFF; no route may
+    # imply consent merely because invite-room pairing is configured.
+    history_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -538,6 +545,9 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
         extended_presets = data.get("lobby_grant_ttl_extended_presets", False)
         if type(extended_presets) is not bool:
             raise RuntimeConfigError("invalid_lobby_grant_ttl")
+        history_enabled = data.get("history_enabled", False)
+        if type(history_enabled) is not bool:
+            raise RuntimeConfigError("invalid_history_enabled")
         original_frontdoor_url = data.get("original_frontdoor_url")
         if "original_frontdoor_url" in data:
             from invite_rooms.original_frontdoor import validate_frontdoor, FrontdoorDenied
@@ -561,7 +571,7 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
                               joining_grant_ttl_max_seconds=joining_grant_ttl_max, pairing=pairing, joining_owner=joining_owner_config,
                               data_listen=data_listen, original_frontdoor_url=original_frontdoor_url,
                               invitation_origin=invitation_origin,
-                              lobby_grant_ttl_extended_presets=extended_presets)
+                              lobby_grant_ttl_extended_presets=extended_presets, history_enabled=history_enabled)
     except RuntimeConfigError:
         _warn_once("values", "config file contains invalid owner identity, store, peer registry or native RPC values")
         return None
@@ -699,8 +709,52 @@ def load_service(env: Optional[dict] = None, *, material_resolver=None, scoped_a
     return service, ctx, config
 
 
+class _ProductHostChannel:
+    """Synchronous product bridge over the existing pinned authenticated channel."""
+    def __init__(self, config, link: Mapping):
+        self._config = config
+        self._link = dict(link)
+
+    def _admit(self) -> bool:
+        try:
+            state = Journal(self._config.pairing.journal_dir,
+                            anchor=self._config.pairing.journal_anchor).snapshot()
+            return any(link.get("endpoint_id") == self._link.get("endpoint_id")
+                       and link.get("generation") == self._link.get("generation")
+                       and link.get("role") == "joining"
+                       for link in state.active_links())
+        except Exception:
+            return False
+
+    def call(self, request: dict):
+        from invite_rooms.runtime_joining import default_joining_control
+        if not self._admit():
+            raise RuntimeError("control_unavailable")
+        channel = default_joining_control(self._config, self._link)
+        deadline = time.monotonic() + 10.0
+        try:
+            return asyncio.run(channel.call(request, deadline=deadline, admit=self._admit))
+        except Exception:
+            raise RuntimeError("control_unavailable") from None
+
+
+def _default_guest_channel(config):
+    """Build the real guest bridge from exactly one current journal link."""
+    if config.pairing is None:
+        return None
+    try:
+        state = Journal(config.pairing.journal_dir,
+                        anchor=config.pairing.journal_anchor).snapshot()
+        links = [link for link in state.active_links() if link.get("role") == "joining"]
+        if len(links) != 1:
+            return None
+        return _ProductHostChannel(config, links[0])
+    except Exception:
+        return None
+
+
 def load_guest_service(env: Optional[dict] = None, *, channel_factory=None, rpc_factory=None,
-                       approval_factory=None):
+                       approval_factory=None, return_config: bool = False):
     """Build per request from validated config, without stale transport globals.
 
     The sidecar supplies the factories. No host connector yet means an offline
@@ -715,9 +769,31 @@ def load_guest_service(env: Optional[dict] = None, *, channel_factory=None, rpc_
         return None
     try:
         joining = JoiningStore(config.joining_store_dir)
-        channel = channel_factory(config) if channel_factory is not None else None
+        channel = channel_factory(config) if channel_factory is not None else _default_guest_channel(config)
         rpc = rpc_factory(config) if rpc_factory is not None else None
         approvals = approval_factory(config) if approval_factory is not None else None
+        history_consent = None
+        history_consent_key = None
+        # Guest history consent is paired-identity scoped.  The host public key
+        # is read from the verified pairing journal, never from HTTP/config.
+        if config.pairing is not None:
+            from invite_rooms.pairing_journal import Journal
+            from invite_rooms.runtime_joining import _IdentityConsentKey
+            bundle = identity_module.load_identity(config.pairing.identity_dir,
+                                                   installation_id=config.installation_id,
+                                                   profile=config.profile)
+            state = Journal(config.pairing.journal_dir,
+                            anchor=config.pairing.journal_anchor).snapshot()
+            links = [link for link in state.active_links() if link.get("role") == "joining"]
+            if len(links) != 1:
+                raise RuntimeConfigError("history_host_unavailable")
+            peer_key = base64.b64decode(links[0]["peer"]["consent_public_key_b64"], validate=True)
+            if len(peer_key) != 32:
+                raise RuntimeConfigError("history_host_unavailable")
+            history_consent = HistoryConsentStore(Path(config.joining_store_dir) / "history-consent.sqlite",
+                                                  owner_public_key=peer_key,
+                                                  guest_public_key=bundle.consent_public_key)
+            history_consent_key = _IdentityConsentKey(bundle)
         def peer_check(peer_id, host_id):
             # Reload the authoritative private registry after every native await.
             from dataclasses import asdict
@@ -727,9 +803,12 @@ def load_guest_service(env: Optional[dict] = None, *, channel_factory=None, rpc_
             value = asdict(peer)
             value['consent_public_key'] = peer.consent_public_key.hex()
             return value
-        return GuestRoomService(joining, channel=channel, rpc=rpc, approvals=approvals,
+        service = GuestRoomService(joining, channel=channel, rpc=rpc, approvals=approvals,
                                 peer_check=peer_check, local_installation_id=config.installation_id,
-                                host_label=config.joining_host_label, own_bot_id=config.joining_own_bot_id)
+                                host_label=config.joining_host_label, own_bot_id=config.joining_own_bot_id,
+                                history_consent=history_consent, history_consent_key=history_consent_key,
+                                history_enabled=config.history_enabled)
+        return (service, None, config) if return_config else service
     except Exception:
         _warn_once("joining", "guest joining configuration is unavailable")
         return None

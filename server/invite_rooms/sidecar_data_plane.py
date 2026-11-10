@@ -35,6 +35,7 @@ from invite_rooms.control.dispatcher import ControlError
 from invite_rooms.control.listener import ControlListener, build_pair_ack_listener
 from invite_rooms.control.scoped_registry import ScopedAdapterRegistry
 from invite_rooms.host_control import build_host_handlers
+from invite_rooms.history_host import OwnerHistoryHandlers, _Signer
 from invite_rooms.joining_material import TargetMaterialMint
 from invite_rooms.joining_store import JoiningStore
 from invite_rooms.material_control import HostConnectorMaterialTransport, MaterialControl, MaterialControlChannel
@@ -667,7 +668,27 @@ def _assemble(service, ctx, config, store_parent, opened) -> SidecarDataPlane:
     adapter = LoopbackAdapter(authority=authority.current)
     scoped_registry = ScopedAdapterRegistry(adapter, authority)
     coordinator = MaterialCoordinator(config, ctx)
+    async def history_native_rpc(method, params, *, effect_admission=None, deadline=None):
+        from invite_rooms.routes import _connect_native_rpc
+        async with _connect_native_rpc(config.native_rpc) as rpc:
+            return await rpc(method, params, effect_admission=effect_admission, deadline=deadline)
+
+    # The local owner identity is the only issuer of the owner-history receipt.
+    # The guest key is supplied only by the journal-authenticated context at
+    # handler execution; it is never taken from config or request data.
+    owner_bundle = identity_bundle()
+    history = OwnerHistoryHandlers(
+        store=service.store, owner_installation_id=ctx.installation_id,
+        owner_key=_Signer(owner_bundle.consent_key()),
+        consent_db=store_parent / "history-consent.sqlite",
+        native_rpc=history_native_rpc)
     host_handlers = build_host_handlers(service.store, ctx)
+    if getattr(config, "history_enabled", False):
+        host_handlers.update({
+            "history_read_scope": history.history_read_scope,
+            "history_read_acceptance": history.history_read_acceptance,
+            "room_log": history.room_log,
+        })
     material_control = _material_control(service, ctx, config, journal, authority, joining_store, coordinator)
     material_handlers = {name: coordinator.handler(callback) for name, callback in material_control.handlers().items()}
     control_listener = build_pair_ack_listener(

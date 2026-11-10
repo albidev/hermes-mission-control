@@ -304,6 +304,16 @@ class AssemblyBuilderTests(Base):
         plane.close()
         plane.close()
 
+    def test_history_handlers_require_explicit_runtime_gate(self):
+        from dataclasses import replace
+        service, owner, config = self.load(self.A, self.peer_b)
+        plane = sdp().build_sidecar_data_plane((service, owner, replace(config, history_enabled=True)))
+        self.assertIsNotNone(plane)
+        self.planes.append(plane)
+        self.assertEqual(set(plane.control_listener._host_handlers), {
+            'preview', 'redeem', 'status', 'joining_consent',
+            'history_read_scope', 'history_read_acceptance', 'room_log'})
+
     def test_control_listener_has_only_frozen_pair_ack_host_and_material_handler_maps(self):
         plane = self.plane()
         listener = plane.control_listener
@@ -312,7 +322,8 @@ class AssemblyBuilderTests(Base):
         self.assertEqual(dict(listener._host_handlers), dict(plane.host_handlers))
         self.assertEqual(dict(listener._material_handlers), dict(plane.material_handlers))
         for name, handler in listener._host_handlers.items():
-            self.assertTrue(handler.__code__.co_filename.endswith("host_control.py"), name)
+            expected_file = "history_host.py" if name.startswith("history_") or name == "room_log" else "host_control.py"
+            self.assertTrue(handler.__code__.co_filename.endswith(expected_file), name)
         control = plane.material_control
         self.assertIs(type(control), MaterialControl)
         request = listener._material_handlers["material_request"]
@@ -334,13 +345,15 @@ class AssemblyBuilderTests(Base):
         self.assertTrue(control._request_bound)
         self.assertTrue(callable(listener._pair_ack))
         self.assertEqual(listener._pair_ack.__module__, "invite_rooms.control.listener")
-        for out_of_scope in ("room_log", "member_left"):
+        for out_of_scope in ("member_left",):
             self.assertNotIn(out_of_scope, listener._host_handlers)
             self.assertNotIn(out_of_scope, listener._material_handlers)
         # Host handlers are the real contextual ones: a non-context caller is refused generically.
         for op, handler in listener._host_handlers.items():
             with self.assertRaises(ControlError, msg=op):
-                handler(object(), {"op": op, "lobby_id": "x", "invite_id": "y"})
+                result = handler(object(), {"op": op, "room_id": "x", "since_seq": 0, "limit": 1})
+                if inspect.isawaitable(result):
+                    asyncio.run(result)
 
     def test_data_endpoint_resolution_uses_journal_peer_and_adapter_id_only(self):
         plane = self.plane()

@@ -100,10 +100,11 @@ class SchemaR1Tests(unittest.TestCase):
             path = Path(tmp)/'v2.sqlite'
             store = RoomInviteStore(path)
             with sqlite3.connect(path) as db:
-                self.assertEqual(db.execute('SELECT version FROM schema_version').fetchall(), [(2,)])
+                self.assertEqual(db.execute('SELECT version FROM schema_version').fetchall(), [(3,)])
                 db.execute('UPDATE schema_version SET version=3')
-            with self.assertRaisesRegex(InviteError, '^schema_too_new$'):
-                store.bind_owner_scope(INSTALL_A, 'default')
+            store.bind_owner_scope(INSTALL_A, 'default')
+            db.execute('UPDATE schema_version SET version=4')
+            db.commit()
             future = RoomInviteStore(path)
             self.assertTrue(future.read_only)
             with self.assertRaisesRegex(InviteError, '^schema_too_new$'):

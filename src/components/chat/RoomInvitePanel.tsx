@@ -30,6 +30,8 @@ export function RoomInvitePanel({ lobbyId, accessToken, api, initialName, embedd
   const [inviteeLabel, setInviteeLabel] = useState('');
   const [confirmActivate, setConfirmActivate] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [historyApproval, setHistoryApproval] = useState<{ scope: object; peer: string; result: 'approved' | 'failed' } | null>(null);
+  const [historyPending, setHistoryPending] = useState(false);
   const issueRef = useRef<RoomInviteIssue | null>(null);
   issueRef.current = issue;
   const mountedRef = useRef(true);
@@ -53,6 +55,18 @@ export function RoomInvitePanel({ lobbyId, accessToken, api, initialName, embedd
   if (state.status === 'error' && !state.lobby) return <div className="rounded-lg border border-negative/30 bg-negative-subtle p-4 text-sm text-negative" role="alert">{state.error?.kind === 'unavailable' ? t('rooms.invites.unavailable') : `${t('rooms.invites.error')} (${state.error?.code})`} <button type="button" className="ml-2 underline" onClick={() => void state.reload()}>{t('rooms.invites.retry')}</button></div>;
   const lobby = state.lobby;
   if (!lobby) return null;
+  const approveHistory = async (peerId: string) => {
+    if (!lobby.planned_room_id || historyPending) return;
+    const scope = scopeRef.current;
+    setHistoryPending(true);
+    try {
+      const result = await inviteApi.approveHistory(lobby.planned_room_id, peerId);
+      if (result.status !== 'owner_approved') throw new Error('history_approval_unconfirmed');
+      if (mountedRef.current && scopeRef.current === scope) setHistoryApproval({ scope, peer: peerId, result: 'approved' });
+    } catch {
+      if (mountedRef.current && scopeRef.current === scope) setHistoryApproval({ scope, peer: peerId, result: 'failed' });
+    } finally { if (mountedRef.current && scopeRef.current === scope) setHistoryPending(false); }
+  };
   const issueInvite = async (member: RoomInviteMember) => {
     if (!inviteeLabel.trim()) return;
     const operation = ++operationRef.current;
@@ -113,6 +127,14 @@ export function RoomInvitePanel({ lobbyId, accessToken, api, initialName, embedd
     <div className="flex gap-2"><input className="mc-input h-8 min-w-0 flex-1 text-xs" value={inviteeLabel} onChange={(event) => setInviteeLabel(event.target.value)} placeholder={t('rooms.invites.inviteePlaceholder')} aria-label={t('rooms.invites.inviteeLabel')} /><button type="button" className="chat-control" disabled={visibleBusy || state.isMutating || !inviteeLabel.trim() || remoteMembers.length === 0} onClick={() => { const peer = remoteMembers[0]; if (peer) void issueInvite(peer); }}>{visibleBusy ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />} {t('rooms.invites.issue')}</button></div>
     {visibleIssue ? <div className="invite-issue min-w-0 rounded-lg border border-warning/40 bg-warning-subtle p-2 text-xs"><div className="flex items-center justify-between gap-2"><strong>{t('rooms.invites.secretOnce')}</strong><button type="button" className="min-h-11 underline" onClick={() => { setIssue(null); issueScopeRef.current = -1; operationRef.current += 1; setCopyState('idle'); }}>{t('rooms.invites.closeSecret')}</button></div><code className="invite-code mt-2 block max-w-full select-all break-all">{visibleIssue.invite_url}</code><button type="button" className="chat-control chat-text-action mt-2 w-full justify-center" onClick={() => void copyInvite()}><Clipboard size={14} /> {copyState === 'copied' ? t('rooms.invites.copied') : copyState === 'failed' ? t('rooms.invites.copyFailed') : t('rooms.invites.copyLink')}</button></div> : null}
     {state.error ? <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-subtle p-2 text-xs text-warning" role="alert"><ShieldAlert size={14} />{state.error.code === 'invite_origin_unavailable' ? t('rooms.invites.originUnavailable') : state.error.code === 'invite_response_incompatible' ? t('rooms.invites.compatibilityError') : state.error.code === 'binding_changed' ? t('rooms.invites.bindingChanged') : state.error.code === 'activation_failed' ? t('rooms.invites.activationFailed') : state.error.kind === 'ambiguous' ? t('rooms.invites.ambiguous') : t('rooms.invites.blocked')}<code>{state.error.code}</code>{state.error.kind === 'ambiguous' ? <button type="button" className="ml-auto underline" onClick={() => void state.refreshActivation()}>{t('rooms.invites.checkStatus')}</button> : null}</div> : null}
+    {lobby.state === 'created' && lobby.history_enabled === true && lobby.planned_room_id ? <div className="grid min-w-0 gap-2 rounded-lg border border-border-subtle p-3 text-xs">
+      <p>{t(lobby.history_policy === 'full' ? 'rooms.invites.history.onHint' : 'rooms.invites.history.offHint')}</p>
+      {remoteMembers.map(peer => <div key={peer.member_id} className="grid min-w-0 gap-1">
+        <span className="break-all">{peer.display_name || peer.handle}</span>
+        <button type="button" className="chat-control chat-text-action" disabled={historyPending || !peer.target?.peer_id} onClick={() => void approveHistory(peer.target!.peer_id)}>{t('rooms.invites.history.approve')}</button>
+        {historyApproval?.scope === scopeRef.current && historyApproval.peer === peer.target?.peer_id ? <p role={historyApproval.result === 'approved' ? 'status' : 'alert'}>{t(historyApproval.result === 'approved' ? 'rooms.invites.history.approved' : 'rooms.invites.history.failed')}</p> : null}
+      </div>)}
+    </div> : null}
     <button type="button" className={`chat-control ${confirmActivate ? 'is-confirm' : ''}`} disabled={visibleBusy || state.isMutating || state.activationNeedsRefresh || !state.activation?.ready} onClick={() => void activate()}>{visibleBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {confirmActivate ? t('rooms.invites.confirmActivate') : t('rooms.invites.activate')}</button>
   </section>;
 }

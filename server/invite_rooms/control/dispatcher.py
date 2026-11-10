@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import math
 import secrets
 import threading
@@ -180,9 +181,11 @@ class LinkState:
     protocol_state: str
 
 
-# Wire ops (handler labels) that may run in the contextual host lane: the invitation operations only.  Material,
-# room-log and membership operations are deliberately absent (later work packages), as is ``pair_ack``.
-CONTEXT_OPERATIONS = frozenset({"preview", "redeem", "joining_consent", "status"})
+# Wire ops that may run in the journal-authenticated contextual host lane.
+# room_log is deliberately narrow: it receives only the immutable peer context and
+# server-validated selectors; it never falls back to the legacy identity-less lane.
+CONTEXT_OPERATIONS = frozenset({"preview", "redeem", "joining_consent", "status", "room_log",
+                               "history_read_scope", "history_read_acceptance"})
 
 
 @dataclass(frozen=True)
@@ -286,7 +289,8 @@ class TransportRegistry:
 
 
 _ALLOWED = {"pair_ack", "preview", "redeem", "consent", "status",
-            "material_request", "material_receipt", "room_log", "member_left"}
+            "material_request", "material_receipt", "room_log", "member_left",
+            "history_read_scope", "history_read_acceptance"}
 # No native method, URL, or arbitrary parameter can cross this boundary.
 _FIELDS = {
     "pair_ack": {"op", "ack"},
@@ -298,6 +302,8 @@ _FIELDS = {
     "material_receipt": {"op", "lobby_id", "invite_id", "receipt"},
     "room_log": {"op", "room_id", "since_seq", "limit"},
     "member_left": {"op", "room_id"},
+    "history_read_scope": {"op", "room_id"},
+    "history_read_acceptance": {"op", "scope", "receipt", "signature"},
 }
 
 
@@ -408,6 +414,29 @@ class ControlDispatcher:
                 raise ControlError()
         if op == "member_left" and (not isinstance(value.get("room_id"), str) or not value["room_id"]):
             raise ControlError()
+        if op == "history_read_scope" and (not isinstance(value.get("room_id"), str)
+                or not value["room_id"] or len(value["room_id"]) > 128):
+            raise ControlError()
+        if op == "history_read_acceptance":
+            scope = value.get("scope")
+            if (not isinstance(scope, dict) or set(scope) != {
+                    "room_id", "home_install_id", "authority_gateway_id", "authority_epoch",
+                    "member_id", "recipient_id", "pairing_generation", "history_policy", "from_seq_inclusive"}
+                    or any(not isinstance(scope[k], str) or not scope[k] for k in
+                           ("room_id", "home_install_id", "authority_gateway_id", "member_id", "recipient_id"))
+                    or type(scope["authority_epoch"]) is not int or scope["authority_epoch"] < 1
+                    or type(scope["pairing_generation"]) is not int or scope["pairing_generation"] < 1
+                    or scope["history_policy"] not in {"on", "off"}
+                    or type(scope["from_seq_inclusive"]) is not int or scope["from_seq_inclusive"] < 1
+                    or (scope["history_policy"] == "on" and scope["from_seq_inclusive"] != 1)
+                    or not isinstance(value.get("receipt"), dict)
+                    or not isinstance(value.get("signature"), str) or len(value["signature"]) > 256):
+                raise ControlError()
+            try:
+                if len(json.dumps(value, separators=(",", ":"), allow_nan=False).encode()) > 16384:
+                    raise ControlError()
+            except (TypeError, ValueError):
+                raise ControlError()
         return op, dict(value)
 
     def _allowed(self, state: LinkState, op: str) -> None:
@@ -539,6 +568,10 @@ class ControlDispatcher:
                     future = loop.run_in_executor(executor, run)
                     # A timeout cancels a still-queued work item; a handler already running cannot be cancelled.
                     result = await asyncio.wait_for(future, timeout=remaining)
+                    # Callable handler objects may expose an async __call__ even
+                    # when inspect.iscoroutinefunction(handler) is false.
+                    if inspect.isawaitable(result):
+                        result = await asyncio.wait_for(result, timeout=max(0.0, absolute - time.monotonic()))
             elif inspect.iscoroutinefunction(handler):
                 result = handler(effective_request)
                 result = await asyncio.wait_for(result, timeout=timeout)

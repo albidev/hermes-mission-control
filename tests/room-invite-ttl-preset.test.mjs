@@ -94,6 +94,6 @@ const off = await suite(false);
 try {
   test('flag OFF renders static duration and sends today body without a hint', async () => {
     const bodies = []; const api = fakeApi({ createLobby: async (body) => { bodies.push(body); return lobby; } });
-    const root = await mount(off.Component, off.I18nProvider, api); assert.equal(document.querySelectorAll('[role="radio"]').length, 0); assert.equal(document.querySelector('[role="radiogroup"]'), null); [...document.querySelectorAll('button')].find((b) => b.textContent.includes('Create lobby')).click(); await flush(); assert.deepEqual(bodies[0], { name: 'Room', roster: [{ member_id: 'local-owner', handle: 'default' }, { member_id: 'peer-peer-b', handle: 'peer-b', target: { peer_id: 'peer-b' } }] }); await root.unmount(); currentRoot = undefined;
+    const root = await mount(off.Component, off.I18nProvider, api); assert.equal(document.querySelectorAll('[role="radio"]').length, 0); assert.equal(document.querySelector('[role="radiogroup"]'), null); [...document.querySelectorAll('button')].find((b) => b.textContent.includes('Create lobby')).click(); await flush(); assert.deepEqual(bodies[0], { name: 'Room', roster: [{ member_id: 'local-owner', handle: 'default' }, { member_id: 'peer-peer-b', handle: 'peer-b', target: { peer_id: 'peer-b' } }], history_policy: 'postjoin' }); await root.unmount(); currentRoot = undefined;
   });
 } finally { await off.close(); }

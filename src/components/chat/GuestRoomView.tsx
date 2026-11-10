@@ -130,7 +130,14 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
   const [hidden, setHidden] = useState(false);
   const [busy, setBusy] = useState(false);
   const lifecycle = useRef<AbortController | null>(null);
+  const historyAccepted = useRef(false);
   const sequence = useRef(0);
+
+  const acceptHistoryBeforeRead = async (roomId: string, signal: AbortSignal) => {
+    if (typeof api.acceptHistoryRead !== 'function') return;
+    await api.acceptHistoryRead(roomId, signal);
+    historyAccepted.current = true;
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -142,6 +149,7 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
     setLogUnavailable(false);
     setHidden(false);
     setTab(defaultGuestTab);
+    historyAccepted.current = false;
     sequence.current = 0;
     const fail = (cause: unknown) => {
       if (controller.signal.aborted) return;
@@ -156,21 +164,24 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
       if (inviteErrorCode(cause) === 'not_supported') setApprovalsUnsupported(true);
       else fail(cause);
     });
-    api.getLog(room.room_id, { sinceSeq: 0, limit: 100 }, controller.signal).then((page) => {
-      if (controller.signal.aborted) return;
-      setEvents(mergeGuestEvents([], page.events));
-      sequence.current = Math.max(0, ...page.events.map((event) => event.seq));
-      setHasMore(page.has_more);
-    }).catch((cause) => {
-      if (controller.signal.aborted) return;
-      // The initial host_offline is presented by the import-only note, not as a generic operation error.
-      if (inviteErrorCode(cause) === 'host_offline') {
-        setLogUnavailable(true);
-        if (isInviteUnavailable(cause)) setHidden(true);
-        return;
+    void (async () => {
+      try {
+        await acceptHistoryBeforeRead(room.room_id, controller.signal);
+        const page = await api.getLog(room.room_id, { sinceSeq: 0, limit: 100 }, controller.signal);
+        if (controller.signal.aborted) return;
+        setEvents(mergeGuestEvents([], page.events));
+        sequence.current = Math.max(0, ...page.events.map((event) => event.seq));
+        setHasMore(page.has_more);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        if (inviteErrorCode(cause) === 'host_offline') {
+          setLogUnavailable(true);
+          if (isInviteUnavailable(cause)) setHidden(true);
+          return;
+        }
+        fail(cause);
       }
-      fail(cause);
-    });
+    })();
     return () => controller.abort();
   }, [api, room.room_id]);
 
@@ -189,6 +200,7 @@ export function GuestRoomView({ room, accessToken, api: apiOverride, onLeave }: 
     finally { if (!signal.aborted) setBusy(false); }
   };
   const loadMore = () => run(async (signal) => {
+    if (!historyAccepted.current) await acceptHistoryBeforeRead(room.room_id, signal);
     const page = await api.getLog(room.room_id, { sinceSeq: sequence.current, limit: 100 }, signal);
     if (signal.aborted) return;
     setEvents((current) => mergeGuestEvents(current, page.events));

@@ -137,7 +137,8 @@ class InviteRoomsService:
         if remote[0]["target"]["installation_id"] == self._trusted_owner.installation_id:
             raise ServiceError("distinct_peer_installation_required")
 
-    def create_lobby(self, ctx: OwnerContext, *, name: str, roster: list[dict], grant_ttl_hint_seconds=None) -> dict:
+    def create_lobby(self, ctx: OwnerContext, *, name: str, roster: list[dict], grant_ttl_hint_seconds=None,
+                     history_policy: str = "full", creation_id: str | None = None) -> dict:
         self._validate_ctx(ctx)
         if grant_ttl_hint_seconds is not None and (type(grant_ttl_hint_seconds) is not int or grant_ttl_hint_seconds not in ({600} | ({3600, 28800, 86400} if self._lobby_grant_ttl_extended_presets else set()))):
             raise ServiceError("invalid_lobby")
@@ -145,10 +146,25 @@ class InviteRoomsService:
         self._validate_roster_bindings(roster)
         if not any(isinstance(m, dict) and "target" not in m and m.get("profile") == self._trusted_owner.profile for m in roster):
             raise ServiceError("owner_profile_mismatch")
-        return self._redact_lobby(self.store.create_lobby(name=name, roster=copy.deepcopy(roster), grant_ttl_hint_seconds=grant_ttl_hint_seconds))
+        if history_policy not in {"full", "postjoin"}:
+            raise ServiceError("invalid_history_policy")
+        try:
+            lobby = self.store.create_lobby(name=name, roster=copy.deepcopy(roster),
+                                            grant_ttl_hint_seconds=grant_ttl_hint_seconds,
+                                            history_policy=history_policy, creation_id=creation_id)
+        except InviteError as exc:
+            raise ServiceError(str(exc)) from None
+        return self._redact_lobby(lobby) | {"history_policy": history_policy}
 
     def inspect_lobby(self, ctx: OwnerContext, lobby_id: str) -> dict:
-        return self._redact_lobby(self._owned_lobby(ctx, lobby_id))
+        lobby = self._owned_lobby(ctx, lobby_id)
+        view = self._redact_lobby(lobby)
+        try:
+            policy = self.store.get_history_policy(lobby_id)
+        except InviteError as exc:
+            raise ServiceError(str(exc)) from None
+        view["history_policy"] = policy["mode"] if policy is not None else "postjoin"
+        return view
 
     def issue_invite(self, ctx: OwnerContext, lobby_id: str, member_id: str, *, invitee_label: str,
                      ttl_seconds: int | float = 86400) -> IssuedInvite:
@@ -365,7 +381,60 @@ class InviteRoomsService:
             raise ServiceError(code) from None
         if not isinstance(room, dict) or room.get("room_id") != lobby["planned_room_id"]:
             raise ServiceError("native_room_conflict")
+        # The native state was authenticated by RoomLobbyService before this
+        # point.  Freeze the already-planned canonical binding and only then
+        # create per-member history admissions.  A missing/corrupt policy never
+        # falls back to the legacy execution consent path.
+        try:
+            policy = self.store.bind_room_history_policy(lobby_id, room["room_id"])
+            latest = self.store.latest_invites(lobby_id)
+            remote = [m for m in lobby["roster"] if "target" in m]
+            if any(m["member_id"] not in latest for m in remote):
+                raise InviteError("history_admission_conflict")
+            existing = [self.store.get_history_admission(lobby_id, m["member_id"]) for m in remote]
+            same_boundary = (existing and all(row is not None and row["invite_id"] == latest[m["member_id"]]
+                                              for row, m in zip(existing, remote)))
+            if same_boundary:
+                boundary = existing[0]["from_seq_inclusive"]
+            elif policy["mode"] == "postjoin":
+                page = await self._rpc("groups.log", {"room_id": room["room_id"], "since_seq": 0, "limit": 1})
+                if not self._valid_history_boundary_page(page, room):
+                    raise InviteError("history_admission_conflict")
+                boundary = page["latest_seq"] + 1
+            else:
+                boundary = 1
+            for member in remote:
+                self.store.record_history_admission(lobby_id, member["member_id"], latest[member["member_id"]], boundary)
+        except Exception:
+            raise ServiceError("history_admission_unavailable") from None
         return {"lobby_id": lobby_id, "status": "activated", "room_id": room["room_id"]}
+
+    @staticmethod
+    def _valid_history_boundary_page(page, room) -> bool:
+        """Validate the canonical owner page before freezing an OFF boundary."""
+        required = {"authority", "events", "cursor", "latest_seq", "has_more"}
+        if (not isinstance(page, dict) or not required <= set(page)
+                or not set(page) <= required | {"room_id"}):
+            return False
+        authority = page.get("authority")
+        expected = {"gateway_id": room.get("authority_gateway_id"), "epoch": room.get("authority_epoch")}
+        if (page.get("room_id", room.get("room_id")) != room.get("room_id")
+                or authority != expected):
+            return False
+        events = page.get("events")
+        if (not isinstance(events, list) or len(events) > 1
+                or any(not isinstance(event, dict)
+                       or event.get("room_id") != room.get("room_id") for event in events)):
+            return False
+        latest, cursor, more = page.get("latest_seq"), page.get("cursor"), page.get("has_more")
+        if (type(latest) is not int or latest < 0 or type(cursor) is not int or cursor < 0
+                or type(more) is not bool or latest < cursor or cursor != (events[-1].get("seq") if events else 0)
+                or more != (cursor < latest)):
+            return False
+        if events and (not isinstance(events[0], dict) or type(events[0].get("seq")) is not int
+                       or events[0]["seq"] <= 0):
+            return False
+        return True
 
     def classify_unconfirmed_mutation(self, lobby_id: str) -> str:
         """Derive a stable code for an unrecognized failure near a native

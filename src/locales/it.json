@@ -1514,5 +1514,11 @@
   "inviteRooms.namesNotVerified": "I nomi dei padroni li sceglie ciascun padrone: non sono identità verificate.",
   "inviteRooms.offline": "Il padrone è offline; vedi l'ultima versione ricevuta, non salvata su questo dispositivo.",
   "inviteRooms.leave": "Esci dalla stanza",
-  "inviteRooms.consent": "Do il consenso"
+  "inviteRooms.consent": "Do il consenso",
+  "rooms.invites.history.label": "Permetti agli ospiti ammessi di vedere la cronologia della stanza",
+  "rooms.invites.history.onHint": "L'attivazione è permanente per questa stanza. I messaggi precedenti richiedono l'approvazione firmata del proprietario e l'accettazione dell'ospite.",
+  "rooms.invites.history.offHint": "Disattivata per impostazione predefinita. Gli ospiti vedono solo i messaggi successivi alla propria ammissione.",
+  "rooms.invites.history.approve": "Approva accesso alla cronologia",
+  "rooms.invites.history.approved": "Accesso alla cronologia approvato. L'ospite deve accettare separatamente.",
+  "rooms.invites.history.failed": "Approvazione non riuscita. Nessun accesso concesso."
 }

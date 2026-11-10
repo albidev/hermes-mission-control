@@ -90,6 +90,7 @@ function createFixtures(t: (key: string) => string, offline: boolean, unavailabl
       events: options?.sinceSeq ? [events[1], event(3, 'Albi', t('inviteUi.mockMessage3'))] : events,
       cursor: null, latest_seq: 3, has_more: !options?.sinceSeq, authority: { gateway_id: 'mock', epoch: 1 },
     }),
+    acceptHistoryRead: async () => ({ room_id: room.room_id, status: 'ready' }),
     decideApproval: async (_room, id) => { approvals = approvals.filter((item) => item.request_id !== id); },
     leaveRoom: async () => undefined,
   };

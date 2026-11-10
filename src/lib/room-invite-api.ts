@@ -17,7 +17,7 @@ export type RoomInviteBinding = {
 export type RoomInviteTarget = { kind?: string; peer_id: string; installation_id?: string; profile?: string; capability_digest?: string };
 export type RoomInvitePeer = { peer_id: string; installation_id: string; profile: string; capability_digest: string };
 export type RoomInviteMember = { member_id: string; profile: string; handle: string; display_name?: string; target?: RoomInviteTarget };
-export type RoomInviteLobby = { lobby_id: string; name: string; state: string; planned_room_id?: string; created_at?: string; updated_at?: string; grant_ttl_hint_seconds?: number | null; roster: RoomInviteMember[] };
+export type RoomInviteLobby = { lobby_id: string; name: string; state: string; planned_room_id?: string; created_at?: string; updated_at?: string; grant_ttl_hint_seconds?: number | null; history_policy?: 'full' | 'postjoin'; history_enabled?: boolean; roster: RoomInviteMember[] };
 export type RoomInvitePeerStatus = {
   member_id: string;
   peer_id?: string | null;
@@ -38,6 +38,8 @@ export type RoomInviteCreateLobbyRequest = {
   name: string;
   roster: Array<{ member_id: string; handle: string; display_name?: string; target?: { peer_id: string } }>;
   grant_ttl_hint_seconds?: number;
+  history_policy?: 'full' | 'postjoin';
+  creation_id?: string;
 };
 
 /**
@@ -53,7 +55,7 @@ export function isRoomsExtendedTtlEnabled(): boolean {
 
 const EXTENDED_TTL_PRESETS = new Set([3600, 28800, 86400]);
 
-export function buildCreateLobbyRequest(name: string, ownerProfile: string, peer: RoomInvitePeer, grantTtlHintSeconds?: number): RoomInviteCreateLobbyRequest {
+export function buildCreateLobbyRequest(name: string, ownerProfile: string, peer: RoomInvitePeer, grantTtlHintSeconds?: number, historyEnabled?: boolean): RoomInviteCreateLobbyRequest {
   if (grantTtlHintSeconds !== undefined && grantTtlHintSeconds !== 600 && (typeof grantTtlHintSeconds !== 'number' || !Number.isInteger(grantTtlHintSeconds) || !EXTENDED_TTL_PRESETS.has(grantTtlHintSeconds))) {
     throw new TypeError('grantTtlHintSeconds must be undefined, 600, 3600, 28800, or 86400');
   }
@@ -66,6 +68,7 @@ export function buildCreateLobbyRequest(name: string, ownerProfile: string, peer
     ],
   };
   if (grantTtlHintSeconds !== undefined && grantTtlHintSeconds !== 600) request.grant_ttl_hint_seconds = grantTtlHintSeconds;
+  if (historyEnabled !== undefined) request.history_policy = historyEnabled ? 'full' : 'postjoin';
   return request;
 }
 
@@ -79,6 +82,7 @@ export type RoomInviteApi = {
   decideHost(lobbyId: string, inviteId: string, input: { peer_id: string; approved: boolean; expected_binding: RoomInviteBinding }, signal?: AbortSignal): Promise<RoomInviteRedemption>;
   getActivation(lobbyId: string, signal?: AbortSignal): Promise<RoomInviteActivationStatus>;
   activate(lobbyId: string, signal?: AbortSignal): Promise<{ lobby_id: string; status: 'activated'; room_id: string }>;
+  approveHistory(roomId: string, recipientId: string, signal?: AbortSignal): Promise<{ status: string }>;
 };
 
 function errorKind(status: number, code: string): RoomInviteErrorKind {
@@ -138,5 +142,6 @@ export function createRoomInviteApi(accessToken?: string, fetcher: typeof fetch 
     decideHost: async (id, invite, input, signal) => (await request<{ redemption: RoomInviteRedemption }>(`/lobbies/${encodeURIComponent(id)}/invites/${encodeURIComponent(invite)}/decision`, { method: 'POST', body: JSON.stringify(input) }, signal)).redemption,
     getActivation: (id, signal) => request<RoomInviteActivationStatus>(`/lobbies/${encodeURIComponent(id)}/activation`, { method: 'GET' }, signal),
     activate: (id, signal) => request<{ lobby_id: string; status: 'activated'; room_id: string }>(`/lobbies/${encodeURIComponent(id)}/activate`, { method: 'POST', body: '{}' }, signal),
+    approveHistory: async (roomId, recipientId, signal) => request<{ status: string }>(`/rooms/${encodeURIComponent(roomId)}/history-approval`, { method: 'POST', body: JSON.stringify({ recipient_id: recipientId }) }, signal),
   };
 }

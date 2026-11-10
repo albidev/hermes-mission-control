@@ -9,6 +9,7 @@ export type GuestRoom = {
   owner_offline_since?: string | null;
   members: Array<{ id: string; name: string; role?: string }>;
   permissions: string[];
+  history_enabled?: boolean;
 };
 export type GuestLogEvent = {
   seq: number;
@@ -34,6 +35,7 @@ export type GuestBot = {
 export type RoomGuestApi = {
   listRooms(signal?: AbortSignal): Promise<GuestRoom[]>;
   getLog(roomId: string, options?: { sinceSeq?: number; limit?: number }, signal?: AbortSignal): Promise<GuestLogPage>;
+  acceptHistoryRead(roomId: string, signal?: AbortSignal): Promise<{ room_id: string; status: string }>;
   getMyBot(roomId: string, signal?: AbortSignal): Promise<GuestBot>;
   decideApproval(roomId: string, requestId: string, choice: 'approve' | 'reject', signal?: AbortSignal): Promise<void>;
   leaveRoom(roomId: string, signal?: AbortSignal): Promise<void>;
@@ -60,6 +62,7 @@ export function createRoomGuestApi(accessToken?: string, fetcher: typeof fetch =
       if (options.limit !== undefined) query.set('limit', String(options.limit));
       return request<GuestLogPage>(`${path(roomId)}/log${query.size ? `?${query}` : ''}`, 'GET', undefined, signal);
     },
+    acceptHistoryRead: (roomId, signal) => request<{ room_id: string; status: string }>(`${path(roomId)}/history-consent`, 'POST', {}, signal),
     getMyBot: (roomId, signal) => request<GuestBot>(`${path(roomId)}/my-bot`, 'GET', undefined, signal),
     decideApproval: async (roomId, requestId, choice, signal) => {
       await request(`${path(roomId)}/approvals/${encodeURIComponent(requestId)}`, 'POST', { choice }, signal);

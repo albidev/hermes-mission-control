@@ -31,12 +31,13 @@ try {
   const oldFetch = async () => new Response(JSON.stringify({ invite_id: 'old-invite', secret: 'B'.repeat(43), expires_at: '2030-01-01' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   const oldApi = createRoomInviteApi(undefined, oldFetch);
   const state = { mode: 'normal', pending: [], copyPending: [], fallbackCalls: [], insertions: [], copies: [], observers: [], seq: 0 };
-  const lobby = (id) => ({ lobby_id: id, name: 'Synthetic long lobby name '.repeat(4), state: 'open', roster: [
+  const lobby = (id) => ({ lobby_id: id, name: 'Synthetic long lobby name '.repeat(4), state: state.lobbyState || 'open', planned_room_id: 'invite-room-' + 'a'.repeat(32), history_enabled: state.lobbyState === 'created', roster: [
     { member_id: 'owner', handle: 'owner', profile: 'default' },
     { member_id: 'peer-b', handle: 'synthetic-peer', display_name: 'Synthetic peer', profile: 'default', target: { peer_id: 'peer-b', profile: 'default', capability_digest: 'c'.repeat(64) } },
   ] });
   const issuePayload = (id) => { const seq = ++state.seq; const inviteId = `invite-${String(seq).padStart(32, '0')}`; const secret = String.fromCharCode(65 + seq % 26).repeat(43); return { invite_id: inviteId, secret, invite_url: `https://invite.example.test/invite/${id}/${inviteId}#${secret}`, expires_at: '2030-01-01' }; };
   const makeApi = () => ({
+    approveHistory: async (roomId, peerId) => { state.historyApproval = { roomId, peerId }; return { status: 'owner_approved' }; },
     getLobby: async id => lobby(id),
     getActivation: async id => ({ lobby_id: id, lobby_state: 'open', ready: false, peers: [] }),
     issueInvite: async id => {
@@ -104,6 +105,14 @@ try {
       const alert = document.querySelector('[role=alert]'); assert.ok(alert); assert.match(alert.textContent, locale === 'en' ? /isn't compatible|can't be used|compatib/i : /compatib/i); assert.equal(document.querySelector('.invite-code'), null); assert.equal(document.querySelector('.invite-issue .chat-control'), null); assert.equal(document.body.textContent.includes('B'.repeat(43)), false);
     });
   }
+  await test('created room requires an explicit owner history approval action', async () => {
+    state.lobbyState = 'created'; state.historyApproval = null;
+    await mount();
+    assert.equal(state.historyApproval, null, 'mounting must not issue owner approval');
+    await click('Approve history access');
+    assert.deepEqual(state.historyApproval, { roomId: 'invite-room-' + 'a'.repeat(32), peerId: 'peer-b' });
+    assert.match(document.body.textContent, /History access approved/);
+  });
 } finally {
   if (root) await flush(() => root.unmount());
   await server.close(); rmSync(cacheDir, { recursive: true, force: true }); dom.window.close();
