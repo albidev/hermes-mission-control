@@ -92,4 +92,25 @@ try{
    assert.equal(scroller.scrollTop,position,'viewport panning must not repeatedly scroll a visible field');
   }finally{await flush(()=>layerRoot.unmount());host.remove();delete window.visualViewport;}
  });
+ await test('native WebKit document pan is not counted twice when fitting the drawer-local layer',async()=>{
+  const {RoomCreationLayer}=await vite.ssrLoadModule('/src/components/chat/RoomCreationLayer.tsx');
+  // Captured from native Safari + software keyboard in iOS 26.2 Simulator.
+  const viewport=new window.EventTarget();viewport.offsetTop=181;viewport.height=377;
+  Object.defineProperty(window,'visualViewport',{configurable:true,value:viewport});
+  const host=document.createElement('aside');document.body.append(host);
+  let bounds={top:-181,bottom:533};host.getBoundingClientRect=()=>bounds;
+  const target=document.createElement('div');host.append(target);const layerRoot=createRoot(target);
+  const {createPortal}=await import('react-dom');
+  try{
+   await flush(()=>layerRoot.render(createPortal(React.createElement(RoomCreationLayer,null,React.createElement('p',null,'Native keyboard scope')),host)));
+   const layer=host.querySelector('.room-create-layer');
+   const top=()=>bounds.top+Number.parseFloat(layer.style.top);
+   const height=()=>bounds.bottom-bounds.top-Number.parseFloat(layer.style.top)-Number.parseFloat(layer.style.bottom);
+   assert.equal(top(),0,'document focus pan must not push the task down into the keyboard');
+   assert.equal(height(),viewport.height,'task must use the full visible keyboard viewport');
+   bounds={top:0,bottom:714};viewport.offsetTop=0;viewport.height=714;
+   await flush(()=>viewport.dispatchEvent(new Event('resize')));
+   assert.equal(top(),0);assert.equal(height(),714,'keyboard dismissal restores drawer-sized layer');
+  }finally{await flush(()=>layerRoot.unmount());host.remove();delete window.visualViewport;}
+ });
 }finally{document.removeEventListener('keydown',onEscape);await vite.close();dom.window.close();rmSync(cacheDir,{recursive:true,force:true});}

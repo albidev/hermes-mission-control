@@ -42,8 +42,12 @@ export function RoomCreationLayer({ children }: { children: ReactNode }) {
     };
     const fit = () => {
       const bounds = drawer.getBoundingClientRect();
-      layer.style.top = `${Math.max(0, (viewport?.offsetTop ?? 0) - bounds.top)}px`;
-      layer.style.bottom = `${Math.max(0, bounds.bottom - ((viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)))}px`;
+      // iOS can pan the document when focusing a nested field: the drawer's
+      // negative rect.top already reflects that pan. Do not apply it twice
+      // through visualViewport.offsetTop when fitting this local overlay.
+      const visibleTop = Math.max(0, (viewport?.offsetTop ?? 0) + Math.min(0, bounds.top));
+      layer.style.top = `${Math.max(0, visibleTop - bounds.top)}px`;
+      layer.style.bottom = `${Math.max(0, bounds.bottom - (visibleTop + (viewport?.height ?? window.innerHeight)))}px`;
       revealFocusedField();
     };
     fit();
