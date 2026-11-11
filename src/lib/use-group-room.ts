@@ -268,16 +268,36 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
 
   const disband = useCallback(async () => {
     if (!selectedRoomId) return;
+    const disbandedRoomId = selectedRoomId;
     try {
-      await clientRef.current.disband(selectedRoomId);
+      await clientRef.current.disband(disbandedRoomId);
       // The room→vault routing map is MC-owned curation state keyed by room
       // id; a disbanded room can never synthesize again, so its entry would
       // otherwise leak forever in room_vaults.json.
-      await clearRoomVault(selectedRoomId, options.accessToken).catch(() => undefined);
-      await loadRoom(selectedRoomId);
+      await clearRoomVault(disbandedRoomId, options.accessToken).catch(() => undefined);
+      // Do not reload the room we just destroyed: groups.state on a disbanded
+      // room without include_disbanded:true answers "invalid_params" (not the
+      // RoomNotFoundError shape isRoomNotFound() expects), so the old
+      // `await loadRoom(disbandedRoomId)` here always surfaced that as a
+      // generic error toast right after a successful disband (issue #145).
+      // Recover exactly like loadRoom's own "pointed at a dead room" path:
+      // refresh the list and move to another room, or clear the selection.
+      const listed = await loadRooms();
+      if (!mountedRef.current) return;
+      const fallback = pickFallbackRoom(listed, disbandedRoomId);
+      if (fallback) {
+        setSelectedRoomId(fallback.id);
+        await loadRoom(fallback.id, true);
+      } else {
+        setSelectedRoomId(null);
+        setRoom(null);
+        setEvents([]);
+        setCursor(null);
+        setDriverStatus({});
+      }
     }
     catch (cause) { if (mountedRef.current) setError(toGroupRoomError(cause)); }
-  }, [loadRoom, options.accessToken, selectedRoomId]);
+  }, [loadRooms, loadRoom, options.accessToken, selectedRoomId]);
 
   const approve = useCallback(async (params: { memberId?: string | null; taskId?: string | null; executionGeneration?: number; choice?: string | null; requestId?: string | null }) => {
     if (!selectedRoomId) throw new Error('No room selected.');
