@@ -74,6 +74,9 @@ assertEqual(calls.map((call) => call.method), [
 assertEqual(calls[2].params, { room_id: 'room-1', since_seq: 100 });
 assertEqual(calls[4].params, { room_id: 'room-1', event_id: 'event-1', payload: { text: 'hello', thread_id: 'thread-1' } });
 assertEqual(Object.prototype.hasOwnProperty.call(calls[3].params, 'actor'), false);
+// Regression for #145: the gateway's GroupsDisbandParams never declared event_id and rejects
+// unknown fields, so disband's payload must carry only room_id.
+assertEqual(calls[6].params, { room_id: 'room-1' });
 
 const unavailable = new GroupGatewayClient(async () => { throw new GroupServiceUnavailableError(); });
 try {

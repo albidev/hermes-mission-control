@@ -269,7 +269,7 @@ export function useGroupRoom(options: GroupRoomOptions = {}): GroupRoomResult {
   const disband = useCallback(async () => {
     if (!selectedRoomId) return;
     try {
-      await clientRef.current.disband(selectedRoomId, `mc-${Date.now()}`);
+      await clientRef.current.disband(selectedRoomId);
       // The room→vault routing map is MC-owned curation state keyed by room
       // id; a disbanded room can never synthesize again, so its entry would
       // otherwise leak forever in room_vaults.json.

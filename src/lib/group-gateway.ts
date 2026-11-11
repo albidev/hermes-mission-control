@@ -204,8 +204,11 @@ export class GroupGatewayClient {
     return normalizeGroupLog(await this.rpc('groups.log', { room_id: roomId, ...(sinceSeq === undefined ? {} : { since_seq: sinceSeq }), ...(options.limit === undefined ? {} : { limit: options.limit }), ...(options.includeDisbanded ? { include_disbanded: true } : {}) }));
   }
 
-  async disband(roomId: string, eventId?: string): Promise<unknown> {
-    return this.rpc('groups.disband', { room_id: roomId, ...(eventId ? { event_id: eventId } : {}) });
+  async disband(roomId: string): Promise<unknown> {
+    // groups.disband's gateway contract (GroupsDisbandParams) never declared event_id — only
+    // room_id and an optional cancel_id — and the base Params model rejects unknown fields. Sending
+    // one here always failed with "event_id: Extra inputs are not permitted" (issue #145).
+    return this.rpc('groups.disband', { room_id: roomId });
   }
 
   async stop(roomId: string): Promise<number> {
