@@ -81,6 +81,22 @@ For installation and the host contract, see [Mission Control plugins](docs/plugi
 
 Feature docs: [Overview](docs/overview.md) · [Chat](docs/chat.md) · [Bot Mode](docs/bot-mode.md) · [Group Rooms](docs/rooms.md) · [Localization](docs/i18n.md) · [Telemetry sidecar](docs/telemetry.md) · [Honcho identity and profile isolation](docs/honcho.md) · [Tools inventory](docs/tools.md) · [HTTP API](docs/api.md).
 
+### Invite-only Rooms (configuration-gated)
+
+Cross-installation invite Rooms are separate from ordinary local Group Rooms. The
+implementation provides pairing, fixed-roster invitations, explicit owner consent,
+activation and immutable full/post-join history policy. It is not an automatic
+network deployment or a public directory; end-to-end topology/release acceptance
+must be demonstrated on the actual installations.
+
+- [User guide: Create / Join, decisions, history and leaving](docs/invite-rooms-user-guide.md)
+- [Operator setup, readiness, private config and troubleshooting](docs/runbooks/invite-rooms-setup.md)
+- [Agent runbook: bounded API calls and owner checkpoints](docs/runbooks/invite-rooms-agent.md)
+- [API contracts](docs/api.md#invite-only-rooms) and [technical boundaries](server/invite_rooms/README.md)
+
+These guides describe the feature-branch implementation, not a claim that the
+feature is enabled on every installation or accepted across different networks.
+
 ## tldraw Agent Mode
 
 The whiteboard is built with the [tldraw SDK](https://github.com/tldraw/tldraw), maintained by [@tldraw](https://github.com/tldraw).
@@ -126,6 +142,7 @@ Group Rooms use the gateway's `groups.*` JSON-RPC surface over `/api/ws`. The ga
   `websockets`). The sidecar launcher prefers the Hermes virtual environment
   (`~/.hermes/hermes-agent/venv/bin/python`) and falls back to `python3`.
 - Optional: `server/requirements-push.txt` for Web Push.
+- Optional: `server/requirements-rooms.txt` for Invite-only Rooms (off by default; also needs the Hermes core on the import path).
 
 ## Quick start
 
@@ -297,6 +314,33 @@ expose Mission Control to Tailscale peers or your LAN:
 A reverse proxy (`tailscale serve`, Caddy, nginx) in front of the frontend is
 the recommended alternative. Remember that a valid token also opens the browser
 terminal: treat it like a shell credential.
+
+### Invite origin (separate from CORS)
+
+Owner invite issuance uses the existing owner-private JSON selected by
+`MISSION_CONTROL_ROOM_INVITES_CONFIG`. Add the dedicated top-level
+`invitation_origin` field, for example:
+
+```json
+{
+  "store_path": "/private/path/invites.sqlite",
+  "installation_id": "install:…",
+  "profile": "default",
+  "peer_registry_path": "/private/path/peers.json",
+  "invitation_origin": "https://owner-a.example"
+}
+```
+
+Both owners must provision the same exact HTTPS scheme and authority
+out-of-band in their local runtime configuration. On the issuer, this is the
+owner-private top-level `invitation_origin` used to mint/display invitation
+URLs. On the receiving peer, the corresponding pin belongs under
+`joining.origins[issuer_peer_id]`; setting the receiver's top-level
+`invitation_origin` does not configure its joining parser. The value may not contain a
+path, query, fragment, userinfo, or HTTP scheme. If it is absent, issuance
+returns `invite_origin_unavailable` before the one-time secret is minted.
+`MISSION_CONTROL_ALLOWED_ORIGIN` remains only the browser CORS/CSRF setting;
+it is intentionally independent and may be an HTTP frontend origin.
 
 ## Building
 

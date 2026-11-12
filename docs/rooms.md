@@ -4,6 +4,11 @@ Group Rooms let several Hermes bots work on one request while you watch the whol
 
 Rooms live inside the Chat drawer, next to the canonical Chat, and reuse the canonical chat rendering surfaces instead of duplicating markup.
 
+For the separate, configuration-gated **cross-installation invite** flow, start
+with the [user guide](invite-rooms-user-guide.md), [operator setup](runbooks/invite-rooms-setup.md)
+or [agent runbook](runbooks/invite-rooms-agent.md). Local Group Rooms and a fully
+provisioned invite Room do not have the same setup requirements.
+
 ## In action
 
 ### Desktop
@@ -144,6 +149,139 @@ Hosted rooms live in the gateway's `shared-state.db` — a dedicated file, delib
 > **Do not copy `hosted_room_driver_leases`.** A lease is a *liveness* record: a `process_generation` plus an expiry refreshed every ~15s by the owning gateway. Copying a dead process's lease imports a stale owner. The driver takes a fresh lease when it claims the room, exactly as it does for a new room.
 
 This gap is upstream, not a Mission Control bug — reported as [hermes-agent#109775](https://github.com/NousResearch/hermes-agent/issues/109775). The migration script is the local repair; if upstream ships one, this becomes a no-op on a healthy install.
+
+## Invite-only guest history
+
+The joining installation separates guest/import status (bot approvals, permissions
+and membership) from the host's authorized canonical history. A pinned mTLS
+`room_log` read path now exists. It requires complete runtime configuration,
+`history_enabled: true`, current admission/membership and **both** explicit
+owner-issued approval and guest read acceptance; participation consent alone is
+insufficient. See [history API](api.md#history-policy-and-read-consent).
+
+The creation checkbox chooses immutable `full` or `postjoin` policy. The browser
+starts unchecked (`postjoin`); headless callers should always send the selected
+policy explicitly because the omitted-policy API default is `full`. Revocation,
+reissue and readmission never reopen that lifetime decision. `postjoin` applies
+the current member's admission boundary even if the guest requests sequence zero.
+
+Reads retain eligible canonical text-event IDs/order and pagination, not private
+native metadata. A missing/offline/unauthorized path remains a visible failure,
+not an empty or substitute transcript:
+
+- This is **not** an empty-room result. The host may have history the guest cannot read.
+- Local `GroupRoomView` data is **not** the host transcript and is never used as a substitute.
+- No transcript, message copy, or synthetic event IDs are rendered in this state.
+
+## Invite Rooms sidecar native attach and bootstrap
+
+The optional owner-private Invite Rooms JSON file selected by
+`MISSION_CONTROL_ROOM_INVITES_CONFIG` supports two **mutually exclusive**
+`native_rpc` forms:
+
+```json
+{"native_rpc": {"profile_home": "/absolute/private/native-root/profiles/research"}}
+```
+
+Canonical mode attaches to an **already-running** native owner serving that
+exact home. The top-level `profile` must be `research` in this example, and
+`installation_id` must match `install:<native-root/install_id>`. For `default`,
+`profile_home` is the installation root itself. The existing root/home must be
+owned by the current user, mode `0700`, with a regular single-link `0600`
+`install_id` file; symlink/overlay aliases are deliberately not supported.
+Missing/invalid native identity is a refusal, never permission to create one.
+
+Each connection uses Core `discover_gateway_endpoint` (ready state only), an
+owner-control-socket **fresh single-use session ticket**, and
+`gateway_ws_target` subprotocols. It verifies the negotiated native protocol,
+exact profile/instance binding and literal loopback authority, refuses redirects,
+and never ensures, starts, replaces or falls back to a gateway. Installations
+must provide compatible Core helper modules on the sidecar's Python import path.
+
+The older explicit `{"endpoint":"ws://127.0.0.1:PORT/...","token_path":"/absolute/private/token"}`
+form remains available only for the legacy topology that accepts it. It is not
+a canonical native authentication mechanism and is never a fallback from
+`profile_home`. Do not mix the forms or place credentials in endpoint URLs.
+
+Cold-start data topology may explicitly contain:
+
+```json
+{"pairing": {"target_listeners": {}, "data_endpoints": {}}}
+```
+
+This is a **fragment**, not a complete startup file: the other existing pairing,
+joining, control/data listener and target HTTP fields remain required. With a
+complete private config the sidecar can own its control listener and empty data
+adapter/registry before any material scope exists. Omitted maps remain incomplete;
+malformed maps, duplicate keys, wildcard/alias destinations and bind collisions
+still fail closed. An empty map authorizes **no** data route, and populating a map
+alone creates neither consent nor a READY material scope. After actual pairing,
+invitation and both owner decisions, configure only product-derived immutable
+adapter IDs at the explicit sidecar restart boundary. Never preseed fake scopes.
+
+Guest approval snapshots and decisions use the same canonical attach in
+`profile_home` mode, without reading a token file or trying Bearer fallback.
+Opaque approval handles bind the confirmed guest scope to the validated native
+home, profile, installation ID, gateway instance and authority epoch (not the
+single-use ticket). A changed authority requires a fresh snapshot. Only the
+existing fixed session discovery/resume/detach and once/deny approval verbs are
+available; native discovery/handshake failures report `native_unavailable`.
+The explicit legacy form retains its existing transport and handle behavior.
+
+These source/transport-contract tests are not two-installation native E2E proof.
+Live configuration activation, real native guest approval behavior and model
+admission remain separately verified gates; no production service is enabled by
+this documentation.
+
+## Historical native compatibility boundary (N1)
+
+The following is a **historical pinned-revision result**, not the current universal
+state of Hermes. Compatible current owners expose the peer methods and may still
+report a deployment-specific refusal (for example `endpoint_required` until their
+explicit RoomLink endpoint is configured). Run the current [native readiness
+check](runbooks/invite-rooms-setup.md#2-verify-native-readiness-without-creating-a-room)
+instead of inheriting this old verdict or treating an old Core pin as a supported
+latest version.
+
+A successful canonical ticket attach is **not** proof that a native owner can
+perform cross-installation pairing. At native Core revision
+`eb30bd6e48a86bcbcbbc0f343e7c0f0aadfe2dc4`, two isolated real host gateways
+reported `driver: true` but returned:
+
+```json
+{"room_link":{"enabled":false,"reason":"canonical_driver_required"}}
+```
+
+Their canonical `groups.capabilities.methods` contains no `groups.peer.*` verbs
+and supplies no RoomLink catalog. An authenticated, correct-Origin
+`POST /api/local/room-invites/pairing/offers` therefore returns **503**
+`{"error":"unavailable","code":"pairing_native_unavailable"}`. This is the
+required fail-closed behavior, not a missing token or a runtime model choice.
+
+The native source also contains richer legacy `tui_gateway/methods_groups.py`
+handlers. Those are not an interchangeable canonical owner contract:
+`gateway/session_controls.py` intercepts `groups.capabilities`, and
+`tui_gateway/ws.py` only considers legacy fallback after an **unknown-method**
+response. A successful disabled capability response does not trigger fallback.
+Some peer verbs may still qualify for legacy fallback with a full interactive
+grant; absence from the canonical method list alone is **not** proof that every
+peer verb is absent from the final WebSocket surface. Bypassing the catalog
+refusal or calling legacy grant helpers does not establish canonical
+home/profile/instance/ticket/consent/admission authority.
+
+No Mission Control-only correction has been demonstrated for that pinned owner
+and the existing two-native-host/two-sidecar layout. Keep pairing refused until
+a separately reviewed native compatibility decision supplies a supported owner
+contract with a real catalog, scoped peer invite/register behavior and preserved
+authority. Do not synthesize a catalog, set `enabled` locally, downgrade to Bearer
+auth, start an extra driver daemon, or edit Core as an MC workaround.
+
+`server/tests/test_native_room_link_contract.py` exercises this disabled payload
+through the actual catalog gate and HTTP pairing route. Its native connector is
+an explicitly labelled response fixture, not a running native host or E2E proof.
+That fixture does not establish full acceptance or model flow. UI hosting is a separate gate:
+the API sidecar returning 404 at `/` is not a hosted Mission Control frontend,
+and native `HERMES_WEB_DIST` is not a verified MC API proxy.
 
 ## Failure handling
 
