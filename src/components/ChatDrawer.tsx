@@ -15,6 +15,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -96,7 +97,14 @@ import { compareChatTimelineEntries } from '../lib/chat-timeline';
 import { useGroupRoom } from '../lib/use-group-room';
 import { createGroupGatewayClient, type GroupRoom } from '../lib/group-gateway';
 import { CreateRoomForm, GroupRoomView } from './chat/GroupRoomView';
+import { RoomCreationLayer } from './chat/RoomCreationLayer';
 import { persistRoomVault } from '../lib/hermes-api';
+import { RoomInvitePanel } from './chat/RoomInvitePanel';
+import { useRoomInvitesAvailable } from '../lib/use-room-invites-available';
+import { ReceivedInvitationPanel } from './chat/ReceivedInvitationPanel';
+import { GuestRoomView } from './chat/GuestRoomView';
+import { createRoomGuestApi, type GuestRoom } from '../lib/room-guest-api';
+
 
 type ChatDrawerProps = {
   open: boolean;
@@ -106,6 +114,7 @@ type ChatDrawerProps = {
   resumeRequestKey?: string | null;
   chatMode?: 'general' | 'canonical' | 'task' | 'room';
   roomId?: string | null;
+  inviteLobbyId?: string | null;
   botProfile?: string | null;
   onClose: () => void;
   onStartTaskChat?: () => void;
@@ -2042,18 +2051,89 @@ const CanonicalChatDrawer = memo(function CanonicalChatDrawer({ open, storedToke
   );
 });
 
-function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange, onResumeSession }: ChatDrawerProps) {
+function GroupChatDrawer({ open, roomId, inviteLobbyId, storedToken, onClose, onRoomChange, onResumeSession }: ChatDrawerProps) {
   const { t } = useI18n();
   const client = useMemo(() => createGroupGatewayClient(storedToken?.trim() || undefined), [storedToken]);
-  const state = useGroupRoom({ client, enabled: open, initialRoomId: roomId ?? null, accessToken: storedToken?.trim() || undefined });
+  const invitesAvailable = useRoomInvitesAvailable(open, storedToken);
+  const [guestRooms, setGuestRooms] = useState<GuestRoom[]>([]);
+  const [guestRoomsLoaded, setGuestRoomsLoaded] = useState(false);
+  const [selectedGuestId, setSelectedGuestId] = useState<string | null>(null);
+  const selectedGuest = invitesAvailable
+    ? guestRooms.find((room) => room.room_id === (selectedGuestId ?? roomId)) ?? null
+    : null;
+  const state = useGroupRoom({
+    client,
+    enabled: open && (!invitesAvailable || guestRoomsLoaded) && !selectedGuest,
+    initialRoomId: null,
+    accessToken: storedToken?.trim() || undefined,
+  });
   const canUseRooms = state.capabilities?.driver === true && state.driverAvailable;
   const [creating, setCreating] = useState(false);
+  const [creationMode, setCreationMode] = useState<'create' | 'join'>('create');
+  const [creationBusy, setCreationBusy] = useState(false);
+  const joinDialogRef = useRef<HTMLDivElement>(null);
+  const joinOpenerRef = useRef<HTMLElement | null>(null);
+  const creationTaskRef = useRef(0);
+  const creationModeRef = useRef<'create' | 'join'>('create');
+  const creationBusyRef = useRef(false);
+  const creationOwnerRef = useRef<{ task: number; mode: 'create' | 'join' } | null>(null);
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
+  const [activeLobbyId, setActiveLobbyId] = useState<string | null>(inviteLobbyId ?? null);
+  const guestApi = useMemo(() => createRoomGuestApi(storedToken?.trim() || undefined), [storedToken]);
+  useEffect(() => {
+    if (!open || !invitesAvailable) {
+      setGuestRooms([]);
+      setGuestRoomsLoaded(false);
+      return;
+    }
+    const controller = new AbortController();
+    void guestApi.listRooms(controller.signal).then((rooms) => {
+      if (!controller.signal.aborted) setGuestRooms(rooms);
+    }).catch(() => {
+      if (!controller.signal.aborted) setGuestRooms([]);
+    }).finally(() => {
+      if (!controller.signal.aborted) setGuestRoomsLoaded(true);
+    });
+    return () => controller.abort();
+  }, [guestApi, invitesAvailable, open]);
+  useEffect(() => { if (inviteLobbyId) setActiveLobbyId(inviteLobbyId); }, [inviteLobbyId]);
+  const closeLobby = useCallback(() => {
+    setActiveLobbyId(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('lobbyId')) {
+      url.searchParams.delete('lobbyId');
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }, []);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [botCandidates, setBotCandidates] = useState<BotMentionCandidate[]>([]);
   const drawerRef = useRef<HTMLElement>(null);
   const resizingRef = useRef(false);
+
+  // Focus the heading only when the choice layer is entered. Mode changes own
+  // focus in the radio key handler below; keeping this effect off
+  // `creationMode` prevents a keyboard transition from being stolen by the
+  // heading after React commits the new mode.
+  useLayoutEffect(() => {
+    if (!creating) return;
+    const dialog = joinDialogRef.current;
+    (dialog?.querySelector<HTMLElement>('h3') ?? dialog)?.focus({ preventScroll: true });
+  }, [creating]);
+
+  useEffect(() => {
+    if (creating) return;
+    const opener = joinOpenerRef.current;
+    if (opener?.isConnected && (document.activeElement === document.body || !document.activeElement)) opener.focus({ preventScroll: true });
+  }, [creating]);
+
+  useEffect(() => {
+    if (invitesAvailable || !creating || creationMode !== 'join') return;
+    invalidateCreationOwner();
+    setCreationMode('create');
+    setCreating(false);
+    setCreationBusy(false);
+  }, [creating, creationMode, invitesAvailable]);
 
   // Share the canonical drawer width so Rooms and Chat keep the same size:
   // read the same localStorage key the chat drawer persists through its resize handle.
@@ -2124,16 +2204,40 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange, onR
   }, [botCandidates.length, open]);
 
   useEffect(() => {
-    if (!open || !state.selectedRoomId || state.selectedRoomId === roomId) return;
+    if (roomId && !selectedGuest && state.rooms.some((room) => room.id === roomId) && state.selectedRoomId !== roomId) {
+      void state.selectRoom(roomId);
+    }
+  }, [roomId, selectedGuest, state.rooms]);
+
+  useEffect(() => {
+    if (!open || selectedGuest || !state.selectedRoomId || state.selectedRoomId === roomId) return;
+    // The preceding effect is still restoring a valid URL-selected room. Its
+    // selectRoom call cannot update this render's snapshot: publishing the
+    // temporary first-list selection here makes URL and hook chase each other.
+    if (roomId && state.rooms.some((room) => room.id === roomId)) return;
     onRoomChange?.(state.selectedRoomId, state.room?.name ?? null);
-  }, [onRoomChange, open, roomId, state.selectedRoomId]);
+  }, [onRoomChange, open, roomId, selectedGuest, state.rooms, state.selectedRoomId]);
 
   const selectRoom = useCallback((nextRoomId: string | null) => {
     onRoomChange?.(nextRoomId, state.room?.name ?? null);
     return state.selectRoom(nextRoomId);
   }, [onRoomChange, state.selectRoom]);
 
+  // Async completions must belong to the currently visible creation task. A
+  // callback's captured mode is stale as soon as the rail is replaced.
+  creationModeRef.current = creationMode;
+  const invalidateCreationOwner = () => {
+    creationOwnerRef.current = null;
+    creationTaskRef.current += 1;
+  };
+  const ownsCreationTask = (task: number, mode: 'create' | 'join') => {
+    const owner = creationOwnerRef.current;
+    return owner?.task === task && owner.mode === mode && creationModeRef.current === mode;
+  };
+
   const createRoomFromDrawer = useCallback(async (name: string, handles: string[], vaultId?: string) => {
+    const task = ++creationTaskRef.current;
+    creationOwnerRef.current = { task, mode: 'create' };
     const roster = handles.map((handle, index) => ({
       id: `member-${handle}-${index}`,
       profile: handle === 'default' ? 'default' : handle,
@@ -2144,15 +2248,17 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange, onR
     if (vaultId) {
       void persistRoomVault(room.id, vaultId, storedToken?.trim() || undefined).catch(() => undefined);
     }
+    const owner = creationOwnerRef.current;
+    if (owner?.task !== task || owner.mode !== 'create' || creationModeRef.current !== 'create') return;
     setCreating(false);
     await state.refresh();
     await state.selectRoom(room.id);
-  }, [botCandidates, client, mentionRoster, state, storedToken]);
+  }, [botCandidates, client, creationMode, mentionRoster, state, storedToken]);
 
   return (
     <>
-      {open ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
-      <aside ref={drawerRef} className={`chat-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal="true" aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
+      {open && !creating ? <button className="chat-backdrop is-open" type="button" aria-label={t('rooms.close')} onClick={onClose} /> : null}
+      <aside ref={drawerRef} className={`chat-drawer chat-room-drawer ${open ? 'is-open' : ''}`} role="dialog" aria-modal={creating ? undefined : true} aria-label={t('rooms.eyebrow')} aria-hidden={!open} inert={!open ? true : undefined}>
         <div className="chat-drawer-resize-handle" role="separator" aria-orientation="vertical" aria-label={t('chatDrawer.resize')} title={t('chatDrawer.dragToResize')} onMouseDown={startResize} />
         <header className="chat-drawer-head">
           <div className="chat-head-main">
@@ -2160,7 +2266,30 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange, onR
               <span className="chat-mark" aria-hidden><Users size={18} /></span>
               <div className="chat-head-copy">
                 <p className="eyebrow">{t('rooms.eyebrow')}</p>
-                {editingName && state.room ? <form onSubmit={(event) => { event.preventDefault(); if (nameDraft.trim() && nameDraft.trim() !== state.room?.name) void state.renameRoom(nameDraft); setEditingName(false); }} className="flex min-w-0 items-center gap-1"><input autoFocus value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => setEditingName(false)} onKeyDown={(event) => { if (event.key === 'Escape') setEditingName(false); }} aria-label={t('rooms.name')} className="mc-input h-7 min-w-0 flex-1 text-xs" /><button type="submit" aria-label={t('rooms.saveName')} title={t('rooms.saveName')} className="chat-control chat-icon-button !h-7 !w-7"><Check size={14} /></button></form> : <h2 title={state.rooms.length > 0 ? t('rooms.selectRoom') : undefined} className={state.rooms.length > 0 ? 'inline-flex cursor-pointer items-center gap-1 hover:text-accent' : ''} onClick={state.rooms.length > 0 ? () => setRoomPickerOpen((open) => !open) : undefined}>{state.room?.name || t('rooms.title')}{state.rooms.length > 0 ? <ChevronDown size={13} className={`shrink-0 transition-transform ${roomPickerOpen ? 'rotate-180' : ''}`} /> : null}</h2>}
+                {editingName && state.room && !selectedGuest ? (
+                  <form className="flex min-w-0 items-center gap-1" onSubmit={(event) => {
+                    event.preventDefault();
+                    if (nameDraft.trim() && nameDraft.trim() !== state.room?.name) void state.renameRoom(nameDraft);
+                    setEditingName(false);
+                  }}>
+                    <input autoFocus value={nameDraft} onChange={(event) => setNameDraft(event.target.value)}
+                      onBlur={() => setEditingName(false)}
+                      onKeyDown={(event) => { if (event.key === 'Escape') setEditingName(false); }}
+                      aria-label={t('rooms.name')} className="mc-input min-h-11 min-w-0 flex-1 text-xs" />
+                    <button type="submit" aria-label={t('rooms.saveName')} className="chat-control chat-icon-button">
+                      <Check size={14} />
+                    </button>
+                  </form>
+                ) : (
+                  <h2>
+                    <button type="button" className="flex min-h-11 min-w-0 items-center gap-2 text-left"
+                      aria-label={t('rooms.selectRoom')} aria-expanded={roomPickerOpen}
+                      onClick={() => setRoomPickerOpen((current) => !current)}>
+                      <span className="break-words">{selectedGuest?.name || state.room?.name || t('rooms.title')}</span>
+                      <ChevronDown size={14} className="shrink-0" />
+                    </button>
+                  </h2>
+                )}
                 {state.room && !state.disbanded ? <span className="chat-session-title">{t('rooms.membersCount', { count: state.room.members.length })} · {t('rooms.messagesCount', { count: state.events.length })}</span> : <span className="chat-session-title">{t('rooms.selectRoom')}</span>}
               </div>
             </div>
@@ -2168,22 +2297,151 @@ function GroupChatDrawer({ open, roomId, storedToken, onClose, onRoomChange, onR
               {state.refreshing ? <Loader2 size={16} className="chat-spin chat-header-loader" aria-label={t('rooms.refresh')} /> : null}
               <span className={`chat-led ${state.disbanded || state.serviceUnavailable ? 'is-offline' : state.pendingActions.length > 0 || state.blocked ? 'is-pending' : 'is-online'}`} title={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')} aria-label={state.disbanded || state.serviceUnavailable ? t('rooms.ledOffline') : state.pendingActions.length > 0 || state.blocked ? t('rooms.ledPending') : t('rooms.ledOnline')}><span className="chat-led-dot" /></span>
               <button className="chat-control chat-icon-button" type="button" onClick={() => { if (state.room) { setNameDraft(state.room.name ?? ''); setEditingName(true); } }} title={t('rooms.renameRoom')} aria-label={t('rooms.renameRoom')} disabled={!state.room || state.disbanded}><Pen size={15} /></button>
-              <button className="chat-control chat-icon-button" type="button" onClick={() => setCreating((current) => !current)} title={creating ? t('rooms.close') : t('rooms.create')} aria-label={creating ? t('rooms.close') : t('rooms.create')}>{creating ? <X size={16} /> : <Plus size={16} />}</button>
+              <button className="chat-control chat-icon-button" type="button" onClick={(event) => { joinOpenerRef.current = event.currentTarget; setRoomPickerOpen(false); setCreationMode('create'); setCreating(true); }} title={t('rooms.create')} aria-label={t('rooms.create')}><Plus size={16} /></button>
               <button className="chat-control chat-icon-button" type="button" onClick={onClose} title={t('rooms.close')} aria-label={t('rooms.close')}><X size={18} /></button>
             </div>
           </div>
-          {roomPickerOpen && state.rooms.length > 0 ? (
+          {roomPickerOpen && (state.rooms.length > 0 || guestRooms.length > 0) ? (
             <div className="absolute left-3 right-3 top-full z-40 mt-1 flex max-h-56 flex-col overflow-y-auto rounded-lg border border-border-subtle bg-surface shadow-lg" role="listbox">
-              {state.rooms.map((room: GroupRoom) => <button key={room.id} type="button" role="option" aria-selected={room.id === state.selectedRoomId} onClick={() => { void selectRoom(room.id); setRoomPickerOpen(false); }} className={`px-2.5 py-1.5 text-left text-xs ${room.id === state.selectedRoomId ? 'bg-accent-subtle text-accent' : 'text-text hover:bg-surface-sunken'}`}>{room.name || room.id}</button>)}
+              {state.rooms.map((room: GroupRoom) => (
+                <button key={room.id} type="button" role="option" aria-selected={!selectedGuest && room.id === state.selectedRoomId}
+                  className="min-h-11 px-3 py-2 text-left text-xs text-text hover:bg-surface-sunken"
+                  onClick={() => { setSelectedGuestId(null); void selectRoom(room.id); setRoomPickerOpen(false); }}>
+                  {room.name || room.id}
+                </button>
+              ))}
+              {guestRooms.map((room) => (
+                <button type="button" key={room.room_id} role="option" aria-selected={selectedGuest?.room_id === room.room_id}
+                  className="flex min-h-11 items-center gap-2 px-3 py-2 text-left text-xs text-text"
+                  onClick={() => {
+                    setSelectedGuestId(room.room_id);
+                    setRoomPickerOpen(false);
+                    onRoomChange?.(room.room_id, room.name);
+                  }}>
+                  <span aria-hidden="true">🔒</span>
+                  <span className="min-w-0 flex-1 break-words">{room.name}</span>
+                  <span className="rounded-full bg-surface-sunken px-2 py-1">{t('inviteUi.guest')}</span>
+                </button>
+              ))}
             </div>
           ) : null}
         </header>
-        <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} chatLed="none" roomsLed={roomAttention} storedToken={storedToken} enabled={open} onResumeSession={onResumeSession} />
+        <AutoHideModeTabs active="rooms" onSelect={(mode) => { if (mode === 'chat') onRoomChange ? onRoomChange(null) : onClose(); }} containerRef={drawerRef} chatLed="none" roomsLed={roomAttention} storedToken={storedToken} enabled={open} blocked={creating} onResumeSession={onResumeSession} />
+
         <div className="flex min-h-0 flex-1 flex-col">
-          {!canUseRooms && !state.loading ? <div className="chat-error m-4" role="status">{t('rooms.driverUnavailable')}</div> : null}
-          {creating ? <div className="chat-transcript rooms-empty"><CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster} onCancel={() => setCreating(false)} onCreate={createRoomFromDrawer} /></div> : state.room && canUseRooms ? <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster} onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)} onNearBottomChange={(near) => { roomsNearBottomRef.current = near; setRoomsNearBottom(near); }} /> : canUseRooms ? <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div> : null}
+          {!selectedGuest && !canUseRooms && !state.loading ? (
+            <div className="chat-error m-4" role="status">{t('rooms.driverUnavailable')}</div>
+          ) : null}
+          {selectedGuest ? (
+            <div className="min-h-0 overflow-y-auto p-3">
+              <GuestRoomView key={selectedGuest.room_id} room={selectedGuest} accessToken={storedToken} api={guestApi}
+                onLeave={() => {
+                  setGuestRooms((rooms) => rooms.filter((room) => room.room_id !== selectedGuest.room_id));
+                  setSelectedGuestId(null);
+                  onRoomChange?.(null);
+                }} />
+            </div>
+          ) : activeLobbyId && invitesAvailable ? (
+            <div className="chat-transcript rooms-empty">
+              <RoomInvitePanel lobbyId={activeLobbyId} accessToken={storedToken} onClose={closeLobby}
+                onRoomActivated={(nextRoomId) => { closeLobby(); void selectRoom(nextRoomId); }} />
+            </div>
+          ) : state.room && canUseRooms ? (
+            <GroupRoomView state={state} mentionRoster={botCandidates.length > 0 ? botCandidates : mentionRoster}
+              onSend={(text) => state.send(text, `room:${state.room?.id ?? state.selectedRoomId}`)}
+              onNearBottomChange={(near) => { roomsNearBottomRef.current = near; setRoomsNearBottom(near); }} />
+          ) : canUseRooms || guestRooms.length > 0 ? (
+            <div className="chat-transcript rooms-empty"><p className="chat-empty">{t('rooms.chooseRoom')}</p></div>
+          ) : null}
           {state.error && !state.serviceUnavailable ? <p className="chat-error" role="alert">{state.error.message}</p> : null}
         </div>
+        {open && creating ? (
+          <RoomCreationLayer>
+            <div ref={joinDialogRef} className="room-create-choice" role="dialog" aria-label={t('rooms.createMode')}
+                tabIndex={-1}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault(); event.stopPropagation();
+                    if (!creationBusy) { invalidateCreationOwner(); setCreating(false); }
+                    return;
+                  }
+                  if (event.key !== 'Tab') return;
+                  const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')].filter((node) => node.tabIndex >= 0);
+                  const first = controls[0]; const last = controls.at(-1);
+                  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+                  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+                }}>
+              <div className="room-create-choice-rail" role="radiogroup" aria-label={t('rooms.createMode')}>
+                <button type="button" role="radio" aria-checked={creationMode === 'create'}
+                  className="room-create-choice-button" tabIndex={creationMode === 'create' ? 0 : -1} disabled={creationBusy}
+                  onClick={(event) => { if (creationBusy) return; invalidateCreationOwner(); setCreationMode('create'); if (event.detail > 0) requestAnimationFrame(() => joinDialogRef.current?.querySelector<HTMLElement>('h3')?.focus({ preventScroll: true })); }}
+                  onKeyDown={(event) => {
+                    if (creationBusy) return;
+                    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+                    event.preventDefault();
+                    const next = event.key === 'Home' ? 'create' : event.key === 'End' ? 'join' : creationMode === 'create' ? 'join' : 'create';
+                    if (next === 'join' && !invitesAvailable) return;
+                    const rail = event.currentTarget.parentElement;
+                    invalidateCreationOwner(); setCreationMode(next);
+                    queueMicrotask(() => rail?.querySelectorAll<HTMLButtonElement>('button')[next === 'create' ? 0 : 1]?.focus({ preventScroll: true }));
+                  }}>
+                  {t('rooms.createModeCreate')}
+                </button>
+                <button type="button" role="radio" aria-checked={creationMode === 'join'} disabled={!invitesAvailable || creationBusy}
+                  className="room-create-choice-button" tabIndex={creationMode === 'join' ? 0 : -1}
+                  onClick={(event) => { if (creationBusy) return; invalidateCreationOwner(); setCreationMode('join'); if (event.detail > 0) requestAnimationFrame(() => joinDialogRef.current?.querySelector<HTMLElement>('h3')?.focus({ preventScroll: true })); }}
+                  onKeyDown={(event) => {
+                    if (creationBusy) return;
+                    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+                    event.preventDefault();
+                    const next = event.key === 'Home' ? 'create' : event.key === 'End' ? 'join' : creationMode === 'create' ? 'join' : 'create';
+                    if (next === 'join' && !invitesAvailable) return;
+                    const rail = event.currentTarget.parentElement;
+                    invalidateCreationOwner(); setCreationMode(next);
+                    queueMicrotask(() => rail?.querySelectorAll<HTMLButtonElement>('button')[next === 'create' ? 0 : 1]?.focus({ preventScroll: true }));
+                  }}>
+                  {t('rooms.createModeJoin')}
+                </button>
+              </div>
+              {!invitesAvailable ? <p className="room-create-choice-hint" role="status">{t('rooms.createModeUnavailable')}</p> : null}
+              {creationMode === 'create' ? (
+                <CreateRoomForm members={botCandidates.length > 0 ? botCandidates : mentionRoster}
+                  onCancel={() => { if (!creationBusy) { invalidateCreationOwner(); setCreating(false); } }} onBusyChange={(busy) => { creationBusyRef.current = busy; setCreationBusy(busy); }} onCreate={createRoomFromDrawer}
+                  renderInviteOnly={invitesAvailable ? (name, onBusyChange) => (
+                    <RoomInvitePanel lobbyId={null} accessToken={storedToken} initialName={name} embedded onBusyChange={(busy) => {
+                      if (busy) {
+                        const task = ++creationTaskRef.current;
+                        creationOwnerRef.current = { task, mode: 'create' };
+                      }
+                      creationBusyRef.current = busy;
+                      onBusyChange(busy); setCreationBusy(busy);
+                    }}
+                      onLobbyCreated={(id) => {
+                        const owner = creationOwnerRef.current;
+                        if (owner && ownsCreationTask(owner.task, 'create')) { invalidateCreationOwner(); setCreating(false); setActiveLobbyId(id); }
+                      }} />
+                  ) : undefined} />
+              ) : (
+                <section className="room-create-form room-create-join" aria-label={t('rooms.createModeJoin')}>
+                  <header className="room-create-header">
+                    <h3 tabIndex={-1}>{t('rooms.createModeJoin')}</h3>
+                    <button type="button" className="room-create-close" onClick={() => { if (!creationBusy) { invalidateCreationOwner(); setCreating(false); } }} aria-label={t('rooms.createClose')}><X size={18} aria-hidden="true" /></button>
+                  </header>
+                  <div className="room-create-scroll">
+                    <ReceivedInvitationPanel accessToken={storedToken} onOpenRoom={(nextRoomId) => {
+                      setCreating(false);
+                      void guestApi.listRooms().then((rooms) => {
+                        setGuestRooms(rooms);
+                        setSelectedGuestId(nextRoomId);
+                        onRoomChange?.(nextRoomId, null);
+                      });
+                    }} />
+                  </div>
+                </section>
+              )}
+              </div>
+          </RoomCreationLayer>
+        ) : null}
       </aside>
     </>
   );

@@ -154,6 +154,210 @@ Details: [chat.md](chat.md), [bot-mode.md](bot-mode.md), [rooms.md](rooms.md).
 
 See [tldraw-feature-matrix.md](tldraw-feature-matrix.md).
 
+## Invite-only rooms
+
+All suffixes below are under `/api/local/room-invites`. The route dispatcher is mounted by the telemetry sidecar, but the feature is disabled by default: it requires valid owner-private `MISSION_CONTROL_ROOM_INVITES_CONFIG`; pairing routes additionally require a valid `pairing` block, and joining routes need a valid joining store. Missing or invalid configuration is intentionally reported as 404. The sidecar now owns complete-bundle control/data listener start and shutdown when its topology is valid. That implementation is distinct from an accepted two-installation end-to-end deployment, which remains a separate gate.
+
+All routes require the normal MC bearer token and exact configured Origin policy whenever an `Origin` header is supplied. Responses are `no-store`; request/response bodies containing invitation or pairing material are not logged. Start with the [user guide](invite-rooms-user-guide.md), [operator setup](runbooks/invite-rooms-setup.md) or [agent runbook](runbooks/invite-rooms-agent.md). The older MVP/pairing plans are design history, not current onboarding or evidence that a deployment passed.
+
+### Host lobby and activation
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| GET | `/paired-peers` | List redacted paired peers for roster selection |
+| POST | `/lobbies` | Create a fixed-roster lobby |
+| GET | `/lobbies/{lobby_id}` | Read the redacted lobby projection |
+| POST | `/lobbies/{lobby_id}/invites` | Issue an invitation; this explicit response is the only host-lobby operation that returns the invite code |
+| POST | `/lobbies/{lobby_id}/invites/{invite_id}/revoke` | Revoke an unused invitation |
+| POST | `/lobbies/{lobby_id}/invites/{invite_id}/decision` | Host's explicit approval or rejection, bound to the displayed peer/policy binding |
+| GET | `/lobbies/{lobby_id}/activation` | Read activation readiness and per-peer registration projection |
+| POST | `/lobbies/{lobby_id}/activate` | Owner-explicit activation; ambiguous or incomplete native effects are not reported as success |
+
+Host successes above use HTTP **200**, not 201. Create/inspect return
+`{"lobby": ...}`, issuance returns `{invite_id, secret, invite_url, expires_at}`
+at the root, decisions return `{"redemption": ...}`, and activation returns
+`{lobby_id, status: "activated", room_id}` at the root. Activation status is a
+root-level readiness projection. The [agent runbook](runbooks/invite-rooms-agent.md)
+specifies the current request bodies and owner checkpoints.
+
+### Pairing
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| GET | `/pairing` | Read redacted pairing-journal rows |
+| POST | `/pairing/offers` | Create a host offer code |
+| POST | `/pairing/offers/{pairing_id}/accept` | Accept an offer and return the next public code/SAS step |
+| POST | `/pairing/offers/{pairing_id}/confirm` | Confirm the host-side SAS read over the independent channel |
+| POST | `/pairing/offers/{pairing_id}/cancel` | Cancel an undecided host offer |
+| POST | `/pairing/imports` | Import a joining-side offer and return the next public code |
+| POST | `/pairing/imports/{pairing_id}/reveal` | Reveal the joining-side SAS step |
+| POST | `/pairing/imports/{pairing_id}/confirm` | Confirm the joining-side SAS read over the independent channel |
+| GET | `/peers` | List redacted paired peers |
+| DELETE | `/peers/{peer_id}` | Unpair and advance the durable pairing generation |
+
+Pairing codes are public transcript material, not credentials; owners must compare the SAS out of band. Never automate confirmation or treat a copied code alone as trust.
+
+### Joining-owner imports
+
+| Method | Suffix | Purpose |
+|--------|--------|---------|
+| POST | `/imports/preview` | Parse an invitation locally (`code`, optional `host_id`); no navigation or URL fetch |
+| GET | `/imports/{import_id}` | Read the redacted joining state |
+| POST | `/imports/{import_id}/metadata` | Refresh sanitized invitation metadata over the pinned host channel |
+| POST | `/imports/{import_id}/redeem` | Explicitly redeem the imported invitation |
+| POST | `/imports/{import_id}/scope` | Confirm the exact room/member scope shown to the joining owner |
+| POST | `/imports/{import_id}/consent` | Record the joining owner's explicit consent (`approve` boolean) |
+| POST | `/imports/{import_id}/resolve` | Owner-directed resolution of an ambiguous redemption |
+
+All successful import operations return HTTP **200** with `{"import": ...}`.
+Metadata/redeem/resolve accept fieldless requests or `{}`; scope requires exactly
+`{room_id, member_id}`, and consent requires exactly `{"approve": true|false}`.
+
+### Guest-room approvals
+
+The guest routes below use the same base path, bearer authentication, Origin policy, and feature gate. Guest approvals remain a separate operation from pairing, invite issuance, and joining-owner consent.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/guest-rooms` | List locally consented joined rooms |
+| GET | `/guest-rooms/{room_id}/log?since_seq=0&limit=200` | Read authorized canonical text events from the pinned host; original event IDs/order and bounded pagination, not private native metadata |
+| GET | `/guest-rooms/{room_id}/my-bot` | Snapshot only the confirmed local bot's approvals |
+| POST | `/guest-rooms/{room_id}/approvals/{request_id}` | Body **only** `{"choice":"approve"}` or `{"choice":"reject"}` |
+| POST | `/guest-rooms/{room_id}/leave` | Empty object; revoke the local grant and persist terminal leave (unchanged) |
+
+### History policy and read consent
+
+`POST /lobbies` accepts `history_policy: "full"|"postjoin"` and optional
+`creation_id`, alongside the existing name/roster/TTL fields. The stored policy
+is immutable for the Room lifetime; reissue/revocation/readmission cannot update
+it. API omission defaults to `full`, whereas the browser checkbox starts
+unchecked and explicitly sends `postjoin`. Headless callers should always send
+the owner's reviewed policy. `creation_id` is not blanket permission to replay
+ambiguous mutations.
+
+`history_enabled` is a separate top-level private runtime boolean, default
+`false`. It gates both read-consent routes and host history-handler registration;
+enabling it neither changes the stored Room policy nor creates approval. Complete
+native/pairing/joining/topology configuration and the existing identity are still
+required. Changing handler registration requires a sidecar restart.
+
+| Method | Suffix | Body | Success |
+|--------|--------|------|---------|
+| POST | `/rooms/{room_id}/history-approval` | Exactly `{"recipient_id":"peer-<actual paired id>"}` | 200 with `status: "owner_approved"`; issuer is the local host owner |
+| POST | `/guest-rooms/{room_id}/history-consent` | `{}` | 200 `{room_id, status: "ready"}` after guest verification, persistence and authenticated acknowledgement |
+
+These require **explicit owner approval and explicit guest acceptance in both
+policy modes**. No guest call issues the owner's approval. The canonical signed
+scope binds room/home authority and epoch, member/recipient, pairing relation,
+history policy and the admission sequence boundary. It is derived from current
+authority/journal/store state, not supplied as browser authorization input.
+
+The history routes return 404 while their runtime gate is off. Owner approval
+refusals are 403; guest consent refusals are 403, or 503 for
+`history_read_unavailable` / `host_offline`. A successful guest log page has
+`events`, `cursor`, `latest_seq`, `has_more` and `authority`; the wire cursor is a
+nonnegative integer. Each eligible text event preserves its native ID/sequence;
+the projection deliberately omits private metadata and non-message control events.
+Limits are 1..200. `postjoin` enforces the member's admission boundary even when
+the caller requests `since_seq=0`. A transport/unavailable log read is 503
+`host_offline`; authorization refusal is 403 `forbidden`. Neither is an empty
+canonical transcript or permission to substitute a local Room.
+
+The installed mTLS control operations `history_read_scope`,
+`history_read_acceptance` and `room_log` are **not** additional browser HTTP
+endpoints. They use journal-authenticated peer contexts and current admission.
+There is no policy-toggle HTTP route or generic reconcile route in this table.
+An ambiguous activation requires operator-directed inspection; do not invent a
+reconcile URL or directly alter a database to retry it.
+
+### Guest bot approval response
+
+Approval response shape (separate from the history-read exchange):
+
+```json
+{
+  "status": "online",
+  "approvals": [{
+    "request_id": "approval-<opaque-handle>",
+    "title": "native redacted command",
+    "detail": "native redacted description",
+    "command": "native redacted command",
+    "description": "native redacted description",
+    "choices": ["once", "deny"],
+    "allow_permanent": false
+  }],
+  "permissions": []
+}
+```
+
+`request_id` is an opaque MC reference, **not** a native prompt/session ID. It
+maps internally to the exact confirmed scope, native endpoint/credential,
+`session_id`, `prompt_id`, and `execution_generation`. Handles expire after
+five minutes, on process restart, or bounded-cache eviction (2048 handles).
+Do not parse, synthesize, persist, or recycle them for a different prompt.
+The existing frontend `request_id`/`title`/`detail` contract can carry this
+without an API/schema change. A valid decision returns `200 {}` only after an
+exact native `resolved` or `already_resolved` result; the latter means the
+selected request settled concurrently, not that another request was approved.
+
+Discovery uses the fixed owner-configured local native socket/token, with the
+**confirmed binding's target profile**, not the launch profile or an HTTP
+parameter. The adapter requires `gateway.ready` to advertise canonical session
+authority, then requests `session.list {include_hidden:true,limit:200}` and
+filters exact `title == "Group: " + confirmed_room_id` and `source == "bot_room"`.
+It never uses the canonical title resolver, computes a room hash, trusts a
+receipt's `roomlink_*`, or accepts session/generation/profile/URL input.
+There is no persistent REST fallback in this implementation: a cold/missing
+live row is temporarily unavailable, and a full 200-row list is inconclusive
+even if it contains one apparent match. Multiple matches fail closed.
+
+Each snapshot/decision opens one authenticated connection and mounts with
+`session.resume`. A decision rediscovers and snapshots again, matches the
+**exact** saved tuple, and sends canonical `approval.respond` on that same
+subscribed socket (`approve -> once`, `reject -> deny`). `profile` is the
+canonical routing envelope stripped by the authority before method validation.
+Every network await is fenced by fresh confirmed consent/material/leave and
+peer-binding checks, including immediately before the response write. The existing
+target material validator rechecks grant claim scope/expiry and pinned catalog/policy
+digests; the stored consent receipt must exactly match the confirmed scope/purpose.
+Native stale-generation checks remain authoritative for races after that write.
+Snapshot polling is used; there is no event replay or cursor continuity claim.
+Cleanup detaches without `end_reason`, then closes only its socket; no turn is
+submitted, interrupted, stopped or steered. No generic RPC route is exposed.
+The existing bounded groups adapter and leave/transcript contracts are unchanged.
+
+| HTTP | `code` | Meaning |
+|------|--------|---------|
+| 401 | Normal MC auth error | Caller unauthenticated |
+| 403 | `forbidden` | Unconfirmed/left/changed consent or material, peer mismatch/unpair, profile/auth refusal |
+| 403 | `forbidden_origin` | Origin not explicitly allowed |
+| 404 | Normal unknown-route response | Feature off/misconfigured or unsupported guest control route |
+| 409 | `request_expired` | Unknown/expired handle, changed scope/endpoint/credential, vanished exact request or stale generation; resnapshot |
+| 501 | `not_supported` | No canonical adapter/authority or incompatible native session protocol; never legacy fallback on auth failure |
+| 503 | `session_unavailable` | No exact live room session yet; retry snapshot later |
+| 503 | `discovery_inconclusive` | Duplicate matches or saturated live listing; no ID guessing |
+| 503 | `native_unavailable` | Missing config/token, offline/closed socket, bounded timeout, malformed/ambiguous native reply |
+
+**Security restriction:** this is an authenticated-local-operator feature. It
+assumes the trusted core maintains a unique, unaltered canonical room namespace
+within the confirmed target profile. Public session projections do **not**
+include the private `state_meta` room identity; title-based discovery is **not a
+cryptographic grant-to-session binding** and does not independently attest the
+hidden home/member tuple. Local confirmed material/consent and peer state are
+re-read; there is no native grant-status introspection here. An operator who
+revokes directly outside this local state must also revoke local consent/material
+(or leave/unpair) to disable MC responses to an already-running waiter. Deployments
+requiring cryptographic scoped lookup or an independent native-grant revocation
+fence must keep this feature unavailable until a scoped core contract exists.
+Do not use title uniqueness to claim resistance to a malicious local operator
+or tampered native database. Ambiguity is always denied.
+
+**Frontend follow-up (not implemented here):** render temporary discovery/offline
+503 separately from genuine protocol 501, and handle 409 by dropping the selected
+handle and fetching a fresh snapshot. Do not silently retarget or auto-retry a
+decision on the next request. Polling can reuse the existing API fields. No UI
+files are changed in this backend packet.
+
 ## Browser terminal
 
 | Method | Path | Purpose |

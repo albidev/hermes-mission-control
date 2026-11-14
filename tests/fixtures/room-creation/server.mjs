@@ -1,0 +1,17 @@
+import {createRequire} from 'node:module';
+import {readFileSync,writeFileSync,existsSync,realpathSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {execFileSync} from 'node:child_process';
+const root=realpathSync(resolve(process.argv[2])),out=realpathSync(resolve(process.argv[3]));
+if(!out.includes('/rooms-create-dialog/implementation/')||existsSync(join(out,'server.json')))throw Error('Fresh owned evidence root required; foreign/completed roots forbidden');
+if(root!==resolve(out.split('/implementation/')[0],'source'))throw Error('Private snapshot only');
+const require=createRequire(join(root,'package.json'));
+const {createServer}=await import(require.resolve('vite'));
+const react=(await import(require.resolve('@vitejs/plugin-react'))).default;
+const fixture=readFileSync(new URL('./fixture.tsx',import.meta.url),'utf8');
+const server=await createServer({root,configFile:false,envDir:false,cacheDir:join(out,'vite-cache'),plugins:[react(),{name:'synthetic-boundaries-only',enforce:'pre',resolveId(id){if(id==='/__fixture.tsx')return join(root,'__fixture.tsx');},load(id){if(id===join(root,'__fixture.tsx'))return fixture;},transform(code,id){if(id===join(root,'src/lib/bot-gateway.ts'))return code.replace("return normalizeProfiles(await requestBotRpc<unknown>('profiles.list', { include_sessions: true }, accessToken));","return { profiles: window.__fixtureProfiles, bot_mode_protocol: true };");},configureServer(s){s.middlewares.use((req,res,next)=>{const path=req.url.split('?')[0];if(path==='/'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html data-theme="dark"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><body><div id="root"></div><script type="module" src="/__fixture.tsx"></script></body></html>');return;}if(path.startsWith('/api/')){res.statusCode=403;res.end('No API in fixture');return;}next();});}}],server:{host:'127.0.0.1',port:0,hmr:false,proxy:undefined},css:{postcss:join(root,'postcss.config.js')}});
+await server.listen();const port=server.httpServer.address().port;
+if([5174,5175,8765,9119].includes(port))throw Error('Forbidden port');
+writeFileSync(join(out,'server.json'),JSON.stringify({pid:process.pid,birth:execFileSync('ps',['-p',String(process.pid),'-o','lstart='],{encoding:'utf8'}).trim(),port,host:'127.0.0.1',proxy:false,root,transforms:['bot-gateway.loadBotProfiles synthetic return only; production drawer/form/CSS unmodified']},null,2));
+console.log('READY',port);
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,async()=>{await server.close();process.exit(0);});

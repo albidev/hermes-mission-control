@@ -1,0 +1,7 @@
+{
+  "name": "Release triage",
+  "roster": [
+    { "member_id": "local-owner", "handle": "default" },
+    { "member_id": "peer-owner-b", "handle": "owner-b", "target": { "peer_id": "owner-b" } }
+  ]
+}

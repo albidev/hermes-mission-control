@@ -21,6 +21,7 @@ const ConfigRoute = lazy(() => import('./routes/ConfigRoute').then((m) => ({ def
 const LogsRoute = lazy(() => import('./routes/LogsRoute').then((m) => ({ default: m.LogsRoute })));
 const KanbanRoute = lazy(() => import('./routes/KanbanRoute').then((m) => ({ default: m.KanbanRoute })));
 const BotsRoute = lazy(() => import('./routes/BotsRoute').then((m) => ({ default: m.BotsRoute })));
+const InviteRoomsMock = import.meta.env.DEV ? lazy(() => import('./components/chat/InviteRoomsMock').then((m) => ({ default: m.InviteRoomsMock }))) : null;
 
 function LocalizedToastProvider({ children }: { children: ReactNode }) {
   const { t } = useI18n();
@@ -63,6 +64,9 @@ function App() {
     setPluginsLoaded(true);
   }, []);
 
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'invite-rooms' && InviteRoomsMock) {
+    return <InviteRoomsMock />;
+  }
   if (!pluginsLoaded) {
     return null; // or loading spinner
   }

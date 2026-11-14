@@ -1,0 +1,26 @@
+{
+  "core_pin": "af5c2014a84eb364fb07a9366da4f2df5a61e185",
+  "source": "gateway/session_group_controls.py",
+  "sha256": "86086ec6745047266429826c73571c0168fc56907433a8fb9f4c7dea7545b698",
+  "allowed": {
+    "groups.peer.invite": [
+      "authority_epoch",
+      "authority_gateway_id",
+      "home_install_id",
+      "member_id",
+      "profile",
+      "room_id",
+      "status_ttl_seconds",
+      "ttl_seconds"
+    ],
+    "groups.peer.register": [
+      "catalog",
+      "grant",
+      "member_id",
+      "profile",
+      "room_id",
+      "target_profile",
+      "target_url"
+    ]
+  }
+}
