@@ -1091,6 +1091,53 @@ class BundleLifecycleTest(Base):
         plane.close()
         self.assertIsNone(plane.admission_store._fd)
 
+    def test_relay_session_starts_after_control_and_stops_before_local_listeners(self):
+        from dataclasses import replace
+        original = self.build_plane()
+        if original is None:
+            raise AssertionError("test plane did not build")
+        order = []
+        plane = replace(original, relay_manager=SimpleNamespace(start=lambda: order.append("relay_start"),
+                                                                close=lambda: order.append("relay_close")))
+        self.planes[-1] = plane
+        real_control_start = plane.control_listener.start
+        real_control_close = plane.control_listener.close
+        real_control_join = plane.control_listener.join
+        real_registry_close = plane.scoped_registry.close
+        real_adapter_close = plane.adapter.close
+        def control_start():
+            order.append("control_start")
+            real_control_start()
+        def control_close():
+            order.append("control_close")
+            real_control_close()
+        def control_join(*args, **kwargs):
+            order.append("control_join")
+            real_control_join(*args, **kwargs)
+        def registry_close():
+            order.append("registry_close")
+            real_registry_close()
+        def adapter_close():
+            order.append("adapter_close")
+            real_adapter_close()
+        with contextlib.ExitStack() as stack:
+            for owner, method, callback in (
+                (plane.control_listener, "start", control_start),
+                (plane.control_listener, "close", control_close),
+                (plane.control_listener, "join", control_join),
+                (plane.scoped_registry, "close", registry_close),
+                (plane.adapter, "close", adapter_close),
+            ):
+                stack.enter_context(mock.patch.object(owner, method, side_effect=callback))
+            plane.start()
+            self.assertLess(order.index("control_start"), order.index("relay_start"))
+            plane.close()
+        self.assertEqual(order[:2], ["control_start", "relay_start"])
+        self.assertLess(order.index("relay_close"), order.index("registry_close"))
+        self.assertLess(order.index("relay_close"), order.index("control_close"))
+        self.assertLess(order.index("relay_close"), order.index("adapter_close"))
+        self.assertEqual(order[-2:], ["control_close", "control_join"])
+
     def test_start_binds_exact_configured_addresses_attaches_registry_then_starts_control(self):
         plane = self.build_plane()
         order = []

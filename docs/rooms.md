@@ -203,6 +203,12 @@ form remains available only for the legacy topology that accepts it. It is not
 a canonical native authentication mechanism and is never a fallback from
 `profile_home`. Do not mix the forms or place credentials in endpoint URLs.
 
+### Optional WSS relay transport
+
+For installations on separate networks, the sidecar can use the owner-provisioned WSS relay path implemented in `server/invite_rooms/relay_transport.py`. It is selected only by the private `pairing.relay_url` + `pairing.relay_links` config for an exact journal endpoint/generation/peer. `control` carries the existing authenticated control protocol; `data:<adapter_id>` carries the existing inner-mTLS scoped connector. Loopback binds and fixed local target listeners remain loopback-only. The relay does not supply peer identity, CA/leaf pin, consent, admission or scope, and its credentials cannot select a destination.
+
+The relay receives route identities, timing/traffic metadata and ciphertext; the control dispatcher, RoomFirewall, journal admission and target native verifier remain the product boundaries. Direct endpoint maps and relay configuration for the same peer are rejected. See the [operator relay setup](runbooks/invite-rooms-setup.md#optional-wss-relay-for-peers-on-different-networks) for the private config and credential rules. Local product relay tests do not certify a two-network deployment; that acceptance gate requires two real installations on distinct networks.
+
 Cold-start data topology may explicitly contain:
 
 ```json

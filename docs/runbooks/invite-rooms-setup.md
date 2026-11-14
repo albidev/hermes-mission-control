@@ -159,6 +159,42 @@ Template contract:
 
 Omitted topology maps are not equivalent to `{}`. Empty `target_listeners` and `data_endpoints` support a deny-all cold start, but authorize no data route. Populate only actual product-derived adapter/scope mappings when the approved flow provides them, at an explicit sidecar restart boundary; do not guess a `link-...` ID to complete the template. This manual topology step is an operator integration boundary, not automatic discovery.
 
+### Optional WSS relay for peers on different networks
+
+The product transport can use an owner-provisioned WSS relay when the two installations cannot reach each other's loopback listeners. The relay is a transport hop, not a trust authority: native peer identity, CA/leaf pin, endpoint, generation, scope, admission and consent still come from each installation's pairing journal. The WSS certificate is verified using the normal system trust store; do not disable verification or substitute an HTTP/WebSocket endpoint.
+
+For a relay-only pair, keep `pairing.control_listen` bound to literal loopback on each side and configure `pairing.relay_url` plus `pairing.relay_links`. Omit direct `pairing.control_endpoints` and `pairing.data_endpoints` for that peer, and omit that peer from `joining.control_endpoints`; mixing direct and relay destinations for one peer disables the pairing configuration. Keep `data_listen` and every `target_listeners` entry loopback-only. The control stream label is fixed as `control`; data streams are fixed per canonical `data:<adapter_id>`.
+
+`relay_links` is a map keyed by the exact journal `endpoint_id` (`link-` plus 32 lowercase hex characters). Each entry has exactly these fields: `generation`, `peer_id` (`peer-` plus 32 lowercase hex characters), `link_id`, `relay_room_id`, and `credential_file`. `peer_id` and `generation` must match the current journal link but do not replace journal authority. Both installations use the same `relay_url`, `link_id`, and `relay_room_id`; each uses its own `peer_id` and its own credential file. The credential directory must be owned by the current user and mode `0700`; each credential must be a single-link regular file owned by that user, mode `0600`, and at most 2048 bytes. Treat the credential as a secret: never commit it, paste it into chat, put it in JSON logs, or reuse a model/provider API key.
+
+Relay-only `pairing` fragment (replace every marker; this is not a complete top-level config):
+
+```json
+{
+  "identity_dir": "__STATE__/identity",
+  "journal_dir": "__STATE__/pairing-journal",
+  "peers_path": "__STATE__/peers.json",
+  "control_listen": {"host": "127.0.0.1", "port": 18740},
+  "relay_url": "wss://relay.example.com:443/data",
+  "relay_links": {
+    "__JOURNAL_ENDPOINT_ID__": {
+      "generation": 1,
+      "peer_id": "__REMOTE_PEER_ID__",
+      "link_id": "__PROVISIONED_LINK_ID__",
+      "relay_room_id": "__PROVISIONED_ROOM_ID__",
+      "credential_file": "__STATE__/relay-credentials/peer.credential"
+    }
+  },
+  "target_listeners": {"__PRODUCT_ADAPTER_ID__": {"host": "127.0.0.1", "port": 18750}}
+}
+```
+
+The `generation: 1` value is illustrative; substitute the generation currently recorded in that installation's journal. The target installation lists its actual product-derived adapter IDs in `target_listeners`; the host side may leave that map empty. Do not add `control_endpoints` or `data_endpoints` for this peer, and do not guess the journal endpoint, generation, peer ID or adapter ID.
+
+Provision route identities with the product's deterministic pair-scoped pseudonym function `invite_rooms.relay_transport.relay_identity_for(installation_id, link_id)`. The relay server is provisioned with those two pseudonyms and issues a distinct credential to each side; install only each side's credential in its private directory, then remove any temporary credential copies from the relay host. The existing F1 relay daemon can serve the WSS protocol, but **do not** use the spike's connector or adapter as product proof. The relay sees link/room identities, connection timing and ciphertext; inner mTLS and the product control/data policies remain mandatory.
+
+A local relay-daemon test proves the product client/manager and byte-stream bridge, not a two-network deployment. Cross-network acceptance still requires two real installations on distinct networks, product configurations on both, zero plaintext markers at the relay, and verified teardown/revocation. Do not describe a successful WSS health probe or a local simulator as that gate.
+
 Keep `history_enabled: false` until the paired identity bundle exists on each side. Once initialized, enabling it requires operator approval, a complete topology and a sidecar restart to install the host history handlers. It does **not** change a Room's immutable `history_policy` or sign owner/guest consent. Set it on each participating side that needs the history flow.
 
 Use one `native_rpc` form only. `profile_home` is the canonical attach-only form; the legacy `{endpoint, token_path}` form is for an explicitly compatible old deployment, never an automatic fallback.

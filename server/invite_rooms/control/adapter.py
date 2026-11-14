@@ -298,6 +298,7 @@ class LoopbackAdapter:
                       verify_native: Callable[[str, Mapping[str, Any]], bool],
                       connector: Callable[..., Any] | None = None,
                       binding=None, identity=None, authority=None, material_scope=None,
+                      stream_client=None,
                       backend_timeout_seconds: float = 30.0,
                       on_admitted: Callable[[str, Mapping[str, Any]], Any] | None = None,
                       ownership_token: object | None = None) -> str:
@@ -310,7 +311,8 @@ class LoopbackAdapter:
         if connector is None:
             from .connector import make_link_connector
             from invite_rooms.peer_registry import MaterialScope, adapter_id_for
-            if binding is None or binding.endpoint_id != endpoint_id or binding.generation != generation:
+            if (binding is None or identity is None or authority is None
+                    or binding.endpoint_id != endpoint_id or binding.generation != generation):
                 raise ValueError("link binding does not match route")
             if (not isinstance(material_scope, MaterialScope)
                     or material_scope.endpoint_id != endpoint_id
@@ -325,8 +327,10 @@ class LoopbackAdapter:
                     }.items())):
                 raise ValueError("material scope does not match route")
             adapter_id = adapter_id_for(material_scope)
-            connector = make_link_connector(binding, identity, authority)
-        elif any(value is not None for value in (binding, identity, authority)):
+            relay_channel = f"data:{adapter_id}" if getattr(binding, "transport", "loopback") == "relay" else None
+            connector = make_link_connector(binding, identity, authority,
+                stream_client=stream_client, relay_channel=relay_channel)
+        elif any(value is not None for value in (binding, identity, authority, stream_client)):
             raise ValueError("ambiguous connector registration")
         firewall = RoomFirewall(expected_scope=expected_scope,
                                 backend=lambda _request: (_ for _ in ()).throw(

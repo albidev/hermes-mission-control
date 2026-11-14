@@ -4,9 +4,12 @@ The owner-only `/api/local/room-invites/*` HTTP dispatcher is mounted by `server
 
 The sidecar now owns complete-bundle control/data listener construction, startup
 and shutdown, including the running scoped registry and material coordinator.
-Incomplete configuration still fails closed. That implementation is distinct
-from accepted two-native-process E2E or cross-network deployment; those gates
-remain separate. This is a living technical reference, not a release receipt.
+Pairing may select either fixed loopback destinations or the optional product-owned
+WSS relay transport; the relay is not a trust authority and does not widen the
+journal-bound control/data policies. Incomplete configuration still fails closed.
+Local product relay tests exercise the manager, pair-ack/control channel and scoped
+mTLS data adapter; they are distinct from accepted two-native-installation E2E or
+cross-network deployment. This is a living technical reference, not a release receipt.
 
 Start with the [user guide](../../docs/invite-rooms-user-guide.md),
 [operator setup](../../docs/runbooks/invite-rooms-setup.md) or

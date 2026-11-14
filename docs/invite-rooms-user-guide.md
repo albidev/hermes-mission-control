@@ -16,7 +16,7 @@ The current product scope is one local owner member and one remote member on a *
 
 Both owners need a compatible running Hermes gateway, their own authenticated Mission Control, and an operator-provisioned connection between the installations. A healthy dashboard alone is insufficient: the native gateway must advertise `room_link.enabled: true`, and the MC sidecar needs its separate pairing/joining/data-plane configuration.
 
-The current product transport configuration uses literal loopback listeners and destinations. A URL displayed in an invitation does not provision networking. Do not expose your MC token, terminal, native API or private keys to make a peer reachable. Cross-network connectivity remains a separate operator acceptance gate.
+The product transport keeps literal-loopback listeners and can use either an owner-configured loopback destination or an opt-in, owner-provisioned WSS relay for the paired peer. A URL displayed in an invitation does not provision networking. Do not expose your MC token, terminal, native API or private keys to make a peer reachable. A relay-enabled configuration is not evidence of a completed cross-network acceptance test; follow the operator runbook and verify the distinct-network gate.
 
 ## 1. Pair the installations
 

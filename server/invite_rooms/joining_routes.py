@@ -56,7 +56,8 @@ def handle(handler, method, path, suffix, params):
     config_loaded = runtime_config.load_service()
     owner = None
     if config_loaded is not None:
-        owner = runtime_joining.load_owner(config_loaded[2])
+        owner = runtime_joining.load_owner(config_loaded[2], relay_manager=getattr(
+            getattr(handler, "server", None), "invite_rooms_relay_manager", None))
     if owner is None:
         handler._json(404, {"error": "not_found", "path": path})
         return True

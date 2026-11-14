@@ -1,10 +1,9 @@
 """One-request pinned mTLS data connections between two owner-fixed sidecars.
 
-No relay, proxy discovery, retry, offline queue, or request-selected destination.
-``authority.admit(endpoint_id, generation, operation)`` must atomically check the
-journal generation/state, serialized with unpair. It releases its transaction
-before returning; no database lock is held across network I/O.
-"""
+An opt-in, owner-configured relay may carry the byte stream, but it never selects
+peer trust or destination. Inner TLS, journal admission and the fixed local bridge
+remain authoritative. No proxy discovery, retry, offline queue, or request-selected
+transport/address is permitted."""
 from __future__ import annotations
 
 import base64
@@ -175,7 +174,7 @@ class LinkIdentity:
 class LinkBinding:
     endpoint_id: str
     generation: int
-    address: tuple[str, int]
+    address: tuple[str, int] | None
     peer_ca_file: str | None
     peer_fingerprint: str
     expected_binding: Mapping[str, Any]
@@ -183,13 +182,26 @@ class LinkBinding:
     max_inflight: int = 8
     #: In-memory peer CA PEM (product path).  Mutually exclusive with ``peer_ca_file``; never written to disk.
     peer_ca_data: str | None = None
+    # Direct loopback remains the default. Relay mode substitutes an already
+    # owner-configured stream dialer; no remote address is accepted here.
+    transport: str = "loopback"
 
     def __post_init__(self):
-        _loopback(self.address[0])
+        if self.transport == "loopback":
+            if not isinstance(self.address, tuple) or len(self.address) != 2:
+                raise ValueError("invalid link binding")
+            _loopback(self.address[0])
+            port = self.address[1]
+            if type(port) is not int or not 0 < port <= 65535:
+                raise ValueError("invalid link binding")
+        elif self.transport == "relay":
+            if self.address is not None:
+                raise ValueError("relay binding cannot carry an address")
+        else:
+            raise ValueError("invalid link transport")
         if (self.peer_ca_file is None) == (self.peer_ca_data is None):
             raise ValueError("invalid link binding")
-        if (type(self.address[1]) is not int or not 0 < self.address[1] <= 65535
-                or type(self.generation) is not int or self.generation < 1
+        if (type(self.generation) is not int or self.generation < 1
                 or not isinstance(self.endpoint_id, str) or not self.endpoint_id
                 or type(self.max_inflight) is not int or self.max_inflight < 1
                 or not math.isfinite(self.timeout) or self.timeout <= 0):
@@ -261,17 +273,40 @@ class _DirectClient:
         return socket.create_connection(self.address, timeout=timeout)
 
 
+class _RelayStreamDialer:
+    """Bind one trusted product operation to a fixed channel on a sidecar-owned relay session."""
+    def __init__(self, client, channel: str):
+        from invite_rooms.relay_transport import validate_channel
+        if not callable(getattr(client, "open_stream", None)):
+            raise ValueError("relay stream client required")
+        self.client = client
+        self.channel = validate_channel(channel)
+
+    def open_stream(self, timeout):
+        return self.client.open_stream(channel=self.channel, timeout=timeout)
+
+
 class HostConnector:
     """A: bounded, single-attempt request over a new pinned mTLS connection.
 
     ``client``/``inner`` are the transport-only spike compatibility seam. Product
     construction uses ``make_link_connector`` and cannot omit durable admission.
     """
-    def __init__(self, client=None, *, inner=None, binding=None, identity=None, authority=None):
+    def __init__(self, client=None, *, inner=None, binding=None, identity=None, authority=None,
+                 stream_client=None, relay_channel=None):
         if binding is not None:
             self.admission = _Admission(binding, authority)
             self.binding = binding
-            self.client = _DirectClient(binding.address)
+            if binding.transport == "loopback":
+                if stream_client is not None or relay_channel is not None:
+                    raise ValueError("direct binding cannot carry relay transport")
+                self.client = _DirectClient(binding.address)
+            elif binding.transport == "relay":
+                if stream_client is None or relay_channel is None:
+                    raise ValueError("relay binding requires its owner-configured stream")
+                self.client = _RelayStreamDialer(stream_client, relay_channel)
+            else:
+                raise ValueError("invalid link transport")
             self.context = client_context(ca_file=binding.peer_ca_file, ca_data=binding.peer_ca_data,
                 cert_file=identity.cert_file, key_file=identity.key_file)
             self.peer_fingerprint = binding.peer_fingerprint
@@ -426,11 +461,13 @@ class HostConnector:
         return self.forward(request, admit, deadline=deadline)
 
 
-def make_link_connector(binding: LinkBinding, identity: LinkIdentity, authority) -> HostConnector:
+def make_link_connector(binding: LinkBinding, identity: LinkIdentity, authority, *,
+                        stream_client=None, relay_channel=None) -> HostConnector:
     """Build the real connector for exactly one acknowledged endpoint/generation."""
     if not isinstance(binding, LinkBinding) or not isinstance(identity, LinkIdentity):
         raise TypeError("fixed link binding and identity required")
-    connector = HostConnector(binding=binding, identity=identity, authority=authority)
+    connector = HostConnector(binding=binding, identity=identity, authority=authority,
+                              stream_client=stream_client, relay_channel=relay_channel)
     connector.admission.check()
     return connector
 
@@ -445,8 +482,10 @@ class PairAckConnector(HostConnector):
     ``confirmed`` link for ``pair_ack`` alone, and the generic ``forward`` (data) entry point is closed, so this object
     can never carry a data/preview/redeem/status/material request on a confirmed link.
     """
-    def __init__(self, *, binding: LinkBinding, identity: LinkIdentity, authority):
-        super().__init__(binding=binding, identity=identity, authority=authority)
+    def __init__(self, *, binding: LinkBinding, identity: LinkIdentity, authority,
+                 stream_client=None, relay_channel=None):
+        super().__init__(binding=binding, identity=identity, authority=authority,
+                         stream_client=stream_client, relay_channel=relay_channel)
         self.admission = _PairAckAdmission(binding, authority)
 
     def forward(self, request, admit=None, *, deadline=None):
@@ -464,13 +503,15 @@ class PairAckConnector(HostConnector):
         return HostConnector.forward(self, ForwardedRequest("POST", PAIR_ACK_PATH, (), payload), admit)
 
 
-def make_pair_ack_connector(binding: LinkBinding, identity: LinkIdentity, authority) -> PairAckConnector:
+def make_pair_ack_connector(binding: LinkBinding, identity: LinkIdentity, authority, *,
+                             stream_client=None, relay_channel=None) -> PairAckConnector:
     """Build the host pair_ack connector for exactly one confirmed/acknowledged endpoint/generation."""
     if not isinstance(binding, LinkBinding) or not isinstance(identity, LinkIdentity):
         raise TypeError("fixed link binding and identity required")
     if binding.peer_ca_data is None:
         raise ValueError("in-memory peer CA required")
-    connector = PairAckConnector(binding=binding, identity=identity, authority=authority)
+    connector = PairAckConnector(binding=binding, identity=identity, authority=authority,
+                                 stream_client=stream_client, relay_channel=relay_channel)
     connector.admission.check()
     return connector
 

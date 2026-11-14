@@ -28,7 +28,7 @@ import stat
 import threading
 import time
 from urllib.parse import urlsplit
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping, Optional
@@ -76,9 +76,12 @@ def _parse_joining_grant_ttls(raw) -> tuple:
 _CONTROL_ENDPOINT_FIELDS = {"host", "port"}
 _CONTROL_ENDPOINT_HOSTS = frozenset({"127.0.0.1", "::1"})
 _PAIRING_FIELDS = {"identity_dir", "journal_dir", "peers_path"}
-_PAIRING_OPTIONAL_FIELDS = {"control_listen", "control_endpoints", "target_listeners", "data_endpoints"}
+_PAIRING_OPTIONAL_FIELDS = {"control_listen", "control_endpoints", "target_listeners", "data_endpoints",
+                            "relay_url", "relay_links"}
 _PEER_ID_KEY = re.compile(r"peer-[0-9a-f]{32}\Z")
 _ADAPTER_ID_KEY = re.compile(r"link-[0-9a-f]{32}\Z")
+_RELAY_TOKEN_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_RELAY_LINK_FIELDS = {"generation", "peer_id", "link_id", "relay_room_id", "credential_file"}
 _PEER_FIELDS = {"peer_id", "installation_id", "profile", "fingerprint", "endpoint_id", "catalog", "consent_public_key_b64", "tls_ca_pem", "pairing_generation"}
 _NATIVE_RPC_FIELDS = {"endpoint", "token_path"}
 
@@ -387,6 +390,17 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class RelayLinkConfig:
+    """Owner-private relay route credentials for one exact journal endpoint/generation."""
+    endpoint_id: str
+    generation: int
+    peer_id: str
+    link_id: str
+    relay_room_id: str
+    credential_file: Path = field(repr=False)
+
+
+@dataclass(frozen=True)
 class PairingConfig:
     identity_dir: Path
     journal_dir: Path
@@ -396,9 +410,73 @@ class PairingConfig:
     control_endpoints: Optional[Mapping] = None  # {peer_id: (host, port)} owner-private OUTBOUND destinations, or None
     target_listeners: Optional[Mapping] = None  # {adapter_id: (host, port)} owner-private inbound mTLS target binds, or None
     data_endpoints: Optional[Mapping] = None  # {peer_id: {adapter_id: (host, port)}} owner-private OUTBOUND data destinations, or None
+    relay_url: Optional[str] = None              # owner-private WSS endpoint; standard TLS validation only
+    relay_links: Optional[Mapping] = None        # {endpoint_id: RelayLinkConfig}; no URL/credential in invitations
 
 
-def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
+def parse_relay_url(raw) -> str:
+    """Accept only an explicit-port WSS relay data endpoint; no userinfo, query, fragment or redirects."""
+    if not isinstance(raw, str) or not raw or "\x00" in raw:
+        raise RuntimeConfigError("invalid_relay_url")
+    try:
+        parts = urlsplit(raw)
+        port = parts.port
+        host = parts.hostname
+    except ValueError:
+        raise RuntimeConfigError("invalid_relay_url") from None
+    if (parts.scheme != "wss" or not host or port is None or not 0 < port <= 65535
+            or parts.path != "/data" or parts.username is not None or parts.password is not None
+            or parts.query or parts.fragment or any(c.isspace() for c in raw)):
+        raise RuntimeConfigError("invalid_relay_url")
+    return raw
+
+
+def _private_relay_credential(path: Path) -> bool:
+    """A relay credential is a single-link owner-private file, never a config/token or symlink alias."""
+    directory_fd = file_fd = None
+    try:
+        directory_fd = private_fs.open_private_dir(path.parent, path.parent, create=False)
+        file_fd = private_fs.open_regular(directory_fd, path.name)
+        data = private_fs.read_all(file_fd, 2048)
+        return (0 < len(data) <= 2048 and b"\x00" not in data and bool(data.strip())
+                and not any(byte in data for byte in b" \t\r\n"))
+    except (OSError, private_fs.PrivateStorageError):
+        return False
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
+def parse_relay_links(raw, *, relay_url: Optional[str], control_endpoints=None, data_endpoints=None,
+                      joining_control_endpoints=None) -> Mapping:
+    """Validate an endpoint-pinned relay map. All relay secrets stay in owner-private files."""
+    if not isinstance(raw, dict) or not raw or relay_url is None:
+        raise RuntimeConfigError("invalid_relay_links")
+    result = {}
+    direct_peers = (set(control_endpoints or {}) | set(data_endpoints or {})
+                    | set(joining_control_endpoints or {}))
+    for endpoint_id, entry in raw.items():
+        if (not isinstance(endpoint_id, str) or not _ADAPTER_ID_KEY.fullmatch(endpoint_id)
+                or not isinstance(entry, dict) or set(entry) != _RELAY_LINK_FIELDS):
+            raise RuntimeConfigError("invalid_relay_links")
+        generation, peer_id = entry["generation"], entry["peer_id"]
+        link_id, relay_room_id, credential_raw = entry["link_id"], entry["relay_room_id"], entry["credential_file"]
+        if (type(generation) is not int or generation < 1 or not isinstance(peer_id, str)
+                or not _PEER_ID_KEY.fullmatch(peer_id) or peer_id in direct_peers
+                or not isinstance(link_id, str) or not _RELAY_TOKEN_KEY.fullmatch(link_id)
+                or not isinstance(relay_room_id, str) or not _RELAY_TOKEN_KEY.fullmatch(relay_room_id)
+                or not isinstance(credential_raw, str) or not credential_raw or "\x00" in credential_raw):
+            raise RuntimeConfigError("invalid_relay_links")
+        credential_file = Path(credential_raw)
+        if not credential_file.is_absolute() or not _private_relay_credential(credential_file):
+            raise RuntimeConfigError("invalid_relay_links")
+        result[endpoint_id] = RelayLinkConfig(endpoint_id, generation, peer_id, link_id, relay_room_id, credential_file)
+    return MappingProxyType(result)
+
+
+def _parse_pairing(raw, peer_registry_path: Path, *, joining_control_endpoints=None) -> Optional[PairingConfig]:
     """Validate the optional ``pairing`` block.  Any problem -> ``None`` (pairing routes 404), never a partial feature.
 
     Directories that already exist must be owner-private (0700, owner UID, no symlink component below the nearest
@@ -419,6 +497,13 @@ def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
                          if "control_endpoints" in raw else None)
     target_listeners = parse_target_listeners(raw["target_listeners"]) if "target_listeners" in raw else None
     data_endpoints = parse_data_endpoints(raw["data_endpoints"]) if "data_endpoints" in raw else None
+    relay_url = parse_relay_url(raw["relay_url"]) if "relay_url" in raw else None
+    relay_links = (parse_relay_links(raw["relay_links"], relay_url=relay_url,
+                                     control_endpoints=control_endpoints, data_endpoints=data_endpoints,
+                                     joining_control_endpoints=joining_control_endpoints)
+                   if "relay_links" in raw else None)
+    if (relay_url is None) != (relay_links is None):
+        raise RuntimeConfigError("invalid_relay_links")
     if peers_path != Path(os.path.abspath(peer_registry_path)):
         return None
     if identity_dir == journal_dir or peers_path.parent in (identity_dir, journal_dir):
@@ -443,7 +528,7 @@ def _parse_pairing(raw, peer_registry_path: Path) -> Optional[PairingConfig]:
     return PairingConfig(identity_dir=identity_dir, journal_dir=journal_dir,
                          journal_anchor=journal_anchor, peers_path=peers_path, control_listen=control_listen,
                          control_endpoints=control_endpoints, target_listeners=target_listeners,
-                         data_endpoints=data_endpoints)
+                         data_endpoints=data_endpoints, relay_url=relay_url, relay_links=relay_links)
 
 
 def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
@@ -538,7 +623,8 @@ def _load_config_file(raw_path: str) -> Optional[RuntimeConfig]:
                                  joining_control_endpoints)
 
         if "pairing" in data:
-            pairing = _parse_pairing(data["pairing"], peer_registry_path)
+            pairing = _parse_pairing(data["pairing"], peer_registry_path,
+                                     joining_control_endpoints=joining_control_endpoints)
             if pairing is None:
                 _warn_once("pairing", "pairing block is invalid; pairing routes are disabled")
         joining_owner_config = data.get("joining")

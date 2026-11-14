@@ -7,6 +7,7 @@ production end-to-end control exchange.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -21,8 +22,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "spikes" / "invite-rooms"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import relay_daemon
 import pairing_support as ps
+import test_control_listener_w2a as w2a
+from server.tests import lab_pki
 from invite_rooms import identity as identity_module
 from invite_rooms import runtime_config
 from invite_rooms import runtime_joining as rj
@@ -32,6 +37,9 @@ from invite_rooms.control.connector import decode_request, encode_response, recv
 from invite_rooms.control.firewall import UpstreamResponse
 from invite_rooms.control.framing import SequencedTLS
 from invite_rooms.joining import JoiningError
+from invite_rooms.pairing_journal import JournalLinkAuthority
+from invite_rooms.relay_transport import RelaySessionManager, relay_identity_for
+from invite_rooms.runtime_config import RelayLinkConfig
 
 LOBBY = "lobby-" + "1" * 32
 INVITE = "invite-" + "2" * 32
@@ -178,6 +186,70 @@ class OwnerEndpointClientTest(W1Base):
         self.assertEqual(envelope["generation"], owner.generation)
         self.assertEqual((request.method, request.target), ("POST", rj.CONTROL_PATH))
         self.assertEqual(owner.origin, "https://host.example")   # joining.origins semantics unchanged
+
+    def test_joining_owner_control_call_uses_the_relay_manager(self):
+        srv = self.server()
+        trust_b, = JournalLinkAuthority(self.b.journal).active_trusts()
+        trust_a, = JournalLinkAuthority(self.a.journal).active_trusts()
+        self.assertEqual((trust_a.endpoint_id, trust_a.generation), (trust_b.endpoint_id, trust_b.generation))
+        link_id = "relay-" + trust_b.endpoint_id
+        room_id = "relay-room-" + trust_b.endpoint_id
+        relay_ca = lab_pki.init_owner(self.tmp / "relay-ca", "relay")
+        relay_cert = lab_pki.issue_server(self.tmp / "relay-ca", self.tmp / "relay-tls", "IP:127.0.0.1")
+        provisioned = relay_daemon.provision(self.tmp / "relay-routes.json", self.tmp / "relay-creds",
+            link_id=link_id, room_id=room_id,
+            source=relay_identity_for(ps.INSTALL_A, link_id), target=relay_identity_for(ps.INSTALL_B, link_id))
+        daemon = relay_daemon.RelayDaemon(self.tmp / "relay-routes.json", host="127.0.0.1", port=0,
+            tls=relay_daemon._server_tls(relay_cert["cert_file"], relay_cert["key_file"]))
+        loop = asyncio.new_event_loop()
+        ready = threading.Event()
+        def run_relay():
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(daemon.run(ready.set, install_signals=False))
+        relay_thread = threading.Thread(target=run_relay, daemon=True)
+        relay_thread.start()
+        self.assertTrue(ready.wait(5), "relay daemon failed to bind")
+        def stop_relay():
+            if getattr(daemon, "stop_event", None) is not None:
+                loop.call_soon_threadsafe(daemon.stop_event.set)
+            relay_thread.join(5)
+            if not loop.is_closed():
+                loop.close()
+        self.addCleanup(stop_relay)
+        relay_url = f"wss://127.0.0.1:{daemon.bound_port}/data"
+        relay_ssl = ssl.create_default_context(cafile=relay_ca["ca_file"])
+        credential_a = Path(provisioned["credential_files"][relay_identity_for(ps.INSTALL_A, link_id)])
+        credential_b = Path(provisioned["credential_files"][relay_identity_for(ps.INSTALL_B, link_id)])
+        link_a = RelayLinkConfig(trust_a.endpoint_id, trust_a.generation, trust_a.peer_id, link_id, room_id, credential_a)
+        link_b = RelayLinkConfig(trust_b.endpoint_id, trust_b.generation, trust_b.peer_id, link_id, room_id, credential_b)
+        manager_a = RelaySessionManager(relay_url=relay_url, links={trust_a.endpoint_id: link_a},
+            installation_id=ps.INSTALL_A, authority=JournalLinkAuthority(self.a.journal),
+            control_target=(srv.host, srv.port), data_targets={}, relay_ssl_context=relay_ssl)
+        manager_b = RelaySessionManager(relay_url=relay_url, links={trust_b.endpoint_id: link_b},
+            installation_id=ps.INSTALL_B, authority=JournalLinkAuthority(self.b.journal),
+            control_target=("127.0.0.1", w2a.free_port()), data_targets={}, relay_ssl_context=relay_ssl)
+        self.addCleanup(manager_a.close)
+        self.addCleanup(manager_b.close)
+        self.cfg["pairing"]["relay_url"] = relay_url
+        self.cfg["pairing"]["relay_links"] = {trust_b.endpoint_id: {
+            "generation": trust_b.generation, "peer_id": trust_b.peer_id, "link_id": link_id,
+            "relay_room_id": room_id, "credential_file": str(credential_b)}}
+        private_json(self.cfg_path, self.cfg)
+        loaded = runtime_config.load_service()
+        if loaded is None:
+            raise AssertionError("relay-only joining config disabled")
+        self.assertEqual(manager_a.refresh(), 1)
+        self.assertEqual(manager_b.refresh(), 1)
+        owner = rj.load_owner(loaded[2], relay_manager=manager_b)
+        if owner is None:
+            raise AssertionError("joining owner failed to build with relay config")
+        self.addCleanup(owner.close)
+        self.assertEqual(self.control(owner), REPLY)
+        self.assertEqual((srv.accepted, srv.handshakes, len(srv.messages)), (1, 1, 1))
+        envelope, request = srv.messages[0]
+        self.assertEqual((envelope["endpoint_id"], envelope["generation"]),
+                         (owner.endpoint_id, owner.generation))
+        self.assertEqual((request.method, request.target), ("POST", rj.CONTROL_PATH))
 
     def test_ipv6_loopback_literal_is_accepted(self):
         try:

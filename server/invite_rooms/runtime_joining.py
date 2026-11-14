@@ -17,14 +17,13 @@ nothing else:
    handed to the product service is built exclusively from that verified link:
    no invitation and no HTTP caller can install a host, endpoint, fingerprint,
    digest or generation.
-3. **One control channel.**  :class:`PinnedControlChannel` speaks the joining
-   control protocol over the existing bounded connector
+3. **One control channel.** :class:`PinnedControlChannel` speaks the joining
+   control protocol over the bounded connector
    (``invite_rooms.control.connector.HostConnector``) with a per-call absolute
-   deadline.  No new transport, no ``requests``, no unbounded sockets, no
-   request-selected destination.  It is installed at PROCESS wiring time via
-   :func:`configure_joining_control`; the default stays ``None`` so that remote
-   operations fail closed with ``control_unavailable`` until P3b.3c supplies the
-   pinned transport (:func:`configure_joining_transport`).
+   deadline. Its per-config dialer selects either the owner-fixed loopback
+   endpoint or an owner-provisioned relay stream; inner mTLS and journal admission
+   are identical on both paths. The process-wide control factory remains scoped
+   by :func:`configure_joining_control`; no request can select a destination.
 4. **The HTTP action map.**  :meth:`JoiningOwner.execute` is a thin, exact map
    from the seven owner actions to the accepted product service calls plus the
    read model the sidecar renders.  No action ever invents a host, session,
@@ -501,18 +500,13 @@ def _refuse_constant(_name):
     raise ValueError("constant")
 
 
-def _config_connector_factory(config) -> Callable:
-    """Per-config pinned transport: ``factory(link, remaining) -> HostConnector`` (loopback mTLS, in-memory CA).
+def _config_connector_factory(config, *, relay_manager=None) -> Callable:
+    """Build a config-scoped direct-loopback or journal-matched relay connector.
 
-    Everything that decides trust is re-read at CALL time from authoritative state, never from the caller's link
-    snapshot, the peer-registry projection or request data:
-
-    * the peer record (leaf pin, CA PEM, binding, generation, state) comes from the pairing journal;
-    * the local certificate/key come from the verified local identity bundle;
-    * the destination comes ONLY from the owner-private ``joining.control_endpoints`` entry for that journal peer.
-
-    The peer CA PEM is handed to ``ssl`` as in-memory ``cadata``; no CA file is ever created or read.  Any failure
-    raises (the channel maps it to ``control_unavailable``) before a socket is opened.
+    Trust, certificate and peer binding come from the journal and verified local
+    identity. The owner-private configuration chooses only a fixed loopback
+    destination or an existing relay session; neither request data nor relay
+    credentials can select a peer or native destination.
     """
     def factory(link: Mapping, remaining: float):
         settings = _joining_settings(config)
@@ -532,22 +526,37 @@ def _config_connector_factory(config) -> Callable:
         if isinstance(link_peer, Mapping) and link_peer.get("peer_id") not in (None, peer_id):
             raise ControlError("control_unavailable")
         try:
-            endpoints = runtime_config.parse_control_endpoints(settings["control_endpoints"])
-            host, port = endpoints[peer_id]
-        except (runtime_config.RuntimeConfigError, KeyError, TypeError):
+            endpoints = (runtime_config.parse_control_endpoints(settings["control_endpoints"])
+                         if settings.get("control_endpoints") is not None else {})
+            destination = endpoints.get(peer_id)
+            stream_client = None
+            relay_channel = None
+            if destination is None:
+                pairing = config.pairing
+                relay_link = pairing.relay_links.get(endpoint_id) if pairing and pairing.relay_links else None
+                if (relay_manager is None or relay_link is None or relay_link.generation != generation
+                        or relay_link.peer_id != peer_id):
+                    raise ControlError("control_unavailable")
+                stream_client = relay_manager.client_for(trust)
+                relay_channel = "control"
+        except (runtime_config.RuntimeConfigError, KeyError, TypeError, ValueError):
             raise ControlError("control_unavailable") from None
         bundle = identity_module.load_identity(settings["identity_dir"], installation_id=config.installation_id,
                                                profile=config.profile)
         expected = trust.binding_dict()
-        binding = LinkBinding(endpoint_id=endpoint_id, generation=generation, address=(host, port),
+        binding = LinkBinding(endpoint_id=endpoint_id, generation=generation, address=destination,
                               peer_ca_file=None, peer_ca_data=ca_pem, peer_fingerprint=trust.fingerprint,
-                              expected_binding=expected, timeout=float(remaining))
+                              expected_binding=expected, timeout=float(remaining),
+                              transport="loopback" if destination is not None else "relay")
         identity = LinkIdentity(cert_file=str(bundle.leaf_cert_file), key_file=str(bundle.leaf_key_file))
-        return make_link_connector(binding, identity, authority)
+        if stream_client is None:
+            return make_link_connector(binding, identity, authority)
+        return make_link_connector(binding, identity, authority, stream_client=stream_client,
+                                   relay_channel=relay_channel)
     return factory
 
 
-def default_joining_control(config, link) -> PinnedControlChannel:
+def default_joining_control(config, link, *, relay_manager=None) -> PinnedControlChannel:
     """Process-wiring factory for the REAL channel.
 
     Install with ``configure_joining_control(default_joining_control)`` (see :func:`install_joining_wiring`).  It
@@ -556,7 +565,7 @@ def default_joining_control(config, link) -> PinnedControlChannel:
     """
     if config is None:
         return PinnedControlChannel(link)
-    return PinnedControlChannel(link, connector_factory=_config_connector_factory(config))
+    return PinnedControlChannel(link, connector_factory=_config_connector_factory(config, relay_manager=relay_manager))
 
 
 def install_joining_wiring() -> None:
@@ -591,9 +600,10 @@ class _ServiceChannel:
 class JoiningOwner:
     """One request-scoped joining owner over the real product stores."""
 
-    def __init__(self, config, deadline: Optional[float] = None):
+    def __init__(self, config, deadline: Optional[float] = None, *, relay_manager=None):
         settings = _joining_settings(config)
         self.config = config
+        self.relay_manager = relay_manager
         self.deadline = float(time.monotonic() + REQUEST_BUDGET) if deadline is None else float(deadline)
         self._call_deadline: Optional[float] = None
         self._closed = False
@@ -712,7 +722,10 @@ class JoiningOwner:
         if self._wire_failed or self._factory is None:
             raise JoiningError("control_unavailable")
         try:
-            wire = self._factory(self.config, dict(self.link))
+            if self._factory is default_joining_control:
+                wire = default_joining_control(self.config, dict(self.link), relay_manager=self.relay_manager)
+            else:
+                wire = self._factory(self.config, dict(self.link))
         except Exception:
             self._wire_failed = True
             raise JoiningError("control_unavailable") from None
@@ -1003,7 +1016,7 @@ def _joining_settings(config) -> dict:
             "origins": dict(origins), "control_endpoints": raw.get("control_endpoints")}
 
 
-def load_owner(config, *, deadline: Optional[float] = None) -> Optional[JoiningOwner]:
+def load_owner(config, *, deadline: Optional[float] = None, relay_manager=None) -> Optional[JoiningOwner]:
     """Build the request-scoped owner, or ``None`` (= the route does not exist).
 
     Every failure mode -- absent/misconfigured ``joining`` block, missing
@@ -1014,7 +1027,7 @@ def load_owner(config, *, deadline: Optional[float] = None) -> Optional[JoiningO
     if config is None or getattr(config, "joining_owner", None) is None:
         return None
     try:
-        return JoiningOwner(config, deadline)
+        return JoiningOwner(config, deadline, relay_manager=relay_manager)
     except (JoiningError, JoiningStoreError, JournalError, InvitationError, PeerBindingError,
             PeerRegistryError, identity_module.IdentityError, private_fs.PrivateStorageError,
             ControlError, OSError, sqlite3.Error, ValueError, TypeError):

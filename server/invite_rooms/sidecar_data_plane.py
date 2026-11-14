@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, NoReturn, Optional
 
 from invite_rooms import identity as identity_module
 from invite_rooms import runtime_config
@@ -45,6 +45,8 @@ from invite_rooms.pairing_journal import Journal, JournalLinkAuthority, Material
 from invite_rooms.peer_registry import MaterialScope, PeerRegistry, RegistrySource, adapter_id_for
 from invite_rooms.runtime_config import RuntimeConfig
 from invite_rooms.runtime_joining import _IdentityConsentKey, _config_connector_factory, _joining_settings
+from invite_rooms.runtime_config import RelayLinkConfig
+from invite_rooms.relay_transport import RelaySessionManager
 from invite_rooms.run_bindings import HostAckBindingStore, TargetReceiptVerifier
 from invite_rooms.scope_lifecycle import ScopeLifecycle
 from invite_rooms.service import InviteRoomsService, OwnerContext
@@ -67,7 +69,7 @@ class DataPlaneError(ValueError):
     """Machine code only: never interpolates paths, peer text, tokens or exception detail."""
 
 
-def _refuse(code: str = "data_plane_unavailable"):
+def _refuse(code: str = "data_plane_unavailable") -> NoReturn:
     raise DataPlaneError(code)
 
 
@@ -93,6 +95,13 @@ class PreparedTargetConnector:
     adapter_id: str
     scope: MaterialScope
     expected_scope: Mapping
+
+
+@dataclass(frozen=True)
+class RelayDataDestination:
+    """A journal-resolved relay link and canonical data service label, never a socket address."""
+    link: RelayLinkConfig
+    channel: str
 
 
 class _LazyNativeRpc:
@@ -310,13 +319,26 @@ class MaterialCoordinator:
             if not ready or not any(p['member_id'] == scope.member_id and p['invite_id'] == scope.invite_id for p in peers):
                 _refuse()
             trust = self._host_trust(scope)
-            destination = plane.config.pairing.control_endpoints.get(trust.peer_id) if plane.config.pairing.control_endpoints else None
-            if destination is None or not admitted():
+            pairing = plane.config.pairing
+            destination = pairing.control_endpoints.get(trust.peer_id) if pairing.control_endpoints else None
+            stream_client = None
+            relay_channel = None
+            if destination is not None:
+                binding = LinkBinding(endpoint_id=trust.endpoint_id, generation=trust.generation, address=tuple(destination),
+                    peer_ca_file=None, peer_ca_data=_ca_text(trust.ca_pem), peer_fingerprint=trust.fingerprint,
+                    expected_binding=trust.binding_dict(), timeout=deadline-time.monotonic())
+            elif pairing.relay_links and pairing.relay_links.get(trust.endpoint_id) is not None:
+                if plane.relay_manager is None:
+                    _refuse()
+                binding = LinkBinding(endpoint_id=trust.endpoint_id, generation=trust.generation, address=None,
+                    peer_ca_file=None, peer_ca_data=_ca_text(trust.ca_pem), peer_fingerprint=trust.fingerprint,
+                    expected_binding=trust.binding_dict(), timeout=deadline-time.monotonic(), transport="relay")
+                stream_client = plane.relay_manager.client_for(trust); relay_channel = "control"
+            else:
                 _refuse()
-            binding = LinkBinding(endpoint_id=trust.endpoint_id, generation=trust.generation, address=tuple(destination),
-                peer_ca_file=None, peer_ca_data=_ca_text(trust.ca_pem), peer_fingerprint=trust.fingerprint,
-                expected_binding=trust.binding_dict(), timeout=deadline-time.monotonic())
-            connector = make_link_connector(binding, self._identity(), plane.authority)
+            connector = (make_link_connector(binding, self._identity(), plane.authority)
+                        if stream_client is None else make_link_connector(binding, self._identity(), plane.authority,
+                            stream_client=stream_client, relay_channel=relay_channel))
             control = MaterialControl(lobby_id=scope.lobby_id, invite_id=scope.invite_id, journal=plane.journal,
                 connector=HostConnectorMaterialTransport(connector, owned=True))
             # ALWAYS obtain target-success outer ready, including durable-receipt
@@ -340,15 +362,26 @@ class MaterialCoordinator:
                     'member_id', 'target_install_id', 'target_profile')
             expected = {k: claims[k] for k in keys}
             trust = self._host_trust(scope)
-            binding = LinkBinding(endpoint_id=trust.endpoint_id, generation=trust.generation,
-                address=plane.data_endpoint_for_scope(scope), peer_ca_file=None, peer_ca_data=_ca_text(trust.ca_pem),
-                peer_fingerprint=trust.fingerprint, expected_binding=trust.binding_dict())
+            destination = plane.data_endpoint_for_scope(scope)
+            stream_client = None
+            if isinstance(destination, RelayDataDestination):
+                if plane.relay_manager is None:
+                    _refuse("data_endpoint_unavailable")
+                binding = LinkBinding(endpoint_id=trust.endpoint_id, generation=trust.generation, address=None,
+                    peer_ca_file=None, peer_ca_data=_ca_text(trust.ca_pem), peer_fingerprint=trust.fingerprint,
+                    expected_binding=trust.binding_dict(), transport="relay")
+                stream_client = plane.relay_manager.client_for(trust)
+            else:
+                binding = LinkBinding(endpoint_id=trust.endpoint_id, generation=trust.generation,
+                    address=tuple(destination), peer_ca_file=None, peer_ca_data=_ca_text(trust.ca_pem),
+                    peer_fingerprint=trust.fingerprint, expected_binding=trust.binding_dict())
             verifier = plane.host_ack_store.verifier(scope=scope, expected_scope=expected)
             _future(deadline)
             if not context.readmit():
                 _refuse()
-            await asyncio.to_thread(plane.scoped_registry.register, scope=scope, binding=binding, identity=self._identity(),
-                expected_scope=expected, verify_native=verifier, on_admitted=verifier.record_ack)
+            await asyncio.to_thread(plane.scoped_registry.register, scope=scope, binding=binding,
+                identity=self._identity(), expected_scope=expected, verify_native=verifier,
+                on_admitted=verifier.record_ack, stream_client=stream_client)
             if time.monotonic() >= deadline or not context.readmit():
                 await asyncio.to_thread(plane.scoped_registry.revoke, scope)
                 _refuse()
@@ -400,6 +433,7 @@ class SidecarDataPlane:
     host_ack_store: HostAckBindingStore
     material_coordinator: Any = None
     original_frontdoor: Any = None
+    relay_manager: Any = None
     _owned: tuple = ()
     _state: Any = field(default_factory=_Lifecycle, repr=False, compare=False)
 
@@ -439,6 +473,10 @@ class SidecarDataPlane:
             started.append("control")
             self.control_listener.start()
             self._check_starting()
+            if self.relay_manager is not None:
+                started.append("relay")
+                self.relay_manager.start()
+                self._check_starting()
         except BaseException:
             self._rollback(started)
             raise
@@ -457,6 +495,8 @@ class SidecarDataPlane:
         steps.append(self.scope_lifecycle.close)
         if self.original_frontdoor is not None:
             steps.insert(0, self.original_frontdoor.close)
+        if "relay" in started and self.relay_manager is not None:
+            steps.insert(0, self.relay_manager.close)
         if "control" in started:
             steps.append(self._close_control)
         if "adapter" in started:
@@ -517,6 +557,8 @@ class SidecarDataPlane:
         steps.extend((self.scope_lifecycle.close, self.scoped_registry.close, self._close_adapter, self._close_control))
         if self.original_frontdoor is not None:
             steps.insert(0, self.original_frontdoor.close)
+        if self.relay_manager is not None:
+            steps.insert(0, self.relay_manager.close)
         for step in steps:
             try:
                 step()
@@ -557,7 +599,8 @@ def _unpack(loaded):
 def _complete(config: RuntimeConfig) -> bool:
     pairing = config.pairing
     return (pairing is not None and pairing.control_listen is not None and pairing.target_listeners is not None
-            and pairing.data_endpoints is not None and config.data_listen is not None
+            and (pairing.data_endpoints is not None or pairing.relay_links is not None)
+            and config.data_listen is not None
             and config.joining_store_dir is not None and config.target_http is not None
             and config.native_rpc is not None and config.joining_owner is not None)
 
@@ -571,6 +614,8 @@ def _local_binds(config: RuntimeConfig) -> tuple:
 def _validate_topology(config: RuntimeConfig) -> None:
     """Re-prove the accepted A2b3-1a topology on the object actually handed to the builder (fail closed)."""
     pairing = config.pairing
+    if pairing is None:
+        _refuse("pairing_config_unavailable")
     joining = config.joining_owner
     if config.original_frontdoor_url is not None:
         from invite_rooms.original_frontdoor import validate_frontdoor
@@ -581,12 +626,12 @@ def _validate_topology(config: RuntimeConfig) -> None:
         joining_control = runtime_config.parse_control_endpoints(joining["control_endpoints"])
     runtime_config._check_data_topology(pairing.control_listen, config.data_listen, pairing.target_listeners,
                                         pairing.control_endpoints, pairing.data_endpoints, joining_control)
-    destinations = [tuple(dest) for scopes in pairing.data_endpoints.values() for dest in scopes.values()]
+    destinations = [tuple(dest) for scopes in (pairing.data_endpoints or {}).values() for dest in scopes.values()]
     binds = _local_binds(config)
     if (len(set(destinations)) != len(destinations) or len(set(binds)) != len(binds)
             or set(destinations) & set(binds)):
         raise runtime_config.RuntimeConfigError("invalid_data_topology")
-    for adapter_ids in (pairing.target_listeners, *pairing.data_endpoints.values()):
+    for adapter_ids in (pairing.target_listeners, *(pairing.data_endpoints or {}).values()):
         if not all(_ADAPTER_ID.fullmatch(key) for key in adapter_ids):
             raise runtime_config.RuntimeConfigError("invalid_data_topology")
 
@@ -691,7 +736,13 @@ def _assemble(service, ctx, config, store_parent, opened) -> SidecarDataPlane:
             "history_read_acceptance": history.history_read_acceptance,
             "room_log": history.room_log,
         })
-    material_control = _material_control(service, ctx, config, journal, authority, joining_store, coordinator)
+    relay_manager = None
+    if pairing.relay_links:
+        relay_manager = RelaySessionManager(relay_url=pairing.relay_url, links=pairing.relay_links,
+            installation_id=ctx.installation_id, authority=authority, control_target=pairing.control_listen,
+            data_targets=pairing.target_listeners or {})
+    material_control = _material_control(service, ctx, config, journal, authority, joining_store, coordinator,
+                                         relay_manager=relay_manager)
     material_handlers = {name: coordinator.handler(callback) for name, callback in material_control.handlers().items()}
     control_listener = build_pair_ack_listener(
         config, installation_id=ctx.installation_id, profile=ctx.profile,
@@ -746,7 +797,7 @@ def _assemble(service, ctx, config, store_parent, opened) -> SidecarDataPlane:
         target_dispatch_backend_factory=dispatch_factory, data_endpoint_resolver=resolve_endpoint,
         data_endpoint_for_scope=endpoint_for_scope, target_connector_factory=connector_factory,
         scope_lifecycle=scope_lifecycle, host_ack_store=host_ack_store, material_coordinator=coordinator,
-        original_frontdoor=original_frontdoor, _owned=owned)
+        original_frontdoor=original_frontdoor, relay_manager=relay_manager, _owned=owned)
     coordinator._plane = plane
     return plane
 
@@ -756,7 +807,10 @@ def _assemble(service, ctx, config, store_parent, opened) -> SidecarDataPlane:
 # ---------------------------------------------------------------------------------------------------------------
 def _endpoint_resolvers(config: RuntimeConfig, authority: JournalLinkAuthority):
     pairing = config.pairing
-    data_endpoints = pairing.data_endpoints
+    if pairing is None:
+        _refuse("pairing_config_unavailable")
+    data_endpoints = pairing.data_endpoints or {}
+    relay_links = pairing.relay_links or {}
     binds = frozenset(_local_binds(config))
     joining_control = (runtime_config.parse_control_endpoints(config.joining_owner["control_endpoints"])
                        if "control_endpoints" in config.joining_owner else {})
@@ -771,16 +825,19 @@ def _endpoint_resolvers(config: RuntimeConfig, authority: JournalLinkAuthority):
             _refuse("data_endpoint_unavailable")
         scopes = data_endpoints.get(fresh.peer_id)
         destination = scopes.get(adapter_id) if scopes is not None else None
-        if destination is None:
+        if destination is not None:
+            destination = tuple(destination)
+            aliases = {tuple(control[fresh.peer_id]) for control in (pairing_control, joining_control)
+                       if fresh.peer_id in control}
+            if destination in binds or destination in aliases:
+                _refuse("data_endpoint_ambiguous")
+            return destination
+        relay = relay_links.get(fresh.endpoint_id)
+        if (relay is None or relay.generation != fresh.generation or relay.peer_id != fresh.peer_id):
             _refuse("data_endpoint_unavailable")
-        destination = tuple(destination)
-        aliases = {tuple(control[fresh.peer_id]) for control in (pairing_control, joining_control)
-                   if fresh.peer_id in control}
-        if destination in binds or destination in aliases:
-            _refuse("data_endpoint_ambiguous")
-        return destination
+        return RelayDataDestination(relay, "data:" + adapter_id)
 
-    def for_scope(scope) -> tuple:
+    def for_scope(scope) -> tuple | RelayDataDestination:
         if type(scope) is not MaterialScope:
             _refuse("data_endpoint_unavailable")
         trust = authority.peer_trust(scope.endpoint_id, scope.pairing_generation, role="host", states=_ACKNOWLEDGED)
@@ -794,9 +851,9 @@ def _endpoint_resolvers(config: RuntimeConfig, authority: JournalLinkAuthority):
 # ---------------------------------------------------------------------------------------------------------------
 # Request-scoped material control resolvers
 # ---------------------------------------------------------------------------------------------------------------
-def _material_control(service, ctx, config, journal, authority, joining_store, coordinator) -> MaterialControl:
+def _material_control(service, ctx, config, journal, authority, joining_store, coordinator, *, relay_manager=None) -> MaterialControl:
     store = service.store
-    connector_factory = _config_connector_factory(config)
+    connector_factory = _config_connector_factory(config, relay_manager=relay_manager)
 
     def checked_context(context, role: str, operation: str):
         """The journal-issued capability, re-proved against a FRESH journal read; never request-selected."""

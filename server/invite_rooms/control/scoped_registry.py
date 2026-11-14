@@ -42,6 +42,7 @@ class _Registration:
     verify_native: Any = None
     on_admitted: Any = None
     token: object | None = None
+    stream_client: Any = None
 
 
 @dataclass
@@ -169,6 +170,7 @@ class ScopedAdapterRegistry:
         # Callback identity is intentionally excluded: first registration wins.
         # The callables are nevertheless shape-validated on every invocation.
         return (a.scope == b.scope and a.binding == b.binding and a.identity == b.identity
+                and a.stream_client is b.stream_client
                 and a.expected_scope == b.expected_scope
                 and a.backend_timeout_seconds == b.backend_timeout_seconds)
 
@@ -209,12 +211,13 @@ class ScopedAdapterRegistry:
             self._retiring.pop(registration.adapter_id, None)
 
     def register(self, *, scope: MaterialScope, binding, identity, expected_scope: Mapping[str, Any],
-                 verify_native, backend_timeout_seconds: float = 30.0, on_admitted=None) -> ScopedRoute:
+                 verify_native, backend_timeout_seconds: float = 30.0, on_admitted=None,
+                 stream_client=None) -> ScopedRoute:
         expected, route_id = self._validate(scope, binding, expected_scope, identity,
                                             verify_native, on_admitted, backend_timeout_seconds)
         token = object()
         candidate = _Registration(scope, binding, identity, route_id, expected,
-                                  backend_timeout_seconds, verify_native, on_admitted, token)
+                                  backend_timeout_seconds, verify_native, on_admitted, token, stream_client)
         while True:
             waiter = None
             repair_snapshot = None
@@ -294,6 +297,7 @@ class ScopedAdapterRegistry:
                 authority=self._authority, material_scope=scope,
                 backend_timeout_seconds=candidate.backend_timeout_seconds,
                 on_admitted=candidate.on_admitted,
+                stream_client=candidate.stream_client,
                 ownership_token=token)
             route = self._route(candidate)
             if route is None:

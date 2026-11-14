@@ -883,14 +883,16 @@ def _h_pairing_accept(handler, service, ctx, config, args, params) -> None:
 def _h_pairing_confirm_offer(handler, service, ctx, config, args, params) -> None:
     sas = _body_sas(handler)
     if sas is not None:
-        _pairing_call(handler, ctx, config, lambda s: _confirm_offer_and_ack(s, config, args[0], sas))
+        relay_manager = getattr(getattr(handler, "server", None), "invite_rooms_relay_manager", None)
+        _pairing_call(handler, ctx, config,
+                      lambda s: _confirm_offer_and_ack(s, config, args[0], sas, relay_manager=relay_manager))
 
 
 class _Reply(tuple):
     """``(status, body)`` for a pairing handler that must choose its own success status."""
 
 
-def _confirm_offer_and_ack(service, config, session_id, sas):
+def _confirm_offer_and_ack(service, config, session_id, sas, *, relay_manager=None):
     """Durably confirm FIRST, then send the already-journaled ``pair_ack`` through the pinned client.
 
     The ack bytes are minted once by the journal (``ack_request``); an unreachable/unverified peer leaves the link
@@ -904,8 +906,11 @@ def _confirm_offer_and_ack(service, config, session_id, sas):
     # Local durable work: errors propagate to ``_pairing_call`` unchanged (established PairingError/JournalError
     # mapping).  The exact ack is journaled once even when no sender is configured.
     req = service.ack_request(session_id)
+    if relay_manager is not None:
+        relay_manager.refresh()
     pending = _Reply((202, {"pairing": row, "ack": "pending", "code": "pairing_ack_pending"}))
-    sender = pair_ack_sender(config)
+    sender = (pair_ack_sender(config) if relay_manager is None else
+              pair_ack_sender(config, relay_manager=relay_manager))
     if sender is None:
         return pending
     try:
@@ -939,7 +944,13 @@ def _h_pairing_reveal(handler, service, ctx, config, args, params) -> None:
 def _h_pairing_confirm_import(handler, service, ctx, config, args, params) -> None:
     sas = _body_sas(handler)
     if sas is not None:
-        _pairing_call(handler, ctx, config, lambda s: {"pairing": s.confirm_import(args[0], sas)})
+        relay_manager = getattr(getattr(handler, "server", None), "invite_rooms_relay_manager", None)
+        def confirm(s):
+            row = s.confirm_import(args[0], sas)
+            if relay_manager is not None:
+                relay_manager.refresh()
+            return {"pairing": row}
+        _pairing_call(handler, ctx, config, confirm)
 
 
 def _h_pairing_list(handler, service, ctx, config, args, params) -> None:
@@ -951,7 +962,13 @@ def _h_pairing_peers(handler, service, ctx, config, args, params) -> None:
 
 
 def _h_pairing_unpair(handler, service, ctx, config, args, params) -> None:
-    _pairing_call(handler, ctx, config, lambda s: {"unpaired": True, **s.unpair(args[0])})
+    relay_manager = getattr(getattr(handler, "server", None), "invite_rooms_relay_manager", None)
+    def unpair(s):
+        result = s.unpair(args[0])
+        if relay_manager is not None:
+            relay_manager.stop_peer(args[0])
+        return {"unpaired": True, **result}
+    _pairing_call(handler, ctx, config, unpair)
 
 
 _ROUTES = (

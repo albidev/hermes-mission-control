@@ -3271,6 +3271,7 @@ def main() -> None:
             def attach_material(registry):
                 server.scoped_adapter_registry = registry
                 server.material_coordinator = plane.material_coordinator
+                setattr(server, "invite_rooms_relay_manager", plane.relay_manager)
             plane.start(attach=attach_material)
         loop_state = "committing"
         serving.set()
@@ -3303,6 +3304,7 @@ def main() -> None:
             if server is not None:
                 server.scoped_adapter_registry = None  # type: ignore[attr-defined]
                 server.material_coordinator = None  # type: ignore[attr-defined]
+                setattr(server, "invite_rooms_relay_manager", None)
             plane.close()  # type: ignore[union-attr]
 
         def join_shutdown_helper(waiter) -> None:

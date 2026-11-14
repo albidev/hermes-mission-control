@@ -6,10 +6,14 @@ the sidecar ``main()`` (W2d); the B listener is instantiated directly.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime as dt
 import json
+import os
 import shutil
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -18,7 +22,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "spikes" / "invite-rooms"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import relay_daemon
+from server.tests import lab_pki
 import pairing_support as ps
 import test_control_listener_w2a as w2a
 import test_room_invite_pairing_routes as base
@@ -36,6 +43,8 @@ from invite_rooms.control.firewall import FirewallDenied, ForwardedRequest
 from invite_rooms.control.listener import ControlListener
 from invite_rooms.pair_ack_sender import PairAckUnavailable, pair_ack_sender
 from invite_rooms.pairing_journal import Journal, JournalError, JournalLinkAuthority
+from invite_rooms.relay_transport import RelaySessionManager, relay_identity_for
+from invite_rooms.runtime_config import RelayLinkConfig
 
 PEER_B = "peer-" + "b" * 32
 PEER_C = "peer-" + "c" * 32
@@ -267,6 +276,66 @@ class ConfirmRouteSendsPairAckTest(W2b0Base):
         link = next(iter(self.A.service().journal.snapshot().links.values()))
         self.assertEqual(link["protocol_state"], "acknowledged")
         self.assertEqual(next(iter(self.b.journal.snapshot().links.values()))["protocol_state"], "acknowledged")
+
+    def test_actual_confirm_route_reaches_b_listener_over_product_relay(self):
+        p = self.ready()
+        self.start_b()
+        endpoint_id, generation = self.a_trust(p)
+        link_id = "relay-" + endpoint_id
+        room_id = "relay-room-" + endpoint_id
+        relay_ca = lab_pki.init_owner(self.tmp / "relay-ca", "relay")
+        relay_cert = lab_pki.issue_server(self.tmp / "relay-ca", self.tmp / "relay-tls", "IP:127.0.0.1")
+        provisioned = relay_daemon.provision(self.tmp / "relay-routes.json", self.tmp / "relay-creds",
+            link_id=link_id, room_id=room_id,
+            source=relay_identity_for(ps.INSTALL_A, link_id), target=relay_identity_for(ps.INSTALL_B, link_id))
+        daemon = relay_daemon.RelayDaemon(self.tmp / "relay-routes.json", host="127.0.0.1", port=0,
+            tls=relay_daemon._server_tls(relay_cert["cert_file"], relay_cert["key_file"]))
+        loop = asyncio.new_event_loop()
+        ready = threading.Event()
+        def run_relay():
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(daemon.run(ready.set, install_signals=False))
+        relay_thread = threading.Thread(target=run_relay, daemon=True)
+        relay_thread.start()
+        self.assertTrue(ready.wait(5), "relay daemon failed to bind")
+        def stop_relay():
+            if getattr(daemon, "stop_event", None) is not None:
+                loop.call_soon_threadsafe(daemon.stop_event.set)
+            relay_thread.join(5)
+            if not loop.is_closed():
+                loop.close()
+        self.addCleanup(stop_relay)
+        relay_url = f"wss://127.0.0.1:{daemon.bound_port}/data"
+        ssl_context = ssl.create_default_context(cafile=relay_ca["ca_file"])
+        credential_a = Path(provisioned["credential_files"][relay_identity_for(ps.INSTALL_A, link_id)])
+        credential_b = Path(provisioned["credential_files"][relay_identity_for(ps.INSTALL_B, link_id)])
+        link_a = RelayLinkConfig(endpoint_id, generation, PEER_B, link_id, room_id, credential_a)
+        link_b = RelayLinkConfig(endpoint_id, generation, w2a.PEER_A, link_id, room_id, credential_b)
+        manager_a = RelaySessionManager(relay_url=relay_url, links={endpoint_id: link_a},
+            installation_id=ps.INSTALL_A, authority=JournalLinkAuthority(self.A.service().journal),
+            control_target=("127.0.0.1", w2a.free_port()), data_targets={}, relay_ssl_context=ssl_context)
+        manager_b = RelaySessionManager(relay_url=relay_url, links={endpoint_id: link_b},
+            installation_id=ps.INSTALL_B, authority=JournalLinkAuthority(self.b.journal),
+            control_target=("127.0.0.1", self.b_port), data_targets={}, relay_ssl_context=ssl_context)
+        self.addCleanup(manager_a.close)
+        self.addCleanup(manager_b.close)
+        self.ENDPOINTS = None
+        self.write_config()
+        config_data = json.loads(self.config_path.read_text())
+        config_data["pairing"]["relay_url"] = relay_url
+        config_data["pairing"]["relay_links"] = {endpoint_id: {
+            "generation": generation, "peer_id": PEER_B, "link_id": link_id,
+            "relay_room_id": room_id, "credential_file": str(credential_a)}}
+        self.config_path.write_text(json.dumps(config_data))
+        os.chmod(self.config_path, 0o600)
+        self.assertEqual(manager_b.refresh(), 1)
+        setattr(self.httpd, "invite_rooms_relay_manager", manager_a)
+        status, data, _ = self.confirm(p)
+        self.assertEqual((status, data["pairing"]["state"]), (200, "acknowledged"), data)
+        self.assertEqual((self.a_session(p)["state"], self.b_session(p)["state"]),
+                         ("acknowledged", "acknowledged"))
+        self.assertEqual(len(self.b_calls), 1)
+        self.assertEqual((manager_a.session_count, manager_b.session_count), (1, 1))
 
     def test_exact_retry_after_lost_reply_is_idempotent(self):
         p = self.ready()
